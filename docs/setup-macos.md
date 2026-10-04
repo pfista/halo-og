@@ -85,7 +85,10 @@ Slayer, and **PB Options → Stock**; competitive options are optional and defau
    **Create Game** (Y on a controller, or Tab on the keyboard). Choose map and mode.
 2. On the same Wi-Fi/LAN, other players open **Multiplayer → System Link**,
    select their profiles, choose the host's game, and join.
-3. For Internet play, the host pastes the invite copied to the clipboard into a
+3. New desktop discovery builds show public Internet games from **games.oghalo.com**
+   in this same list. Select a game and wait for **Connecting…** to open its lobby.
+   See [public discovery/private hosting](system-link-directory.md). For older
+   builds or private games, the host pastes the invite copied to the clipboard into a
    message to friends. Joining players open the `halo://join/…` link, or copy
    it and return to Halo OG. Then select the host in **System Link** and join.
 4. Once everyone is in the lobby, the host starts the match. Keep the host app running.

@@ -57,6 +57,7 @@ only look up and create stand-ins.
 #include "posix.h"
 #include "port_config.h"
 #include "p2p_internal.h"
+#include "game_directory.h"
 #include "ikcp.h"
 
 #include <stddef.h>
@@ -2316,6 +2317,27 @@ int p2p_join_invite(const char *text)
 	return result > 0;
 }
 
+int p2p_invite_identity(const char *text, unsigned char *out)
+{
+	unsigned char hash[P2P_KEY_HASH_SIZE], token[P2P_TOKEN_SIZE];
+	if (parse_invite(text, hash, token) != 1) return 0;
+	p2p_identifier_from_hash(hash, out);
+	return 1;
+}
+
+int p2p_invite_peer_address(const char *text, unsigned long *address)
+{
+	unsigned char host[P2P_IDENTIFIER_SIZE];
+	struct peer *peer;
+	int found = 0;
+	if (!p2p_invite_identity(text, host)) return 0;
+	pthread_mutex_lock(&p2p_lock);
+	peer = find_peer(host);
+	if (peer && peer->connected && peer->is_host) { *address = peer->virtual_address; found = 1; }
+	pthread_mutex_unlock(&p2p_lock);
+	return found;
+}
+
 void p2p_invite_received(const char *text)
 {
 	/* (an older version's is logged as such) */
@@ -2381,6 +2403,7 @@ static void update_hosting(void)
 			snprintf(p2p.invite, sizeof(p2p.invite), "halo://join/%s", text);
 		}
 		p2p.hosting = 1;
+		game_directory_set_invite(p2p.invite);
 		p2p.stun_started = 1;
 		p2p_signal_start();
 		p2p_signal_host(p2p.token);
@@ -2397,6 +2420,7 @@ static void update_hosting(void)
 	else if (!want && p2p.hosting)
 	{
 		p2p.hosting = 0;
+		game_directory_set_invite(NULL);
 		p2p_signal_stop_hosting();
 		p2p_discord_set_hosting(NULL, 0, 0);
 	}

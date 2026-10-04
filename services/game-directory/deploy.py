@@ -80,8 +80,16 @@ def main():
     }
     if existing is None:
         metadata["migrations"] = {"new_tag": "v1", "new_sqlite_classes": ["GameDirectory"]}
-    elif existing.get("migration_tag") != "v1":
-        raise SystemExit("Unexpected Durable Object migration tag; refusing to overwrite this Worker")
+    else:
+        # Settings responses do not always include migration_tag. Pin the
+        # existing namespace instead of creating or migrating storage again.
+        bindings = existing.get("bindings", [])
+        binding = next((item for item in bindings if item.get("name") == "DIRECTORY"), None)
+        if (existing.get("migration_tag") not in (None, "v1") or not binding or
+                binding.get("type") != "durable_object_namespace" or
+                binding.get("class_name") != "GameDirectory" or not binding.get("namespace_id")):
+            raise SystemExit("Unexpected Durable Object binding; refusing to overwrite this Worker")
+        metadata["bindings"][0]["namespace_id"] = binding["namespace_id"]
     boundary = "halo-og-" + secrets.token_hex(16)
     body = bytearray()
     for name, filename, mime, data in [

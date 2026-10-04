@@ -183,6 +183,15 @@ void event_manager_post_button(
 }
 
 /* ---------- private code */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+void event_manager_post_directory_join(short controller_index)
+{
+	struct event_record event = {0};
+	if (!event_manager_globals.state.initialized || controller_index < 0 || controller_index >= MAXIMUM_GAMEPADS) return;
+	event.type = HALO_DIRECTORY_JOIN_READY_EVENT;
+	queue_event(&event, controller_index);
+}
+#endif
 
 static void queue_event(
 	struct event_record *event,

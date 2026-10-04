@@ -53,7 +53,7 @@ jobs:
       - name: Controls, rendering and workload verification
         run: python3 -m unittest tools.test_input_bindings tools.test_visibility_queries tools.test_geometry_cache tools.test_presentation tools.test_macos_preflight tools.test_macos_benchmark
       - name: Version 11 network protocol
-        run: python3 -m unittest tools.test_network_pings tools.test_network_v11
+        run: python3 -m unittest tools.test_network_pings tools.test_network_v11 tools.test_game_directory
       - name: Spawn inventory, teleport prediction and projectile trails
         run: python3 -m unittest tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail tools.test_weapon_sound_events
       - name: Native data import and packaging rules

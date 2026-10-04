@@ -105,4 +105,8 @@ virtual address (network byte order): where its packets come from; 0 if
 it is no peer's */
 unsigned long p2p_peer_endpoint_address(unsigned long virtual_address);
 
+/* Directory selection waits for this authenticated P2P peer and its real LAN advertisement. */
+int p2p_invite_identity(const char *invite, unsigned char *identifier);
+int p2p_invite_peer_address(const char *invite, unsigned long *address);
+
 #endif

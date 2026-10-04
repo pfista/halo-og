@@ -16,6 +16,7 @@ Built with the host's ABI, as the other posix_*.c.
 */
 
 #include "update.h"
+#include "game_directory.h"
 
 #include "mbedtls/error.h"
 #include "mbedtls/net_sockets.h"
@@ -304,6 +305,7 @@ static int connection_read(struct connection *connection, unsigned char *buffer,
 struct download
 {
 	FILE *file;
+	unsigned char *memory;
 	update_progress_proc progress;
 	void *context;
 	unsigned long long received, total, maximum;
@@ -318,7 +320,9 @@ static int body_write(struct download *download, const unsigned char *data, size
 		download->limit_exceeded = 1;
 		return 0;
 	}
-	if (fwrite(data, 1, size, download->file) != size)
+	if (download->memory)
+		memcpy(download->memory + (size_t)download->received, data, size);
+	else if (fwrite(data, 1, size, download->file) != size)
 		return 0;
 	download->received += size;
 	if (download->progress)
@@ -382,12 +386,12 @@ static int read_body(struct connection *connection, struct download *download, i
 
 /* one GET: the body into download on 200, the Location on a redirect;
 the status, or 0 on failure */
-static int https_get(const char *url, struct download *download, char *location, size_t location_size, char *error,
-	int error_size)
+static int https_request(const char *url, struct download *download, char *location, size_t location_size, char *error,
+	int error_size, const char *method, const char *body, const char *lease)
 {
 	struct connection *connection;
 	char host[256], port[16], path[2048];
-	char request[3072];
+	char request[4096], authorization[128] = "";
 	char line[MAXIMUM_HEADER_SIZE];
 	unsigned long long length = 0;
 	int have_length = 0, chunked = 0, status = 0;
@@ -404,11 +408,14 @@ static int https_get(const char *url, struct download *download, char *location,
 		return 0;
 	}
 	if (!connection_open(connection, host, port, error, error_size)) goto done;
+	if (lease && *lease)
+		snprintf(authorization, sizeof(authorization), "Authorization: Bearer %s\r\n", lease);
 	snprintf(request, sizeof(request),
-		"GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: " UPDATE_USER_AGENT "\r\n"
-		"Accept: */*\r\nConnection: close\r\n\r\n",
-		path, host);
+		"%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: " UPDATE_USER_AGENT "\r\n"
+		"Accept: */*\r\n%sContent-Type: application/json\r\nContent-Length: %u\r\nConnection: close\r\n\r\n",
+		method, path, host, authorization, body ? (unsigned)strlen(body) : 0);
 	if (!connection_write(connection, request, strlen(request)) ||
+		(body && !connection_write(connection, body, strlen(body))) ||
 		!connection_read_line(connection, line, sizeof(line)) ||
 		sscanf(line, "HTTP/%*d.%*d %d", &status) != 1)
 	{
@@ -449,7 +456,7 @@ static int https_get(const char *url, struct download *download, char *location,
 			snprintf(location, location_size, "%s", value);
 		}
 	}
-	if (status == 200)
+	if (status == 200 || download->memory)
 	{
 		download->total = have_length && !chunked ? length : 0;
 		if (download->maximum && have_length && !chunked && length > download->maximum)
@@ -505,7 +512,7 @@ static int update_download_serialized(const char *url, const char *path, unsigne
 	snprintf(current, sizeof(current), "%s", url);
 	for (redirect = 0; redirect <= MAXIMUM_REDIRECTS; redirect++)
 	{
-		int status = https_get(current, &download, location, sizeof(location), error, error_size);
+		int status = https_request(current, &download, location, sizeof(location), error, error_size, "GET", NULL, NULL);
 
 		if (status == 200)
 		{
@@ -558,6 +565,34 @@ int update_download(const char *url, const char *path, update_progress_proc prog
 	int error_size)
 {
 	return update_download_limited(url, path, 0, progress, context, error, error_size);
+}
+
+int halo_directory_http(const char *method, const char *url, const char *lease,
+	const char *body, char *response, int capacity, int *status)
+{
+	struct download download = {0};
+	char location[2048], error[256];
+	int size = -1;
+	*status = 0;
+	if (capacity < 2 || capacity > HALO_DIRECTORY_BODY_LIMIT ||
+		(lease && *lease && (strlen(lease) != 64 || strspn(lease, "0123456789abcdef") != 64)) ||
+		(body && strlen(body) > 4096) || strpbrk(url, "\r\n")) return -1;
+	download.memory = (unsigned char *)response;
+	download.maximum = (unsigned)capacity - 1;
+	/* Same PSA lock as map downloads; all transfers stay off the game thread. */
+	pthread_mutex_lock(&download_lock);
+	pthread_once(&certificates_once, load_certificates);
+	if (!crypto_ready || !certificates_loaded) {
+		pthread_mutex_unlock(&download_lock);
+		return -1;
+	}
+	*status = https_request(url, &download, location, sizeof(location), error, sizeof(error), method, body, lease);
+	if (*status && !download.limit_exceeded) {
+		size = (int)download.received;
+		response[size] = 0;
+	}
+	pthread_mutex_unlock(&download_lock);
+	return size;
 }
 
 /* ---------- files and processes */

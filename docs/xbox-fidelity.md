@@ -91,6 +91,22 @@ reference is separate from normal-play performance choices. Native maps can use
 
 ## Reconstruction target and validation
 
+### Public System Link discovery
+
+The October 4, 2026 integration adds Halo OG's own HTTPS directory in the existing
+Xbox-style System Link list on all three desktop ports. It does not import an
+upstream UI, alter simulation or gameplay packets, or add a gameplay relay.
+LAN/private invites retain their original native paths. Public hosting is on
+by default with a config opt-out; a different compatible HTTPS directory can
+replace the default. Upstream-only MQTT discovery remains a separate adapter task.
+
+The listing is display data. Joining uses the existing authenticated P2P peer,
+matches its real advertisement by identity/address, then applies the existing
+protocol and options checks. Fixtures cover those guards, expiry, deduplication,
+timeout, and cancelled/stale events. A local Mac build and live host listing/
+renewal passed. A two-instance invite match was not established; physical Mac,
+Windows and Linux/NAT playtests remain necessary. See [discovery](system-link-directory.md).
+
 ### Native gameplay corrections
 
 The native inventory receiver retains a spawn snapshot until its unit and

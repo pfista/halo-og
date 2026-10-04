@@ -6446,6 +6446,20 @@ static void widget_instance_tab_to_previous_valid_widget(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+boolean ui_widget_is_system_link_list(struct ui_widget_definition *definition)
+{
+	long i;
+	for (i = 0; i < definition->game_data_inputs.count; i++)
+	{
+		struct ui_widget_game_data_input_reference *input =
+			(struct ui_widget_game_data_input_reference *)definition->game_data_inputs.address + i;
+		if (ui_widget_game_data_function_is_server_list(input->function)) return TRUE;
+	}
+	return FALSE;
+}
+#endif
+
 static void widget_instance_process_one_event_recursive(
 	struct widget_instance *widget,
 	struct ui_widget_definition *definition,
@@ -6462,6 +6476,14 @@ static void widget_instance_process_one_event_recursive(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
 		3067,
 		widget && definition && event && return_widget_deleted);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (event_for_this_widget && event->type == HALO_DIRECTORY_JOIN_READY_EVENT && ui_widget_is_system_link_list(definition))
+	{
+		ui_widget_directory_join_ready(widget, &widget_deleted);
+		*return_widget_deleted = widget_deleted;
+		return;
+	}
+#endif
 	if (event->type == _event_type_button &&
 		event->data.button.value > 1 &&
 		event->controller_index >= 0 &&

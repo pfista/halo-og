@@ -99,7 +99,11 @@ app data. See [Android installation/data](../port/android/README.md#game-data).
 3. On the same LAN, clients open **Multiplayer → System Link** and select the
    host's game. Allow local-network/firewall access if your operating system
    prompts; isolated guest Wi-Fi may prevent discovery.
-4. For an Internet test, the host shares the current `halo://join/…` invite
+4. New desktop builds discover public Internet games from **games.oghalo.com**
+   directly in System Link. Select the host and wait for **Connecting…** to open
+   the normal lobby. [Public discovery and private hosting](system-link-directory.md)
+   explains the two-machine test and settings. Older builds/private games use
+   invites: the host shares the current `halo://join/…` invite
    copied to its clipboard. The client copies the invite and returns to the
    game, or opens the registered invite link. Once the host appears in System
    Link, select it and join. The host app must remain running.

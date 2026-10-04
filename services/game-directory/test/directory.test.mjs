@@ -62,6 +62,15 @@ test('a different host cannot edit or delete a listing; invites are immutable', 
   assert.equal((await (await request('/v1/games')).json()).games.length, 1);
 });
 
+test('custom map cache names with spaces can be advertised', async (t) => {
+  const {request} = await setup(t);
+  const response = await request('/v1/games', 'POST', {...listing, map: 'custom map'});
+  assert.equal(response.status, 201);
+  assert.equal((await (await request('/v1/games')).json()).games[0].map, 'custom map');
+  for (const map of ['x'.repeat(32), '../stock'])
+    assert.equal((await request('/v1/games', 'POST', {...listing, map})).status, 400);
+});
+
 test('expired games disappear and their leases cannot revive them', async (t) => {
   const {request} = await setup(t);
   const lease = await (await request('/v1/games', 'POST', listing)).json();

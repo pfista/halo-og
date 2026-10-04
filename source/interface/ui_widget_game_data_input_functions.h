@@ -19,6 +19,11 @@ header included in hcex build.
 /* ---------- structures */
 
 struct widget_instance;
+struct ui_widget_definition;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+boolean ui_widget_is_system_link_list(struct ui_widget_definition *definition);
+boolean ui_widget_game_data_function_is_server_list(word function);
+#endif
 
 typedef void (*ui_widget_game_data_function)(
 	struct widget_instance *widget);

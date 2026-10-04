@@ -1928,6 +1928,10 @@ static boolean network_game_join_game_from_server_list(
 
 						/* (a host of another network version: the player is told
 						which is the newer, and stays in the list) */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+						if (network_game_client_directory_begin_join((struct network_advertised_game *)server))
+							return TRUE;
+#endif
 						if (!network_game_client_advertised_game_compatible(global_network_game_client_get(), server, TRUE))
 							return FALSE;
 						transport_client_start(server + 0x18, server + 8, server, 0x141E, &address);
@@ -1986,6 +1990,32 @@ static boolean network_game_join_game_from_server_list(
 }
 
 /* ---------- private code */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+boolean ui_widget_directory_join_ready(struct widget_instance *widget, boolean *widget_deleted)
+{
+	struct network_advertised_game *server = network_game_client_directory_take_join(global_network_game_client_get());
+	void *saved_list;
+	short saved_count, saved_index;
+	boolean result;
+	if (!server) return FALSE;
+	/* Reuse the original join event, including compatibility checks and the
+	   pregame screen. This temporary list exists only during event dispatch. */
+	saved_list = widget->generated_list;
+	saved_count = widget->generated_count;
+	saved_index = widget->data3C.selected_index;
+	widget->generated_list = &server;
+	widget->generated_count = 1;
+	widget->data3C.selected_index = 0;
+	result = network_game_join_game_from_server_list(widget, NULL, widget_deleted);
+	if (!*widget_deleted)
+	{
+		widget->generated_list = saved_list;
+		widget->generated_count = saved_count;
+		widget->data3C.selected_index = saved_index;
+	}
+	return result;
+}
+#endif
 
 static boolean pause_game_restart_at_checkpoint(
 	struct widget_instance *widget,
@@ -2086,6 +2116,9 @@ static boolean network_server_list_dispose(
 	struct event_record *event,
 	boolean *widget_deleted)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	network_game_client_directory_cancel();
+#endif
 	widget->generated_list = NULL;
 	widget->generated_count = 0;
 	return TRUE;

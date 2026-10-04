@@ -808,6 +808,9 @@ boolean allow_out_of_sync = FALSE;
 boolean network_game_client_dont_use_directly_in_use = FALSE;
 
 /* ---------- public code */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "network_directory.inc"
+#endif
 
 /* transport_network_available asks the system for its interfaces
 (getifaddrs): asked at most once a second, not every frame */
@@ -897,6 +900,9 @@ void network_game_client_dispose(
 {
 	if (client)
 	{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		network_game_client_directory_cancel();
+#endif
 		if (client->connection)
 			network_connection_delete(client->connection);
 
@@ -1210,6 +1216,10 @@ boolean network_game_client_idle(
 	struct network_game_client *client)
 {
 	boolean success = FALSE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (client && client->state != _network_game_client_state_searching)
+		game_directory_browse(FALSE);
+#endif
 
 	match_assert(
 		"c:\\halo\\SOURCE\\networking\\network_client_manager.c",
@@ -3115,6 +3125,10 @@ boolean network_game_client_advertised_game_in_progress(
 	struct network_game_client *client,
 	struct network_advertised_game const *game)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	long directory_index = directory_game_index(game);
+	if (directory_index != NONE) return (boolean)directory_metadata[directory_index].in_progress;
+#endif
 	long game_index = client ? game - client->available_games : NONE;
 
 	return game_index >= 0 && game_index < MAXIMUM_NETWORK_ADVERTISED_GAMES &&

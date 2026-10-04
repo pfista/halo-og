@@ -63,7 +63,9 @@ function validateListing(body) {
   const invite = text(body.invite, 'invite', 76).toLowerCase();
   if (!/^halo:\/\/join\/[0-9a-f]{64}$/.test(invite)) throw new ApiError(400, 'invalid_invite');
   const map = text(body.map, 'map', 32);
-  if (!/^[a-zA-Z0-9_-]+$/.test(map)) throw new ApiError(400, 'invalid_map');
+  if (map.length > 31 || !/^[a-zA-Z0-9_-][a-zA-Z0-9_ -]*$/.test(map) || map.endsWith(' ')) {
+    throw new ApiError(400, 'invalid_map');
+  }
   const maximum = integer(body.max_players, 'max_players', 1, 128);
   const platform = text(body.platform, 'platform', 16, false);
   if (platform && !['macos', 'windows', 'linux', 'android', 'ios'].includes(platform)) {
@@ -134,7 +136,7 @@ export default {
           heartbeat_seconds: HEARTBEAT_SECONDS,
           expiry_seconds: TTL_SECONDS,
           transport: 'direct-p2p',
-          client_integration: 'pending',
+          client_integration: 'native-desktop-source',
         });
       }
       if (!/^\/(?:health|v1\/games(?:\/[0-9a-f-]{36})?)$/.test(url.pathname)) {

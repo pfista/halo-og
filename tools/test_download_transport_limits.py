@@ -408,11 +408,61 @@ class DownloadTransportLimitTests(unittest.TestCase):
     def test_posix_production_response_limits_and_legacy_wrapper(self):
         source = (ROOT / "port/linux/src/posix_update.c").read_text(encoding="utf-8")
         signatures = ("static int parse_url(", "struct download\n{", "static int body_write(",
-                      "static int read_body(", "static int https_get(", "static int update_download_serialized(", "int update_download_limited(",
+                      "static int read_body(", "static int https_request(", "static int update_download_serialized(", "int update_download_limited(",
                       "int update_download(")
         pieces = [function(source, signature) + (";" if signature.startswith("struct") else "")
                   for signature in signatures]
         self.compile_and_run("posix", POSIX + "\n".join(pieces) + POSIX_CASES)
+
+    def test_directory_requests_keep_leases_out_of_urls_and_bound_memory_without_redirects(self):
+        source = (ROOT / "port/linux/src/posix_update.c").read_text(encoding="utf-8")
+        signatures = ("static int parse_url(", "struct download\n{", "static int body_write(",
+                      "static int read_body(", "static int https_request(", "int halo_directory_http(")
+        pieces = [function(source, signature) + (";" if signature.startswith("struct") else "")
+                  for signature in signatures]
+        stub = function(POSIX, "static int connection_write(")
+        transport = POSIX.replace(stub, r'''
+static char sent_headers[4096];
+static int connection_write(struct connection *c, const char *data, size_t size)
+{
+    (void)c; assert(size);
+    if (!strncmp(data,"POST ",5) || !strncmp(data,"PUT ",4) || !strncmp(data,"DELETE ",7) || !strncmp(data,"GET ",4))
+        snprintf(sent_headers,sizeof(sent_headers),"%s",data);
+    else assert(!strcmp(data,"{}"));
+    return 1;
+}
+''')
+        cases = r'''
+int main(int argc,char **argv) {
+    (void)argc;(void)argv;(void)progress; char buffer[32],token[65]; int status;
+    memset(token,'a',64);token[64]=0;
+    response="HTTP/1.1 201 Created\r\nContent-Length: 2\r\n\r\n{}";
+    assert(halo_directory_http("POST","https://example.test/v1/games",NULL,"{}",buffer,sizeof(buffer),&status)==2);
+    assert(status==201 && !strcmp(buffer,"{}") && strstr(sent_headers,"Content-Length: 2\r\n"));
+    response="HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\n\r\n{}";
+    assert(halo_directory_http("PUT","https://example.test/v1/games/id",token,"{}",buffer,sizeof(buffer),&status)==2);
+    assert(status==403 && strstr(sent_headers,"Authorization: Bearer aaaa"));
+    assert(!strstr(sent_headers,"/id?"));
+    response="HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n";
+    assert(halo_directory_http("DELETE","https://example.test/v1/games/id",token,NULL,buffer,sizeof(buffer),&status)==0 && status==204);
+    response="HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n";
+    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,7,&status)==6 && !strcmp(buffer,"abcdef"));
+    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,6,&status)==-1);
+    response="HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n";
+    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,sizeof(buffer),&status)==-1);
+    response="HTTP/1.1 302 Found\r\nLocation: https://elsewhere.test/\r\nContent-Length: 0\r\n\r\n";opens=0;
+    assert(halo_directory_http("PUT","https://example.test/v1/games/id",token,"{}",buffer,sizeof(buffer),&status)==0 && status==302 && opens==1);
+    opens=0;
+    assert(halo_directory_http("GET","https://example.test/\r\nInjected: yes",NULL,NULL,buffer,sizeof(buffer),&status)==-1 && !opens);
+    assert(halo_directory_http("PUT","https://example.test/id","bad\r\nheader","{}",buffer,sizeof(buffer),&status)==-1 && !opens);
+    crypto_ready=0;
+    assert(halo_directory_http("GET","https://example.test/id",NULL,NULL,buffer,sizeof(buffer),&status)==-1 && !opens);
+    crypto_ready=1;certificates_loaded=0;
+    assert(halo_directory_http("GET","https://example.test/id",NULL,NULL,buffer,sizeof(buffer),&status)==-1 && !opens);
+    puts("PASS directory JSON methods, lease headers, status bodies, bounds, no redirects");
+}
+'''
+        self.compile_and_run("directory", "#define HALO_DIRECTORY_BODY_LIMIT (256*1024)\n" + transport + "\n".join(pieces) + cases)
 
     def test_windows_production_header_limits_and_request_flags(self):
         source = (ROOT / "port/windows/src/win32_update.c").read_text(encoding="utf-8")
@@ -425,7 +475,7 @@ class DownloadTransportLimitTests(unittest.TestCase):
     def test_simultaneous_map_and_release_transfers_serialize_psa_and_keep_individual_responses(self):
         source = (ROOT / "port/linux/src/posix_update.c").read_text(encoding="utf-8")
         signatures = ("static int parse_url(", "struct download\n{", "static int body_write(",
-                      "static int read_body(", "static int https_get(", "static int update_download_serialized(",
+                      "static int read_body(", "static int https_request(", "static int update_download_serialized(",
                       "int update_download_limited(", "int update_download(")
         pieces = [function(source, signature) + (";" if signature.startswith("struct") else "") for signature in signatures]
         start = POSIX.index("/* glibc's stdlib headers")

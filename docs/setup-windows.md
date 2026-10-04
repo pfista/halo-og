@@ -82,7 +82,10 @@ Slayer, and **PB Options → Stock**; optional competitive changes default off.
 2. On the same LAN, others open **Multiplayer → System Link**, select their
    profiles, choose the host's game, and join. Allow firewall access for Halo
    when Windows asks on your trusted local network.
-3. For Internet play, the host pastes the invite copied to its clipboard into a
+3. New desktop discovery builds also show public Internet games from
+   **games.oghalo.com** in System Link. Select a game and wait for **Connecting…**.
+   See [public discovery/private hosting](system-link-directory.md). For older
+   builds or private games, the host pastes the invite copied to its clipboard into a
    message. Joining players **copy the complete `halo://join/…` link and switch
    back to Halo**, then select the host in **System Link** and join.
 4. Once everyone is in the lobby, the host starts the match and keeps the game open.

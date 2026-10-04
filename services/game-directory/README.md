@@ -2,10 +2,12 @@
 
 Cloudflare Worker + SQLite-backed Durable Object at `https://games.oghalo.com`.
 It advertises public games; gameplay uses the existing direct P2P transport.
-The game client integration is still pending. Deploying this service alone does
-not add internet listings to existing builds.
+The shared desktop client integration is in the source: Mac, Windows, and Linux
+query it in the original System Link menu and advertise hosted games by default.
+Existing builds need an update; service deployment alone cannot change them.
+See [client settings and playtesting](../../docs/system-link-directory.md).
 
-Deployed and verified on October 4, 2026. Five local Workers-runtime tests and
+Deployed and verified on October 4, 2026. Six local Workers-runtime tests and
 the live registration/update/removal smoke check passed. The scoped deployment
 token is stored in the `oghalo.com` 1Password environment without expiration.
 It is also available as the `CLOUDFLARE_WORKERS_API_TOKEN` GitHub Actions
@@ -100,4 +102,5 @@ The deployment token needs Workers Scripts Edit for the Halo account and Zone
 Read, DNS Edit, and Workers Routes Edit only for `oghalo.com`. The deployment
 script refuses to replace another service's domain or an existing unrelated
 DNS record. Worker uploads update only `halo-og-game-directory`; SQLite rows
-survive redeployments. Client integration should get its own focused commit.
+survive redeployments. Local deploys reuse the existing namespace and do not
+apply new migrations.

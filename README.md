@@ -195,9 +195,12 @@ and discovery protocols while keeping original Xbox graphics and our own menus.
 The host's rules still govern a shared game: changing the HUD or rendering is
 different from changing movement, weapons, damage, or match timing independently.
 Some upstream game options need further compatibility work, and Internet play
-needs mixed-client testing. Its PC-style server browser UI is not part of this fork;
-future discovery UI will use original Xbox-style Multiplayer/System Link menus
-after a user check-in.
+needs mixed-client testing. Desktop source builds on macOS, Windows, and Linux
+now discover public games from **games.oghalo.com** in the original
+**Multiplayer → System Link** menu, alongside LAN games. Hosting is public by
+default; a config option keeps it private. Gameplay uses the existing direct
+P2P connection. Older published builds need an update to gain this discovery.
+See [public games and private hosting](docs/system-link-directory.md).
 See the [interoperability review](docs/network-interoperability.md).
 
 ## Community maps and original assets

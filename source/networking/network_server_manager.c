@@ -480,6 +480,9 @@ symbols in this file:
 #include "cache/cache_files.h"
 
 /* port: internet play's Discord presence (port/linux/src/p2p.c) */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "../../port/linux/src/game_directory.h"
+#endif
 void p2p_set_game_player_counts(int count, int maximum);
 
 /* ---------- constants */
@@ -1386,6 +1389,9 @@ void network_game_server_dispose(
 	network_game_server_memory_do_not_use_directly_in_use = FALSE;
 
 	p2p_set_game_player_counts(0, 0);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	game_directory_publish(NULL, NULL, 0, 0, 0, 0, 0, 0, 0, FALSE);
+#endif
 	network_event("network server disposed");
 
 	return;
@@ -1449,6 +1455,26 @@ boolean network_game_server_idle(
 
 	/* (what Discord shows of a game hosted for internet play) */
 	p2p_set_game_player_counts(server->game.player_count, server->game.maximum_players);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	{
+		char name[33];
+		long index;
+		short state = network_game_server_get_state(server, NULL);
+		boolean open = state == _network_game_server_state_ingame
+			? network_game_server_accepts_late_joins(server)
+			: state == _network_game_server_state_pregame && !network_game_server_game_is_loading(server) &&
+				network_game_server_game_is_open(server) && network_game_has_free_player_slot(&server->game);
+		for (index = 0; index < NETWORK_GAME_NAME_LENGTH && index < 32 && server->game.name[index]; index++)
+			name[index] = server->game.name[index] >= 32 && server->game.name[index] <= 126
+				? (char)server->game.name[index] : '?';
+		name[index] = 0;
+		game_directory_publish(name, server->game.map.name, server->game.variant.game_engine_index,
+			server->game.player_count, server->game.maximum_players,
+			network_performance_advertised_version(performance_variant_get_flags(&server->game.variant), HALO_PORT_NETWORK_VERSION),
+			open, state != _network_game_server_state_pregame, server->game.variant.universal_variant.teams,
+			network_game_should_accept_remote_connections() && !network_game_is_splitscreen_local());
+	}
+#endif
 
 	if (network_game_server_game_is_valid(server))
 	{
