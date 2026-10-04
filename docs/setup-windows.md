@@ -100,7 +100,7 @@ Copy your **maps** folder and **config.toml** into it. Profiles/saves stay in
 **%APPDATA%\Halo OG**. Keep the old folder until the new build works.
 Install the downloaded build manually using these steps.
 
-The published `test-v0.3.0-net11-gameplay1` build predates these notices; check
+The `gameplay1` and `setup1` Windows/Linux builds do not have these notices; check
 [Halo OG downloads](../README.md#download) manually when using that build.
 
 ## If something goes wrong

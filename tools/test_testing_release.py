@@ -16,6 +16,10 @@ from tools import ci_build, testing_release as release
 
 SHA = "a" * 40
 TAG = "test-v0.3.0-net11"
+DATE = "2026-10-03T00:00:00Z"
+DESKTOP_BINARY = ("synthetic executable\0" + SHA + "\0" + DATE + "\0"
+                  "https://api.github.com/repos/pfista/halo-og/releases?per_page=5\0"
+                  "Halo OG update available\0Open download\0Stop checking\0").encode()
 
 
 class FixtureAPI:
@@ -39,9 +43,9 @@ class FixtureAPI:
                              "BuildInfo.txt": "Source: " + SHA + "\n",
                              "SHA256SUMS": hashlib.sha256(data).hexdigest() + "  " + release.DMG + "\n"}
                 elif "windows" in name:
-                    files = {"halo.exe": b"synthetic exe", "SDL3.dll": b"synthetic dll"}
+                    files = {"halo.exe": DESKTOP_BINARY + name.encode() + b".zip", "SDL3.dll": b"synthetic dll"}
                 elif "linux" in name:
-                    files = {"halo": b"synthetic binary"}
+                    files = {"halo": DESKTOP_BINARY + name.encode() + b".zip"}
                 else:
                     files = {"app-release.apk": b"synthetic apk"}
                 with zipfile.ZipFile(path, "w") as archive:
@@ -58,6 +62,8 @@ class FixtureAPI:
     def get(self, path, *, missing_ok=False):
         if path == "git/ref/heads/main":
             return {"object": {"sha": self.sha}}
+        if path == "git/commits/" + SHA:
+            return {"sha": SHA, "committer": {"date": DATE}}
         if path.startswith(("git/ref/tags/", "releases/tags/")):
             return {"id": 1} if self.claimed else None
         if path.startswith("contents/"):
@@ -91,6 +97,7 @@ class TestingReleaseTests(unittest.TestCase):
     def test_same_source_candidate_has_protocol_and_verifies(self):
         record = self.prepare()
         self.assertEqual(record["network_protocol"], 11)
+        self.assertEqual(record["source_date"], DATE)
         self.assertEqual(len(record["artifacts"]), 4)
         self.assertEqual(release.verify_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory), record)
         self.assertEqual({p.name for p in self.directory.iterdir()}, release.ASSETS | {"release-notes.md"})
@@ -149,6 +156,22 @@ class TestingReleaseTests(unittest.TestCase):
         self.api.artifacts["halo-macos-arm64-dmg"]["digest"] = "sha256:" + "0" * 64
         with self.assertRaisesRegex(RuntimeError, "checksum"):
             self.prepare()
+
+    def test_desktop_binaries_without_matching_notice_identity_cannot_be_published(self):
+        for platform, executable in (("windows", "halo.exe"), ("linux", "halo")):
+            for missing in (SHA, DATE, "Open download", "Stop checking",
+                            "https://api.github.com/repos/pfista/halo-og/releases?per_page=5",
+                            f"halo-{platform}-release.zip"):
+                with self.subTest(platform=platform, missing=missing):
+                    path = self.root / f"{platform}-missing.zip"
+                    with zipfile.ZipFile(path, "w") as archive:
+                        binary = DESKTOP_BINARY + f"halo-{platform}-release.zip".encode()
+                        archive.writestr(executable, binary.replace(missing.encode(), b"disabled"))
+                        if platform == "windows":
+                            archive.writestr("SDL3.dll", b"fixture")
+                    with self.assertRaisesRegex(RuntimeError, "discovery or source identity missing"):
+                        release.check_platform_archive(path, f"halo-{platform}-release",
+                                                       source_sha=SHA, source_stamp=DATE)
 
     def test_mac_buildinfo_and_disk_image_hash_are_checked(self):
         for filename, value, expected in (("BuildInfo.txt", "Source: wrong\n", "BuildInfo"),

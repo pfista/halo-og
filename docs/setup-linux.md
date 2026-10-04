@@ -108,7 +108,7 @@ until it works. Profiles/saves stay in **~/.local/share/halo-og** by default
 (or **$XDG_DATA_HOME/halo-og** if configured). Install the downloaded build
 manually using these steps.
 
-The published `test-v0.3.0-net11-gameplay1` build predates these notices; check
+The `gameplay1` and `setup1` Windows/Linux builds do not have these notices; check
 [Halo OG downloads](../README.md#download) manually when using that build.
 
 ## If something goes wrong

@@ -55,17 +55,17 @@ evidence, and the [upstream credits](#build-and-contribute) for the work we buil
 
 ## Download
 
-Use the **[test-v0.3.0-net11-setup1 testing release](https://github.com/pfista/halo-og/releases/tag/test-v0.3.0-net11-setup1)**.
+Use the **[test-v0.3.0-net11-setup2 testing release](https://github.com/pfista/halo-og/releases/tag/test-v0.3.0-net11-setup2)**.
 This build adds automatic disc-image setup and Halo OG update notices on Mac,
 Windows, and Linux, with short setup guides for every platform. It also includes
 the prior spawn, teleporter, and projectile-trail fixes. Choose your platform:
 
 | Platform | Testing package | Requirements |
 | --- | --- | --- |
-| Mac | [Halo-OG-macos-arm64.dmg](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup1/Halo-OG-macos-arm64.dmg) | Apple Silicon, macOS 26+ |
-| Windows | [halo-windows-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup1/halo-windows-release.zip) | x86/x86-64 PC, OpenGL 4.5 |
-| Linux | [halo-linux-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup1/halo-linux-release.zip) | x86, OpenGL 4.5, [32-bit runtime libraries](port/linux/README.md#requirements) |
-| Android | [halo-android-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup1/halo-android-release.zip) | ARM64, Android 9+, OpenGL ES 3; controller or keyboard |
+| Mac | [Halo-OG-macos-arm64.dmg](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup2/Halo-OG-macos-arm64.dmg) | Apple Silicon, macOS 26+ |
+| Windows | [halo-windows-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup2/halo-windows-release.zip) | x86/x86-64 PC, OpenGL 4.5 |
+| Linux | [halo-linux-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup2/halo-linux-release.zip) | x86, OpenGL 4.5, [32-bit runtime libraries](port/linux/README.md#requirements) |
+| Android | [halo-android-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup2/halo-android-release.zip) | ARM64, Android 9+, OpenGL ES 3; controller or keyboard |
 
 All packages in the release come from the **same source commit**. Use the same
 tag when playing together. The release includes `SHA256SUMS`, `provenance.json`,

@@ -235,7 +235,7 @@ does not interrupt a match or replace the running executable.
 - **Stop checking** saves `auto = false` in the `[update]` section of
   `config.toml`. Set it back to `true` to enable startup checks.
 
-The current `test-v0.3.0-net11-gameplay1` download predates this notice; install
+The `gameplay1` and `setup1` Windows/Linux downloads lack this notice; install
 a build containing this source change to receive it. Local development builds
 do not check automatically. The inherited cybersecurity self-installer remains
 disabled for Halo OG; these builds never offer to replace themselves with a

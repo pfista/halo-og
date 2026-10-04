@@ -35,8 +35,12 @@ will use explicit increasing platform build numbers.
 
 Local/development desktop builds do not advertise automatic upgrade ordering;
 Mac can open the Halo OG releases page manually. The published
-`test-v0.3.0-net11-gameplay1` predates the new notice/discovery code. The setup1 testing
-release includes the new notice/discovery code once its matching builds are published.
+`test-v0.3.0-net11-gameplay1` predates the new notice/discovery code. The setup1
+Windows/Linux packages also omitted it because a restored compiler cache failed
+the clean-source check. The setup2 pipeline ignores that generated cache and
+requires the final desktop binaries to contain their exact source identity and
+notice code before upload and publication. Older Windows/Linux builds need one
+manual upgrade to setup2.
 
 Source entry points: [build identity](../tools/release_discovery.py),
 [shared metadata parser](../port/linux/src/release_discovery.c),

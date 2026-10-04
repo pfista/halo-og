@@ -1,6 +1,9 @@
 """Authored release metadata and native tests; no installed application updates."""
 import copy
+import contextlib
+import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,7 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from tools import release_discovery as identity
+from tools import ci_build, release_discovery as identity
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA = "a" * 40
@@ -272,6 +275,98 @@ class ReleaseIdentityTests(unittest.TestCase):
             check.return_value.returncode = 0
             check.return_value.stdout = b"?? untracked-source.c\n"
             self.assertIsNone(identity.ci_source_identity(environment))
+
+    @unittest.skipUnless(shutil.which("git"), "git is required for the real CI source identity fixture")
+    def test_restored_compile_cache_preserves_identity_but_dirty_source_does_not(self):
+        with tempfile.TemporaryDirectory(prefix="halo-source-identity-") as directory:
+            root = Path(directory).resolve()
+            (root / ".gitignore").write_bytes((ROOT / ".gitignore").read_bytes())
+            source = root / "fixture-source.c"
+            source.write_text("int fixture_source;\n")
+            def git(*arguments):
+                return subprocess.check_output(["git", "-C", str(root), *arguments], text=True, stderr=subprocess.PIPE).strip()
+            git("-c", "init.defaultBranch=main", "init", "-q")
+            git("add", ".gitignore", source.name)
+            git("-c", "commit.gpgsign=false", "-c", "user.name=Halo fixture", "-c", "user.email=fixture@example.test",
+                "commit", "-qm", "Authored source fixture")
+            environment = {"GITHUB_REPOSITORY": identity.REPOSITORY, "GITHUB_REF": "refs/heads/main",
+                           "GITHUB_SHA": git("rev-parse", "HEAD")}
+            with patch.object(identity, "ROOT", root):
+                clean = identity.required_ci_source_identity(environment)
+                self.assertIsNotNone(clean)
+                (root / ".ccache" / "cache-entry").mkdir(parents=True)
+                (root / ".ccache/cache-entry/index").write_bytes(b"authored generated cache")
+                self.assertEqual(identity.required_ci_source_identity(environment), clean)
+                self.assertIn("-DHALO_OG_RELEASE_DISCOVERY=1", identity.desktop_discovery_defines(environment))
+                source.write_text("int modified_source;\n")
+                self.assertIsNone(identity.ci_source_identity(environment))
+                with self.assertRaisesRegex(RuntimeError, "clean committed source tree"):
+                    identity.desktop_discovery_defines(environment)
+                source.write_text("int fixture_source;\n")
+                (root / "untracked-source.c").write_text("int untracked_source;\n")
+                with self.assertRaisesRegex(RuntimeError, "clean committed source tree"):
+                    identity.required_ci_source_identity(environment)
+
+    def test_source_identity_failure_is_required_only_for_halo_main_ci(self):
+        environment = {"GITHUB_REPOSITORY": identity.REPOSITORY, "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": SHA}
+        with patch.object(identity, "ci_source_identity", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "cannot be disabled"):
+                identity.required_ci_source_identity(environment)
+            self.assertEqual(identity.desktop_discovery_defines({}), "-DHALO_OG_RELEASE_DISCOVERY=0")
+            self.assertEqual(identity.desktop_discovery_defines(environment | {"GITHUB_REF": "refs/heads/feature"}),
+                             "-DHALO_OG_RELEASE_DISCOVERY=0")
+
+    def test_reconfigure_tracks_identity_helper_and_cache_ignore_rules(self):
+        from tools import linux_build, windows_build
+        for inputs in (linux_build.linux_configure_inputs(), windows_build.windows_configure_inputs()):
+            self.assertIn(Path("tools/release_discovery.py"), inputs)
+            self.assertIn(Path(".gitignore"), inputs)
+
+
+class ReleaseArtifactIdentityTests(unittest.TestCase):
+    @staticmethod
+    def markers(platform):
+        return [SHA, DATE, identity.DISCOVERY_URL, "Halo OG update available", "Open download",
+                "Stop checking", identity.DESKTOP_ASSETS[platform]]
+
+    def test_collected_binary_requires_every_discovery_marker(self):
+        with tempfile.TemporaryDirectory(prefix="halo-binary-markers-") as directory:
+            binary = Path(directory) / "authored-binary"
+            for platform in identity.DESKTOP_ASSETS:
+                markers = self.markers(platform)
+                binary.write_bytes("\0".join(markers).encode())
+                identity.verify_desktop_discovery_artifact(binary, platform, {"source_sha": SHA, "source_date": DATE})
+                for removed in markers:
+                    with self.subTest(platform=platform, removed=removed):
+                        binary.write_bytes("\0".join(value for value in markers if value != removed).encode())
+                        with self.assertRaisesRegex(RuntimeError, "release discovery is missing"):
+                            identity.verify_desktop_discovery_artifact(binary, platform, {"source_sha": SHA, "source_date": DATE})
+
+    def test_ci_collection_verifies_binary_and_rejects_disabled_notice(self):
+        for platform in identity.DESKTOP_ASSETS:
+            for complete in (True, False):
+                with self.subTest(platform=platform, complete=complete), tempfile.TemporaryDirectory(prefix="halo-ci-collect-") as directory:
+                    root = Path(directory)
+                    for output in ci_build.OUTPUTS[platform]:
+                        path = root / output
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes("\0".join(self.markers(platform) if complete else [SHA, DATE]).encode())
+                    for license in ("extract-xiso/LICENSE.TXT", "mbedtls/LICENSE", "miniupnpc/LICENSE"):
+                        path = root / "port/third_party" / license
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text("Authored license fixture")
+                    with patch.object(ci_build, "ROOT", root), patch.object(ci_build, "run") as run, \
+                            patch.object(identity, "required_ci_source_identity", return_value={"source_sha": SHA, "source_date": DATE}), \
+                            patch.object(sys, "argv", ["ci_build.py", platform, "release"]), \
+                            patch.dict(os.environ, {}, clear=True), contextlib.redirect_stdout(io.StringIO()) as output:
+                        if complete:
+                            self.assertEqual(ci_build.main(), 0)
+                            self.assertIn("Verified Halo OG release discovery", output.getvalue())
+                        else:
+                            with self.assertRaisesRegex(RuntimeError, "release discovery is missing"):
+                                ci_build.main()
+                        self.assertEqual(run.call_args_list[-1].args[0], ["ninja", platform])
+                        self.assertEqual(os.environ["HALO_BUILD_NUMBER"], "0")
 
 
 if __name__ == "__main__": unittest.main()

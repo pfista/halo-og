@@ -282,11 +282,12 @@ def _load_port_config() -> Dict[str, Any]:
 def linux_configure_inputs() -> List[Path]:
     """Files whose change must re-run configure.py."""
     if not PORT_CONFIG.is_file():
-        return [Path(__file__)]
+        return [Path(__file__), Path("tools/release_discovery.py"), Path(".gitignore")]
     # (the folders of the game's sources, so that adding or removing one
     # re-runs it)
     game_folders = sorted({source.parent for source in game_sources(_load_port_config())})
-    return [PORT_CONFIG, Path(__file__), PORT_DIR / "src", PORT_DIR / "game", XDK_INCLUDE, *game_folders,
+    return [PORT_CONFIG, Path(__file__), Path("tools/release_discovery.py"), Path(".gitignore"),
+            PORT_DIR / "src", PORT_DIR / "game", XDK_INCLUDE, *game_folders,
             *hud_configure_inputs()]
 
 

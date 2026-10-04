@@ -7,6 +7,14 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "pfista/halo-og"
+DISCOVERY_URL = "https://api.github.com/repos/pfista/halo-og/releases?per_page=5"
+DESKTOP_ASSETS = {"linux": "halo-linux-release.zip", "windows": "halo-windows-release.zip"}
+
+
+def is_halo_main_ci(environment=None):
+    environment = os.environ if environment is None else environment
+    return (environment.get("GITHUB_REPOSITORY") == REPOSITORY and
+            environment.get("GITHUB_REF") == "refs/heads/main")
 
 
 def source_git_command(*arguments):
@@ -31,8 +39,7 @@ def source_identity():
 def ci_source_identity(environment=None):
     """Return a public identity only for a clean matching Halo OG main CI tree."""
     environment = os.environ if environment is None else environment
-    if (environment.get("GITHUB_REPOSITORY") != REPOSITORY or
-            environment.get("GITHUB_REF") != "refs/heads/main"):
+    if not is_halo_main_ci(environment):
         return None
     identity = source_identity()
     if not identity or identity["source_sha"] != environment.get("GITHUB_SHA"):
@@ -46,9 +53,30 @@ def ci_source_identity(environment=None):
     return identity
 
 
+def required_ci_source_identity(environment=None):
+    """A Halo OG main CI build must fail instead of silently omitting notices."""
+    identity = ci_source_identity(environment)
+    if not identity and is_halo_main_ci(environment):
+        raise RuntimeError("Halo OG main CI requires a clean committed source tree matching GITHUB_SHA; "
+                           "release discovery cannot be disabled in a published build")
+    return identity
+
+
+def verify_desktop_discovery_artifact(path, platform, identity):
+    """Check the collected executable, without running or installing it."""
+    markers = {"source SHA": identity["source_sha"], "source date": identity["source_date"],
+               "release API": DISCOVERY_URL, "update notice": "Halo OG update available",
+               "download button": "Open download", "opt-out button": "Stop checking",
+               "platform asset": DESKTOP_ASSETS[platform]}
+    data = Path(path).read_bytes()
+    missing = [name for name, value in markers.items() if value.encode("ascii") not in data]
+    if missing:
+        raise RuntimeError(f"Halo OG release discovery is missing from {Path(path).name}: " + ", ".join(missing))
+
+
 def desktop_discovery_defines(environment=None):
     """Keep the separate upstream self-installer's build number at zero."""
-    identity = ci_source_identity(environment)
+    identity = required_ci_source_identity(environment)
     if not identity:
         return "-DHALO_OG_RELEASE_DISCOVERY=0"
     return ("-DHALO_OG_RELEASE_DISCOVERY=1 "

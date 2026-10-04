@@ -12,8 +12,9 @@ release build does (profile-guided optimisation needs clang 22 or later,
 and is skipped with an older one). CI_COMPILER_LAUNCHER (ccache, say) is
 passed on as --compiler-launcher. A build of the main branch gets the run's
 number (HALO_BUILD_NUMBER), which its release is named after and the
-self-updater compares, only in the upstream repository. Fork builds disable
-the updater, whose current download source belongs to upstream.
+self-updater compares, only in the upstream repository. Halo OG main builds
+embed their immutable source identity for browser-only release notices;
+fork builds never enable upstream's executable replacement updater.
 """
 
 import argparse
@@ -24,6 +25,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+if __package__:
+    from . import release_discovery
+else:
+    import release_discovery
 
 # what each port's build leaves, and what goes into dist/
 OUTPUTS = {
@@ -64,6 +70,11 @@ def main() -> int:
     parser.add_argument("platform", choices=sorted(OUTPUTS))
     parser.add_argument("config", choices=["debug", "release"])
     args = parser.parse_args()
+    discovery_identity = (release_discovery.required_ci_source_identity()
+                          if args.platform in release_discovery.DESKTOP_ASSETS else None)
+    if discovery_identity:
+        print(f"Halo OG release discovery source {discovery_identity['source_sha']} "
+              f"({discovery_identity['source_date']})", flush=True)
 
     configure = [sys.executable, "configure.py", "--portable"]
     if args.config == "release":
@@ -99,6 +110,10 @@ def main() -> int:
     for output in outputs:
         shutil.copy2(ROOT / output, dist)
         print(f"{output} -> {dist.relative_to(ROOT)}", flush=True)
+    if discovery_identity:
+        release_discovery.verify_desktop_discovery_artifact(
+            dist / Path(outputs[0]).name, args.platform, discovery_identity)
+        print("Verified Halo OG release discovery in the collected executable", flush=True)
     # the disc image readers (port/linux/src/xiso.c, and the Android app's
     # XisoExtractor.java) follow extract-xiso, whose license asks binaries
     # to carry its notice

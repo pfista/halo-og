@@ -84,6 +84,16 @@ def source_protocol(api, sha):
     return int(match[1])
 
 
+def source_date(api, sha):
+    commit = api.get("git/commits/" + sha)
+    if commit.get("sha") != sha:
+        raise RuntimeError("Commit date belongs to a different source")
+    stamp = datetime.fromisoformat(commit["committer"]["date"].replace("Z", "+00:00"))
+    if stamp.tzinfo is None:
+        raise RuntimeError("Source commit date has no timezone")
+    return stamp.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def validate_run(run, workflow, sha):
     if (run.get("head_sha") != sha or run.get("head_branch") != "main"
             or run.get("status") != "completed" or run.get("conclusion") != "success"
@@ -164,7 +174,7 @@ def collect_mac(archive_path, directory, sha):
             raise RuntimeError("The packaged DMG does not match its CI checksum")
 
 
-def check_platform_archive(path, name):
+def check_platform_archive(path, name, *, source_sha=None, source_stamp=None):
     names = validate_zip(path)
     required = {"halo-windows-release": {"halo.exe", "SDL3.dll"},
                 "halo-linux-release": {"halo"}}
@@ -172,6 +182,17 @@ def check_platform_archive(path, name):
         raise RuntimeError("Incomplete platform artifact: " + name)
     if name == "halo-android-release" and not any(file.endswith(".apk") for file in names):
         raise RuntimeError("Android artifact has no APK")
+    executable = {"halo-windows-release": "halo.exe", "halo-linux-release": "halo"}.get(name)
+    if executable and source_sha is not None:
+        if source_stamp is None:
+            raise RuntimeError("Desktop release verification requires its commit date")
+        markers = (source_sha, source_stamp,
+                   "https://api.github.com/repos/pfista/halo-og/releases?per_page=5",
+                   "Halo OG update available", "Open download", "Stop checking", name + ".zip")
+        with zipfile.ZipFile(path) as archive:
+            data = archive.read(executable)
+        if any(marker.encode("ascii") not in data for marker in markers):
+            raise RuntimeError("Desktop release discovery or source identity missing: " + name)
 
 
 def release_notes(record):
@@ -213,7 +234,8 @@ def prepare(api, repository, sha, tag, directory):
             selected.append((workflow, run, artifact, output))
     directory.mkdir(parents=True)
     record = {"repository": repository, "sha": sha, "tag": tag,
-              "network_protocol": source_protocol(api, sha), "artifacts": [], "files": {}}
+              "network_protocol": source_protocol(api, sha), "source_date": source_date(api, sha),
+              "artifacts": [], "files": {}}
     with tempfile.TemporaryDirectory(prefix="halo-testing-release-") as temporary:
         for workflow, run, artifact, output in selected:
             archive = Path(temporary) / f"{artifact['id']}.zip"
@@ -223,7 +245,7 @@ def prepare(api, repository, sha, tag, directory):
             if workflow == "macos-dmg.yml":
                 collect_mac(archive, directory, sha)
             else:
-                check_platform_archive(archive, artifact["name"])
+                check_platform_archive(archive, artifact["name"], source_sha=sha, source_stamp=record["source_date"])
                 shutil.copyfile(archive, directory / output)
             record["artifacts"].append({"workflow": workflow, "run_id": run["id"],
                 "artifact_id": artifact["id"], "name": artifact["name"], "digest": artifact["digest"]})
@@ -242,6 +264,8 @@ def verify_candidate(api, repository, sha, tag, directory):
         raise RuntimeError("Prepared source or testing tag changed")
     if record.get("network_protocol") != source_protocol(api, sha):
         raise RuntimeError("Prepared network protocol does not match selected source")
+    if record.get("source_date") != source_date(api, sha):
+        raise RuntimeError("Prepared commit date does not match selected source")
     if {path.name for path in directory.iterdir()} != ASSETS | {"release-notes.md"}:
         raise RuntimeError("Prepared asset list changed")
     expected_files = ASSETS - {"provenance.json", "SHA256SUMS"}
@@ -250,6 +274,10 @@ def verify_candidate(api, repository, sha, tag, directory):
     for name, checksum in record["files"].items():
         if digest(directory / name) != checksum:
             raise RuntimeError("Prepared asset changed: " + name)
+    for platform in ("windows", "linux", "android"):
+        name = f"halo-{platform}-release"
+        check_platform_archive(directory / (name + ".zip"), name,
+                               source_sha=sha, source_stamp=record["source_date"])
     expected_sums = "".join(f"{digest(directory / name)}  {name}\n" for name in sorted(ASSETS - {"SHA256SUMS"}))
     if (directory / "SHA256SUMS").read_text() != expected_sums:
         raise RuntimeError("Prepared checksums changed")
