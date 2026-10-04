@@ -103,6 +103,15 @@ class ToolchainTests(unittest.TestCase):
         self.assertIn("-DCMAKE_OSX_ARCHITECTURES=arm64", options)
         self.assertEqual([x for x in tools.OPTIONS if x in ("EXTRACT", "BUILD")], ["BUILD", "EXTRACT"])
 
+    def test_unreviewed_runtime_dependency_is_named_but_still_refused(self):
+        for consumer, header, imports in (
+                ("linux", "Advanced Micro Devices X86-64", "Shared library: [unreviewed.so]"),
+                ("windows", "architecture: i386:x86-64", "DLL Name: unreviewed.dll")):
+            with self.subTest(consumer=consumer), \
+                    patch.object(tools.subprocess, "check_output", side_effect=[header, imports]):
+                with self.assertRaisesRegex(RuntimeError, "unbundled.*unreviewed"):
+                    tools.inspect_binary(self.root / "candidate", consumer)
+
     def fixture_platform(self, consumer="linux"):
         pins = tools.read_pins()
         key = consumer + "-x86_64"

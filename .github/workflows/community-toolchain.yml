@@ -87,6 +87,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: content-tools-${{ matrix.platform }}-diagnostics
-          path: build/content-tools-${{ matrix.platform }}/build.log
+          path: |
+            build/content-tools-${{ matrix.platform }}/build.log
+            build/content-tools-${{ matrix.platform }}/build/invader-extract*
+            build/content-tools-${{ matrix.platform }}/build/invader-build*
           if-no-files-found: ignore
           retention-days: 7

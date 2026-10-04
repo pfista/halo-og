@@ -251,7 +251,7 @@ def inspect_binary(binary, consumer):
         libraries = re.findall(r"DLL Name:\s*(\S+)", text)
         allowed = {"kernel32.dll", "msvcrt.dll", "userenv.dll", "ws2_32.dll", "advapi32.dll", "bcrypt.dll", "ntdll.dll", "synchronization.dll"}
         if not libraries or any(name.casefold() not in allowed for name in libraries):
-            raise RuntimeError("Windows helper requires an unbundled non-system DLL")
+            raise RuntimeError("Windows helper requires an unbundled non-system DLL: " + ", ".join(libraries))
         return libraries, "10.0"
     header = subprocess.check_output(["readelf", "-h", str(binary)], text=True, encoding="utf-8", errors="replace")
     if "Advanced Micro Devices X86-64" not in header:
@@ -260,7 +260,7 @@ def inspect_binary(binary, consumer):
     libraries = re.findall(r"Shared library: \[([^]]+)\]", text)
     allowed = {"libc.so.6", "libm.so.6", "libstdc++.so.6", "libgcc_s.so.1", "libpthread.so.0", "libdl.so.2", "librt.so.1", "libutil.so.1"}
     if not libraries or any(name not in allowed for name in libraries):
-        raise RuntimeError("Linux helper requires an unbundled non-system library")
+        raise RuntimeError("Linux helper requires an unbundled non-system library: " + ", ".join(libraries))
     return libraries, "ubuntu-24.04-build-host"
 
 
