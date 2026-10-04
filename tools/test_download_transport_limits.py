@@ -198,6 +198,9 @@ int main(int argc, char **argv)
     /* A failed transfer must release the lock for the next independent GET. */
     char error[512] = {0};
     assert(update_download_limited("https://example.test/map", argv[1], 6, progress, NULL, error, sizeof(error)));
+    /* Seven worker successes plus the retry must each read one complete body
+       and publish its full byte count; the failed connection reads none. */
+    assert(body_reads == 8 && progressed == 6);
     unlink(argv[1]);
     puts("PASS simultaneous metadata/map transfers preserve responses, serialize shared PSA, and release failure locks");
     return 0;
