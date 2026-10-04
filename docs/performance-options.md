@@ -118,8 +118,7 @@ Normal restores the original gain, including for a still-playing sound.
 The affected stock weapon inventory is assault rifle, pistol, shotgun, plasma
 rifle, plasma pistol, rocket launcher, sniper rifle, needler, flamethrower,
 oddball and flag. Map-authored ready and put-away sounds on custom weapons use
-the same event policy; absent recordings remain absent. Verification evidence
-and remaining gates are recorded in [the first-three delivery log](pb-first-three.md).
+the same event policy; absent recordings remain absent. Use the event-policy tests and gameplay listening checks to verify both modes.
 
 ## Spawn markers and supported maps
 
@@ -200,8 +199,7 @@ The v11 settings record adds 28 bytes; v10 and PB-v10 (`0x800A`) must update.
 Capability flag `0x02` is now upstream's in-progress flag, so PB uses `0x04`.
 The reliable option messages and saved variants are unchanged. Unsupported active
 PC options and mixed five-plus-player infinite-grenade rules are refused; see the
-[current protocol review](upstream-review-2026-10-03.md). The v10 runtime evidence
-below remains historical evidence, not a v11 cross-platform test.
+[protocol compatibility policy](xbox-fidelity.md#protocol-compatibility).
 
 Enabling an option, selecting an enabled saved variant, and starting the match
 check the connected peers. An unsupported existing peer causes the host's
@@ -242,58 +240,17 @@ draft; Audio Accept persists them, while parent Cancel discards them. The pages 
 configuration and report save failures. See
 [`native-settings.md`](native-settings.md) for controls and persistence details.
 
-## Validation and limits
-
-Recorded October 2, 2026. The runtime checks used real native Mac processes with
-isolated saves, the opt-in local console, and encrypted invite connections on
-one Mac. Each test kept at most two game instances active; the late-join test
-replaced its temporary second peer after the match started.
-
-| Check | Evidence |
-| --- | --- |
-| Installed native editor: PB row, fitted text, Stock/Practice, Cancel, Accept, Save Changes and reopen; valid flags on disk | [`native-ui-check/validation.json`](../build/performance-options/native-ui-check/validation.json) |
-| Expanded installed UI: both Settings branches, Music Cancel/Accept and config preservation, card status, independent Timer Sounds and saved flags `7` | [`expanded-ui-check/validation.json`](../build/performance-options/expanded-ui-check/validation.json) |
-| Retail Chill Out: all eight option combinations synchronized; 25 Slayer markers on both peers, arrows visually confirmed, client mutation refused; three-minute runtime with audio enabled | [`stock-audio-smoke/validation.json`](../build/performance-options/stock-audio-smoke/validation.json) |
-| Native pause submenu: fitted heading/rows/footer; Apply disabled the timer on both peers (`7 → 6`); F2 `pb timer on` restored the clock and reported installed recordings | [`stock-pause-diagnostic/ui-validation.json`](../build/performance-options/stock-pause-diagnostic/ui-validation.json), [`runtime report`](../build/performance-options/stock-pause-diagnostic/validation.json) |
-| NHE Prisoner: 24 markers on both peers; all timer/marker combinations; client mutation refused | [`prisoner-smoke-2/validation.json`](../build/performance-options/prisoner-smoke-2/validation.json) |
-| Downrush: actual in-progress join at host tick 175; timer sampled at 188 on both peers; 19 markers; live `3 → 1 → 2 → 0 → 3 → 0` updates; client mutation refused | [`downrush-latejoin-3/validation.json`](../build/performance-options/downrush-latejoin-3/validation.json) |
-| Updated host with options off admits stock v10; enabling is refused and the session continues | [`compatibility-v10-1/stock_session/validation.json`](../build/performance-options/compatibility-v10-1/stock_session/validation.json) |
-| Enabled updated host rejects stock v10 with an update explanation; updated client joins a stock v10 host | [`compatibility-v10-2/validation.json`](../build/performance-options/compatibility-v10-2/validation.json) |
-
-The passing reports contain no runtime faults. These are local generated
-artifacts, not files required by a checkout or shipped with the game. They record
-the guest hashes actually tested: Prisoner used `0fa61f1afafb…`; the later
-Downrush and compatibility checks used `dcdb2abc05ce…`. The saved unextended v10
-guest used `6f525b592908…`. Expanded UI and retail Chill Out checks used
-`131ff620b6b8…`. The Chill Out run enabled the mixer with muted master output;
-it verifies runtime behavior but is not an audible listening check.
-The pause/F2 check used `d7d2e98ad8fd…` with a temporary menu-event trace;
-that trace was removed after confirming the native event path. A stale UI
-capture affected an earlier manual attempt, so the successful check used a
-fresh capture session. The final source also hides stock spawn arrows while
-menus are open, covered by the runtime fixture, and preserves the invoking
-controller for split-screen PB menus, covered by the pause fixture.
+## Validation
 
 [`test_performance_variants.py`](../tools/test_performance_variants.py) exercises
-the format, malformed extensions, editor dirty detection and variant save/copy
-flows using production functions with storage/signature fixtures.
-[`performance_network.c`](../port/macos/tests/performance_network.c) covers wire
-validation and admission/version combinations. The runtime runners are
+saved formats, malformed extensions, dirty detection and variant save/copy flows.
+[`performance_network.c`](../port/macos/tests/performance_network.c) checks wire
+validation and admission/version combinations. Runtime probes are
 [`macos_performance_smoke.py`](../tools/macos_performance_smoke.py) and
 [`macos_performance_compatibility.py`](../tools/macos_performance_compatibility.py).
-Run multiplayer runners sequentially because the game uses fixed ports.
+Run probes sequentially with isolated saves because the game uses fixed ports.
 
-Focused production-code fixtures cover native UI construction and tag lifetime,
-all eight saved option combinations, host and audio-pack capability gates,
-the announcement schedule and mixer controls, stock-map spawn filtering and
-geometry, console commands, and TOML write failure/comment preservation.
-The importer tests compare decoding with the game's Xbox ADPCM algorithm and
-reject malformed sound tags and existing output files.
-
-These results do not establish Windows-binary interoperability, two physical
-machines or networks, Internet/NAT coverage beyond the same-Mac invite path,
-long-session stability, physical-controller navigation or reference-Xbox
-fidelity. Network runtime reports exercise options through the native diagnostic
-command. The separate editor and pause checks use keyboard navigation in the
-installed app and isolated saves; pause Apply was additionally checked on both
-peers through their read-only diagnostic status.
+Check host/client option changes, admission with incompatible peers, late joins,
+marker filtering, timer schedules, audio and persistence. Fixtures and same-Mac
+runs do not establish physical cross-platform networking, controller navigation,
+long-session stability or reference-Xbox fidelity.

@@ -9,7 +9,7 @@ Upstream v11 interoperability covers original-rule sessions with the same maps.
 This build refuses unsupported PC gametype options before loading; use the
 original options, and leave Infinite Grenades off in mixed-build games with five
 or more players. PB Options require compatible fork builds when enabled. See the
-[v11 review and exact compatibility boundary](upstream-review-2026-10-03.md).
+[v11 review and exact compatibility boundary](xbox-fidelity.md#protocol-compatibility).
 
 ## Play on Mac using an invite
 
@@ -44,57 +44,10 @@ prevent a connection. This build does not provide guaranteed connectivity,
 host migration, or a browser client. See the
 [upstream connection notes](../port/linux/README.md#connection).
 
-The last full integration kept the Apple ARM64/Metal renderer and merged
-cybersecurity upstream through `c55e4e2b` (build 64, widescreen UI fills). This
-includes repeated-match input and client-role fixes, map compatibility checks,
-mouse aiming changes, compressed networking updates, stronger hit and movement
-validation, score/death replication, and version-9 distributed netcode. Invite
-codes now contain 64 hex digits, including a longer hash of the host's key.
-On October 2, only the version-10 protocol changes from upstream `d1c7243c`
-were adopted. The host now sends player ping measurements every two seconds;
-the original scoreboard remains, so this fork does not display a new ping
-column. Simulation timing, movement, hit detection and game rules are unchanged
-by that update. Version-9 Mac and iPhone builds must be rebuilt before joining
-a version-10 room; older rooms still require a matching older build. The
-[upstream review](upstream-review-2026-10-02.md) records the included protocol
-files, excluded presentation changes and verification limits.
-
-The updates since the September 30, 5 p.m. Panama review also fix sound-cache
-cleanup between games and vehicles waking after a client's movement. Clients
-use the host's game rules; hosts can detect sustained speed hacks and ban
-players, and received player and machine names are cleaned before display.
-See the [shared netcode notes](../port/linux/NETCODE.md) for these rules.
-
-The console now shows important messages by default. Set `console_log` in
-the `[game]` section of `config.toml` to `"all"`, `"important"`, or `"none"`;
-command responses and stopping asserts remain visible. This setting is
-config-only in this fork.
-
-The October 1 integration also fixes first-person effects following a dropped
-or deleted weapon, selects the actual weapon object for its sound, and limits
-repeated missing-mouth-data and ignored-advertisement messages. It includes the
-high-resolution HUD artwork, text edge fixes and widescreen menu backgrounds;
-that integration used networking protocol version 9, before the selective
-version-10 update described above.
-
-The original Xbox decompilation was reviewed through `901aee16`, including
-the new text and circular-queue matching work. This port already implements
-those routines and retains its portable Unicode handling and Apple ABI.
-
-PR #22 was reviewed through `2e00e652`. Its clock/uptime fix (`5d18a367`)
-and Darwin broken-pipe protection remain included. Its LP64/OpenGL conversion
-is a separate port; this app keeps the rebased ARM guest and ANGLE/Metal.
-
-PR #20 was reviewed through `79cbcb94`. Its reachable host advertisements
-and replies to game searches from outside the LAN remain included. Upstream's
-new socket-port tracking replaces the earlier invite-port restriction. The
-latest ANGLE framebuffer/blit correction (`ea1015e1`) is also included.
-The Command-W protection (`716338d8`) is adapted in the native SDL bridge.
-The Discord socket-directory fix (`79cbcb94`) is already covered by this
-port's native environment and Darwin temporary-directory lookup.
-Automatic Tailscale lookup, alternate compilation and ray-traced lighting
-remain separate. The Mac renderer streams geometry to avoid stale cached
-walls after changing from Prisoner to Chill Out.
+The original scoreboard remains; received ping telemetry does not add a new
+column. The shared [netcode reference](../port/linux/NETCODE.md) describes host
+rules. Set `game.console_log` in `config.toml` to `"all"`, `"important"` or
+`"none"`; command responses and stopping asserts remain visible.
 
 ## Connect the devices
 
@@ -205,23 +158,9 @@ networks and 128-player capacity still need separate testing.
 LAN mode also needs a second configured non-loopback IPv4 address on the Mac
 (for example an existing VPN interface); it discovers that address automatically
 or accepts `--client-address`. Invite mode works with LAN plus loopback.
-The local invite test passed on the M5 Max. Direct discovery between its LAN
-and VPN interfaces did not find the host; that path and LAN play between two
-physical Macs remain unverified. Use the invite path for the current POC.
-
-The protocol-9 candidate (build 6) passed a 95-second run with two consecutive
-Slayer matches over an encrypted invite on the M5 Max. Both
-instances exchanged updates and exited cleanly without a fault or unexpected
-kick. The native runtime probes also
-cover current invite lengths, Discord socket ownership, Command-W handling,
-and occupied UDP ports used by UPnP cleanup. A private mock Discord RPC test
-delivers the current join secret into the real game without changing Discord
-activity:
-
-Build 7 adds the console logging update. It passed the seven input-binding
-checks, the private Discord invite test, and a 65-second encrypted two-instance
-match. These tests use isolated saves; the installed app keeps existing player
-profiles, controls and audio settings.
+Same-machine tests do not establish discovery across physical devices,
+Internet/NAT connectivity, maximum player counts or campaign co-op.
+For a private Discord RPC smoke check without changing Discord activity:
 
 ```sh
 python3 tools/macos_discord_smoke.py

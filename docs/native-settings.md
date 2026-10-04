@@ -115,69 +115,7 @@ Windows, fullscreen joins the same config transaction as other preferences.
 If storage or the display backend also refuses restoration after an error,
 the menu reloads current values and reports that restoration was incomplete.
 
-Focused tests cover mixed numeric/boolean persistence and injected file errors,
-live sound gains, current timer clips, menu Accept/Back and registration
-lifecycle, input transitions, video application, and the shared save boundary.
-The installed Mac build passed 35 focused tests and a two-peer Chill Out smoke
-test covering all PB option combinations. Isolated UI checks exercised main-menu
-and campaign settings, audio Accept/Cancel, live menu music, fullscreen, resizing,
-Escape/Pause and Resume. A main-menu-to-campaign stale-string regression found
-during verification is fixed and covered by map-transition fixtures. Audio gain
-behavior is verified by mixer tests; subjective listening and physical-controller
-split-screen play were not assessed. Local evidence is in
-`build/native-settings/ui-check/validation.json` and
-`build/native-settings/multiplayer-check/validation.json`.
-
-The Settings chooser revision passed 10 focused menu, persistence and runtime-tag
-tests. Live checks confirmed both pictures and descriptions, keyboard focus,
-mouse activation of each destination, and Back navigation. Evidence is in
-`build/native-settings/chooser-check/validation.json`.
-
-The Game Settings chooser and Audio/Video editor revision passed 12 focused
-menu, runtime-tag and Mac input tests. Live checks confirmed the original artwork,
-option backgrounds and arrows, focus-dependent help, mouse changes in both
-directions, and Accept/Cancel persistence for audio and video. Checks used a
-separate save directory; the normal user's preferences were preserved. Evidence
-is in `build/native-settings/native-pages-check/validation.json`.
-
-The timer-preference extension passed native main-menu and in-game checks:
-Timer Audio child Accept and parent Cancel, parent Accept persistence, independent
-preferences on two peers, unchanged fractional values, and a live bottom-right
-75% timer. Main-menu PB sound rules also saved and reopened correctly; mouse
-arrow hitboxes now include the original arrow artwork for all six PB rows.
-See [the first-three integration record](pb-first-three.md) for the 51 focused
-tests, peer checks, exact build hashes and current limitations.
-
-The subsequent in-game menu repair restores complete rounded selector outlines,
-centers text on the authored 202×27 button background, and retains the original
-frame corners, divider and button legend. Compact labels leave padding inside
-the curved ends; help lines are checked against the actual bitmap font widths.
-The campaign/co-op list moves up three pixels so its added Game Settings row
-clears the original footer, while the mission-objective panel stays unchanged.
-The main-menu layouts and gameplay rules are unchanged by this repair.
-
-The repair passed 25 focused tests, including real-font help widths, native
-menu input/persistence, campaign pause-counter lifecycle, and frame geometry/UV
-checks under ASan/UBSan. Live Prisoner checks confirmed complete selector
-outlines and padding on PB Options, Audio and Timer Audio, a clean settings
-chooser, and a host-applied setting reaching both peers. Live A10 checks
-confirmed the campaign's last selector clears the divider and the original
-mission-objective panel remains intact. Video and nested Timer Audio held game
-time at tick 494 across separate 0.6-second samples; closing the menus resumed
-time (1038 to 1056 over 0.6 seconds).
-
-The installed, signature-verified guest is
-`46f1ec75a3b8a5c12a68d85f8b79b10102b9ccb27995cd83e1e932c62068f5b7`.
-The normal Applications app was observed running that guest with its normal
-data/save paths. The final campaign check used that build; the multiplayer
-visual/synchronization check used `ec85a5ae55d5506b217b11c884f425e8b19ab7889f2cb54bff07b869a96ef93a`,
-before the isolated campaign-pause-flag correction. Split-screen geometry and
-co-op pause flags are covered by fixtures, not a physical-controller session.
-Evidence is in `build/native-settings/pause-fidelity-polish-final/`,
-`build/native-settings/pause-fidelity-campaign-pause-fixed/`, and
-`build/native-settings/pause-fidelity-pause-fixed-tests.log`.
-
-The test window was deliberately launched at 640×480. Normal launches use the
-display's aspect at startup, with 480-line rendering. The current renderer retains
-that startup aspect when the window is resized; dynamic aspect changes remain a
-separate renderer improvement.
+The current renderer retains the startup aspect when resizing; dynamic aspect
+changes are a separate improvement. Physical-controller split-screen, subjective
+audio and cross-platform gameplay need separate runtime checks. See
+[building and validation](building.md#validation-and-contribution) for test entry points.

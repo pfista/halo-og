@@ -10,43 +10,16 @@ icon is retained; `port/macos/Helmet.svg` generates a vector template PDF.
 ## GitHub Actions DMG
 
 The [macOS DMG workflow](https://github.com/pfista/halo-og/actions/workflows/macos-dmg.yml)
-builds an Apple Silicon app on code pushes to `main` and manual runs. Sign in to
-GitHub, choose a successful run, and download **halo-macos-arm64-dmg** under
-**Artifacts**. Artifacts are retained for 14 days and contain:
+builds on relevant `main` pushes and manual runs. It produces the
+`halo-macos-arm64-dmg` artifact with the DMG, installation notes, build provenance
+and checksums. Use [player installation](playtesting.md#mac) for download/run
+instructions. Artifacts expire after 14 days.
 
-- `Halo-OG-macos-arm64.dmg`, with `Halo OG.app` and an Applications shortcut.
-- `README.txt`, with the build's minimum macOS version and installation steps.
-- `BuildInfo.txt`, identifying the source revision and compiled guest hash.
-- `SHA256SUMS`, for verifying the DMG after extracting the artifact ZIP.
-
-The current bundled dependencies require macOS 26 or later on Apple Silicon.
-Use the minimum macOS version recorded in the artifact's `README.txt` for that
-build.
-No build tools are needed to run the download. Open the DMG, drag the app into
-Applications as **Halo OG.app**, and supply your own original Xbox game data on first launch.
-These are ad hoc signed, unnotarized builds; see
-[Mac installation](../port/macos/README.md#download) for the first-launch steps.
-
-CI uses public dependencies and the checked-in SDK declarations. It audits the
-app to exclude game data, private inputs and local checkout paths, verifies its
-signature, and packages the DMG. The artifact does not configure Sparkle updates
-or use a Developer ID signing identity. The notarized release process below
-remains separate.
-
-CI explicitly uses `--sign-identity -` and imports no developer certificates or
-Keychain credentials. Before upload, every bundled Mach-O architecture must have
-an ad hoc signature with no certificate authority or team identifier. The app
-uses the generic `local.halo.ce-universal` bundle identifier. Third-party helper
-identifiers and capability entitlements remain those of the pinned dependency.
-The app's displayed name is **Halo OG** and its bundle identifier remains stable.
-The canonical data directory is `~/Library/Application Support/Halo OG/`.
-Prior files are copied from `~/Library/Application Support/Halo CE Universal/`
-without deleting the original files or replacing files already in the new directory.
-Existing Halo OG settings take precedence. Copied settings point to copied managed
-data when that selection is complete; a conflicting selection continues using
-its intact legacy path. External game folders remain selected in place.
-If migration cannot complete, the app reports the error and stops launch so it
-can retry safely next time.
+CI uses public dependencies and checked-in SDK declarations. It excludes game
+data, private inputs and checkout paths, and verifies every Mach-O architecture
+is ad-hoc signed without developer certificates. The displayed name is Halo OG;
+the stable bundle ID remains `local.halo.ce-universal`. CI testing builds disable
+Sparkle; Developer ID signing/notarization is a separate workflow.
 
 ## Manual testing prerelease
 
@@ -56,8 +29,7 @@ dispatched on `main` with a new `test-...` tag, for example
 successful **Build** and **macOS DMG** workflow outputs from that exact commit.
 It does not rebuild, sign with a personal identity, or include game data.
 
-After these changes are committed and pushed, wait for both build workflows to
-succeed. In GitHub Actions, choose **Publish testing prerelease → Run workflow**,
+Wait for both build workflows to succeed on the same latest `main` commit. In GitHub Actions, choose **Publish testing prerelease → Run workflow**,
 select `main`, and enter an unused testing tag. This explicit dispatch publishes
 a prerelease; code pushes do not publish. Prepare/collection uses a read-only
 token; the separate publication job alone receives `contents: write`.
@@ -143,12 +115,6 @@ directory permission and symlink target against the source and verifies the
 copied signature. It preserves the app's build information and does not rebuild
 the game or change user data. Existing output files are never replaced.
 
-`test-v0.3.0-net11-dmg2` is an installer revision of `test-v0.3.0-net11`.
-Its Mac app and other platform ZIPs are identical to that release's
-`41c4aa82` game build. `provenance.json`
-records the installer tooling commit separately from the binary source and
-original CI artifacts. The original release and its checksums remain available.
-
 The end user needs no Homebrew, XDK or build tools. SDL3, ANGLE, Sparkle and the
 compiled engine are bundled. First launch accepts the user's locally obtained
 original Xbox Halo XISO/ISO, or extracted game folder (its `maps` subfolder also
@@ -169,7 +135,7 @@ Extracted-folder selection offers **Copy and Manage**, **Use This Folder**, or
 **Cancel**. Managed copies use the same Application Support layout and preserve
 the original files. Community downloads have separate opt-in controls and a
 verified library under `Community Maps/maps/`; user-supplied files take priority.
-See [managed storage and map downloads](map-downloads-plan.md) for the catalog,
+See [managed storage and map downloads](community-maps.md#managed-storage-and-downloads) for the catalog,
 missing-map readiness flow and hosting configuration. The selected publisher
 is `https://dl.oghalo.com`; downloads default off until the player opts in.
 
@@ -219,8 +185,7 @@ python3 tools/macos_release.py setup-updates
 Commit only its public key. Keep the private key in Keychain and back it up via
 the established 1Password workflow. Use the 1Password MCP server when preparing
 developer environments. Signing/notary use existing Keychain identities and
-profiles; storage uses an existing AWS profile. No keys or cloud resources have
-been created for this task.
+profiles; storage uses an existing AWS profile.
 
 From a clean, committed tree, prepare a release with an explicit identity:
 Use the packaging virtual environment prepared above so the Finder metadata
@@ -260,26 +225,12 @@ The publisher re-verifies checksum, certificate signature, stapled ticket and
 Sparkle signature, uploads an immutable versioned DMG, reads the public download
 back and checks its hash, then updates the feed last and verifies the live XML.
 `release.json` records source revision, signatures, hashes, URLs and notarization
-submissions. Nothing has been published for this task.
+submissions.
 
-## Apple signing risk
-
-Developer ID distribution still carries contractual third-party IP requirements.
-Notarization checks security; it is not App Review or legal clearance. Omitting
-maps/discs/SDK helps but does not settle the reconstructed engine or Halo/Master
-Chief branding rights. The project's license cannot grant third-party rights.
-
-Apple reserves certificate revocation. Its guidance says every app signed with
-a revoked Developer ID certificate can stop installing or launching. Reusing
-TrackTimer's certificate therefore couples the projects. A separate certificate
-reduces certificate-level coupling, but does not guarantee isolation from
-developer-team/account enforcement. Resolve engine and branding rights before
-public signing.
-
-- [Apple Developer Program agreement](https://developer.apple.com/support/terms/apple-developer-program-license-agreement/)
-- [Apple Developer ID guidance](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/)
-- [Apple notarization documentation](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)
-- [Sparkle documentation](https://sparkle-project.org/documentation/)
+The packaging audit verifies resource and signature boundaries, not third-party
+redistribution rights. Dependency licenses are included; notarization is separate
+from gameplay and fidelity validation. See [Apple notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)
+and [Sparkle](https://sparkle-project.org/documentation/) for distribution tooling.
 
 ## Validation
 

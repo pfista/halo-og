@@ -117,8 +117,7 @@ Other OS/device combinations have not been exhaustively tested.
 
 ## Development workflow
 
-[Apple regression checks](apple-regression-checks.md) covers source-only CI,
-native menu responsiveness and local gameplay/renderer validation.
+Use the [validation commands below](#validation) for runtime and UI checks.
 
 Use `main` in [pfista/halo-og](https://github.com/pfista/halo-og)
 as the working branch. `origin` points to that fork; `upstream` points to
@@ -186,3 +185,28 @@ but does not turn a locally built app into an approved redistributable package.
 Keep compiled apps, logs and provisioning profiles local. When contributing
 source, inspect `git diff --cached --name-only` and `git diff --cached` before
 committing; ignore rules cannot prevent an explicit `git add -f`.
+
+## Validation
+
+From an Apple Silicon Mac with the dependencies above, source/runtime checks
+use authored fixtures rather than original assets:
+
+```sh
+python3 tools/macos_build.py --plugin-only
+python3 tools/test_macos_runtime.py --standalone
+python3 -m unittest tools.test_input_bindings tools.test_visibility_queries tools.test_geometry_cache tools.test_presentation tools.test_macos_preflight tools.test_macos_benchmark
+python3 tools/test_macos_menu.py
+python3 tools/test_macos_menu.py --check-ui
+```
+
+The UI check requires a WindowServer session. For the iPhone compiler/runtime
+path, also run `ios_build.py --plugin-only` and `test_ios_runtime.py` from `tools/`.
+Check [Apple CI](../.github/workflows/apple.yml) for the current automated suite.
+
+Real gameplay, rendering and multiplayer probes require separately supplied
+maps, fresh output folders and isolated saves. Use the
+[Mac performance guide](../port/macos/README.md#performance-checks),
+[multiplayer guide](apple-multiplayer.md#diagnosing-a-disconnect) and
+[community-map checks](community-maps.md#validation). Keep generated measurements,
+private room invites and game data out of Git. Compilation/fixtures do not
+establish physical-device gameplay or reference-Xbox parity.

@@ -199,4 +199,4 @@ Open an [issue in Halo OG](https://github.com/pfista/halo-og/issues/new) with:
 
 Do not attach game data, private invite codes, credentials, or personal saves
 to a public issue. Check logs for personal paths before sharing. Keep originals
-and backups while testing. See [current validation limits](../README.md#what-has-been-checked).
+and backups while testing. See [current validation limits](xbox-fidelity.md#reconstruction-target-and-validation).

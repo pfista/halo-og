@@ -103,7 +103,7 @@ PC settings it does not implement before applying settings or precaching a map.
 It also recognizes upstream's action-only input bit while preserving its local
 controls. PB capability uses advertisement flag `0x04`, distinct from the new
 in-progress flag `0x02`; an enabled PB session advertises version `0x800B`.
-See [the v11 selective review](../../docs/upstream-review-2026-10-03.md) for exact
+See [the v11 selective review](../../docs/xbox-fidelity.md#protocol-compatibility) for exact
 settings, rule and mixed-build compatibility limits.
 
 A client plays by its host's rules: in another's game (searching for it,

@@ -63,20 +63,9 @@ Choose your platform:
 All packages in the release come from the **same source commit**. Use the same
 tag when playing together. The release includes `SHA256SUMS`, `provenance.json`,
 and Mac installation notes. These are experimental builds.
-The `dmg2` revision adds a Mac drag-to-Applications install screen; the game app
-and other platform ZIPs are unchanged from `test-v0.3.0-net11`; both releases
-contain identical protocol-11 game builds. The original release remains available.
-
-If the release is not available, sign in to GitHub and use successful runs of
-this repository's [macOS DMG workflow](https://github.com/pfista/halo-og/actions/workflows/macos-dmg.yml)
-or [Build workflow](https://github.com/pfista/halo-og/actions/workflows/build.yml).
-Download the platform's `halo-…-release` artifact, or `halo-macos-arm64-dmg`, and
-match the runs' commit SHA. Artifact downloads are ZIPs and expire.
-
-The Mac test build is ad-hoc signed and unnotarized. Install **Halo OG.app** into
-Applications; no Homebrew or developer tools are needed. Testing packages have
-automatic updates disabled. [Installation steps](docs/playtesting.md) explain
-first launch, platform dependencies, and updating.
+The Mac test build is ad-hoc signed and unnotarized, with automatic updates
+disabled. Use [playtesting](docs/playtesting.md) for installation, dependencies,
+CI artifact downloads and updating.
 
 ## Get running
 
@@ -96,18 +85,13 @@ and existing files. External map folders can remain selected.
 
 ## Community maps and competitive options
 
-Mac Settings can **download 40 approved community maps in the background** after
-you opt in. The Cloudflare R2 collection is about **863 MiB**, built for Xbox v5
-NTSC data. Verified downloads remain usable offline. Windows and Linux on `main`
-download the same collection automatically in the background when original NTSC
-data is available; the published testing release still needs manual installation
-on those platforms. Their simple control is `community_maps.auto_download` in
-`config.toml` beside the executable (default `true`; set `false` before launch to
-disable downloads). Downloader status appears in terminal output; the setup
-guide below includes log capture commands. Downloads go into the active
-data folder's `maps/` directory, preserve existing files, and appear in the map
-selector after a restart. Android still installs matching maps manually;
-[community-map setup](docs/playtesting.md#community-maps) includes the downloads.
+The community collection contains **40 Xbox v5 NTSC maps**. Mac Settings offers
+opt-in background downloads; current Windows/Linux source enables
+`community_maps.auto_download` by default. The published Windows/Linux testing
+packages require manual installation. Android also installs maps manually.
+Verified maps remain available offline, and existing files are preserved.
+Use [community-map setup](docs/playtesting.md#community-maps) for your selected
+release and [map guidance](docs/community-maps.md) for storage and controls.
 
 **PB Options** offers a match timer, spawn markers, timer announcements, and
 optional silent movement/weapon-ready sounds. All modifications default **off**;
@@ -178,63 +162,32 @@ verify, not a claim that the networking code is identical. Protocol 11 adds wire
 compatibility and received-input handling; it is not a new Halo OG prediction
 algorithm. Use matching Halo OG builds for playtests. See the
 [networking implementation](port/linux/NETCODE.md),
-[protocol review](docs/upstream-review-2026-10-03.md), and
+[protocol review](docs/xbox-fidelity.md#protocol-compatibility), and
 [fidelity policy](docs/xbox-fidelity.md) for details and current evidence.
 
 ## Community maps and original assets
 
-We plan to keep maps on **Cloudflare R2, separate from the client**, so map and
-client updates can ship independently and application downloads stay smaller.
-The intended flow is for each platform to download stripped community-map
-packages. After the player supplies their own Xbox Halo XISO, Halo OG will
-extract the required original assets, combine them with each package, and build
-playable maps locally. Verified rebuilt maps will remain available offline;
-client updates will reuse compatible unchanged maps.
+Maps stay separate from the client on Cloudflare R2 so content and application
+updates can ship independently. Package reconstruction combines community
+content with original dependencies extracted locally from the player's own XISO.
+It removes whole unchanged original assets; modified and differently serialized
+assets remain in scope. This does not establish that every retained byte is
+community-authored.
 
-**This is a working local prototype, not a feature of the published testing
-build.** The current Cloudflare collection still serves complete converted
-`.map` files, including their embedded Halo dependencies. It has not been
-replaced with stripped packages, and no community maps are bundled in the DMG.
+The published testing build predates package reconstruction. Use the
+[reconstruction guide](docs/community-map-packages.md) for current implementation,
+platform support and exact original-data requirements. Keep release behavior
+separate from work on `main`.
 
-The prototype removes complete assets that exactly match freshly extracted
-original stock tags and stores references in their place. Modified,
-differently serialized, and unknown assets remain in the package for now; this
-does not establish that the remaining content is entirely community-authored.
-Downrush is the first verified package: 700 unchanged-stock references omit about
-10 MiB, and the native Mac reconstruction recreated the approved playable map
-byte-for-byte in about nine seconds. Verified local maps survive restart and
-work with network downloads disabled.
-
-Before this can ship, we still need to prepare and verify packages for the other 39 maps,
-automatically download and rebuild packages after XISO import, make the
-helper toolchain reproducible in CI with public corresponding-source delivery,
-and test the native import UI and gameplay.
-The current package requires exact original NTSC stock-map hashes; it does not
-accept every Xbox disc revision. Optional prototype helpers currently require
-macOS 27. Windows and Linux must rebuild the same packages to the same map hashes
-using native helpers; their helper builds and real-map acceptance remain
-unfinished. Native app package import currently targets Mac, with Android
-integration still future work.
-See the [package format, evidence, and remaining work](docs/community-map-packages.md).
-
-## What has been checked
-
-Native Mac campaign/input/audio smoke checks and protocol-11 stock multiplayer
-have been exercised. A client starting without Downrush downloaded the verified
-map and completed two consecutive Slayer matches with a host on the **same
-physical Mac**; offline reuse also passed. All 40 community caches passed short
-local load/render and public hash checks; the native Mac download service also
-passed automatic download and offline reuse for all 40. Physical cross-platform
-play, Internet/NAT, long sessions, full campaign coverage, and reference-Xbox
-fidelity remain acceptance work. See the [fidelity policy](docs/xbox-fidelity.md),
-[protocol review](docs/upstream-review-2026-10-03.md), and
-[map-delivery evidence](docs/map-publishing.md).
+Physical cross-platform play, Internet/NAT, long sessions, full campaign coverage
+and reference-Xbox fidelity still require acceptance testing. See
+[playtesting](docs/playtesting.md) and the [fidelity policy](docs/xbox-fidelity.md).
 
 ## Build and contribute
 
 [Build from source](docs/building.md) · [Apple setup](docs/apple-build.md) ·
 [Community-map conversion](docs/community-maps.md) ·
-[Community package prototype](docs/community-map-packages.md) ·
+[Map reconstruction](docs/community-map-packages.md) ·
 [Report a playtest problem](docs/playtesting.md#report-a-problem)
 
 The experimental [iPhone port](port/ios/README.md) is a developer build with no

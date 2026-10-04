@@ -1,132 +1,93 @@
 # Original Xbox fidelity
 
-This fork targets original Xbox Halo: Combat Evolved NTSC gameplay on native
-macOS, with controller support and separately imported community maps. Matching
-decompilation, core performance, stability and platform improvements should stay
-current through selective upstream review. Original game presentation and rules
-remain the baseline; an upstream change is not accepted merely because it is new.
+Halo OG targets original Xbox Halo: Combat Evolved NTSC gameplay, presentation
+and LAN feel across native platforms. Community maps and optional competitive
+features extend that baseline without replacing its rules.
 
-## Pinned baseline and upstream review
+## Upstream integration
 
-The last full upstream integration is `c55e4e2b` (build 64), merged into the
-Apple fork as `aabe44417431c36e46aaa385a69a89a3c9d685c0`. On October 2, the network
-protocol portion of `d1c7243cb20eab4488efa1266e259b1f4d5240f6` was selectively
-adopted for version 10 compatibility, retaining the original scoreboard and
-presentation. On October 3, the version-11 wire record and required received-input
-handling from `c9ee319ab5f2964a32372fffdc7756111e39727d` were selectively ported,
-preserving the fork's native menus, PB Options and existing gameplay rules.
-Unsupported upstream PC gametype settings are refused before precache/play.
-See the [v10 review](upstream-review-2026-10-02.md) and
-[current per-commit review and validation record](upstream-review-2026-10-03.md).
-This does not integrate intervening upstream changes. During upstream-update work, review all
-changes since the last recorded review so useful core improvements are not missed.
-Fetching upstream does not authorize merging it. Do not merge upstream `main`
-wholesale; select focused changes and split mixed commits when necessary.
+The full cybersecurity baseline is `c55e4e2b` (build 64), integrated as
+`aabe44417431c36e46aaa385a69a89a3c9d685c0`. Selective protocol additions are
+v10 (`d1c7243cb20eab4488efa1266e259b1f4d5240f6`, local
+`ea4dec3c28fcb4975ad36718c344bf5205b4c5eb`) and v11
+(`c9ee319ab5f2964a32372fffdc7756111e39727d`, local
+`694cc79d48654d862d3ecda51e71ea559f93bd2d`). These are focused ports, not merges
+of intervening upstream changes.
 
-The last review covered new commits through upstream revision
-`23b542601f2ca505c7a0143703e92fbda6075e18` on October 3, 2026. The current review
-records all seven new commits since the October 2 review. The following
-earlier exclusions also remain in force; neither is integrated:
+**Reviewed through:** `23b542601f2ca505c7a0143703e92fbda6075e18`.
+Review subsequent diffs individually. Keep review and integration boundaries
+separate, and record new decisions here with their validation and local commit.
 
-| Upstream change | Category and effect | Decision and reason | Validation / integration status |
-| --- | --- | --- | --- |
-| [`0182da817285b67eee8264663ca79f7c32d66b5e`](https://github.com/cybersecurity/halo-ce-universal/commit/0182da817285b67eee8264663ca79f7c32d66b5e) | Presentation / branding: high-resolution text and OpenCE titles. | Exclude: keep the game data's bitmap fonts and original menu titles. | Diff reviewed; not integrated; no adoption tests required. |
-| [`f2ba71d9af4c6fc65d7419cc22e8f4899b16da88`](https://github.com/cybersecurity/halo-ce-universal/commit/f2ba71d9af4c6fc65d7419cc22e8f4899b16da88) | Presentation / player information: names above players' heads. | Exclude: preserve original target-name/teammate-indicator behavior. | Diff reviewed; not integrated; no adoption tests required. |
+The following decisions still constrain integration. Excluded/deferred changes
+were diff-reviewed and remain unintegrated; their runtime behavior is unvalidated.
 
-Every upstream commit requires inspection of its actual diff and behavioral
-effects, including defaults, assets, dependencies and bundled changes. Use the
-following policy when deciding what to integrate:
-
-| Change category | Policy |
+| Upstream commit | Decision and current boundary |
 | --- | --- |
-| Matching decompilation / byte accuracy | Prioritize verified corrections toward the stated Xbox reconstruction target; validate their effect on the native port separately. |
-| Core performance, stability, platform compatibility and renderer correctness | Prioritize improvements that preserve original gameplay and presentation. Verify that an optimization does not silently change simulation timing or player behavior. |
-| Netcode and potential matchmaking | Consider individually for more reliable, fair online play. Review compatibility, latency, authority, timing and fairness effects; eligibility is not automatic acceptance. |
-| Renaming or rebranding, including OpenCE names/titles | Exclude from this fork unless the user explicitly requests a separate change. |
-| Replacement fonts, artwork or HUD; new overhead player labels | Exclude by default. Preserve original presentation and original target-name/teammate-indicator behavior. |
-| Timers, silent weapon switches, balance changes or other rule modifications | Exclude from the baseline unless the user explicitly requests and separately reviews them. |
+| `0182da817285b67eee8264663ca79f7c32d66b5e` | Exclude replacement fonts and OpenCE titles; retain original presentation. |
+| `f2ba71d9af4c6fc65d7419cc22e8f4899b16da88` | Exclude overhead player names. |
+| `9f3e8c92de7569a577c3044d05288dbd6590c5bf` | Exclude replacement postgame title/panel. |
+| `f0dfb58c94fa1a8f0f46cbd7df97dfda91a3dcb3`, `ab96597321eb50ccb499e5cec540cfdd5aca2d84` | Defer the desktop frame limiter and build fix pending a deliberate platform adaptation. |
+| `634b4197f91534625bf99cb9ef0abe88975a7213`, `b438cea47946b2e6471ccc41c7d3da3542fca7f6` | Exclude refinements of overhead labels. |
+| `fd3d62f9602870b209b8e0e5cd38d9f90ced6029` | Defer name/ban policy; broader keyboard/profile changes need separate review. |
+| `d1c7243cb20eab4488efa1266e259b1f4d5240f6` | Adopt ping protocol only; retain original scoreboard. Integrated as `ea4dec3c`; protocol fixtures cover layout, roles and malformed/stale packets. |
+| `80d30410c8db28f4008b92f4e012a1b046ece14e` | Defer Intel/Mesa memory barriers pending GPU comparison and configuration review. |
+| `c9ee319ab5f2964a32372fffdc7756111e39727d` | Adopt v11 wire record, original defaults, advertisement metadata and received action-only input. Exclude PC menus, added modes, bindings/save format and associated dependencies. Integrated as `694cc79d`; network fixtures cover wire layout and admission before precache. |
+| `2b0103a0ef2f46f3713d7e045436c5283668f9a6`, `383355381c3f92ae8ce6c9c79cbe84924856aa2f` | Exclude expanded score menus. |
+| `e8e0c2215ab6871bbe6f855f67b3459d94817b35` | Defer compiler include-path changes required only by the excluded PC menus. |
+| `62b630a2610e7c0df88ffa43d6f03914cb35345e` | Exclude new weapon/loadout policy. |
+| `23b542601f2ca505c7a0143703e92fbda6075e18` | Exclude altered infinite-grenade and unarmed-loadout rules; retain existing Xbox behavior and mixed-build admission gates. |
 
-Renderer correctness fixes can be appropriate: the existing `bfbac357`
-glyph-padding fix preserves the original font pixels and prevents adjacent atlas
-cells bleeding into enlarged text. A cosmetic replacement bundled with a useful
-fix is not a reason to accept the replacement; isolate the fix or defer the commit.
-Uncertain fidelity or fairness effects should be recorded and deferred pending
-evidence, rather than silently changing the baseline.
+Prioritize verified matching corrections, correctness, stability, performance
+and renderer/platform fixes that preserve the baseline. Assess netcode for
+simulation timing, input, authority, fairness, compatibility and service
+requirements. Split cosmetic or gameplay changes from useful fixes; defer
+uncertain effects. The glyph-padding correction preserves original font pixels
+and is a renderer fix, not authorization to replace fonts.
 
-Keep an upstream review ledger alongside the relevant update documentation. For
-each reviewed commit, record its full hash, category, actual behavioral effect,
-decision (adopt, partially adopt, exclude or defer), reason, relevant tests and
-integration status (including the local commit when integrated). Include rejected,
-deferred and already-equivalent/no-change decisions so later reviews do not mistake
-them for omissions. Record the upstream revision reviewed through separately from
-the last integrated revision. A matching-build result, native regression result
-and untested claim must remain distinguishable.
+## Protocol compatibility
 
-Generic macOS/v5-map fixes can still be offered upstream as focused contributions,
-independently of this fork's presentation choices. This policy does not schedule
-automatic fetching, merging or monitoring.
+Protocol 11 retains host authority and 30 Hz simulation. Its 28-byte PC options
+record does not introduce a new prediction or transport algorithm. Halo OG
+hosts original-rule defaults and rejects active PC options it does not implement
+before applying settings or loading maps. Use matching builds and maps.
 
-## Explicit optional PB Options exception
+PB capability flag `0x04` is separate from the in-progress flag `0x02`.
+Options-off games advertise stock v11; enabled PB games advertise `0x800B` and
+require supporting peers. v10/PB-v10 builds must update. Mixed upstream/fork
+games with five or more players must leave Infinite Grenades off.
+See [networking](../port/linux/NETCODE.md), [PB Options](performance-options.md)
+and [playtesting](playtesting.md) for implementation and player guidance.
 
-On October 2, 2026, the user separately authorized an optional elapsed match
-timer, separately toggled NHE timer announcements, and spawn markers under
-**PB Options**, including markers derived from stock-map spawn data. All default to off and
-are selected in a saved game type or applied by the host for the session. This
-authorization was extended to host-controlled silent movement and weapon-ready
-sounds, which default to Normal, plus local timer-audio and display preferences.
-These are limited exceptions to the presentation and sound exclusions above;
-they do not authorize other Performance Build mechanics, weapon behavior changes
-or a different simulation rate. The original 30 Hz simulation remains in place.
+## Optional competitive features
 
-See [PB Options](performance-options.md) for the native editor and pause-menu
-flows, saved variant format, host authority and v11 compatibility, restrictions
-on inert marker tags, stock-map marker rendering and the single-Mac
-Prisoner/Downrush validation evidence.
-The current marker audits cover 24 placements in converted NHE Prisoner and 19
-in converted Downrush. Original PC v7 caches remain unsupported. Marker drawing
-is included in the engine; optional user-local voice recordings are separate
-from the maps. Retail map checksums are preserved.
+PB Options permits host-selected match timers, timer announcements, spawn
+markers and silent movement/weapon-ready sounds. All modifications default off;
+sounds default Normal. Timer audio/display preferences are local. These limited
+options do not authorize other Performance Build mechanics, weapon changes or
+a different tick rate. Original PC v7 caches remain unsupported.
 
 ## Defaults and comparison profile
 
-The current implementation creates new `config.toml` files with
-`display.high_res_hud = false`,
-`display.interpolation = false` and `display.direct_camera = false`. The
-simulation stays at 30 Hz. These current defaults are not a permanent requirement
-to cap rendering at 30 FPS. High-refresh rendering, including 120 FPS through
-interpolation, can be appropriate while preserving the 30 Hz simulation. Review
-interpolation and camera behavior for their effect on fidelity and responsiveness.
-Existing configurations are preserved; explicitly set these keys to false when
-using an older save directory for reference comparisons.
+New configurations set `display.high_res_hud`, `display.interpolation` and
+`display.direct_camera` to `false`. Existing choices are preserved. Simulation
+stays at 30 Hz; high-refresh rendering can be appropriate, with interpolation
+and input response assessed separately.
 
-[xbox-ntsc.toml](../port/macos/profiles/xbox-ntsc.toml) supplies an isolated
-comparison profile. Launch it with the existing `HALO_SCREEN_WIDTH=640` override
-for a 4:3 window. Fullscreen/widescreen and optional rendering settings remain
-available, but the reference comparison uses original presentation settings.
-Keep this 30 FPS reference preset separate from decisions about normal-play
-rendering performance.
+Use [xbox-ntsc.toml](../port/macos/profiles/xbox-ntsc.toml) with the existing
+`HALO_SCREEN_WIDTH=640` override for an isolated 4:3 comparison. This 30 FPS
+reference is separate from normal-play performance choices. Native maps can use
+128 MiB disk caches; the original 22 MiB tag arena and Xbox build limits remain.
 
-Modern native networking and community-map loading are deliberate extensions.
-They must preserve the baseline's timing and weapon/player rules. Native map
-files may use a bounded 128 MiB disk cache; the original 22 MiB tag arena and
-non-native Xbox build limits are retained. Imported map geometry, spawn/item
-placements and necessary custom content are reviewed separately from the engine.
+## Reconstruction target and validation
 
-## What “100% matching” means here
-
-The decompilation target is Xbox build **2342**, `cachebeta.exe`, SHA-256
+The executable target is Xbox build **2342**, `cachebeta.exe`, SHA-256
 `4cc87b45f721270392a96f1674ed2b5cd4a7bb4355faeab4531d1cf1884d9520`.
-The local retail data set is USA NTSC cache v5 build **2276**,
-`01.10.12.2276`. These are distinct identifiers.
+The original data baseline is USA NTSC cache v5 build **2276**,
+`01.10.12.2276`. These are different identifiers.
 
-The [bnunu decompilation README](https://github.com/bnunu/halo-1#readme) reported
-99.5% byte matching when inspected on October 1, 2026. This is a reported status,
-not a matching build verified in this checkout. Track future matching progress
-against its stated executable and build configuration. Do not call the ARM Mac
-executable byte-identical to an Xbox executable: it uses a different compiler,
-instruction set and platform layer, with replacement networking.
-
-A matching Xbox reconstruction and a faithful native port require different
-evidence. Native fidelity still needs physical-controller play, reference Xbox
-comparisons, campaign/save coverage and multiplayer timing tests. A successful
-Mac build, stock-map hash or community-map smoke test does not certify those.
+Matching an Xbox executable and reproducing its feel on native ARM/x86 require
+different evidence. Physical controllers, reference-Xbox comparisons,
+campaign/save coverage, multiplayer timing and cross-platform play need runtime
+validation. Compilation, cache hashes and short smoke runs alone do not certify
+retail fidelity. Use repeatable timing measurements and isolated saves; keep
+generated evidence outside the source tree.
