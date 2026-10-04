@@ -48,6 +48,77 @@ also passed signing and bundle audits. Native menu interaction and gameplay in
 that prototype app have not been exercised; the installed app and active game
 were preserved.
 
+## Windows and Linux reconstruction
+
+Windows and Linux support is a requirement of the package design. The same
+`.hogpkg` must rebuild the same Xbox NTSC v5 map on Mac, Windows, and Linux;
+the host platform does not change the map format or the stock data required.
+The current real Downrush acceptance evidence is from an ARM Mac only.
+
+The developer CLI supports fixed native `invader-extract` and `invader-build`
+helpers, with `.exe` names on Windows. A package records its producer's helper
+hashes. A different native consumer toolchain must independently pin its own
+helper hashes and explicitly allow that exact producer in the **locally trusted**
+toolchain manifest's `compatible_package_producers` array:
+
+```json
+{
+  "invader_commit": "7d25a855f5ef9e4ab8407abf490b21f8780abf27",
+  "binaries": {
+    "extract": {"sha256": "<reviewed native extractor SHA-256>"},
+    "build": {"sha256": "<reviewed native builder SHA-256>"}
+  },
+  "compatible_package_producers": [
+    {
+      "invader_commit": "7d25a855f5ef9e4ab8407abf490b21f8780abf27",
+      "tool_sha256": {
+        "extract": "4dc6a8c5583f055b715cf48ae011929be63749a56a68540c31e73238d46e1e3f",
+        "build": "4586b82e0db2a57e390e6d61ccf3a4cf2fde26288652cd0d3708be0e87111f65"
+      }
+    }
+  ]
+}
+```
+
+This example allows the reviewed Mac producer used for the Downrush prototype.
+Replace the two placeholders only with hashes of reviewed native helper builds.
+Keep that manifest outside downloaded packages; do not generate approval entries
+automatically from untrusted package metadata. Sharing an Invader source revision
+alone does not authorize a different toolchain. Existing manifests without a
+compatibility array keep their exact producer/consumer binary-hash requirement.
+An optional `consumer_platform` field (`macos`, `windows`, or `linux`) must match
+the current host. Provenance records both the producer and native consumer
+helper hashes and the consumer platform.
+
+Run the existing CLI with user-extracted stock maps and a fresh output directory:
+
+```sh
+python tools/community_packages.py reconstruct --package downrush.hogpkg --stock-maps /path/to/your/maps --tool-bin /path/to/reviewed/native/tools --toolchain-manifest /path/to/trusted/source-manifest.json --destination build/community-maps/downrush-new
+```
+
+On Windows, use native Windows paths for those arguments and quote paths with
+spaces. Package and extracted asset paths must also satisfy Windows filename
+rules, including reserved device names and trailing dots/spaces. The CLI keeps
+the exact original-stock, restored-tag, final-map size, and SHA-256 gates.
+Only a successful exact rebuild publishes the final map and provenance.
+
+The [desktop portability workflow](../.github/workflows/community-packages.yml)
+runs synthetic package, filesystem, helper-selection, and publication checks on
+Windows, Linux, and Mac. It uses no game assets. These checks do **not** prove
+that real Invader builds produce identical Downrush bytes on those platforms.
+Before enabling package inclusion in distributed builds, each desktop platform
+still needs reviewed native helper binaries and dependency/source delivery, a
+real same-package/same-stock exact-hash rebuild, and game load/play verification.
+Pin the compression and conversion dependencies as well as Invader: the reviewed
+Mac build found zlib 1.2.12 in the Apple SDK, and compression differences can
+change the final cache SHA-256. Native Squish settings also need to match the
+reviewed scalar configuration. Capture the RIAT Cargo lockfile and match the
+Windows Rust/C runtime toolchains as part of reproducible helper builds.
+A build that misses the approved output hash remains unusable.
+Run those tests locally with independently supplied game data; do not upload
+stock maps or disc images to public CI. Automatic bundled-package discovery,
+native Windows/Linux app import, and Android integration remain unfinished.
+
 ## Format and consumer contract
 
 A `.hogpkg` file contains a 16-byte header (`<8sQ`, little endian), UTF-8 JSON,

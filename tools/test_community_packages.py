@@ -9,8 +9,10 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -40,7 +42,7 @@ class CommunityPackageTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="halo-community-package-test-")
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.original = self.root / "original-stock-tags"
         self.patched = self.root / "patched-stock-tags"
         self.tags = self.root / "prepared-tags"
@@ -83,11 +85,20 @@ class CommunityPackageTests(unittest.TestCase):
             },
         }))
         self.sources_before = self.source_snapshot()
+        self.suffix = ".exe" if packages._consumer_platform() == "windows" else ""
 
     def source_snapshot(self):
         return {name: tree_bytes(path) for name, path in (
             ("original", self.original), ("patched", self.patched),
             ("tags", self.tags), ("data", self.data), ("maps", self.maps))}
+
+    def make_symlink(self, path, target, *, directory=False):
+        try:
+            path.symlink_to(target, target_is_directory=directory)
+        except OSError as error:
+            if packages._consumer_platform() == "windows" and getattr(error, "winerror", None) == 1314:
+                self.skipTest("Windows runner lacks the privilege to create symlinks")
+            raise
 
     def prepare(self):
         return packages.prepare_package(
@@ -280,7 +291,7 @@ class CommunityPackageTests(unittest.TestCase):
         for destination_kind in ("empty", "user-files", "symlink"):
             with self.subTest(kind=destination_kind):
                 if destination_kind == "symlink":
-                    self.destination.symlink_to(self.root / "absent-target")
+                    self.make_symlink(self.destination, self.root / "absent-target")
                 else:
                     self.destination.mkdir()
                     if destination_kind == "user-files":
@@ -305,8 +316,8 @@ class CommunityPackageTests(unittest.TestCase):
             for directory in (False, True):
                 with self.subTest(root=source_root.name, directory=directory):
                     link = source_root / "unsafe-link"
-                    link.symlink_to(external.parent if directory else external,
-                                    target_is_directory=directory)
+                    self.make_symlink(link, external.parent if directory else external,
+                                      directory=directory)
                     with self.assertRaises(packages.PackageError):
                         self.prepare()
                     self.assertFalse(self.package.exists())
@@ -404,14 +415,14 @@ class CommunityPackageTests(unittest.TestCase):
     def test_reconstruction_publishes_only_the_exact_expected_cache(self):
         manifest = self.prepare()
         tool_bin = self.root / "tools"
-        write_files(tool_bin, {"invader-extract": b"fake-extract",
-                               "invader-build": b"fake-build"})
+        write_files(tool_bin, {"invader-extract" + self.suffix: b"fake-extract",
+                               "invader-build" + self.suffix: b"fake-build"})
         rebuilt = self.root / "rebuilt"
         calls = []
         corrupt = True
         def run(args, **kwargs):
-            calls.append((Path(args[0]).name, list(args[1:]), kwargs))
-            if Path(args[0]).name == "invader-extract":
+            calls.append((Path(args[0]).stem, list(args[1:]), kwargs))
+            if Path(args[0]).stem == "invader-extract":
                 write_files(Path(args[args.index("-t") + 1]), self.original_bytes)
             else:
                 target = Path(args[args.index("-m") + 1]) / "downrush.map"
@@ -439,17 +450,20 @@ class CommunityPackageTests(unittest.TestCase):
         self.assertEqual(build_args[0:2], ["-g", "xbox-ntsc"])
         self.assertEqual(build_args[-4:], ["-S", "data", "-E", "levels/test/downrush/downrush"])
         self.assertTrue(all(kwargs["timeout"] == 180 for _, _, kwargs in calls))
+        self.assertTrue(all(kwargs["encoding"] == "utf-8" and kwargs["errors"] == "replace"
+                            and kwargs["shell"] is False and kwargs["cwd"] == rebuilt
+                            for _, _, kwargs in calls))
         self.assertEqual(self.source_snapshot(), self.sources_before)
 
     def test_reconstruction_rejects_changed_stock_and_tool_before_execution(self):
         self.prepare()
         tool_bin = self.root / "tools"
-        write_files(tool_bin, {"invader-extract": b"fake-extract",
-                               "invader-build": b"fake-build"})
+        write_files(tool_bin, {"invader-extract" + self.suffix: b"fake-extract",
+                               "invader-build" + self.suffix: b"fake-build"})
         rebuilt = self.root / "rebuilt"
         stock = self.maps / "bloodgulch.map"
         stock_bytes = stock.read_bytes()
-        build = tool_bin / "invader-build"
+        build = tool_bin / ("invader-build" + self.suffix)
         with patch("tools.community_maps.subprocess.run",
                    side_effect=AssertionError("unverified tools must never execute")):
             for changed in ("stock", "tool", "toolchain"):
@@ -472,6 +486,219 @@ class CommunityPackageTests(unittest.TestCase):
                     build.write_bytes(b"fake-build")
                     self.toolchain.write_bytes(original_manifest)
         self.assertEqual(self.source_snapshot(), self.sources_before)
+
+    def native_manifest(self, platform, producer, *, compatible=True):
+        native = {name: (platform + "-native-" + name).encode() for name in ("extract", "build")}
+        data = {"invader_commit": packages.INVADER_COMMIT, "consumer_platform": platform,
+                "binaries": {name: {"sha256": sha(value), "path": "../never-executed-package-tool"}
+                             for name, value in native.items()}}
+        if compatible:
+            data["compatible_package_producers"] = [{"invader_commit": packages.INVADER_COMMIT,
+                                                       "tool_sha256": producer["tool_sha256"]}]
+        path = self.root / (platform + "-consumer.json")
+        path.write_text(json.dumps(data), encoding="utf-8")
+        binary = self.root / (platform + "-tools")
+        suffix = ".exe" if platform == "windows" else ""
+        write_files(binary, {"invader-" + name + suffix: value for name, value in native.items()})
+        return path, binary, data
+
+    def test_existing_v1_package_uses_explicit_native_consumer_mapping(self):
+        producer = self.prepare()
+        package_before = self.package.read_bytes()
+        for platform in ("macos", "linux", "windows"):
+            with self.subTest(platform=platform):
+                manifest, binary, trusted = self.native_manifest(platform, producer)
+                destination = self.root / (platform + "-reconstructed")
+                calls = []
+
+                def run(command, **kwargs):
+                    calls.append(command)
+                    name = Path(command[0]).stem
+                    if name == "invader-extract":
+                        write_files(Path(command[command.index("-t") + 1]), self.original_bytes)
+                    else:
+                        (Path(command[command.index("-m") + 1]) / "downrush.map").write_bytes(self.expected_bytes)
+                    self.assertFalse(kwargs["shell"])
+                    self.assertEqual(kwargs["cwd"], destination)
+                    return subprocess.CompletedProcess(command, 0, "UTF-8 fixture output: \uFFFD 日本語", "")
+
+                with patch.object(packages, "_consumer_platform", return_value=platform), \
+                        patch.object(packages.subprocess, "run", side_effect=run):
+                    result = packages.reconstruct_package(package=self.package, stock_maps=self.maps,
+                        tool_bin=binary, toolchain_manifest=manifest, destination=destination)
+                suffix = ".exe" if platform == "windows" else ""
+                self.assertEqual([Path(call[0]).name for call in calls],
+                    ["invader-extract" + suffix] * 3 + ["invader-build" + suffix])
+                self.assertTrue(all(Path(call[0]).parent == binary for call in calls))
+                self.assertEqual(result["consumer_platform"], platform)
+                self.assertEqual(result["producer_tool_sha256"], producer["tool_sha256"])
+                self.assertEqual(result["tool_sha256"], {name: item["sha256"]
+                    for name, item in trusted["binaries"].items()})
+                self.assertEqual(result["map"], producer["output"])
+                self.assertEqual((destination / "maps/downrush.map").read_bytes(), self.expected_bytes)
+                self.assertEqual((destination / "logs/01-extract.log").read_text(encoding="utf-8"),
+                                 "UTF-8 fixture output: \uFFFD 日本語")
+                self.assertEqual(self.package.read_bytes(), package_before)
+        self.assertEqual(self.source_snapshot(), self.sources_before)
+
+    def test_same_revision_different_binaries_require_local_producer_allowlist(self):
+        producer = self.prepare()
+        manifest, binary, _ = self.native_manifest("linux", producer, compatible=False)
+        with patch.object(packages, "_consumer_platform", return_value="linux"), \
+                patch.object(packages.subprocess, "run") as run:
+            with self.assertRaisesRegex(packages.PackageError, "producer is not approved"):
+                packages.reconstruct_package(package=self.package, stock_maps=self.maps,
+                    tool_bin=binary, toolchain_manifest=manifest, destination=self.destination)
+        run.assert_not_called()
+        self.assertFalse(self.destination.exists())
+
+    def test_approved_producer_does_not_grant_trust_to_changed_consumer_binary(self):
+        producer = self.prepare()
+        manifest, binary, _ = self.native_manifest("windows", producer)
+        (binary / "invader-build.exe").write_bytes(b"unapproved consumer replacement")
+        with patch.object(packages, "_consumer_platform", return_value="windows"), \
+                patch.object(packages.subprocess, "run") as run:
+            with self.assertRaisesRegex(packages.PackageError, "executable differs"):
+                packages.reconstruct_package(package=self.package, stock_maps=self.maps,
+                    tool_bin=binary, toolchain_manifest=manifest, destination=self.destination)
+        run.assert_not_called()
+        self.assertFalse(self.destination.exists())
+
+    def test_native_mapping_cannot_weaken_exact_output_or_stock_checks(self):
+        producer = self.prepare()
+        manifest, binary, _ = self.native_manifest("linux", producer)
+        stock_before = (self.maps / "ui.map").read_bytes()
+        with patch.object(packages, "_consumer_platform", return_value="linux"), \
+                patch.object(packages.subprocess, "run") as run:
+            (self.maps / "ui.map").write_bytes(stock_before[:-1] + b"!")
+            with self.assertRaisesRegex(packages.PackageError, "exact package base"):
+                packages.reconstruct_package(package=self.package, stock_maps=self.maps,
+                    tool_bin=binary, toolchain_manifest=manifest, destination=self.destination)
+            run.assert_not_called()
+        (self.maps / "ui.map").write_bytes(stock_before)
+
+        def wrong_output(command, **kwargs):
+            if Path(command[0]).stem == "invader-extract":
+                write_files(Path(command[command.index("-t") + 1]), self.original_bytes)
+            else:
+                changed = bytearray(self.expected_bytes); changed[-1] ^= 1
+                (Path(command[command.index("-m") + 1]) / "downrush.map").write_bytes(changed)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with patch.object(packages, "_consumer_platform", return_value="linux"), \
+                patch.object(packages.subprocess, "run", side_effect=wrong_output):
+            with self.assertRaisesRegex(packages.PackageError, "exact bytes"):
+                packages.reconstruct_package(package=self.package, stock_maps=self.maps,
+                    tool_bin=binary, toolchain_manifest=manifest, destination=self.destination)
+        self.assertFalse(self.destination.exists())
+        self.assertEqual(self.source_snapshot(), self.sources_before)
+
+    def test_malformed_compatibility_manifests_and_wrong_platform_refused(self):
+        producer = self.prepare()
+        manifest, _, valid = self.native_manifest("windows", producer)
+        variants = []
+        for value in (None, {}, [{}], valid["compatible_package_producers"] * 33):
+            changed = copy.deepcopy(valid); changed["compatible_package_producers"] = value
+            variants.append(changed)
+        for key, value in (("invader_commit", "0" * 40), ("tool_sha256", {"extract": "bad", "build": "0" * 64})):
+            changed = copy.deepcopy(valid); changed["compatible_package_producers"][0][key] = value
+            variants.append(changed)
+        changed = copy.deepcopy(valid); changed["consumer_platform"] = "linux"; variants.append(changed)
+        for value in variants:
+            with self.subTest(value=value):
+                manifest.write_text(json.dumps(value))
+                with self.assertRaises(packages.PackageError):
+                    packages._consumer_tools(manifest, producer, "windows")
+        encoded = json.dumps(valid)
+        manifest.write_text('{"invader_commit":"untrusted",' + encoded[1:])
+        with self.assertRaisesRegex(packages.PackageError, "Duplicate JSON key"):
+            packages._consumer_tools(manifest, producer, "windows")
+
+    def test_windows_reserved_illegal_and_alias_components_refused(self):
+        for value in ("NUL.weapon", "safe/con.bitmap", "safe/PRN.any.ext", "Lpt9/tag.weapon",
+                      "COM1.foo", "CONIN$.tag", "CONOUT$.tag", "con .tag", "safe./tag",
+                      "safe /tag", "safe/tag.", "safe/tag ", "safe/a<b", "safe/a>b",
+                      'safe/a"b', "safe/a|b", "safe/a?b", "safe/a*b", "safe/PROFIL~1.bin"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(packages.PackageError, "Windows"):
+                    packages._consumer_path(value, "windows")
+        for value in ("vehicles/scorpion/headlights scorpion.lens_flare", "safe/nulled.bitmap",
+                      "safe/com10.weapon", "safe/normal.tag"):
+            self.assertEqual(packages._consumer_path(value, "windows"), value)
+
+    def test_windows_invalid_package_paths_refused_before_helpers_or_materialization(self):
+        producer = self.prepare()
+        manifest, binary, _ = self.native_manifest("windows", producer)
+        for field in ("path", "stock_path", "scenario", "id"):
+            changed = copy.deepcopy(producer)
+            if field == "path":
+                next(entry for entry in changed["files"] if entry["kind"] == "literal")[field] = "safe/NUL.weapon"
+            elif field == "stock_path":
+                next(entry for entry in changed["files"] if entry["kind"] == "stock-reference")[field] = "safe/COM1.weapon"
+            elif field == "scenario":
+                previous = changed["scenario"]
+                changed[field] = "CON/downrush"
+                next(entry for entry in changed["files"] if entry["path"] == previous + ".scenario")["path"] = changed[field] + ".scenario"
+            else:
+                previous = changed["scenario"]
+                changed[field] = "con"; changed["scenario"] = "levels/test/con/con"
+                next(entry for entry in changed["files"] if entry["path"] == previous + ".scenario")["path"] = changed["scenario"] + ".scenario"
+            forged = self.forged(changed)
+            # Windows restrictions are consumer checks, not a v1 schema change.
+            self.assertEqual(packages.read_package(forged), changed)
+            with patch.object(packages, "_consumer_platform", return_value="windows"), \
+                    patch.object(packages.subprocess, "run") as run:
+                with self.assertRaisesRegex(packages.PackageError, "Windows"):
+                    packages.reconstruct_package(package=forged, stock_maps=self.maps, tool_bin=binary,
+                        toolchain_manifest=manifest, destination=self.destination)
+                with self.assertRaisesRegex(packages.PackageError, "Windows"):
+                    packages.materialize_package(package=forged, original_stock_tags=self.original,
+                                                 destination=self.destination)
+            run.assert_not_called()
+            self.assertFalse(self.destination.exists())
+        self.assertEqual(self.source_snapshot(), self.sources_before)
+
+    def test_reparse_regular_files_and_tree_roots_are_refused(self):
+        flagged_file = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_file_attributes=0x400)
+        flagged_directory = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_file_attributes=0x400)
+        with patch.object(Path, "lstat", return_value=flagged_file):
+            with self.assertRaises(packages.PackageError):
+                packages._regular(self.expected)
+        with patch.object(Path, "lstat", return_value=flagged_directory):
+            with self.assertRaisesRegex(packages.PackageError, "real asset directory"):
+                packages._tree(self.original, consumer_platform="windows")
+
+    def test_reparse_child_refused_before_directory_traversal(self):
+        root = self.root / "junction-fixture"
+        child = root / "linked-child"
+        child.mkdir(parents=True)
+        lstat = Path.lstat
+        iterdir = Path.iterdir
+
+        def info(path):
+            return (SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_file_attributes=0x400)
+                    if path == child else lstat(path))
+
+        def children(path):
+            if path == child:
+                self.fail("An unsafe reparse directory must never be traversed")
+            return iterdir(path)
+
+        with patch.object(Path, "lstat", info), patch.object(Path, "iterdir", children):
+            with self.assertRaisesRegex(packages.PackageError, "reparse"):
+                packages._tree(root, consumer_platform="windows")
+
+    def test_windows_destination_reparse_ancestor_refused(self):
+        lstat = Path.lstat
+
+        def info(path):
+            return (SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_file_attributes=0x400)
+                    if path == self.root else lstat(path))
+
+        with patch.object(packages, "_consumer_platform", return_value="windows"), patch.object(Path, "lstat", info):
+            with self.assertRaisesRegex(packages.PackageError, "Destination ancestors"):
+                packages._outside(self.destination, (self.maps,))
+        self.assertFalse(self.destination.exists())
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ import shutil
 import stat
 import struct
 import subprocess
+import sys
 import tempfile
 
 MAGIC = b"HOGPKG1\n"
@@ -41,6 +42,8 @@ CLASSIFICATIONS = {"unchanged-stock", "modified-or-different-stock", "unknown-or
                    "compatibility-modified-stock", "generated-data"}
 ID = re.compile(r"[a-z0-9][a-z0-9_-]{0,30}\Z")
 SHA = re.compile(r"[0-9a-f]{64}\Z")
+WINDOWS_DEVICES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"} | {
+    prefix + str(number) for prefix in ("COM", "LPT") for number in range(1, 10)}
 
 
 class PackageError(ValueError):
@@ -77,21 +80,82 @@ def _path(value):
     return value
 
 
+def _consumer_platform():
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform.startswith("linux"):
+        return "linux"
+    raise PackageError("CLI reconstruction supports macOS, Linux and Windows")
+
+
+def _consumer_path(value, platform):
+    """Keep the v1 format unchanged; reject aliases on the consuming filesystem."""
+    _path(value)
+    if platform == "windows":
+        for component in value.split("/"):
+            # '~' can address an automatically generated NTFS 8.3 alias. Never
+            # allow a package to select it instead of its intended whole file.
+            stem = component.split(".", 1)[0].rstrip(" .").upper()
+            if (len(component) > 255 or component.endswith((" ", ".")) or
+                    any(c in component for c in '<>"|?*~') or stem in WINDOWS_DEVICES):
+                raise PackageError("Asset path is unsafe or ambiguous on Windows")
+    return value
+
+
+def _consumer_paths(manifest, platform):
+    _consumer_path(manifest["id"] + ".map", platform)
+    _consumer_path(manifest["scenario"], platform)
+    for entry in manifest["files"]:
+        _consumer_path(entry["path"], platform)
+        if "stock_path" in entry:
+            _consumer_path(entry["stock_path"], platform)
+
+
+def _reparse(info):
+    return bool(getattr(info, "st_file_attributes", 0) &
+                getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+
 def _regular(path):
     path = Path(path)
-    if not stat.S_ISREG(path.lstat().st_mode):
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or _reparse(info):
         raise PackageError(f"Expected a regular file: {path}")
     return path
 
 
-def _tree(root):
+def _tree(root, *, consumer_platform=None):
     root = Path(root)
-    if not stat.S_ISDIR(root.lstat().st_mode):
+    info = root.lstat()
+    if not stat.S_ISDIR(info.st_mode) or _reparse(info):
         raise PackageError("Expected a real asset directory")
-    files, seen, total = {}, set(), 0
-    for p in sorted(root.rglob("*")):
-        mode = p.lstat().st_mode
+    def walk(directory):
+        # Inspect each directory before recursing. Sorting a complete rglob
+        # first can traverse an external Windows junction before rejecting it.
+        for path in sorted(directory.iterdir()):
+            info = path.lstat()
+            if _reparse(info) or (not stat.S_ISREG(info.st_mode) and not stat.S_ISDIR(info.st_mode)):
+                raise PackageError("Links, reparse points and special files are not permitted in asset trees")
+            yield path, info
+            if stat.S_ISDIR(info.st_mode):
+                yield from walk(path)
+
+    files, seen, spellings, total = {}, set(), {}, 0
+    for p, info in walk(root):
+        mode = info.st_mode
         relative = _path(p.relative_to(root).as_posix())
+        if consumer_platform:
+            _consumer_path(relative, consumer_platform)
+            if consumer_platform == "windows":
+                parts = relative.split("/")
+                for index in range(1, len(parts) + 1):
+                    prefix = "/".join(parts[:index])
+                    folded = prefix.casefold()
+                    if folded in spellings and spellings[folded] != prefix:
+                        raise PackageError("Case-colliding asset directory paths")
+                    spellings[folded] = prefix
         if stat.S_ISDIR(mode):
             continue
         if not stat.S_ISREG(mode):
@@ -135,15 +199,51 @@ def _cache(path, *, stock=False):
             "declared_bytes": declared, "tag_bytes": tag_bytes}
 
 
-def _tools(manifest):
-    data = json.loads(_regular(manifest).read_text())
-    if data.get("invader_commit") != INVADER_COMMIT:
+def _toolchain(manifest):
+    data = json.loads(_regular(manifest).read_text(encoding="utf-8"), object_pairs_hook=_unique_json)
+    if not isinstance(data, dict) or data.get("invader_commit") != INVADER_COMMIT:
         raise PackageError("Unsupported Invader revision")
+    return data
+
+
+def _tool_hashes(data):
     try:
         hashes = {name: _sha(data["binaries"][name]["sha256"]) for name in ("extract", "build")}
     except (KeyError, TypeError) as error:
         raise PackageError("Missing trusted Invader hashes") from error
     return hashes
+
+
+def _tools(manifest):
+    return _tool_hashes(_toolchain(manifest))
+
+
+def _consumer_tools(manifest, package_manifest, platform):
+    """A local allowlist, never package-provided hashes, grants compatibility.
+
+    Legacy local manifests require identical producer/consumer binaries. A
+    reviewed platform build may additionally declare compatible_package_producers
+    as [{invader_commit: PIN, tool_sha256: {extract: SHA, build: SHA}}]. Its own
+    binaries remain independently authenticated by the local binaries entries.
+    """
+    data = _toolchain(manifest)
+    if data.get("consumer_platform", platform) != platform:
+        raise PackageError("Trusted consumer manifest is for a different platform")
+    trusted = _tool_hashes(data)
+    compatible = data.get("compatible_package_producers", [])
+    if not isinstance(compatible, list) or len(compatible) > 32:
+        raise PackageError("Invalid trusted package-producer compatibility list")
+    accepted = [trusted]
+    for producer in compatible:
+        if (not isinstance(producer, dict) or set(producer) != {"invader_commit", "tool_sha256"} or
+                producer["invader_commit"] != INVADER_COMMIT or
+                not isinstance(producer["tool_sha256"], dict) or
+                set(producer["tool_sha256"]) != {"extract", "build"}):
+            raise PackageError("Invalid trusted package-producer identity")
+        accepted.append({name: _sha(producer["tool_sha256"][name]) for name in ("extract", "build")})
+    if package_manifest["tool_sha256"] not in accepted:
+        raise PackageError("Package producer is not approved by the trusted consumer manifest")
+    return trusted
 
 
 def _stock_inputs(maps):
@@ -297,6 +397,17 @@ def read_package(path, verify_payload=True):
 
 
 def _outside(destination, roots):
+    # A Windows junction can be a directory according to st_mode. Do not create
+    # reconstruction work beneath it or any other reparse-point ancestor.
+    if _consumer_platform() == "windows":
+        absolute = Path(destination).absolute()
+        for parent in absolute.parents:
+            try:
+                info = parent.lstat()
+            except FileNotFoundError:
+                continue
+            if _reparse(info) or stat.S_ISLNK(info.st_mode):
+                raise PackageError("Destination ancestors must not be links or reparse points")
     resolved = Path(destination).absolute().resolve()
     for root in roots:
         if resolved.is_relative_to(Path(root).resolve()):
@@ -410,7 +521,9 @@ def materialize_package(*, package, original_stock_tags, destination):
     package, destination = Path(package), Path(destination)
     _outside(destination, (original_stock_tags,))
     m = read_package(package)
-    original = _tree(original_stock_tags)
+    platform = _consumer_platform()
+    _consumer_paths(m, platform)
+    original = _tree(original_stock_tags, consumer_platform=platform)
     _verify_originals(m, original)
     # Validate stock override hierarchy before opening any destination files.
     for entry in m["files"]:
@@ -469,29 +582,39 @@ def materialize_package(*, package, original_stock_tags, destination):
 
 
 def reconstruct_package(*, package, stock_maps, tool_bin, toolchain_manifest, destination):
-    """Reconstruct in a fresh workspace using only trusted native extract/build."""
-    package, stock_maps, tool_bin, destination = map(Path, (package, stock_maps, tool_bin, destination))
+    """Reconstruct v1 packages using explicitly trusted platform-native tools.
+
+    Different producer binary hashes require an exact entry in the local
+    compatible_package_producers allowlist. Source, stock and final cache pins
+    are never relaxed. Windows consumes fixed invader-{extract,build}.exe names.
+    """
+    package, stock_maps, tool_bin, destination = (Path(path).absolute()
+        for path in (package, stock_maps, tool_bin, destination))
     _outside(destination, (stock_maps, tool_bin))
     m = read_package(package)
+    platform = _consumer_platform()
+    _consumer_paths(m, platform)
     if _stock_inputs(stock_maps) != m["stock_inputs"]:
         raise PackageError("Selected original stock cache hashes differ from this exact package base")
-    trusted = _tools(toolchain_manifest)
-    if trusted != m["tool_sha256"]:
-        raise PackageError("Package toolchain differs from trusted source manifest")
+    trusted = _consumer_tools(toolchain_manifest, m, platform)
+    suffix = ".exe" if platform == "windows" else ""
+    executables = {name: tool_bin / ("invader-" + name + suffix) for name in trusted}
     for name, sha in trusted.items():
-        if digest(_regular(tool_bin / ("invader-" + name))) != sha:
+        if digest(_regular(executables[name])) != sha:
             raise PackageError("Invader executable differs from trusted manifest")
     destination.mkdir(parents=True, exist_ok=False)
     try:
         logs = destination / "logs"
         logs.mkdir()
         def run(name, *args):
-            command = [str((tool_bin / ("invader-" + name)).resolve()), *map(str, args)]
+            command = [str(executables[name].resolve()), *map(str, args)]
             try:
-                result = subprocess.run(command, capture_output=True, text=True, timeout=180)
+                result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
+                                        errors="replace", timeout=180, shell=False, cwd=destination)
             except subprocess.TimeoutExpired as error:
                 raise PackageError(f"Trusted invader-{name} timed out") from error
-            (logs / f"{len(list(logs.iterdir())) + 1:02d}-{name}.log").write_text(result.stdout + result.stderr)
+            (logs / f"{len(list(logs.iterdir())) + 1:02d}-{name}.log").write_text(
+                result.stdout + result.stderr, encoding="utf-8")
             if result.returncode:
                 raise PackageError(f"Trusted invader-{name} failed ({result.returncode}): {result.stderr[-1500:]}")
         extracted = destination / ".original-stock"
@@ -513,13 +636,14 @@ def reconstruct_package(*, package, stock_maps, tool_bin, toolchain_manifest, de
         report = {"status": "exact-reconstruction", "id": m["id"], "package_sha256": digest(package),
                   "map": m["output"], "profile": m["profile"], "invader_commit": m["invader_commit"],
                   "tool_sha256": trusted, "stock_inputs": m["stock_inputs"],
+                  "producer_tool_sha256": m["tool_sha256"], "consumer_platform": platform,
                   "scope": "Only whole identical stock tags omitted; modified and unknown assets remain literal."}
         # Publish verified maps last, after compiler success and all hash gates.
         for tree in ("stock", "tags", "data", "maps"):
             os.rename(workspace / tree, destination / tree)
         workspace.rmdir()
         shutil.rmtree(extracted)
-        (destination / "provenance.json").write_text(json.dumps(report, indent=2) + "\n")
+        (destination / "provenance.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         return report
     except BaseException:
         shutil.rmtree(destination)
