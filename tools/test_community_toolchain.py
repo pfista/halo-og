@@ -112,6 +112,31 @@ class ToolchainTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "unbundled.*unreviewed"):
                     tools.inspect_binary(self.root / "candidate", consumer)
 
+    def test_windows_crt_is_checked_from_actual_headers_not_configure_substrings(self):
+        with patch.object(tools.subprocess, "check_output", side_effect=["x86_64-w64-mingw32\n", "#define __MSVCRT_VERSION__ 0x700\n"]):
+            self.assertEqual(tools.verify_windows_compiler(), "0x700")
+        for target, macros in (("x86_64-w64-mingw32", "#define _UCRT\n#define __MSVCRT_VERSION__ 0xE00\n"),
+                               ("x86_64-w64-mingw32", "#define __MSVCRT_VERSION__ 0x1400\n"),
+                               ("x86_64-pc-cygwin", "#define __MSVCRT_VERSION__ 0x700\n"),
+                               ("x86_64-w64-mingw32", "")):
+            with self.subTest(target=target, macros=macros), \
+                    patch.object(tools.subprocess, "check_output", side_effect=[target, macros]), \
+                    self.assertRaisesRegex(RuntimeError, "MSVCRT headers"):
+                tools.verify_windows_compiler()
+
+    def test_windows_static_runtime_notices_are_delivered_and_required(self):
+        prefix = self.root / "compiler"; output = self.root / "notices"; output.mkdir()
+        for relative in ("gcc/COPYING3", "gcc/COPYING.RUNTIME", "crt/COPYING",
+                         "crt/COPYING.MinGW-w64-runtime.txt", "crt/COPYING.MinGW-w64.txt", "libwinpthread/COPYING"):
+            path = prefix / "share/licenses" / relative
+            path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(relative.encode())
+        tools.windows_runtime_notices(prefix, output)
+        self.assertEqual(len(list(output.iterdir())), 6)
+        self.assertEqual((output / "GCC-COPYING.RUNTIME.txt").read_bytes(), b"gcc/COPYING.RUNTIME")
+        (prefix / "share/licenses/crt/COPYING").unlink()
+        with self.assertRaisesRegex(RuntimeError, "notice is missing"):
+            tools.windows_runtime_notices(prefix, output)
+
     def fixture_platform(self, consumer="linux"):
         pins = tools.read_pins()
         key = consumer + "-x86_64"

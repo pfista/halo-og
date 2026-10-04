@@ -205,6 +205,34 @@ def cmake_options(prefix, consumer, pins):
     return options
 
 
+def verify_windows_compiler():
+    # GCC's configure log can mention both CRT variants. Inspect the target's
+    # actual headers, as MinGW defines _UCRT from __MSVCRT_VERSION__.
+    target = subprocess.check_output(["gcc", "-dumpmachine"], text=True,
+                                     encoding="utf-8", errors="replace").strip()
+    macros = subprocess.check_output(["gcc", "-dM", "-E", "-x", "c", "-include", "_mingw.h", "-"],
+                                     input="", text=True, encoding="utf-8", errors="replace")
+    version = re.search(r"^#define __MSVCRT_VERSION__\s+(0x[0-9a-fA-F]+|[0-9]+)\s*$", macros, re.MULTILINE)
+    if (target != "x86_64-w64-mingw32" or not version
+            or re.search(r"^#define _UCRT\b", macros, re.MULTILINE)
+            or not 0 < int(version[1], 0) < 0xE00):
+        raise RuntimeError("Windows recipe needs native x86_64 GNU/MSVCRT headers matching Rust windows-gnu")
+    return version[1]
+
+
+def windows_runtime_notices(prefix, output):
+    # The Windows -static build also contains MinGW/GCC runtime code. Preserve
+    # its supplied notices, rather than relying only on Rust's similar notices.
+    records = {"GCC-COPYING3.txt": "gcc/COPYING3", "GCC-COPYING.RUNTIME.txt": "gcc/COPYING.RUNTIME",
+               "MinGW-CRT-COPYING.txt": "crt/COPYING", "MinGW-CRT-runtime.txt": "crt/COPYING.MinGW-w64-runtime.txt",
+               "MinGW-COPYING.txt": "crt/COPYING.MinGW-w64.txt", "Winpthreads-COPYING.txt": "libwinpthread/COPYING"}
+    for name, relative in records.items():
+        source = Path(prefix) / "share/licenses" / relative
+        if source.is_symlink() or not source.is_file() or source.stat().st_size > 16 * 1024 * 1024:
+            raise RuntimeError("Windows static-runtime notice is missing: " + relative)
+        shutil.copyfile(source, Path(output) / name)
+
+
 def collect_notices(sources, rust_bin, output):
     mac = json.loads((CONFIG / "notices.json").read_text())
     output.mkdir()
@@ -227,6 +255,8 @@ def collect_notices(sources, rust_bin, output):
             raise RuntimeError("Cargo dependency license missing")
         for path in licenses:
             shutil.copyfile(path, output / (crate.name + "-" + path.name))
+    if host_platform() == "windows-x86_64":
+        windows_runtime_notices(Path(shutil.which("gcc")).resolve().parent.parent, output)
     shutil.copyfile(CONFIG / "dependencies.cmake", output / "invader-dependencies.cmake")
     shutil.copyfile(CONFIG / "README.md", output / "README.txt")
     return {path.name: sha256(path) for path in sorted(output.iterdir())}
@@ -289,9 +319,8 @@ def build(output, source_cache=None, rust_bin=None, jobs=4):
     # this changes neither RIAT's source nor the required macOS deployment target.
     env["CARGO_PROFILE_RELEASE_STRIP"] = "none"
     if consumer == "windows":
-        compiler = subprocess.check_output(["gcc", "-v"], stderr=subprocess.STDOUT, text=True)
-        if "msvcrt" not in compiler.lower() or "ucrt" in compiler.lower():
-            raise RuntimeError("Windows recipe needs GNU/MSVCRT C++ matching the Rust windows-gnu target")
+        crt = verify_windows_compiler()
+        print("Verified Windows GNU/MSVCRT headers " + crt, flush=True)
     versions = {}
     for name, command, expected in (("rust", [str(rust_bin / "rustc"), "--version"], pins["rust_version"]),
                                     ("cmake", ["cmake", "--version"], pins["cmake_version"]),
