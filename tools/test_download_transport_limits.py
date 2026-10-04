@@ -459,6 +459,7 @@ int main(int argc,char **argv) {
     assert(halo_directory_http("GET","https://example.test/id",NULL,NULL,buffer,sizeof(buffer),&status)==-1 && !opens);
     crypto_ready=1;certificates_loaded=0;
     assert(halo_directory_http("GET","https://example.test/id",NULL,NULL,buffer,sizeof(buffer),&status)==-1 && !opens);
+    assert(progressed==0 && body_reads>0); /* Directory transfers never invoke file progress. */
     puts("PASS directory JSON methods, lease headers, status bodies, bounds, no redirects");
 }
 '''

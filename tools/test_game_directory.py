@@ -43,6 +43,15 @@ class DirectoryTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        if sys.platform == "win32":
+            # Windows keeps a loaded DLL's file locked. Release the fixture
+            # library after its last call before deleting the temporary tree.
+            from _ctypes import FreeLibrary
+            import gc
+            handle = cls.lib._handle
+            cls.lib = None
+            gc.collect()
+            FreeLibrary(handle)
         cls.temp.cleanup()
 
     def listing(self, **changes):
