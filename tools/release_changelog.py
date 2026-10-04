@@ -11,6 +11,9 @@ from urllib.parse import quote
 
 
 REPOSITORY = "pfista/halo-og"
+# One-time first-release range, selected from October 2, 2026 (America/Panama).
+# Only use this immutable commit while no recognized Halo OG release exists.
+FIRST_RELEASE_BASELINE = "6c1f1ae8b9caa4b1cd06c6d1a1fa855127b682ef"
 PAGE_SIZE = 100
 MAX_PAGES = 1000
 SEMANTIC_TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
@@ -150,7 +153,7 @@ def _commits(api, previous_sha, sha, first):
 
 
 def generate_changelog(api, repository, sha, tag):
-    """Find the closest released ancestor and return every commit since it."""
+    """Return every commit since a released ancestor or the first-release baseline."""
     if repository != REPOSITORY:
         raise RuntimeError("Release changelogs are limited to " + REPOSITORY)
     _sha(sha)
@@ -159,6 +162,15 @@ def generate_changelog(api, repository, sha, tag):
     semantic = [(name, prior) for name, prior in releases if prior is not None]
     if semantic and version <= max(prior for _, prior in semantic):
         raise RuntimeError("The new version must exceed every published semantic release")
+    if not releases:
+        previous_sha = _sha(FIRST_RELEASE_BASELINE)
+        first = _comparison(api, previous_sha, sha, 1)
+        if not _ancestor(first, previous_sha):
+            raise RuntimeError("The first-release baseline is not an ancestor of the selected source")
+        if not first["ahead_by"]:
+            raise RuntimeError("The selected source has no commits since its first-release baseline")
+        return {"previous_tag": None, "previous_sha": previous_sha,
+                "commits": _commits(api, previous_sha, sha, first)}
     highest = max(semantic, key=lambda item: item[1])[0] if semantic else None
     candidates, comparisons = [], {}
     for name, prior_version in releases:
@@ -210,7 +222,10 @@ def format_changelog(record, markdown=False):
     lines.extend("- " + _display_subject(subject, markdown) for subject in reversed(changes))
     if not changes:
         lines.append("- See the complete commit list below.")
-    lines += ["", prefix + "All commits since " + changelog["previous_tag"], ""]
+    baseline = changelog["previous_tag"]
+    if baseline is None:
+        baseline = "baseline commit " + changelog["previous_sha"][:12]
+    lines += ["", prefix + "All commits since " + baseline, ""]
     lines.extend(f"- {commit['sha'][:12]} {_display_subject(commit['subject'], markdown)}" for commit in commits)
     compare = (f"https://github.com/{record['repository']}/compare/"
                f"{changelog['previous_sha']}...{record['sha']}")

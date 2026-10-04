@@ -3,6 +3,7 @@
 import copy
 import re
 import unittest
+from unittest.mock import patch
 
 from tools import release_changelog as changelog
 
@@ -151,11 +152,77 @@ class ReleaseChangelogTests(unittest.TestCase):
         api.add("v0.3.1", sha(2), [commit(3)])
         self.assertEqual(self.generate(api, "v0.3.2")["previous_tag"], "v0.3.1")
 
-    def test_missing_baseline_and_zero_change_range_refused(self):
+    def test_first_release_uses_pinned_commit_without_claiming_a_previous_tag(self):
         api = HistoryAPI()
         api.releases = []
-        with self.assertRaisesRegex(RuntimeError, "baseline is required"):
+        api.compare(changelog.FIRST_RELEASE_BASELINE, [commit(2), commit(3)])
+        result = self.generate(api)
+        self.assertEqual(result, {"previous_tag": None, "previous_sha": changelog.FIRST_RELEASE_BASELINE,
+                                 "commits": [{"sha": sha(2), "subject": "Change 2"},
+                                             {"sha": api.head, "subject": "Change 3"}]})
+        self.assertFalse(any(path.startswith("git/") for path in api.calls))
+        record = {"repository": changelog.REPOSITORY, "sha": api.head, "tag": "v0.3.0", "changelog": result}
+        for markdown in (False, True):
+            output = changelog.format_changelog(record, markdown=markdown)
+            self.assertIn("All commits since baseline commit " + changelog.FIRST_RELEASE_BASELINE[:12], output)
+            self.assertIn(f"/compare/{changelog.FIRST_RELEASE_BASELINE}...{api.head}", output)
+            self.assertNotIn(LEGACY, output)
+
+    def test_first_release_ignores_unrecognized_unpublished_and_draft_history_and_paginates(self):
+        api = HistoryAPI(count=301)
+        api.releases = [published(f"build-{number}") for number in range(105)]
+        api.releases += [published("v9.0.0", draft=True), published("v8.0.0", date=None)]
+        api.compare(changelog.FIRST_RELEASE_BASELINE, [commit(number) for number in range(2, 303)])
+        result = self.generate(api)
+        self.assertIsNone(result["previous_tag"])
+        self.assertEqual(len(result["commits"]), 301)
+        self.assertIn("releases?per_page=100&page=2", api.calls)
+        for page in range(1, 5):
+            self.assertIn(f"compare/{changelog.FIRST_RELEASE_BASELINE}...{api.head}?per_page=100&page={page}", api.calls)
+
+    def test_first_release_refuses_invalid_unreachable_or_empty_baseline(self):
+        api = HistoryAPI()
+        api.releases = []
+        with patch.object(changelog, "FIRST_RELEASE_BASELINE", "short"), \
+                self.assertRaisesRegex(RuntimeError, "full lowercase commit SHAs"):
             self.generate(api)
+        for status, behind in (("diverged", 1), ("behind", 1)):
+            api.compare(changelog.FIRST_RELEASE_BASELINE, [commit(2), commit(3)], status=status, behind=behind)
+            with self.subTest(status=status), self.assertRaisesRegex(RuntimeError, "first-release baseline is not an ancestor"):
+                self.generate(api)
+        api.head = changelog.FIRST_RELEASE_BASELINE
+        api.compare(api.head, [], status="identical")
+        with self.assertRaisesRegex(RuntimeError, "no commits"):
+            self.generate(api)
+
+    def test_first_release_comparison_integrity_guards_are_not_bypassed(self):
+        api = HistoryAPI(count=101)
+        api.releases = []
+        api.compare(changelog.FIRST_RELEASE_BASELINE, [commit(number) for number in range(2, 103)])
+        api.overrides[(changelog.FIRST_RELEASE_BASELINE, 2)] = {"total_commits": 102}
+        with self.assertRaisesRegex(RuntimeError, "changed during pagination"):
+            self.generate(api)
+        api = HistoryAPI()
+        api.releases = []
+        api.compare(changelog.FIRST_RELEASE_BASELINE, [commit(2), commit(99)])
+        with self.assertRaisesRegex(RuntimeError, "omits the selected source"):
+            self.generate(api)
+        api.comparisons[changelog.FIRST_RELEASE_BASELINE]["base_commit"] = {"sha": sha(99)}
+        with self.assertRaisesRegex(RuntimeError, "does not match"):
+            self.generate(api)
+
+    def test_published_legacy_or_semantic_release_never_uses_first_release_fallback(self):
+        for tag in (LEGACY, "v0.2.9"):
+            api = HistoryAPI()
+            api.releases = [published(tag)]
+            api.refs[tag] = {"sha": sha(1), "type": "commit"}
+            with self.subTest(tag=tag), patch.object(changelog, "FIRST_RELEASE_BASELINE", "invalid"):
+                self.assertEqual(self.generate(api)["previous_tag"], tag)
+                api.comparisons[sha(1)].update(status="diverged", behind_by=1)
+                with self.assertRaises(RuntimeError):
+                    self.generate(api)
+
+    def test_unreachable_releases_and_zero_change_range_refused(self):
         api = HistoryAPI()
         api.refs[LEGACY] = {"sha": api.head, "type": "commit"}
         api.compare(api.head, [], status="identical")

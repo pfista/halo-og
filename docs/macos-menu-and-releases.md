@@ -78,6 +78,12 @@ History comes from GitHub's published Halo OG releases, including legacy
 `test-v...` releases for the first version-only tag. The nearest ancestor is
 selected regardless of publication order; upstream build/launcher and content
 tool tags are excluded. New version-only releases must increase the version.
+When no recognized published Halo OG release exists, the first release uses
+the pinned October 2, 2026 baseline commit
+`6c1f1ae8b9caa4b1cd06c6d1a1fa855127b682ef` (17:12 America/Panama).
+The notes label it as a baseline commit, not a previous release tag. This
+one-time fallback requires the same strict ancestry and complete comparison;
+after a recognized release is published, normal release history always wins.
 Highlights use up to five recent non-merge commit subjects; the complete list
 includes merges and every commit in the range. Publication rechecks that history.
 Notes must fit the 16 KiB limit in existing desktop clients; oversized complete

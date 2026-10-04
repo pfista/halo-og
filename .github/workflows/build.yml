@@ -78,6 +78,7 @@ jobs:
           tools.test_desktop_first_run tools.test_release_discovery
           tools.test_download_transport_limits tools.test_desktop_map_downloads tools.test_game_directory
           tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail
+          tools.test_input_delay
 
       - name: Compile cache
         run: ccache --show-stats
@@ -218,6 +219,7 @@ jobs:
           tools.test_desktop_first_run tools.test_release_discovery
           tools.test_download_transport_limits tools.test_desktop_map_downloads tools.test_game_directory
           tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail
+          tools.test_input_delay
 
       - name: Compile cache
         run: ccache --show-stats

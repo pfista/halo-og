@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from tools import ci_build, testing_release as release
+from tools import ci_build, release_changelog, testing_release as release
 
 
 SHA = "a" * 40
@@ -178,6 +178,24 @@ class TestingReleaseTests(unittest.TestCase):
         self.assertIn(CHANGELOG["previous_tag"], annotation)
         self.assertIn(f'/compare/{CHANGELOG["previous_sha"]}...{SHA}', notes)
         self.assertEqual(notes.count("https://github.com/pfista/halo-og/commit/"), 1)
+
+    def test_first_release_baseline_is_honest_and_rechecked_before_publication(self):
+        first = {**CHANGELOG, "previous_tag": None,
+                 "previous_sha": release_changelog.FIRST_RELEASE_BASELINE}
+        self.changelog.side_effect = lambda *args: copy.deepcopy(first)
+        record = self.prepare()
+        self.assertIsNone(record["changelog"]["previous_tag"])
+        self.assertEqual(release.verify_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory), record)
+        for text in (release.release_notes(record), release.tag_message(record)):
+            self.assertIn("All commits since baseline commit " + first["previous_sha"][:12], text)
+            self.assertIn(f'/compare/{first["previous_sha"]}...{SHA}', text)
+            self.assertNotIn(CHANGELOG["previous_tag"], text)
+        # Another published release must replace the fallback, invalidating this candidate.
+        self.changelog.side_effect = lambda *args: copy.deepcopy(CHANGELOG)
+        with patch.object(release.subprocess, "run") as publish, self.assertRaisesRegex(RuntimeError, "previous release"):
+            release.publish_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
+        self.assertEqual(self.api.posts, [])
+        publish.assert_not_called()
 
     def test_publication_creates_annotation_then_ref_and_versioned_release(self):
         record = self.prepare()

@@ -31,11 +31,11 @@ were diff-reviewed and remain unintegrated; their runtime behavior is unvalidate
 | `fd3d62f9602870b209b8e0e5cd38d9f90ced6029` | Defer name/ban policy; broader keyboard/profile changes need separate review. |
 | `d1c7243cb20eab4488efa1266e259b1f4d5240f6` | Adopt ping protocol only; retain original scoreboard. Integrated as `ea4dec3c`; protocol fixtures cover layout, roles and malformed/stale packets. |
 | `80d30410c8db28f4008b92f4e012a1b046ece14e` | Defer Intel/Mesa memory barriers pending GPU comparison and configuration review. |
-| `c9ee319ab5f2964a32372fffdc7756111e39727d` | Adopt v11 wire record, original defaults, advertisement metadata and received action-only input. Exclude PC menus, added modes, bindings/save format and associated dependencies. Integrated as `694cc79d`; network fixtures cover wire layout and admission before precache. |
+| `c9ee319ab5f2964a32372fffdc7756111e39727d` | Adopt v11 wire record, original defaults, advertisement metadata and received action-only input. Exclude PC menus, added modes, bindings/save format and associated dependencies. Integrated as `694cc79d`; network fixtures cover wire layout and admission before precache. The client-only host-team attachment correction was selected separately on October 4 and integrated as `6de3e8d221208e85c9340a8b58c70ddcddcbe044`; production-function fixtures cover both teams, invalid team values and free-for-all. The upstream host rebalance algorithm remains unintegrated. |
 | `2b0103a0ef2f46f3713d7e045436c5283668f9a6`, `383355381c3f92ae8ce6c9c79cbe84924856aa2f` | Exclude expanded score menus. |
 | `e8e0c2215ab6871bbe6f855f67b3459d94817b35` | Defer compiler include-path changes required only by the excluded PC menus. |
 | `62b630a2610e7c0df88ffa43d6f03914cb35345e` | Exclude new weapon/loadout policy. |
-| `23b542601f2ca505c7a0143703e92fbda6075e18` | Exclude altered infinite-grenade and unarmed-loadout rules; retain existing Xbox behavior and mixed-build admission gates. |
+| `23b542601f2ca505c7a0143703e92fbda6075e18` | Exclude altered infinite-grenade and unarmed-loadout rules; retain existing Xbox behavior. October 4 compatibility changes deliberately remove the v11 gametype-options gate for best-effort mixed-host tests; protocol, PB capability, packet and map checks remain enforced. This admission change does not implement the excluded rules. |
 
 Prioritize verified matching corrections, correctness, stability, performance
 and renderer/platform fixes that preserve the baseline. Assess netcode for
@@ -59,21 +59,37 @@ server browser UI is not adopted.
 
 Protocol 11 retains host authority and 30 Hz simulation. Its 28-byte PC options
 record does not introduce a new prediction or transport algorithm. Halo OG
-hosts original-rule defaults and rejects active PC options it does not implement
-before applying settings or loading maps. Use matching builds and maps.
+hosts original-rule defaults. At the user's request, the October 4 compatibility
+changes admit differing v11 gametype options for best-effort live testing,
+including options with unimplemented local behavior. The diagnostic helper
+still classifies unsupported options, but no longer controls admission. Host
+time limits and other authoritative state can be replicated, while radar,
+initial vehicle placement, custom loadouts and weapon rules may still differ.
+This is not a claim of supported mixed-host gameplay. See
+[host settings compatibility](host-time-limit-compatibility.md).
+
+Protocol/version and PB capability checks, packet reassembly, machine/player
+counts, difficulty, map-name and map compatibility checks remain enforced
+before the received settings can change state or start precaching. Use matching
+Halo OG builds and map revisions for the baseline playtest.
 
 PB capability flag `0x04` is separate from the in-progress flag `0x02`.
 Options-off games advertise stock v11; enabled PB games advertise `0x800B` and
-require supporting peers. v10/PB-v10 builds must update. Mixed upstream/fork
-games with five or more players must leave Infinite Grenades off.
+require supporting peers. Input Delay: 33ms also requires peers that confirm
+the delay capability; older PB builds cannot join an enabled-delay match.
+v10/PB-v10 builds must update. For mixed cybersecurity tests, leave PB Options
+Stock and Input Delay Off. Games with five or more players should leave
+Infinite Grenades off because the native Xbox rule still differs even though
+the best-effort gate admits that setting.
 See [networking](../port/linux/NETCODE.md), [PB Options](performance-options.md)
 and [playtesting](playtesting.md) for implementation and player guidance.
 
 ## Optional competitive features
 
 PB Options permits host-selected match timers, timer announcements, spawn
-markers and silent movement/weapon-ready sounds. All modifications default off;
-sounds default Normal. Timer audio/display preferences are local. These limited
+markers, silent movement/weapon-ready sounds and fixed 33ms input delay.
+All modifications default off; sounds default Normal. Timer audio/display
+preferences are local. These limited
 options do not authorize other Performance Build mechanics, weapon changes or
 a different tick rate. Original PC v7 caches remain unsupported.
 
