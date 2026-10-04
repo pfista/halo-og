@@ -288,7 +288,7 @@ def inspect_binary(binary, consumer):
         raise RuntimeError("Linux content helper must be native x86_64")
     text = subprocess.check_output(["readelf", "-d", str(binary)], text=True, encoding="utf-8", errors="replace")
     libraries = re.findall(r"Shared library: \[([^]]+)\]", text)
-    allowed = {"libc.so.6", "libm.so.6", "libstdc++.so.6", "libgcc_s.so.1", "libpthread.so.0", "libdl.so.2", "librt.so.1", "libutil.so.1"}
+    allowed = {"libc.so.6", "libm.so.6", "libstdc++.so.6", "libgcc_s.so.1", "libpthread.so.0", "libdl.so.2", "librt.so.1", "libutil.so.1", "ld-linux-x86-64.so.2"}
     if not libraries or any(name not in allowed for name in libraries):
         raise RuntimeError("Linux helper requires an unbundled non-system library: " + ", ".join(libraries))
     return libraries, "ubuntu-24.04-build-host"

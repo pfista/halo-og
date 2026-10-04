@@ -112,6 +112,16 @@ class ToolchainTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "unbundled.*unreviewed"):
                     tools.inspect_binary(self.root / "candidate", consumer)
 
+    def test_linux_system_loader_allowed_but_dynamic_zlib_still_refused(self):
+        imports = "\n".join("Shared library: [" + name + "]" for name in
+                            ("libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld-linux-x86-64.so.2"))
+        with patch.object(tools.subprocess, "check_output", side_effect=["Advanced Micro Devices X86-64", imports]):
+            libraries, _ = tools.inspect_binary(self.root / "candidate", "linux")
+        self.assertIn("ld-linux-x86-64.so.2", libraries)
+        with patch.object(tools.subprocess, "check_output", side_effect=["Advanced Micro Devices X86-64", imports + "\nShared library: [libz.so.1]"]), \
+                self.assertRaisesRegex(RuntimeError, "unbundled.*libz.so.1"):
+            tools.inspect_binary(self.root / "candidate", "linux")
+
     def test_windows_crt_is_checked_from_actual_headers_not_configure_substrings(self):
         with patch.object(tools.subprocess, "check_output", side_effect=["x86_64-w64-mingw32\n", "#define __MSVCRT_VERSION__ 0x700\n"]):
             self.assertEqual(tools.verify_windows_compiler(), "0x700")
