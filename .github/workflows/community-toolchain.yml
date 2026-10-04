@@ -6,6 +6,9 @@ on:
       - '.github/workflows/community-toolchain.yml'
       - 'tools/community_toolchain.py'
       - 'tools/test_community_toolchain.py'
+      - 'tools/community_tools_download.py'
+      - 'tools/test_community_tools_download.py'
+      - 'tools/test_content_tools_build_integration.py'
       - 'tools/community-toolchain/**'
       - 'tools/macos_content_tools.py'
       - 'tools/test_macos_content_tools.py'
@@ -15,6 +18,9 @@ on:
       - '.github/workflows/community-toolchain.yml'
       - 'tools/community_toolchain.py'
       - 'tools/test_community_toolchain.py'
+      - 'tools/community_tools_download.py'
+      - 'tools/test_community_tools_download.py'
+      - 'tools/test_content_tools_build_integration.py'
       - 'tools/community-toolchain/**'
       - 'tools/macos_content_tools.py'
       - 'tools/test_macos_content_tools.py'
@@ -65,7 +71,7 @@ jobs:
           rustup toolchain install 1.95.0 --profile default --target "${{ matrix.rust }}"
           rustup default 1.95.0
       - name: Test source and packaging boundaries
-        run: python -m unittest -v tools.test_community_toolchain tools.test_macos_content_tools
+        run: python -m unittest -v tools.test_community_toolchain tools.test_macos_content_tools tools.test_community_tools_download tools.test_content_tools_build_integration
       - name: Build two native helpers and corresponding source
         run: python -m tools.community_toolchain --output build/content-tools-${{ matrix.platform }}
       - name: Upload review candidate only

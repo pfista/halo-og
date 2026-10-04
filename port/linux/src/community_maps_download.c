@@ -1,6 +1,5 @@
-/* Desktop full-map prefetch. Compiled with the host ABI, like posix_update.c;
-   only scalar declarations cross into the game. Mac/Android use their own UI.
-   This downloads complete Xbox caches, not stripped community packages. */
+/* Desktop whole-tag package prefetch and local exact-cache reconstruction.
+   Host ABI, like posix_update.c. Mac/Android use their own integration. */
 #include "community_maps_download.h"
 
 #if defined(HALO_ANDROID) || defined(HALO_MACOS)
@@ -9,6 +8,7 @@ void community_maps_download_start(void) {}
 
 #include "port_config.h"
 #include "update.h"
+#include "community_packages.h"
 #include <SDL3/SDL.h>
 #include <ctype.h>
 #include <errno.h>
@@ -36,12 +36,13 @@ extern void platform_log(const char *format, ...);
 #define NTSC_BUILD "01.10.12.2276"
 #define MAX_CATALOG_BYTES (1024u * 1024u)
 #define MAX_MAP_BYTES (128u * 1024u * 1024u)
+#define MAX_PACKAGE_BYTES (256u * 1024u * 1024u)
 #define MAX_TAG_BYTES (22u * 1024u * 1024u)
 #define MAX_MAPS 115
-#define MAX_BATCH_BYTES (2ULL * 1024 * 1024 * 1024)
+#define MAX_BATCH_BYTES (4ULL * 1024 * 1024 * 1024)
 #define PATH_BYTES 1024
 
-struct map_entry { char id[32], sha256[65], object_key[128]; unsigned long long bytes; };
+struct map_entry { char id[32], sha256[65], package_sha256[65], object_key[160]; unsigned long long bytes, package_bytes; };
 struct catalog { struct map_entry entries[MAX_MAPS]; unsigned count; };
 struct json { const unsigned char *p, *end; };
 static SDL_AtomicInt started;
@@ -116,7 +117,7 @@ static int json_boolean(struct json *j)
 static int map_object(struct json *j, struct map_entry *entry)
 {
     unsigned fields = 0;
-    char key[32], value[128], expected[128];
+    char key[32], value[128], expected[160];
     unsigned long long number;
     memset(entry, 0, sizeof(*entry));
     if (!token(j, '{')) return 0;
@@ -131,16 +132,19 @@ static int map_object(struct json *j, struct map_entry *entry)
         else if (!strcmp(key, "cache_version")) { bit = 32; if (!integer(j, &number) || number != 5) return 0; }
         else if (!strcmp(key, "scenario_type")) { bit = 64; if (!integer(j, &number) || number != 1) return 0; }
         else if (!strcmp(key, "prefetch")) { bit = 128; if (!json_boolean(j)) return 0; }
+        else if (!strcmp(key, "package_sha256")) { bit = 256; if (!string(j, entry->package_sha256, sizeof(entry->package_sha256))) return 0; }
+        else if (!strcmp(key, "package_bytes")) { bit = 512; if (!integer(j, &entry->package_bytes) || entry->package_bytes < 54 || entry->package_bytes > MAX_PACKAGE_BYTES) return 0; }
         else return 0;
         if (fields & bit) return 0;
         fields |= bit;
         if (token(j, '}')) break;
         if (!token(j, ',')) return 0;
     }
-    if ((fields & 127) != 127 || !safe_id(entry->id) || strlen(entry->sha256) != 64) return 0;
+    if (fields != 1023 || !safe_id(entry->id) || strchr(entry->id, ' ') || strlen(entry->sha256) != 64 || strlen(entry->package_sha256) != 64) return 0;
     for (unsigned i = 0; i < 64; i++)
-        if (!((entry->sha256[i] >= '0' && entry->sha256[i] <= '9') || (entry->sha256[i] >= 'a' && entry->sha256[i] <= 'f'))) return 0;
-    snprintf(expected, sizeof(expected), "maps/sha256/%s/%s.map", entry->sha256, entry->id);
+        if (!((entry->sha256[i] >= '0' && entry->sha256[i] <= '9') || (entry->sha256[i] >= 'a' && entry->sha256[i] <= 'f')) ||
+            !((entry->package_sha256[i] >= '0' && entry->package_sha256[i] <= '9') || (entry->package_sha256[i] >= 'a' && entry->package_sha256[i] <= 'f'))) return 0;
+    snprintf(expected, sizeof(expected), "packages/sha256/%s/%s.mapog", entry->package_sha256, entry->id);
     return !strcmp(expected, entry->object_key);
 }
 static int parse_catalog(const unsigned char *data, size_t size, struct catalog *catalog)
@@ -154,7 +158,7 @@ static int parse_catalog(const unsigned char *data, size_t size, struct catalog 
     for (;;) {
         unsigned bit;
         if (!string(&j, key, sizeof(key)) || !token(&j, ':')) return 0;
-        if (!strcmp(key, "schema_version")) { bit = 1; if (!integer(&j, &number) || number != 1) return 0; }
+        if (!strcmp(key, "schema_version")) { bit = 1; if (!integer(&j, &number) || number != 2) return 0; }
         else if (!strcmp(key, "profile")) { bit = 2; if (!string(&j, value, sizeof(value)) || strcmp(value, "stock-xbox-ntsc")) return 0; }
         else if (!strcmp(key, "maps")) {
             bit = 4;
@@ -165,7 +169,7 @@ static int parse_catalog(const unsigned char *data, size_t size, struct catalog 
                 entry = &catalog->entries[catalog->count];
                 if (!map_object(&j, entry)) return 0;
                 for (unsigned i = 0; i < catalog->count; i++) if (!strcmp(catalog->entries[i].id, entry->id)) return 0;
-                if ((total += entry->bytes) > MAX_BATCH_BYTES) return 0;
+                if ((total += entry->package_bytes) > MAX_BATCH_BYTES) return 0;
                 catalog->count++;
                 if (token(&j, ']')) break;
                 if (!token(&j, ',')) return 0;
@@ -248,13 +252,6 @@ static int sync_file(const char *path)
     if (file == BAD_FILE) return 0;
     result = FlushFileBuffers(file); CloseHandle(file); return result;
 }
-static int publish_file(const char *source, const char *target)
-{
-    wchar_t wide_source[PATH_BYTES], wide_target[PATH_BYTES];
-    /* Same-volume rename works on FAT/exFAT too. No REPLACE_EXISTING flag:
-       a racing target always wins, even an exact matching file. */
-    return wide_path(source, wide_source) && wide_path(target, wide_target) && MoveFileExW(wide_source, wide_target, 0);
-}
 #else
 typedef int file_handle;
 #define BAD_FILE -1
@@ -285,7 +282,6 @@ static int sync_file(const char *path)
     result = !fstat(file, &info) && S_ISREG(info.st_mode) && fsync(file) == 0;
     close(file); return result;
 }
-static int publish_file(const char *source, const char *target) { return link(source, target) == 0; }
 #endif
 
 /* Existing directories may use the Xbox's case-insensitive spelling. Reject
@@ -373,7 +369,7 @@ static int stock_profile(const char *maps)
     return 1;
 }
 
-static int verify_map(const char *path, const struct map_entry *entry)
+static int verify_bytes(const char *path, unsigned long long expected_bytes, const char *expected_sha, const struct map_entry *map)
 {
     unsigned char bytes[65536], digest[32]; char hex[65]; unsigned long long size, received = 0;
     file_handle file = read_open(path); int okay = 0, count;
@@ -387,11 +383,12 @@ static int verify_map(const char *path, const struct map_entry *entry)
     if (file == BAD_FILE) { mbedtls_sha256_free(&hash); return 0; }
     if (mbedtls_sha256_starts(&hash, 0)) goto done;
 #endif
-    if (!file_size(file, &size) || size != entry->bytes) goto done;
-    count = read_bytes(file, bytes, 2048);
-    if (count != 2048 || !valid_header(bytes, entry->id, 1, 1)) goto done;
+    if (!file_size(file, &size) || size != expected_bytes) goto done;
+    count = read_bytes(file, bytes, sizeof(bytes));
+    if (map && (count < 2048 || !valid_header(bytes, map->id, 1, 1))) goto done;
+    if (!map && (count < 8 || memcmp(bytes, "HOGMAP2\n", 8))) goto done;
     for (;;) {
-        if (count < 0 || (received += (unsigned)count) > entry->bytes) goto done;
+        if (count < 0 || (received += (unsigned)count) > expected_bytes) goto done;
 #ifdef _WIN32
         if (BCryptHashData(hash, bytes, (ULONG)count, 0) < 0) goto done;
 #else
@@ -400,14 +397,14 @@ static int verify_map(const char *path, const struct map_entry *entry)
         count = read_bytes(file, bytes, sizeof(bytes));
         if (!count) break;
     }
-    if (received != entry->bytes || !file_size(file, &size) || size != received) goto done;
+    if (received != expected_bytes || !file_size(file, &size) || size != received) goto done;
 #ifdef _WIN32
     if (BCryptFinishHash(hash, digest, sizeof(digest), 0) < 0) goto done;
 #else
     if (mbedtls_sha256_finish(&hash, digest)) goto done;
 #endif
     for (unsigned i = 0; i < sizeof(digest); i++) snprintf(hex + i * 2, 3, "%02x", digest[i]);
-    okay = !strcmp(hex, entry->sha256);
+    okay = !strcmp(hex, expected_sha);
 done:
 #ifdef _WIN32
     if (hash) BCryptDestroyHash(hash); if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
@@ -416,6 +413,10 @@ done:
 #endif
     file_close(file); return okay;
 }
+static int verify_map(const char *path, const struct map_entry *entry)
+{ return verify_bytes(path, entry->bytes, entry->sha256, entry); }
+static void assembly_progress(void *context, const char *message)
+{ platform_log("community maps: %s: %s", (const char *)context, message); }
 static void map_progress(void *context, unsigned long long received, unsigned long long total)
 {
     unsigned *last = context; unsigned percent = total ? (unsigned)(received * 100 / total) : 0;
@@ -435,7 +436,7 @@ static int object_url(char *out, size_t capacity, const char *key)
 }
 static int prefetch(void *unused)
 {
-    char maps[PATH_BYTES], partial[PATH_BYTES], catalog_path[PATH_BYTES] = "", map_partial[PATH_BYTES] = "", error[256] = "";
+    char maps[PATH_BYTES], partial[PATH_BYTES], tools[PATH_BYTES], record[PATH_BYTES], catalog_path[PATH_BYTES] = "", map_partial[PATH_BYTES] = "", error[256] = "";
     struct catalog *catalog = NULL; unsigned char *data = NULL;
     unsigned completed = 0, preserved = 0, failed = 0; unsigned long long size;
     file_handle file = BAD_FILE; int own_partial = 0;
@@ -453,7 +454,12 @@ static int prefetch(void *unused)
         !join_path(map_partial, sizeof(map_partial), partial, "map.partial")) {
         platform_log("community maps: cannot create private temporary download directory"); goto done;
     }
-    platform_log("community maps: auto_download=true; checking %s (full caches, up to 2 GiB; original files preserved)", CATALOG_URL);
+    const char *base = SDL_GetBasePath();
+    if (!base || !join_path(tools, sizeof(tools), base, "content-tools") || !join_path(record, sizeof(record), tools, "ContentTools.json") ||
+        !real_directory_chain(tools) || path_kind(record) != 1) {
+        platform_log("community maps: fixed local content-tools/ContentTools.json is unavailable; no package download"); goto done;
+    }
+    platform_log("community maps: auto_download=true; checking %s (whole-tag packages, up to 4 GiB; original files preserved)", CATALOG_URL);
     if (!update_download_limited(CATALOG_URL, catalog_path, MAX_CATALOG_BYTES, NULL, NULL, error, sizeof(error))) {
         platform_log("community maps: catalog download failed: %s", error); goto done;
     }
@@ -485,22 +491,26 @@ static int prefetch(void *unused)
         /* Never reuse an abandoned temporary file. Only our private directory
            is cleaned; no data/stock/user file is passed to the transport. */
         remove_file(map_partial);
-        platform_log("community maps: downloading %s (%u/%u, %llu bytes)", entry->id, i + 1, catalog->count, entry->bytes);
-        if (!update_download_limited(url, map_partial, entry->bytes, map_progress, &last, error, sizeof(error))) {
+        platform_log("community maps: downloading package %s (%u/%u, %llu bytes)", entry->id, i + 1, catalog->count, entry->package_bytes);
+        if (!update_download_limited(url, map_partial, entry->package_bytes, map_progress, &last, error, sizeof(error))) {
             failed++; platform_log("community maps: %s download failed: %s", entry->id, error); continue;
         }
-        if (!verify_map(map_partial, entry) || !sync_file(map_partial)) {
-            failed++; platform_log("community maps: %s failed exact size/SHA-256/Xbox compatibility verification", entry->id); continue;
+        struct community_package_info info;
+        if (!verify_bytes(map_partial, entry->package_bytes, entry->package_sha256, NULL) || !sync_file(map_partial) ||
+            community_package_inspect(map_partial, &info, error, sizeof(error)) < 0 || info.package_bytes != entry->package_bytes || strcmp(info.id, entry->id) ||
+            strcmp(info.map_sha256, entry->sha256) || info.map_bytes != entry->bytes) {
+            failed++; platform_log("community maps: %s failed exact package size/SHA-256/schema/output identity verification", entry->id); continue;
         }
         /* Recheck case aliases immediately before exclusive publication. A
            racing exact-name file also wins: publication never replaces it. */
         existing = find_child(maps, name, target, sizeof(target));
-        if (existing || !join_path(target, sizeof(target), maps, name) || !publish_file(map_partial, target)) {
+        if (existing || !join_path(target, sizeof(target), maps, name) ||
+            community_package_reconstruct(map_partial, maps, tools, record, partial, target, assembly_progress, (void *)entry->id, error, sizeof(error)) < 0) {
             char raced[PATH_BYTES]; int race = find_child(maps, name, raced, sizeof(raced));
             if (race == 1 && verify_map(raced, entry)) completed++;
             else if (race == 1) { preserved++; platform_log("community maps: %s destination changed; existing content preserved", entry->id); }
-            else { failed++; platform_log("community maps: %s could not be published safely; no existing verified destination", entry->id); }
-        } else { completed++; platform_log("community maps: %s verified and published", entry->id); }
+            else { failed++; platform_log("community maps: %s could not be reconstructed/published safely: %s", entry->id, error); }
+        } else { completed++; platform_log("community maps: %s reconstructed, verified and published", entry->id); }
     }
     platform_log("community maps: finished; %u verified, %u existing files preserved, %u failed. Restart Halo OG to discover new maps.", completed, preserved, failed);
     goto done;

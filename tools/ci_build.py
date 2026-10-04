@@ -24,6 +24,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from tools.community_toolchain import stage_desktop_content_tools
+from tools.community_tools_download import fetch_content_tools
 
 # what each port's build leaves, and what goes into dist/
 OUTPUTS = {
@@ -59,11 +62,31 @@ def android_install_build_number(environment):
     return "0"
 
 
+def resolve_content_tools(platform, config, explicit=None, without=False):
+    if platform == "android":
+        if explicit is not None:
+            raise RuntimeError("Native content helpers are available only for desktop builds")
+        return None
+    if without:
+        return None
+    if explicit is not None:
+        return explicit
+    if config == "release":
+        return fetch_content_tools(platform + "-x86_64")
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("platform", choices=sorted(OUTPUTS))
     parser.add_argument("config", choices=["debug", "release"])
+    helpers = parser.add_mutually_exclusive_group()
+    helpers.add_argument("--content-tools", type=Path, metavar="TOOLCHAIN_DIRECTORY",
+                         help="Stage an explicitly supplied independently reviewed desktop toolchain")
+    helpers.add_argument("--without-content-tools", action="store_true",
+                         help="Development/bootstrap build without community reconstruction helpers")
     args = parser.parse_args()
+    content_tools = resolve_content_tools(args.platform, args.config, args.content_tools, args.without_content_tools)
 
     configure = [sys.executable, "configure.py", "--portable"]
     if args.config == "release":
@@ -110,6 +133,10 @@ def main() -> int:
     # internet play's UPnP (port/third_party/miniupnpc), in every build,
     # whose BSD license asks binaries to carry its notice
     shutil.copy2(ROOT / "port/third_party/miniupnpc/LICENSE", dist / "miniupnpc-LICENSE.txt")
+    if args.platform in ("linux", "windows"):
+        shutil.copy2(ROOT / "port/third_party/miniz/LICENSE", dist / "miniz-LICENSE.txt")
+        if content_tools is not None:
+            stage_desktop_content_tools(dist / "content-tools", content_tools)
     return 0
 
 

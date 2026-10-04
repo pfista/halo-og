@@ -424,8 +424,8 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
         posix_cflags = " ".join(POSIX_FLAGS + [march_flag(sln), f"-I{platform_dir}"])
         mbedtls_include = f"-I{MBEDTLS_DIR / 'include'}"
         for source in sorted(platform_dir.glob("*.c")):
-            if source.name in ("posix_update.c", "community_maps_download.c"):
-                add_object(source, f"{posix_cflags} {mbedtls_include}", posix=True)
+            if source.name in ("posix_update.c", "community_maps_download.c", "community_packages.c", "community_mapog.c"):
+                add_object(source, f"{posix_cflags} {mbedtls_include} -Iport/third_party/miniz", posix=True)
             elif source.name == "posix_upnp.c":
                 add_object(source, f"{posix_cflags} -I{MINIUPNPC_DIR / 'include'} -DMINIUPNP_STATICLIB", posix=True)
             elif source.name.startswith("posix_"):
@@ -436,6 +436,7 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
                 add_object(source, platform_cflags)
         for source in embedded_assets:
             add_object(source, platform_cflags)
+        add_object(Path("port/third_party/miniz/tinfl_only.c"), f"{posix_cflags} -Iport/third_party/miniz", posix=True)
         # the self-updater's TLS (port/third_party/mbedtls), with the host's
         # ABI as the posix_*.c that use it (and no loop turned into glibc's
         # wcslen, which linux_link_check.py rejects: the game's wchar_t is

@@ -1,4 +1,6 @@
 #import "HaloMapDownloads.h"
+#import "HaloMapPackages.h"
+#include <CoreFoundation/CoreFoundation.h>
 #include <CommonCrypto/CommonDigest.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -22,9 +24,23 @@ static BOOL allowedURL(NSURL *url, NSDictionary *config) {
     return NO;
 }
 static BOOL numberInRange(id value, unsigned long long maximum) {
-    return [value isKindOfClass:NSNumber.class] && strcmp([value objCType], @encode(BOOL)) &&
+    return [value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID() &&
+        [value objCType][0] && ![value objCType][1] && strchr("cCsSiIlLqQ", [value objCType][0]) &&
         [value doubleValue] >= 1 && [value doubleValue] <= maximum &&
         [value doubleValue] == [value unsignedLongLongValue];
+}
+static BOOL numberEquals(id value, unsigned long long expected) {
+    return numberInRange(value, expected) && [value unsignedLongLongValue] == expected;
+}
+static NSData *boundedRegularData(NSURL *url, NSUInteger maximum) {
+    int fd = open(url.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    struct stat info;
+    if (fd < 0) return nil;
+    BOOL bounded = !fstat(fd, &info) && S_ISREG(info.st_mode) && info.st_size > 0 && (uint64_t)info.st_size <= maximum;
+    NSFileHandle *file = [[NSFileHandle alloc] initWithFileDescriptor:fd closeOnDealloc:YES];
+    NSData *bytes = bounded ? [file readDataUpToLength:maximum + 1 error:nil] : nil;
+    [file closeFile];
+    return bounded && bytes.length == (NSUInteger)info.st_size ? bytes : nil;
 }
 static BOOL mapNameIsValid(NSString *name) {
     if (![name isKindOfClass:NSString.class] || name.length < 1 || name.length > 31) return NO;
@@ -41,10 +57,11 @@ static BOOL hashIsValid(id hash) {
         [hash rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"].invertedSet].location == NSNotFound;
 }
 BOOL HaloDownloadConfigurationIsValid(NSDictionary *config) {
-    if (![config isKindOfClass:NSDictionary.class] || ![config[@"schema_version"] isEqual:@1] ||
+    if (![config isKindOfClass:NSDictionary.class] || !numberEquals(config[@"schema_version"], 1) ||
         ![config[@"profile"] isEqual:@"stock-xbox-ntsc"] || ![config[@"cache_build"] isEqual:@"01.10.12.2276"] ||
         ![config[@"allowed_origins"] isKindOfClass:NSArray.class] ||
         !numberInRange(config[@"max_catalog_bytes"], 1048576) || !numberInRange(config[@"max_map_bytes"], 134217728) ||
+        !numberInRange(config[@"max_package_bytes"], 268435456) ||
         !numberInRange(config[@"max_cache_bytes"], 134217728) || !numberInRange(config[@"max_tag_bytes"], 23068672) ||
         !numberInRange(config[@"max_maps"], 115)) return NO;
     id catalog = config[@"catalog_url"], base = config[@"objects_base_url"];
@@ -58,25 +75,37 @@ NSDictionary *HaloValidateMapCatalog(NSData *data, NSDictionary *config, NSError
         if (error) *error = downloadError(@"The map catalog exceeds this build's limits.");
         return nil;
     }
-    id catalog = [NSJSONSerialization JSONObjectWithData:data options:0 error:error];
-    if (![catalog isKindOfClass:NSDictionary.class] || ![catalog[@"schema_version"] isEqual:@1] ||
+    id catalog = HaloParseStrictContentJSON(data, error);
+    if (![catalog isKindOfClass:NSDictionary.class] || [catalog count] != 3 || !numberEquals(catalog[@"schema_version"], 2) ||
         ![catalog[@"profile"] isEqual:config[@"profile"]] || ![catalog[@"maps"] isKindOfClass:NSArray.class] ||
         [catalog[@"maps"] count] > [config[@"max_maps"] unsignedIntegerValue]) {
         if (error) *error = downloadError(@"The map catalog is incompatible with this build.");
         return nil;
     }
     NSMutableDictionary *entries = [NSMutableDictionary dictionary];
+    unsigned long long totalBytes = 0;
     for (id entry in catalog[@"maps"]) {
         NSString *name = [entry isKindOfClass:NSDictionary.class] ? entry[@"id"] : nil;
-        BOOL valid = mapNameIsValid(name) && [name isEqual:name.lowercaseString] && hashIsValid(entry[@"sha256"]) && !entries[name.lowercaseString] &&
+        NSSet *fields = [NSSet setWithArray:@[@"id",@"sha256",@"file_bytes",@"cache_version",@"cache_build",@"scenario_type",@"object_key",@"prefetch",@"package_sha256",@"package_bytes"]];
+        NSCharacterSet *idCharacters = [NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyz0123456789_-"];
+        BOOL valid = mapNameIsValid(name) && [name rangeOfCharacterFromSet:idCharacters.invertedSet].location == NSNotFound &&
+            [[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyz0123456789"] characterIsMember:[name characterAtIndex:0]] &&
+            [[NSSet setWithArray:[entry allKeys]] isEqual:fields] && [name isEqual:name.lowercaseString] &&
+            hashIsValid(entry[@"sha256"]) && hashIsValid(entry[@"package_sha256"]) && !entries[name.lowercaseString] &&
+            numberInRange(entry[@"package_bytes"], [config[@"max_package_bytes"] unsignedLongLongValue]) &&
+            [entry[@"package_bytes"] unsignedLongLongValue] >= 56 &&
             numberInRange(entry[@"file_bytes"], [config[@"max_map_bytes"] unsignedLongLongValue]) &&
-            [entry[@"file_bytes"] unsignedLongLongValue] >= 2048 && [entry[@"cache_version"] isEqual:@5] &&
-            [entry[@"cache_build"] isEqual:config[@"cache_build"]] && [entry[@"scenario_type"] isEqual:@1];
-        NSString *key = valid ? [NSString stringWithFormat:@"maps/sha256/%@/%@.map", entry[@"sha256"], name] : nil;
+            [entry[@"file_bytes"] unsignedLongLongValue] >= 2048 && numberEquals(entry[@"cache_version"], 5) &&
+            [entry[@"cache_build"] isEqual:config[@"cache_build"]] && numberEquals(entry[@"scenario_type"], 1);
+        NSString *key = valid ? [NSString stringWithFormat:@"packages/sha256/%@/%@.mapog", entry[@"package_sha256"], name] : nil;
         if (!valid || ![entry[@"object_key"] isEqual:key] ||
-            (entry[@"prefetch"] && ![entry[@"prefetch"] isKindOfClass:NSNumber.class])) {
+            ![entry[@"prefetch"] isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)entry[@"prefetch"]) != CFBooleanGetTypeID()) {
             if (error) *error = downloadError(@"The map catalog contains an unsafe, duplicate or unsupported map.");
             return nil;
+        }
+        totalBytes += [entry[@"package_bytes"] unsignedLongLongValue];
+        if (totalBytes > 4ULL * 1024 * 1024 * 1024) {
+            if (error) *error = downloadError(@"The map collection exceeds this build's download limits."); return nil;
         }
         entries[name.lowercaseString] = entry;
     }
@@ -86,7 +115,7 @@ static uint32_t little32(const unsigned char *p) {
     return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 }
 BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *config, NSError **error) {
-    int descriptor = open(file.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW);
+    int descriptor = open(file.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
     struct stat info;
     unsigned char header[2048];
     BOOL valid = HaloDownloadConfigurationIsValid(config) && descriptor >= 0 && !fstat(descriptor, &info) && S_ISREG(info.st_mode) &&
@@ -125,6 +154,28 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
     return valid;
 }
 
+BOOL HaloVerifyDownloadedPackage(NSURL *file, NSDictionary *entry, NSDictionary *config, NSError **error) {
+    int descriptor = open(file.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    struct stat info;
+    BOOL valid = HaloDownloadConfigurationIsValid(config) && hashIsValid(entry[@"package_sha256"]) &&
+        numberInRange(entry[@"package_bytes"], [config[@"max_package_bytes"] unsignedLongLongValue]) &&
+        descriptor >= 0 && !fstat(descriptor, &info) && S_ISREG(info.st_mode) && info.st_size >= 56 &&
+        (unsigned long long)info.st_size == [entry[@"package_bytes"] unsignedLongLongValue];
+    if (valid) {
+        CC_SHA256_CTX context; CC_SHA256_Init(&context);
+        unsigned char bytes[65536], digest[CC_SHA256_DIGEST_LENGTH];
+        ssize_t count;
+        while ((count = read(descriptor, bytes, sizeof(bytes))) > 0) CC_SHA256_Update(&context, bytes, (CC_LONG)count);
+        CC_SHA256_Final(digest, &context);
+        NSMutableString *hash = [NSMutableString string];
+        for (unsigned i = 0; i < sizeof(digest); i++) [hash appendFormat:@"%02x", digest[i]];
+        valid = count == 0 && [hash isEqual:entry[@"package_sha256"]];
+    }
+    if (descriptor >= 0) close(descriptor);
+    if (!valid && error) *error = downloadError(@"The map package failed its size or SHA-256 check.");
+    return valid;
+}
+
 @interface HaloMapTransfer : NSObject
 @property(nonatomic) BOOL catalog;
 @property(nonatomic) BOOL accepted;
@@ -141,7 +192,7 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
 @end
 
 @implementation HaloMapDownloads {
-    NSURL *_support, *_library, *_partials;
+    NSURL *_support, *_library, *_partials, *_gameDataRoot;
     NSDictionary *_configuration;
     NSURLSession *_session;
     dispatch_queue_t _work;
@@ -200,6 +251,7 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
 - (void)setGameDataRoot:(NSURL *)root {
     /* Called before the engine starts. Changing the next-launch preference
        never switches the current session's content profile. */
+    _gameDataRoot = root;
     NSURL *maps = nil, *ui = nil;
     for (NSURL *file in [NSFileManager.defaultManager contentsOfDirectoryAtURL:root includingPropertiesForKeys:nil options:0 error:nil])
         if ([file.lastPathComponent.lowercaseString isEqual:@"maps"]) maps = file;
@@ -238,9 +290,9 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
         }
         [self loadLocalMaps];
         NSURL *cached = [self->_library URLByAppendingPathComponent:@"catalog.json"];
-        NSData *bytes = [NSData dataWithContentsOfURL:cached options:NSDataReadingMappedIfSafe error:nil];
+        NSData *bytes = boundedRegularData(cached, [self->_configuration[@"max_catalog_bytes"] unsignedIntegerValue] + 4096);
         if (bytes) {
-            NSDictionary *record = [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil];
+            NSDictionary *record = HaloParseStrictContentJSON(bytes, nil);
             if ([record isKindOfClass:NSDictionary.class] && [record[@"catalog_url"] isEqual:self->_configuration[@"catalog_url"]]) {
                 NSData *catalog = [NSJSONSerialization dataWithJSONObject:record[@"catalog"] ?: @{} options:0 error:nil];
                 NSDictionary *entries = HaloValidateMapCatalog(catalog, self->_configuration, nil);
@@ -277,6 +329,7 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
     });
 }
 - (void)cancelDownloads {
+    @synchronized(self) { _cancelled = YES; }
     dispatch_async(_work, ^{
         @synchronized(self) {
             self->_cancelled = YES; self->_catalogFailed = NO;
@@ -298,8 +351,8 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
     @synchronized(self) {
         NSNumber *state = _states[key];
         if (state.intValue == HALO_MAP_DOWNLOAD_READY) return HALO_MAP_DOWNLOAD_READY;
-        if (_initializing) return HALO_MAP_DOWNLOAD_PENDING;
         if (_cancelled) return HALO_MAP_DOWNLOAD_UNAVAILABLE;
+        if (_initializing) return HALO_MAP_DOWNLOAD_PENDING;
         if (_localEntries[key]) return state ? state.intValue : HALO_MAP_DOWNLOAD_FAILED;
         if (!_enabled || !_configured || _cancelled) return HALO_MAP_DOWNLOAD_UNAVAILABLE;
         if (state) return state.intValue;
@@ -357,7 +410,7 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
 }
 - (void)loadLocalMaps {
     NSURL *receipt = [_library URLByAppendingPathComponent:@"local-maps.json"];
-    int descriptor = open(receipt.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW);
+    int descriptor = open(receipt.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
     struct stat info;
     if (descriptor < 0) return;
     BOOL bounded = !fstat(descriptor, &info) && S_ISREG(info.st_mode) && info.st_size > 0 && info.st_size <= 1048576;
@@ -379,9 +432,7 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
     [self acceptCatalog:@{}];
     if (valid.count) [self status:[NSString stringWithFormat:@"%lu locally rebuilt maps are available offline.", (unsigned long)valid.count]];
 }
-- (void)registerAssembledMap:(NSURL *)file manifest:(NSDictionary *)manifest
-                 completion:(void (^)(NSError *))completion {
-    dispatch_async(_work, ^{
+- (NSError *)recordAssembledMap:(NSURL *)file manifest:(NSDictionary *)manifest {
         NSError *error = nil;
         NSDictionary *entry = [self localEntry:manifest];
         NSURL *expected = entry ? [self->_mapsDirectory URLByAppendingPathComponent:[entry[@"id"] stringByAppendingPathExtension:@"map"]] : nil;
@@ -420,6 +471,12 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
                 [self status:[NSString stringWithFormat:@"%@ is ready to play and available offline.", entry[@"id"]]];
             }
         }
+    return error;
+}
+- (void)registerAssembledMap:(NSURL *)file manifest:(NSDictionary *)manifest
+                 completion:(void (^)(NSError *))completion {
+    dispatch_async(_work, ^{
+        NSError *error = [self recordAssembledMap:file manifest:manifest];
         dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(error); });
     });
 }
@@ -466,12 +523,12 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
     }
     NSNumber *free = nil;
     [_library getResourceValue:&free forKey:NSURLVolumeAvailableCapacityKey error:nil];
-    if (free && free.unsignedLongLongValue < [entry[@"file_bytes"] unsignedLongLongValue] + 1048576) {
-        [self failMap:name message:@"There is not enough free space to download this map."]; return;
+    if (free && free.unsignedLongLongValue < [entry[@"package_bytes"] unsignedLongLongValue] + [entry[@"file_bytes"] unsignedLongLongValue] + 2ULL * 1024 * 1024 * 1024) {
+        [self failMap:name message:@"Local reconstruction needs at least 2 GB of temporary free space, plus the package and rebuilt map."]; return;
     }
     HaloMapTransfer *transfer = [[HaloMapTransfer alloc] init];
     transfer.entry = entry;
-    transfer.partial = [_partials URLByAppendingPathComponent:[NSString stringWithFormat:@"%@-%@.partial", entry[@"sha256"], NSUUID.UUID.UUIDString]];
+    transfer.partial = [_partials URLByAppendingPathComponent:[NSString stringWithFormat:@"%@-%@.partial", entry[@"package_sha256"], NSUUID.UUID.UUIDString]];
     transfer.descriptor = open(transfer.partial.fileSystemRepresentation, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
     if (transfer.descriptor < 0) { [self failMap:name message:@"The download staging file could not be created."]; return; }
     NSURL *url = [[NSURL URLWithString:_configuration[@"objects_base_url"]] URLByAppendingPathComponent:entry[@"object_key"]];
@@ -504,7 +561,7 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
     (void)session;
     dispatch_async(_work, ^{
         HaloMapTransfer *transfer = self->_transfers[@(task.taskIdentifier)];
-        unsigned long long limit = transfer.catalog ? [self->_configuration[@"max_catalog_bytes"] unsignedLongLongValue] : [transfer.entry[@"file_bytes"] unsignedLongLongValue];
+        unsigned long long limit = transfer.catalog ? [self->_configuration[@"max_catalog_bytes"] unsignedLongLongValue] : [transfer.entry[@"package_bytes"] unsignedLongLongValue];
         transfer.accepted = [response isKindOfClass:NSHTTPURLResponse.class] && ((NSHTTPURLResponse *)response).statusCode == 200 &&
             allowedURL(response.URL, self->_configuration) && (response.expectedContentLength < 0 || (unsigned long long)response.expectedContentLength <= limit);
         if (!transfer.accepted) transfer.failure = downloadError(@"The server returned an unexpected response or file size.");
@@ -516,7 +573,7 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
     dispatch_async(_work, ^{
         HaloMapTransfer *transfer = self->_transfers[@(task.taskIdentifier)];
         if (!transfer || transfer.failure) return;
-        unsigned long long limit = transfer.catalog ? [self->_configuration[@"max_catalog_bytes"] unsignedLongLongValue] : [transfer.entry[@"file_bytes"] unsignedLongLongValue];
+        unsigned long long limit = transfer.catalog ? [self->_configuration[@"max_catalog_bytes"] unsignedLongLongValue] : [transfer.entry[@"package_bytes"] unsignedLongLongValue];
         if (data.length > limit - transfer.received) { transfer.failure = downloadError(@"The server sent more bytes than the approved file size."); [task cancel]; return; }
         if (transfer.catalog) [transfer.data appendData:data];
         else {
@@ -565,15 +622,34 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
             NSString *name = [transfer.entry[@"id"] lowercaseString];
             if (!error && ![self->_entries[name][@"sha256"] isEqual:transfer.entry[@"sha256"]])
                 error = downloadError(@"The approved map revision changed during download. Retry with the current catalog.");
-            if (!error && transfer.accepted && HaloVerifyDownloadedMap(transfer.partial, transfer.entry, self->_configuration, &error)) {
-                NSURL *destination = [self->_mapsDirectory URLByAppendingPathComponent:[transfer.entry[@"id"] stringByAppendingPathExtension:@"map"]];
-                /* link is atomic and exclusive; unlike rename it cannot replace
-                   a file that appeared while the HTTP task was running. */
-                if (!link(transfer.partial.fileSystemRepresentation, destination.fileSystemRepresentation) ||
-                    HaloVerifyDownloadedMap(destination, transfer.entry, self->_configuration, nil)) {
-                    @synchronized(self) { self->_states[name] = @(HALO_MAP_DOWNLOAD_READY); [self->_failures removeObjectForKey:name]; }
-                    [self status:[NSString stringWithFormat:@"%@ is ready.", transfer.entry[@"id"]]];
-                } else error = downloadError(@"The destination already exists or could not be created. Existing files were preserved.");
+            NSDictionary *manifest = nil;
+            if (!error && !transfer.accepted) error = downloadError(@"The map package response was not accepted.");
+            if (!error && HaloVerifyDownloadedPackage(transfer.partial, transfer.entry, self->_configuration, &error)) {
+                manifest = HaloInspectCommunityPackage(transfer.partial, &error);
+                if (manifest && (![manifest[@"id"] isEqual:name] ||
+                    ![manifest[@"output"][@"sha256"] isEqual:transfer.entry[@"sha256"]] ||
+                    ![manifest[@"output"][@"size"] isEqual:transfer.entry[@"file_bytes"]])) {
+                    manifest = nil;
+                    error = downloadError(@"The package does not reconstruct the map approved by this catalog.");
+                }
+            }
+            if (!error && manifest) {
+                NSBundle *bundle = NSBundle.mainBundle;
+                NSURL *tools = [bundle.bundleURL URLByAppendingPathComponent:@"Contents/Helpers" isDirectory:YES];
+                NSURL *recordURL = [bundle.resourceURL URLByAppendingPathComponent:@"ContentTools.json"];
+                int recordFD = open(recordURL.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+                struct stat recordInfo = {0};
+                BOOL bounded = recordFD >= 0 && !fstat(recordFD, &recordInfo) && S_ISREG(recordInfo.st_mode) &&
+                    recordInfo.st_size > 0 && recordInfo.st_size <= 1048576;
+                NSFileHandle *recordFile = recordFD >= 0 ? [[NSFileHandle alloc] initWithFileDescriptor:recordFD closeOnDealloc:YES] : nil;
+                NSData *recordBytes = bounded ? [recordFile readDataUpToLength:1048577 error:&error] : nil;
+                [recordFile closeFile];
+                NSDictionary *record = recordBytes.length == (NSUInteger)recordInfo.st_size ? HaloParseStrictContentJSON(recordBytes, &error) : nil;
+                NSURL *rebuilt = record ? HaloAssembleCommunityPackage(transfer.partial, self->_gameDataRoot,
+                    self->_support, tools, record, ^(NSString *progress) { [self status:progress]; }, &error) : nil;
+                if (rebuilt && HaloVerifyDownloadedMap(rebuilt, transfer.entry, self->_configuration, &error))
+                    error = [self recordAssembledMap:rebuilt manifest:manifest];
+                else error = error ?: downloadError(@"This build lacks the trusted content helpers required for local reconstruction.");
             }
             if (transfer.partial) unlink(transfer.partial.fileSystemRepresentation);
             if (error && !transfer.cancelled) [self failMap:name message:error.localizedDescription];

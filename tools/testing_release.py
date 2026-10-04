@@ -30,8 +30,6 @@ WORKFLOWS = {
 MAC_FILES = {DMG, "README.txt", "BuildInfo.txt", "SHA256SUMS"}
 ASSETS = {DMG, "macos-README.txt", "macos-BuildInfo.txt", "SHA256SUMS",
           "provenance.json", *(f"halo-{p}-release.zip" for p in ("windows", "linux", "android"))}
-DOWNRUSH_SHA256 = "3282e580e782f939ae00c63f01971238eb0f85db19a2467efe42b5cb5600d126"
-DOWNRUSH_URL = f"https://dl.oghalo.com/maps/sha256/{DOWNRUSH_SHA256}/downrush.map"
 
 
 class GitHub:
@@ -192,10 +190,16 @@ def release_notes(record):
             "On Mac, choosing a maps folder offers **Copy and Manage**. Managed maps, saves "
             "and preferences persist in `~/Library/Application Support/Halo OG/` across app updates. "
             "With original Xbox NTSC 2276 data selected, opt into **Download approved community maps "
-            "in the background** in Settings to get the hosted Downrush map. Downloads default off.\n\n"
-            f"For manual setup on any platform, download [downrush.map]({DOWNRUSH_URL}) "
-            "and follow the playtesting guide to add it to your maps folder. Its SHA-256 is "
-            f"`{DOWNRUSH_SHA256}`. Use the same map bytes on every player.\n\n"
+            "in the background** in Settings. Mac downloads default off.\n\n"
+            "Windows and Linux community downloads default on after original NTSC game data is selected. "
+            "To disable them, set `auto_download = false` under `[community_maps]` in `config.toml` beside the executable. "
+            "Watch download and reconstruction status in terminal output, then restart after completion to discover the new maps.\n\n"
+            "Community maps are delivered as compressed `.mapog` packages and reconstructed locally with "
+            "the bundled, verified helpers and your original NTSC `bloodgulch.map`, `a10.map`, and `ui.map`. "
+            "Hosted packages omit whole byte-identical original tags; custom content and modified original assets remain. "
+            "Original stock caches and disc images are not hosted or bundled. Android community-cache placement "
+            "remains manual; local package reconstruction is available on desktop platforms. "
+            f"See [community package setup]({source}/docs/community-map-packages.md) for the format and requirements.\n\n"
             "Check SHA256SUMS before installing. provenance.json records workflow runs, artifact IDs "
             "and hashes. These are test builds; physical cross-platform and Internet/NAT play "
             "still need testing. CI does not establish multiplayer interoperability.\n")

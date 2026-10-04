@@ -1,10 +1,13 @@
 #import "HaloMapPackages.h"
 #import "HaloMapDownloads.h"
+#include "community_mapog.h"
 #include <CommonCrypto/CommonDigest.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -100,7 +103,7 @@ static NSString *hashRange(int fd, uint64_t offset, uint64_t length, NSError **e
 }
 static int regularFile(NSURL *url, uint64_t maximum, uint64_t *size, NSError **error) {
     if (!url.isFileURL) { failure(error, @"Expected a local regular file."); return -1; }
-    int fd = open(url.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    int fd = open(url.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
     struct stat info;
     if (fd < 0 || fstat(fd, &info) || !S_ISREG(info.st_mode) ||
         info.st_size < 0 || (uint64_t)info.st_size > maximum) {
@@ -175,6 +178,20 @@ static BOOL jsonValue(JSONCursor *s, unsigned depth) {
     size_t start = s->cursor;
     while (s->cursor < s->size && !strchr(" \t\r\n,}]", s->p[s->cursor])) s->cursor++;
     return s->cursor != start;
+}
+id HaloParseStrictContentJSON(NSData *data, NSError **error) {
+    if (!data || data.length > manifestLimit) {
+        failure(error, @"Content JSON exceeds this build's limits."); return nil;
+    }
+    JSONCursor cursor = {data.bytes, data.length, 0, 0};
+    if (!jsonValue(&cursor, 0)) {
+        failure(error, @"Content JSON is invalid or contains duplicate keys."); return nil;
+    }
+    white(&cursor);
+    if (cursor.cursor != cursor.size) {
+        failure(error, @"Content JSON has unexpected trailing data."); return nil;
+    }
+    return [NSJSONSerialization JSONObjectWithData:data options:0 error:error];
 }
 
 /* Register the spelling of every component, not just complete file paths.
@@ -286,7 +303,7 @@ static BOOL manifestIsValid(NSDictionary *m, NSError **error) {
         return failure(error, @"The package is missing its authored scenario or complete payload.");
     return YES;
 }
-static NSDictionary *openPackage(NSURL *url, int *descriptor, uint64_t *payloadStart, NSError **error) {
+static NSDictionary *openRawPackage(NSURL *url, int *descriptor, uint64_t *payloadStart, NSError **error) {
     uint64_t size;
     int fd = regularFile(url, packageLimit, &size, error);
     if (fd < 0) return nil;
@@ -330,6 +347,55 @@ static NSDictionary *openPackage(NSURL *url, int *descriptor, uint64_t *payloadS
     if (!manifest) { close(fd); return nil; }
     if (descriptor) *descriptor = fd; else close(fd);
     if (payloadStart) *payloadStart = 16 + length;
+    return manifest;
+}
+static NSString *canonicalParentPath(NSURL *url) {
+    /* Foundation presents /private/var paths as /var on macOS. Resolve the
+       parent for the C decoder while preserving its final O_NOFOLLOW check. */
+    char *parent = realpath(url.URLByDeletingLastPathComponent.fileSystemRepresentation, NULL);
+    if (!parent) return nil;
+    NSString *path = [NSFileManager.defaultManager stringWithFileSystemRepresentation:parent length:strlen(parent)];
+    free(parent);
+    return [path stringByAppendingPathComponent:url.lastPathComponent];
+}
+static NSDictionary *openPackage(NSURL *url, int *descriptor, uint64_t *payloadStart, NSError **error) {
+    uint64_t size;
+    int source = regularFile(url, packageLimit, &size, error);
+    if (source < 0) return nil;
+    unsigned char magic[8];
+    BOOL readable = size >= sizeof(magic) && readRange(source, magic, sizeof(magic), 0);
+    close(source);
+    if (!readable) {
+        failure(error, @"The community package is truncated or unreadable."); return nil;
+    }
+    if (memcmp(magic, "HOGMAP2\n", sizeof(magic)))
+        return openRawPackage(url, descriptor, payloadStart, error);
+
+    /* Expansion is bounded by the shared native decoder. The inner format
+       retains its complete-asset hashes, classifications and stock guards.
+       An open inner descriptor remains valid after its private name is removed. */
+    NSURL *temporaryRoot = [NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES].URLByResolvingSymlinksInPath;
+    NSString *pattern = [temporaryRoot.path stringByAppendingPathComponent:@"halo-og-mapog-XXXXXX"];
+    char *temporary = strdup(pattern.fileSystemRepresentation);
+    if (!temporary || !mkdtemp(temporary)) {
+        free(temporary);
+        failure(error, @"A private community package expansion directory could not be created."); return nil;
+    }
+    NSURL *directory = [NSURL fileURLWithFileSystemRepresentation:temporary isDirectory:YES relativeToURL:nil];
+    free(temporary);
+    NSURL *inner = [directory URLByAppendingPathComponent:@"expanded.hogpkg"];
+    NSDictionary *manifest = nil;
+    @try {
+        char message[512] = {0};
+        NSString *sourcePath = canonicalParentPath(url), *destinationPath = canonicalParentPath(inner);
+        if (!sourcePath || !destinationPath || community_mapog_expand(sourcePath.fileSystemRepresentation,
+            destinationPath.fileSystemRepresentation, message, sizeof(message))) {
+            NSString *detail = [NSString stringWithUTF8String:message];
+            failure(error, detail.length ? detail : @"The compressed community package failed its integrity checks.");
+        } else manifest = openRawPackage(inner, descriptor, payloadStart, error);
+    } @finally {
+        [NSFileManager.defaultManager removeItemAtURL:directory error:nil];
+    }
     return manifest;
 }
 NSDictionary *HaloInspectCommunityPackage(NSURL *file, NSError **error) {
@@ -514,7 +580,7 @@ static BOOL runTool(NSURL *tool, NSArray *arguments, NSURL *workspace, NSURL *lo
 static NSDictionary *mapConfiguration(void) {
     return @{@"schema_version":@1, @"profile":@"stock-xbox-ntsc", @"cache_build":cacheBuild,
         @"allowed_origins":@[], @"catalog_url":NSNull.null, @"objects_base_url":NSNull.null,
-        @"max_catalog_bytes":@1048576, @"max_map_bytes":@(assetLimit), @"max_cache_bytes":@(assetLimit),
+        @"max_catalog_bytes":@1048576, @"max_map_bytes":@(assetLimit), @"max_package_bytes":@(packageLimit), @"max_cache_bytes":@(assetLimit),
         @"max_tag_bytes":@(22ULL * 1024 * 1024), @"max_maps":@115};
 }
 static BOOL verifyOutput(NSURL *file, NSDictionary *manifest, NSError **error) {
@@ -541,6 +607,7 @@ NSURL *HaloAssembleCommunityPackage(NSURL *package, NSURL *gameDataRoot, NSURL *
     @try {
         if (![toolsRecord isKindOfClass:NSDictionary.class] || !integer(toolsRecord[@"schema"], 1, 1) ||
             ![toolsRecord[@"architecture"] isEqual:@"arm64"] ||
+            (toolsRecord[@"consumer_platform"] && ![toolsRecord[@"consumer_platform"] isEqual:@"macos"]) ||
             ![toolsRecord[@"invader_commit"] isEqual:invaderCommit] ||
             ![toolsRecord[@"binaries"] isKindOfClass:NSDictionary.class] ||
             !realDirectory(toolsDirectory, error) || !realDirectory(gameDataRoot, error) ||
@@ -548,13 +615,32 @@ NSURL *HaloAssembleCommunityPackage(NSURL *package, NSURL *gameDataRoot, NSURL *
             failure(error, @"This build lacks the reviewed native content helpers or valid data directories.");
             return nil;
         }
+        BOOL compatibleProducer = NO;
+        NSDictionary *nativeProducer = @{@"extract": toolsRecord[@"binaries"][@"extract"][@"source_sha256"] ?: @"",
+            @"build": toolsRecord[@"binaries"][@"build"][@"source_sha256"] ?: @""};
+        if ([nativeProducer isEqual:m[@"tool_sha256"]]) compatibleProducer = YES;
+        id producers = toolsRecord[@"compatible_package_producers"] ?: @[];
+        if (![producers isKindOfClass:NSArray.class] || [producers count] > 32) {
+            failure(error, @"This build's trusted producer allowlist is invalid."); return nil;
+        }
+        for (id producer in producers) {
+            if (!dictionary(producer, @[@"invader_commit",@"tool_sha256"]) ||
+                ![producer[@"invader_commit"] isEqual:invaderCommit] ||
+                !dictionary(producer[@"tool_sha256"], @[@"extract",@"build"]) ||
+                !checksum(producer[@"tool_sha256"][@"extract"]) || !checksum(producer[@"tool_sha256"][@"build"])) {
+                failure(error, @"This build's trusted producer allowlist is invalid."); return nil;
+            }
+            if ([producer[@"tool_sha256"] isEqual:m[@"tool_sha256"]]) compatibleProducer = YES;
+        }
+        if (!compatibleProducer) {
+            failure(error, @"This package producer has not been reviewed for this build's native helpers."); return nil;
+        }
         NSMutableDictionary *helpers = [NSMutableDictionary dictionary];
         for (NSString *name in @[@"extract",@"build"]) {
             NSDictionary *record = toolsRecord[@"binaries"][name];
             NSURL *helper = [toolsDirectory URLByAppendingPathComponent:[@"invader-" stringByAppendingString:name]];
             if (![record isKindOfClass:NSDictionary.class] || !checksum(record[@"source_sha256"]) ||
                 !checksum(record[@"bundled_sha256"]) || ![record[@"architecture"] isEqual:@"arm64"] ||
-                ![record[@"source_sha256"] isEqual:m[@"tool_sha256"][name]] ||
                 ![hashFile(helper, assetLimit, NULL, error) isEqual:record[@"bundled_sha256"]]) {
                 failure(error, @"The package toolchain or bundled helper bytes differ from this build's trusted provenance.");
                 return nil;

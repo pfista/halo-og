@@ -37,5 +37,6 @@ int halo_map_download_request(const char *map_name);
 BOOL HaloDownloadConfigurationIsValid(NSDictionary *configuration);
 NSDictionary *HaloValidateMapCatalog(NSData *data, NSDictionary *configuration, NSError **error);
 BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *configuration, NSError **error);
+BOOL HaloVerifyDownloadedPackage(NSURL *file, NSDictionary *entry, NSDictionary *configuration, NSError **error);
 #endif
 #endif

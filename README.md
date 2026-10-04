@@ -32,8 +32,9 @@ practice play. The project's priorities are:
   Mac settings, first-launch data import, and a drag-to-Applications DMG accompany
   the Windows, Linux, and Android ports.
 - **A persistent community-map library.** Managed maps, saves, and settings
-  survive app updates. Mac players can opt into verified background map downloads
-  and reuse downloaded maps offline.
+  survive app updates. Compressed `.mapog` packages restore unchanged original
+  dependencies locally from the player's game data. Mac players can opt into
+  background downloads; Windows/Linux enable them by default in current source.
 - **Competitive options chosen by the host.** PB Options adds timers, spawn
   markers, announcements, and sound options without enabling them by default.
   Stock remains the original-rule preset.
@@ -85,11 +86,14 @@ and existing files. External map folders can remain selected.
 
 ## Community maps and competitive options
 
-The community collection contains **40 Xbox v5 NTSC maps**. Mac Settings offers
-opt-in background downloads; current Windows/Linux source enables
-`community_maps.auto_download` by default. The published Windows/Linux testing
-packages require manual installation. Android also installs maps manually.
-Verified maps remain available offline, and existing files are preserved.
+The community collection contains **40 Xbox v5 NTSC maps**. Current source
+downloads compressed `.mapog` packages and reconstructs each `.map` locally with
+bundled native tools and the player's original Xbox NTSC game data. Mac Settings
+offers opt-in downloads; Windows/Linux enable `community_maps.auto_download` by
+default. The published `dmg2` packages predate this reconstruction workflow;
+helper-enabled testing builds are being prepared. Android installs locally
+reconstructed maps manually. Verified maps remain available offline, and
+existing files are preserved.
 Use [community-map setup](docs/playtesting.md#community-maps) for your selected
 release and [map guidance](docs/community-maps.md) for storage and controls.
 
@@ -170,9 +174,9 @@ algorithm. Use matching Halo OG builds for playtests. See the
 Maps stay separate from the client on Cloudflare R2 so content and application
 updates can ship independently. Package reconstruction combines community
 content with original dependencies extracted locally from the player's own XISO.
-It removes whole unchanged original assets; modified and differently serialized
-assets remain in scope. This does not establish that every retained byte is
-community-authored.
+The `.mapog` package omits whole byte-identical original tags; modified and
+differently serialized original tags remain, as scoped. This does not establish
+that every retained byte is community-authored.
 
 The published testing build predates package reconstruction. Use the
 [reconstruction guide](docs/community-map-packages.md) for current implementation,

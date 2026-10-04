@@ -437,7 +437,9 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         f"-I{PORT_DIR}/include", f"-I{TOML_DIR}", f"-I{KCP_DIR}", "-Isource -Isource/cseries",
         f"-I{SDL_DIR}/include", f"-I{gl_include}", *libc_includes, f"-idirafter {XDK_INCLUDE}",
     ])
-    guest_host_only = {"memory_watch.c"}  # replaced by guest_memory_watch.c
+    # Map reconstruction uses native desktop helper processes and crypto;
+    # Android's shared downloader remains a no-op.
+    guest_host_only = {"memory_watch.c", "community_packages.c", "community_mapog.c"}
     for source in sorted((LINUX_DIR / "src").glob("*.c")):
         if source.name.startswith("posix_") or source.name in guest_host_only:
             continue

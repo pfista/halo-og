@@ -391,7 +391,7 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     if (![record isKindOfClass:NSDictionary.class]) return;
     NSOpenPanel *panel = NSOpenPanel.openPanel;
     panel.canChooseDirectories = NO; panel.canChooseFiles = YES; panel.allowsMultipleSelection = NO;
-    panel.allowedFileTypes = @[@"hogpkg"]; panel.allowsOtherFileTypes = NO; panel.resolvesAliases = NO;
+    panel.allowedFileTypes = @[@"mapog", @"hogpkg"]; panel.allowsOtherFileTypes = NO; panel.resolvesAliases = NO;
     panel.message = @"Choose a Halo OG community package. Halo OG will build its playable map from this package and your original Xbox disc data, then keep it in your map library.";
     [panel beginSheetModalForWindow:self.settingsWindow completionHandler:^(NSModalResponse response) {
         if (response != NSModalResponseOK || self.importing) return;

@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/richgel999/miniz",
+  "tag": "3.1.0",
+  "commit": "174573d60290f447c13a2b1b3405de2b96e27d6c",
+  "files_sha256": {
+    "miniz_tinfl.c": "ff9cc5426df23a78070b5b8fa2dcb7aea68faac466169a883b4ffb8727532350",
+    "miniz_tinfl.h": "da4850920fdf09f8877d9affabe1ebba1852ce4b1ebbd121f2ba7a7ea8e57e5d",
+    "miniz_common.h": "6320fa10a5d21db9f78594d92745bc27593c1e6bed657104c22da0a9bd687b49",
+    "miniz.h": "232abb0b807fd4962a8e61822459dd49baecb61d0e557f23497732978640f6a7",
+    "miniz_tdef.h": "d62da02953c3834dfcbde4db026c6d9345013ef9b0e53185131016a3a4e48c33",
+    "miniz_zip.h": "b062a5def545445c73fd1d664e35a89165dfb0d996ab848f507244e819cfcf04",
+    "LICENSE": "0115478d567121238cf6cc1c0c361926cf07a49d9e4c9e66da97fac6a01646b3"
+  },
+  "compiled_source": "tinfl_only.c"
+}

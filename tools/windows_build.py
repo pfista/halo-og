@@ -372,8 +372,8 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
         for source in sorted(linux_platform.glob("*.c")):
             if source.name in replaced:
                 continue
-            if source.name == "community_maps_download.c":
-                add_object(source, win32_cflags)
+            if source.name in ("community_maps_download.c", "community_packages.c", "community_mapog.c"):
+                add_object(source, win32_cflags + " -Iport/third_party/miniz")
             elif source.name == "updater.c":
                 add_object(source, f"{platform_cflags} {updater_defines(getattr(sln, 'port_release', False))}")
             else:
@@ -391,6 +391,7 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
                                          "-D_CRT_SECURE_NO_WARNINGS", "-D_WINSOCK_DEPRECATED_NO_WARNINGS", "-w"]))
         for source in embedded_assets:
             add_object(source, platform_cflags)
+        add_object(Path("port/third_party/miniz/tinfl_only.c"), win32_cflags + " -Iport/third_party/miniz")
         # the settings file's parser (port/third_party/tomlc17), with the
         # platform layer's ABI and nothing else
         add_object(TOML_DIR / "tomlc17.c", " ".join([abi, "-std=gnu11", "-w"]))

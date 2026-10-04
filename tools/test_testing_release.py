@@ -95,15 +95,21 @@ class TestingReleaseTests(unittest.TestCase):
         self.assertEqual(release.verify_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory), record)
         self.assertEqual({p.name for p in self.directory.iterdir()}, release.ASSETS | {"release-notes.md"})
 
-    def test_release_setup_links_match_selected_source_and_verified_map(self):
+    def test_release_setup_links_match_selected_source_and_package_reconstruction(self):
         self.prepare()
         notes = (self.directory / "release-notes.md").read_text()
         source = f"https://github.com/{release.REPOSITORY}/blob/{SHA}"
-        for path in ("README.md", "docs/playtesting.md", "port/linux/README.md#requirements"):
+        for path in ("README.md", "docs/playtesting.md", "port/linux/README.md#requirements", "docs/community-map-packages.md"):
             self.assertIn(f"({source}/{path})", notes)
-        self.assertIn(f"[downrush.map]({release.DOWNRUSH_URL})", notes)
-        self.assertIn(f"`{release.DOWNRUSH_SHA256}`", notes)
-        self.assertIn("Downloads default off", notes)
+        self.assertNotIn("dl.oghalo.com/maps/", notes)
+        self.assertNotIn("[downrush.map]", notes)
+        self.assertIn("Mac downloads default off", notes)
+        self.assertIn("Windows and Linux community downloads default on", notes)
+        self.assertIn("compressed `.mapog` packages", notes)
+        self.assertIn("your original NTSC `bloodgulch.map`, `a10.map`, and `ui.map`", notes)
+        self.assertIn("whole byte-identical original tags", notes)
+        self.assertIn("modified original assets remain", notes)
+        self.assertIn("Android community-cache placement remains manual", notes)
         self.assertIn("~/Library/Application Support/Halo OG/", notes)
         self.assertIn("physical cross-platform and Internet/NAT play still need testing", notes)
         self.assertNotIn("/blob/main/", notes)

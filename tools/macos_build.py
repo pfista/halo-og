@@ -24,6 +24,7 @@ from tools.linux_build import MINIUPNPC_DEFINES, MINIUPNPC_DIR, miniupnpc_source
 from tools.macos_menu_icon import render as render_menu_icon
 from tools.macos_sparkle import setup_sparkle, DIRECTORY as SPARKLE_DIRECTORY
 from tools.macos_content_tools import stage_content_tools
+from tools.community_tools_download import fetch_content_tools
 BUILD = ROOT / "build/macos"
 LLVM = Path(os.environ.get("HALO_MACOS_LLVM_BIN", "/opt/homebrew/opt/llvm/bin"))
 SDL = Path(os.environ.get("HALO_MACOS_SDL_PREFIX", "/opt/homebrew/opt/sdl3"))
@@ -44,6 +45,12 @@ def require(path):
     if not path.exists():
         raise RuntimeError(f"Missing build dependency: {path}. See port/macos/README.md.")
     return path
+
+
+def resolve_content_tools(explicit=None, without=False):
+    if without:
+        return None
+    return explicit if explicit is not None else fetch_content_tools("macos-arm64")
 
 
 def build_plugin():
@@ -71,12 +78,13 @@ def build_host():
         companion.symlink_to(companion_target)
     flags = ["-arch", "arm64", "-mmacosx-version-min=14.0", "-O2", "-g", "-DHALO_MACOS=1", "-D_DARWIN_C_SOURCE",
              "-Wall", "-Wextra", "-Wno-unused-function", "-Wno-unused-parameter",
-             "-I.", "-Iport/macos/host", "-Iport/macos/native", "-Iport/android/include", "-Iport/linux/src",
+             "-I.", "-Iport/macos/host", "-Iport/macos/native", "-Iport/android/include", "-Iport/linux/src", "-Iport/third_party/miniz",
              f"-I{SDL / 'include'}", f"-I{GL}",
              f"-I{MINIUPNPC_DIR / 'include'}", f"-I{MINIUPNPC_DIR / 'src'}", *MINIUPNPC_DEFINES]
     sources = sorted((ROOT / "port/macos/host").glob("*.c"))
     sources += sorted((ROOT / "port/macos/native").glob("*.m"))
     sources += [ROOT / "port/linux/src/xiso.c"]
+    sources += [ROOT / "port/linux/src/community_mapog.c", ROOT / "port/third_party/miniz/tinfl_only.c"]
     sources += miniupnpc_sources()
     sources += [BUILD / "host/host_import_table.c", ROOT / "port/macos/host/entry.s"]
     objects = []
@@ -273,6 +281,7 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
         (ROOT / "build/android/third_party/musl-1.2.5/COPYRIGHT", "musl.txt"),
         (ROOT / "port/third_party/kcp/LICENSE", "KCP.txt"),
         (ROOT / "port/third_party/miniupnpc/LICENSE", "miniupnpc.txt"),
+        (ROOT / "port/third_party/miniz/LICENSE", "miniz.txt"),
         (ROOT / "port/third_party/extract-xiso/LICENSE.TXT", "extract-xiso.txt"),
         (ROOT / "port/third_party/tomlc17/LICENSE", "tomlc17.txt"),
         (ROOT / "port/third_party/mbedtls/LICENSE", "mbedtls.txt"),
@@ -421,8 +430,11 @@ def main():
     parser.add_argument("--sign-identity", default="-")
     parser.add_argument("--version", default=APP_VERSION)
     parser.add_argument("--build-number", default=APP_BUILD)
-    parser.add_argument("--content-tools", type=Path, metavar="TOOLCHAIN_DIRECTORY",
-                        help="Opt in to reviewed Invader helpers for local community package import")
+    helpers = parser.add_mutually_exclusive_group()
+    helpers.add_argument("--content-tools", type=Path, metavar="TOOLCHAIN_DIRECTORY",
+                         help="Override the fixed reviewed release with an independently pinned local toolchain")
+    helpers.add_argument("--without-content-tools", action="store_true",
+                         help="Development/bootstrap build without community reconstruction helpers")
     parser.add_argument("--install", nargs="?", const=Path("/Applications"), type=Path,
                         metavar="DIRECTORY", help="Install in /Applications, or the given directory, for Spotlight")
     parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 4, 6))
@@ -436,6 +448,7 @@ def main():
     if args.plugin_only:
         build_plugin()
         return
+    content_tools = resolve_content_tools(args.content_tools, args.without_content_tools)
     if not args.host_only:
         llvm_bin = BUILD / "toolchain/bin"
         require(llvm_bin / "llvm-ar")
@@ -447,7 +460,7 @@ def main():
         run(ninja, "-j", args.jobs, "macos_guest")
     build_host()
     package(None if args.no_data_path or args.release else args.data_root,
-            sign_identity=args.sign_identity, release=args.release, version=args.version, build=args.build_number, content_tools=args.content_tools)
+            sign_identity=args.sign_identity, release=args.release, version=args.version, build=args.build_number, content_tools=content_tools)
     if args.install:
         install_app(BUILD / (APP_NAME + ".app"), args.install)
 

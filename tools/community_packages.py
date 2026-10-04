@@ -18,6 +18,9 @@ import subprocess
 import sys
 import tempfile
 
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 MAGIC = b"HOGPKG1\n"
 HEADER = struct.Struct("<8sQ")
 FORMAT = "halo-og-community-package"
@@ -363,6 +366,15 @@ def _unique_json(pairs):
 
 
 def read_package(path, verify_payload=True):
+    from tools.mapog import raw_package
+    try:
+        with raw_package(path) as raw:
+            return _read_raw_package(raw, verify_payload)
+    except ValueError as error:
+        raise PackageError(str(error)) from None
+
+
+def _read_raw_package(path, verify_payload=True):
     """Validate schema, exact bounds and optionally every complete literal hash."""
     path = _regular(path)
     size = _integer(path.stat().st_size, HEADER.size + 2, MAX_PACKAGE_BYTES, "package size")
@@ -517,6 +529,12 @@ def _verify_originals(m, original):
 
 
 def materialize_package(*, package, original_stock_tags, destination):
+    from tools.mapog import raw_package
+    with raw_package(package) as raw:
+        return _materialize_raw_package(package=raw, original_stock_tags=original_stock_tags, destination=destination)
+
+
+def _materialize_raw_package(*, package, original_stock_tags, destination):
     """Asset-only seam: exact references, intact literals, guarded stock repairs."""
     package, destination = Path(package), Path(destination)
     _outside(destination, (original_stock_tags,))
