@@ -2,6 +2,7 @@
 import hashlib
 import json
 import ntpath
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -92,7 +93,8 @@ class ContentToolsTests(unittest.TestCase):
     def test_two_helpers_sign_and_provenance_omit_machine_paths(self):
         binaries = self.stage()
         self.assertEqual([path.name for path in binaries], ["invader-extract", "invader-build"])
-        self.assertTrue(all(path.stat().st_mode & 0o111 for path in binaries))
+        if os.name != "nt":  # Windows stat does not report POSIX chmod execute bits.
+            self.assertTrue(all(path.stat().st_mode & 0o111 for path in binaries))
         provenance = (self.app / "Contents/Resources/ContentTools.json").read_text()
         self.assertNotIn(str(self.root), provenance)
         self.assertNotIn("/untrusted", provenance)

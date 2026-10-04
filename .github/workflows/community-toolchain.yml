@@ -82,3 +82,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+      - name: Preserve compiler diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: content-tools-${{ matrix.platform }}-diagnostics
+          path: build/content-tools-${{ matrix.platform }}/build.log
+          if-no-files-found: ignore
+          retention-days: 7
