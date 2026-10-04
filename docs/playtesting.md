@@ -130,10 +130,13 @@ New **Windows/Linux builds from main** download approved community maps in the
 background once original NTSC game data is available. Downloads are enabled by
 default. To disable them, set `auto_download = false` in the `[community_maps]`
 section of `config.toml` beside the executable. Files go into the active game
-data root's `maps` folder; existing files are never overwritten. Check the
-game's `debug.txt` log for status or errors, wait for downloads to finish, then
-restart the game to refresh its map list. Real Windows/Linux download and
-gameplay verification is still pending.
+data root's `maps` folder; existing files are never overwritten. Downloader
+status and errors go to standard error (terminal output), separately from the
+game's `debug.txt`. To capture them, open a terminal in the extracted build
+folder and launch `./halo 2>community-maps.log` on Linux, or
+`.\halo.exe 2>community-maps.log` in Windows PowerShell. Wait for downloads to
+finish, then restart the game to refresh its map list. Real Windows/Linux
+download and gameplay verification is still pending.
 
 The published **test-v0.3.0-net11-dmg2 Windows/Linux packages**, and **Android**,
 still need manual maps. Download the same approved

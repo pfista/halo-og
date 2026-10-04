@@ -103,7 +103,8 @@ download the same collection automatically in the background when original NTSC
 data is available; the published testing release still needs manual installation
 on those platforms. Their simple control is `community_maps.auto_download` in
 `config.toml` beside the executable (default `true`; set `false` before launch to
-disable downloads). Status appears in the game log. Downloads go into the active
+disable downloads). Downloader status appears in terminal output; the setup
+guide below includes log capture commands. Downloads go into the active
 data folder's `maps/` directory, preserve existing files, and appear in the map
 selector after a restart. Android still installs matching maps manually;
 [community-map setup](docs/playtesting.md#community-maps) includes the downloads.
@@ -205,7 +206,7 @@ byte-for-byte in about nine seconds. Verified local maps survive restart and
 work with network downloads disabled.
 
 Before this can ship, we still need to prepare and verify packages for the other 39 maps,
-automatically discover and rebuild bundled packages after XISO import, make the
+automatically download and rebuild packages after XISO import, make the
 helper toolchain reproducible in CI with public corresponding-source delivery,
 and test the native import UI and gameplay.
 The current package requires exact original NTSC stock-map hashes; it does not
