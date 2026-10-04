@@ -127,6 +127,33 @@ class ToolchainTests(unittest.TestCase):
         self.assertIn("-DCMAKE_OSX_ARCHITECTURES=arm64", options)
         self.assertEqual([x for x in tools.OPTIONS if x in ("EXTRACT", "BUILD")], ["BUILD", "EXTRACT"])
 
+    def test_native_startup_uses_supported_info_flag_without_assets_or_unbounded_wait(self):
+        helper = self.root / "build/invader-extract"
+        helper.parent.mkdir()
+        def run(command, **options):
+            self.assertEqual(command, [str(helper), "--info"])
+            self.assertTrue(options["check"])
+            self.assertEqual(options["timeout"], 30)
+            self.assertTrue(options["capture_output"])
+            self.assertEqual(list(Path(options["cwd"]).iterdir()), [])
+            return subprocess.CompletedProcess(command, 0, b"Invader 0.55.0.unknown\n\nCredits\n", b"")
+        with patch.object(tools.subprocess, "run", side_effect=run):
+            record = tools.smoke_native_helper(helper, "extract")
+        self.assertEqual(record, {"argument": "--info", "exit_code": 0, "version": "Invader 0.55.0.unknown"})
+        self.assertEqual(list(self.root.iterdir()), [helper.parent])
+
+    def test_native_startup_refuses_failure_timeout_missing_version_and_oversized_output(self):
+        helper = self.root / "build/invader-build"
+        helper.parent.mkdir()
+        for failure in (subprocess.CalledProcessError(1, [str(helper)]), subprocess.TimeoutExpired([str(helper)], 30)):
+            with self.subTest(failure=type(failure).__name__), patch.object(tools.subprocess, "run", side_effect=failure), self.assertRaises(type(failure)):
+                tools.smoke_native_helper(helper, "build")
+        for stdout, stderr in ((b"", b""), (b"unexpected program\n", b""), (b"Invader " + b"x" * 32768, b""),
+                               (b"Invader 0.55\n", b"x" * 32769)):
+            with self.subTest(size=(len(stdout), len(stderr))), patch.object(tools.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout, stderr)), self.assertRaises(RuntimeError):
+                tools.smoke_native_helper(helper, "build")
+        self.assertEqual(list(self.root.iterdir()), [helper.parent])
+
     def test_unreviewed_runtime_dependency_is_named_but_still_refused(self):
         for consumer, header, imports in (
                 ("linux", "Advanced Micro Devices X86-64", "Shared library: [unreviewed.so]"),

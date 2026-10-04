@@ -391,6 +391,22 @@ def build(output, source_cache=None, rust_bin=None, jobs=4):
     return finalize_toolchain(output, rust_bin)
 
 
+def smoke_native_helper(path, name):
+    """Start a freshly compiled helper with the pinned, asset-free info flag."""
+    with tempfile.TemporaryDirectory(prefix="native-startup-", dir=Path(path).parent.parent) as cwd:
+        result = subprocess.run([str(path), "--info"], cwd=cwd, check=True,
+                                capture_output=True, timeout=30)
+    if len(result.stdout) > 32768 or len(result.stderr) > 32768:
+        raise RuntimeError("Native helper startup output exceeds its bound")
+    lines = result.stdout.decode("utf-8", errors="replace").splitlines()
+    version = lines[0] if lines else ""
+    if (not version.startswith("Invader ") or len(version) > 200
+            or any(ord(character) < 32 for character in version)):
+        raise RuntimeError("Native helper startup did not report its Invader version")
+    print("Native startup passed: invader-" + name + " --info (" + version + ")", flush=True)
+    return {"argument": "--info", "exit_code": 0, "version": version}
+
+
 def finalize_toolchain(output, rust_bin):
     """Create provenance/source delivery after a successful private native build.
 
@@ -416,8 +432,9 @@ def finalize_toolchain(output, rust_bin):
     for name in TOOLS:
         path = output / "build" / ("invader-" + name + (".exe" if consumer == "windows" else ""))
         libraries, minimum = inspect_binary(path, consumer)
-        subprocess.run([str(path), "--info"], check=True, capture_output=True)
-        binaries[name] = {"sha256": sha256(path), "architecture": selected["architecture"], "system_libraries": libraries, "minimum_system": minimum}
+        startup = smoke_native_helper(path, name)
+        binaries[name] = {"sha256": sha256(path), "architecture": selected["architecture"], "system_libraries": libraries, "minimum_system": minimum,
+                          "native_startup": startup}
     notices = collect_notices(sources, rust_bin, output / "Licenses")
     archive_name = "halo-content-tools-source.tar.gz"
     # Binary/ delivery hashes are review outputs, never source-build inputs.
