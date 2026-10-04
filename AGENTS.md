@@ -14,6 +14,14 @@ content imports; competitive features are optional and default off.
 - Prioritize matching accuracy, correctness, stability, performance and platform
   fixes that preserve Xbox behavior. Review netcode timing, authority, fairness,
   compatibility and service dependencies before adoption.
+- Maintain interoperability with cybersecurity games as a goal. Keep Halo OG's
+  original presentation and local feel while respecting shared host-authoritative
+  rules. A shared protocol number alone does not establish gameplay compatibility.
+- Reference upstream discovery, invite and connection protocols independently of
+  its PC-style menus. Check in with the user before implementing game-discovery
+  UI, then map it to original Xbox-style Multiplayer/System Link menus rather
+  than importing upstream UI. OS-native settings windows are not the intended
+  game-discovery UI.
 - Keep original fonts, artwork, HUD, scoreboard, sounds and game rules. Rebranding,
   overhead labels, balance changes and other modifications require explicit scope.
 - Keep the reviewed-through revision separate from the integrated baseline.

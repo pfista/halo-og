@@ -41,6 +41,10 @@ practice play. The project's priorities are:
 - **Selective upstream integration.** Review correctness, performance, platform,
   and networking improvements individually, preserving the Xbox baseline and
   keeping optional modifications explicit.
+- **A shared multiplayer ecosystem.** Aim to find and join cybersecurity games
+  through compatible network and discovery protocols while retaining Halo OG's
+  original presentation and local experience. Shared match rules remain the
+  host's responsibility; mixed-client support needs explicit testing.
 
 The decompilation foundation and protocol-11 networking are shared with our
 upstream projects; they are not exclusive Halo OG features. Our distinction is
@@ -185,6 +189,16 @@ algorithm. Use matching Halo OG builds for playtests. See the
 [networking implementation](port/linux/NETCODE.md),
 [protocol review](docs/xbox-fidelity.md#protocol-compatibility), and
 [fidelity policy](docs/xbox-fidelity.md) for details and current evidence.
+
+Interoperability with cybersecurity clients is a goal. We can share connection
+and discovery protocols while keeping original Xbox graphics and our own menus.
+The host's rules still govern a shared game: changing the HUD or rendering is
+different from changing movement, weapons, damage, or match timing independently.
+Some upstream game options need further compatibility work, and Internet play
+needs mixed-client testing. Its PC-style server browser UI is not part of this fork;
+future discovery UI will use original Xbox-style Multiplayer/System Link menus
+after a user check-in.
+See the [interoperability review](docs/network-interoperability.md).
 
 ## Community maps and original assets
 

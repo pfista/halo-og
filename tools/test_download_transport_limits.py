@@ -56,13 +56,20 @@ POSIX = r'''
 #define UPDATE_USER_AGENT "fixture"
 #define MAXIMUM_HEADER_SIZE 16384
 #define MAXIMUM_REDIRECTS 8
-typedef int pthread_once_t;
+/* glibc's stdlib headers already declare pthread types. Keep fixture stubs
+   distinct, then alias only the production function names being exercised. */
+typedef int fixture_pthread_once_t;
+#define pthread_once_t fixture_pthread_once_t
 #define PTHREAD_ONCE_INIT 0
-static int pthread_once(pthread_once_t *state, void (*callback)(void))
+#define pthread_once fixture_pthread_once
+static int fixture_pthread_once(fixture_pthread_once_t *state, void (*callback)(void))
 { if (!*state) { callback(); *state = 1; } return 0; }
 static pthread_once_t certificates_once = PTHREAD_ONCE_INIT;
-typedef int pthread_mutex_t;
+typedef int fixture_pthread_mutex_t;
+#define pthread_mutex_t fixture_pthread_mutex_t
 #define PTHREAD_MUTEX_INITIALIZER 0
+#define pthread_mutex_lock fixture_pthread_mutex_lock
+#define pthread_mutex_unlock fixture_pthread_mutex_unlock
 static pthread_mutex_t download_lock = PTHREAD_MUTEX_INITIALIZER;
 static int pthread_mutex_lock(pthread_mutex_t *lock) { assert(!*lock); *lock=1; return 0; }
 static int pthread_mutex_unlock(pthread_mutex_t *lock) { assert(*lock); *lock=0; return 0; }
@@ -386,10 +393,12 @@ class DownloadTransportLimitTests(unittest.TestCase):
                 command += ["-D_CRT_SECURE_NO_WARNINGS"]
             else:
                 command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-            subprocess.run(command + [str(source), "-o", str(binary)], check=True, capture_output=True,
-                           text=True, encoding="utf-8", errors="replace", timeout=60)
-            result = subprocess.run([str(binary), str(root / "download.tmp")], check=True, capture_output=True,
+            compiled = subprocess.run(command + [str(source), "-o", str(binary)], capture_output=True,
+                                      text=True, encoding="utf-8", errors="replace", timeout=60)
+            self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+            result = subprocess.run([str(binary), str(root / "download.tmp")], capture_output=True,
                                     text=True, encoding="utf-8", errors="replace", timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("PASS", result.stdout)
             self.assertFalse((root / "download.tmp").exists())
 
@@ -416,7 +425,7 @@ class DownloadTransportLimitTests(unittest.TestCase):
                       "static int read_body(", "static int https_get(", "static int update_download_serialized(",
                       "int update_download_limited(", "int update_download(")
         pieces = [function(source, signature) + (";" if signature.startswith("struct") else "") for signature in signatures]
-        start = POSIX.index("typedef int pthread_once_t;")
+        start = POSIX.index("/* glibc's stdlib headers")
         end = POSIX.index("static int crypto_ready")
         native = (POSIX[:start] + "#include <pthread.h>\n#include <time.h>\n"
                   "static pthread_once_t certificates_once = PTHREAD_ONCE_INIT;\n"

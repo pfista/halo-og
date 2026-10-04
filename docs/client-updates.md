@@ -20,7 +20,7 @@ The notice opens the platform download in a browser; installation remains manual
 It does not fetch those checksum/provenance files to authenticate or install code.
 
 Build identity comes from a clean, matching `main` CI checkout: repository,
-ref, `GITHUB_SHA`, actual Git HEAD, and tracked source cleanliness must match.
+ref, `GITHUB_SHA`, actual Git HEAD, and a clean source checkout must match.
 The app records that commit and its UTC commit date. Release discovery compares
 source identities/dates, rather than sorting testing tag names or build clocks.
 The current GitHub metadata path uses release `created_at` for source ordering;
@@ -42,6 +42,15 @@ Source entry points: [build identity](../tools/release_discovery.py),
 [shared metadata parser](../port/linux/src/release_discovery.c),
 [Mac notice controller](../port/macos/native/HaloReleaseUpdates.m), and
 [testing-release publisher](../tools/testing_release.py).
+
+The cybersecurity updater was reviewed at `193cbf59`. Its desktop path uses
+GitHub releases and a numeric build comparator, downloads a ZIP over HTTPS,
+then replaces individual files. It does not provide signed desktop archives
+or a transactional package rollback. That is useful reference code for
+background checks, but the signed installation stage will use each platform's
+updater and package format below. See the reviewed
+[desktop updater](https://github.com/cybersecurity/halo-ce-universal/blob/193cbf59c7e483386538fa34e28fb2503ab79a4b/port/linux/src/updater.c)
+and [build workflow](https://github.com/cybersecurity/halo-ce-universal/blob/193cbf59c7e483386538fa34e28fb2503ab79a4b/.github/workflows/build.yml).
 
 ## Future GitHub Actions pipeline
 

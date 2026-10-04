@@ -53,6 +53,7 @@ HARNESS = r'''
 #define SDL_strcasecmp strcasecmp
 #else
 #define SDL_strcasecmp _stricmp
+#include <unistd.h>
 #define readlink fixture_readlink
 static int fixture_readlink(const char *, char *, size_t);
 #endif
@@ -97,7 +98,12 @@ static ssize_t fixture_readlink(const char *path, char *buffer, size_t size) {
 static int fixture_readlink(const char *path, char *buffer, size_t size) {
 #endif
     size_t length=strlen(executable_path); (void)path;
-    if (length>size) return -1; memcpy(buffer,executable_path,length); return (int)length;
+    if (length>size) return -1; memcpy(buffer,executable_path,length);
+#ifdef _WIN32
+    /* The production readlink shim returns the executable with POSIX slashes. */
+    for (size_t i=0; i<length; i++) if (buffer[i]=='\\') buffer[i]='/';
+#endif
+    return (int)length;
 }
 /* ROOT_FUNCTIONS */
 int main(int count, char **arguments) {
@@ -151,7 +157,9 @@ class DesktopFirstRunTests(unittest.TestCase):
         else:
             command += ["-D_GNU_SOURCE", "-D_FILE_OFFSET_BITS=64", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                         str(ROOT / "port/linux/src/posix_files.c")]
-        subprocess.run([*command, "-o", str(cls.binary)], check=True, capture_output=True, text=True)
+        compiled = subprocess.run([*command, "-o", str(cls.binary)], capture_output=True, text=True)
+        if compiled.returncode:
+            raise AssertionError(compiled.stdout + compiled.stderr)
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -205,7 +213,8 @@ class DesktopFirstRunTests(unittest.TestCase):
         image = self.write_image("Halo.XISO")
         (self.app / "pc.iso").write_bytes(b"PC ISO")
         result = self.run_fixture("discover", self.app).stdout.splitlines()
-        self.assertEqual(result[:2], ["1", str(image)])
+        self.assertEqual(result[0], "1")
+        self.assertEqual(Path(result[1]), image)
 
     def test_multiple_supported_images_require_picker(self):
         self.write_image()
@@ -234,7 +243,7 @@ class DesktopFirstRunTests(unittest.TestCase):
         self.write_image()
         before = self.image.read_bytes()
         result = self.run_fixture("root", self.app / "halo.exe")
-        self.assertEqual(result.stdout.strip(), str(self.app))
+        self.assertEqual(Path(result.stdout.strip()), self.app)
         self.assertIn("extract=1 picker=0 questions=0", result.stderr)
         self.assertEqual((self.app / "maps/ui.map").read_bytes(), map_header())
         self.assertEqual((self.app / "maps/a10.map").read_bytes(), bytes(range(256)) * 8)
@@ -316,7 +325,7 @@ class DesktopFirstRunTests(unittest.TestCase):
         configured = self.folder / "configured"
         self.make_data(configured)
         result = self.run_fixture("root", self.app / "halo.exe", configured)
-        self.assertEqual(result.stdout.strip(), str(configured))
+        self.assertEqual(Path(result.stdout.strip()), configured)
         self.assertIn("extract=0", result.stderr)
         self.make_data(self.folder)
         result = self.run_fixture("root", self.app / "halo.exe")
@@ -328,7 +337,7 @@ class DesktopFirstRunTests(unittest.TestCase):
         self.write_image()
         self.make_data(self.app)
         result = self.run_fixture("root", self.app / "halo.exe")
-        self.assertEqual(result.stdout.strip(), str(self.app))
+        self.assertEqual(Path(result.stdout.strip()), self.app)
         self.assertIn("extract=0", result.stderr)
         shutil.rmtree(self.app / "Maps")
         self.make_data(self.folder / "assets")

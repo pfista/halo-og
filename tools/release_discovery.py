@@ -9,11 +9,17 @@ ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "pfista/halo-og"
 
 
+def source_git_command(*arguments):
+    # Actions' container checkout can belong to the host runner. Trust only
+    # this explicitly selected source tree, without changing global Git config.
+    return ["git", "-c", f"safe.directory={ROOT}", *arguments]
+
+
 def source_identity():
     """Use the immutable commit, not the build clock or a mutable tag name."""
     try:
-        sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-        stamp = subprocess.check_output(["git", "show", "-s", "--format=%ct", "HEAD"], cwd=ROOT, text=True).strip()
+        sha = subprocess.check_output(source_git_command("rev-parse", "HEAD"), cwd=ROOT, text=True).strip()
+        stamp = subprocess.check_output(source_git_command("show", "-s", "--format=%ct", "HEAD"), cwd=ROOT, text=True).strip()
         if not re.fullmatch(r"[0-9a-f]{40}", sha) or not stamp.isascii() or not stamp.isdecimal():
             return None
         date = datetime.fromtimestamp(int(stamp), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -32,7 +38,7 @@ def ci_source_identity(environment=None):
     if not identity or identity["source_sha"] != environment.get("GITHUB_SHA"):
         return None
     try:
-        status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=normal"], cwd=ROOT, capture_output=True)
+        status = subprocess.run(source_git_command("status", "--porcelain", "--untracked-files=normal"), cwd=ROOT, capture_output=True)
         if status.returncode or status.stdout:
             return None
     except OSError:

@@ -141,8 +141,10 @@ class ReleaseDiscoveryTests(unittest.TestCase):
         (cls.work / "SDL3/SDL.h").write_text(SDL)
         (cls.work / "fixture.c").write_text(HARNESS)
         cls.binary = cls.work / ("fixture.exe" if sys.platform == "win32" else "fixture")
-        subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
-                        "-I" + str(cls.work), "-I" + str(ROOT / "port/linux/src"),
+        command = [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror"]
+        if sys.platform == "win32":
+            command += ["-D_CRT_SECURE_NO_WARNINGS"]
+        subprocess.run([*command, "-I" + str(cls.work), "-I" + str(ROOT / "port/linux/src"),
                         str(cls.work / "fixture.c"), "-o", str(cls.binary)], check=True)
 
     @classmethod
@@ -246,12 +248,16 @@ class ReleaseDiscoveryTests(unittest.TestCase):
 class ReleaseIdentityTests(unittest.TestCase):
     def test_identity_is_commit_utc_and_discovery_only_clean_matching_fork_main(self):
         environment = {"GITHUB_REPOSITORY": identity.REPOSITORY, "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": SHA}
-        with patch.object(identity.subprocess, "check_output", side_effect=[SHA + "\n", "1791028800\n"]), \
+        with patch.object(identity.subprocess, "check_output", side_effect=[SHA + "\n", "1791028800\n"]) as source, \
                 patch.object(identity.subprocess, "run") as check:
             check.return_value.returncode = 0
             check.return_value.stdout = b""
             result = identity.ci_source_identity(environment)
         self.assertEqual(result, {"source_sha": SHA, "source_date": DATE})
+        expected_git = ["git", "-c", f"safe.directory={identity.ROOT}"]
+        self.assertEqual(source.call_args_list[0].args[0], [*expected_git, "rev-parse", "HEAD"])
+        self.assertEqual(source.call_args_list[1].args[0], [*expected_git, "show", "-s", "--format=%ct", "HEAD"])
+        self.assertEqual(check.call_args.args[0], [*expected_git, "status", "--porcelain", "--untracked-files=normal"])
         with patch.object(identity, "ci_source_identity", return_value=result):
             defines = identity.desktop_discovery_defines(environment)
         self.assertIn("-DHALO_OG_RELEASE_DISCOVERY=1", defines)

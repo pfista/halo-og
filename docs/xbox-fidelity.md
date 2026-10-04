@@ -46,6 +46,17 @@ and is a renderer fix, not authorization to replace fonts.
 
 ## Protocol compatibility
 
+Interoperability with cybersecurity clients and discovery services is a goal,
+alongside Halo OG's original presentation and local feel. Review network and
+discovery protocols separately from upstream menus and gameplay additions.
+Shared sessions must respect the host's authoritative rules; a local client
+cannot impose different movement or weapon rules while claiming a consistent
+match. Keep Halo OG hosting defaults original and validate received host options
+individually. See [the current interoperability review](network-interoperability.md).
+Game-discovery UI requires a user check-in before implementation and should map
+to original Xbox-style Multiplayer/System Link menus; upstream's PC-style
+server browser UI is not adopted.
+
 Protocol 11 retains host authority and 30 Hz simulation. Its 28-byte PC options
 record does not introduce a new prediction or transport algorithm. Halo OG
 hosts original-rule defaults and rejects active PC options it does not implement
