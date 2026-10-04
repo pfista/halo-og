@@ -106,7 +106,7 @@ static int integer(struct json *j, unsigned long long *out)
     if (begin == j->p || (j->p - begin > 1 && *begin == '0')) return 0;
     *out = value; return 1;
 }
-static int boolean(struct json *j)
+static int json_boolean(struct json *j)
 {
     whitespace(j);
     if (j->end - j->p >= 4 && !memcmp(j->p, "true", 4)) { j->p += 4; return 1; }
@@ -130,7 +130,7 @@ static int map_object(struct json *j, struct map_entry *entry)
         else if (!strcmp(key, "file_bytes")) { bit = 16; if (!integer(j, &entry->bytes) || entry->bytes < 2048 || entry->bytes > MAX_MAP_BYTES) return 0; }
         else if (!strcmp(key, "cache_version")) { bit = 32; if (!integer(j, &number) || number != 5) return 0; }
         else if (!strcmp(key, "scenario_type")) { bit = 64; if (!integer(j, &number) || number != 1) return 0; }
-        else if (!strcmp(key, "prefetch")) { bit = 128; if (!boolean(j)) return 0; }
+        else if (!strcmp(key, "prefetch")) { bit = 128; if (!json_boolean(j)) return 0; }
         else return 0;
         if (fields & bit) return 0;
         fields |= bit;

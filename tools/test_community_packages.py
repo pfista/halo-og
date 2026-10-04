@@ -292,6 +292,7 @@ class CommunityPackageTests(unittest.TestCase):
             with self.subTest(kind=destination_kind):
                 if destination_kind == "symlink":
                     self.make_symlink(self.destination, self.root / "absent-target")
+                    original_link_target = self.destination.readlink()
                 else:
                     self.destination.mkdir()
                     if destination_kind == "user-files":
@@ -303,7 +304,7 @@ class CommunityPackageTests(unittest.TestCase):
                 if destination_kind == "user-files":
                     self.assertEqual((self.destination / "save.bin").read_bytes(), b"USER-SAVE")
                 if self.destination.is_symlink():
-                    self.assertEqual(self.destination.readlink(), self.root / "absent-target")
+                    self.assertEqual(self.destination.readlink(), original_link_target)
                     self.destination.unlink()
                 else:
                     shutil.rmtree(self.destination)
