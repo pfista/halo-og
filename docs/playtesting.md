@@ -1,12 +1,11 @@
 # Playtesting Halo OG
 
-Use the same Halo OG testing package as the other players:
-**[test-v0.3.0-net11-dmg2](https://github.com/pfista/halo-og/releases/tag/test-v0.3.0-net11-dmg2)**.
-If the release is unavailable, the [download table](../README.md#download)
-explains matching-commit CI artifacts.
-You do not need to compile the game.
-This revision adds the Mac installer screen. Its game app and other platform
-ZIPs match `test-v0.3.0-net11`; both contain identical protocol-11 game builds.
+Use the same Halo OG testing release as the other players. The
+[download table](../README.md#download) links published packages and explains
+matching-commit CI artifacts if a release is unavailable. You do not need to
+compile the game. New source changes appear in downloads only when a matching
+build is published; the older `test-v0.3.0-net11-dmg2` release is distinguished
+below.
 
 Bring your own original Xbox Halo: Combat Evolved disc image (`.iso` / `.xiso`)
 or extracted game data. Use one complete set. **USA NTSC is recommended**;
@@ -117,16 +116,21 @@ community maps** for original Xbox v5 NTSC data, about **863 MiB** in total.
 This includes PB community variants with their normal embedded Halo dependencies;
 original disc images, stock map files, campaign files, and `ui.map` are excluded.
 
-On **Mac**, open **Halo OG → Settings…**, enable **Download approved community
-maps in the background**, and accept the prompt. **Check Maps / Retry** refreshes
-the catalog. Missing maps from the collection are queued on launch while the
-app runs; joining a host whose approved map is missing also requests it. Watch
-the Settings progress/error text. Installed, verified maps work with downloads
-disabled and offline.
-Reopen map selection after completion; restart if the current session still
-holds an older selection. Downloads never replace your original maps.
+The **test-v0.3.0-net11-maps1 Mac build** enables **Download approved community maps in the
+background** for fresh settings and queues **all 40** approved maps at launch
+once original NTSC data is available. A saved opt-out stays off. Open
+**Halo OG → Settings…** to disable downloads or use **Check Maps / Retry** when
+enabled. Watch its progress/error text. Files go into
+`~/Library/Application Support/Halo OG/Community Maps/maps/`; originals and
+existing conflicting files are preserved. Installed, verified maps remain
+usable with downloads disabled and offline. Reopen map selection after
+completion; restart if the session still holds an older selection.
 
-New **Windows/Linux builds from main** download approved community maps in the
+The published **test-v0.3.0-net11-dmg2 Mac build** still needs you to enable
+that checkbox and accept its prompt. It can download the existing complete-map
+collection, but it does not have the new fresh-settings default.
+
+The **test-v0.3.0-net11-maps1 Windows/Linux builds** download all 40 approved community maps in the
 background once original NTSC game data is available. Downloads are enabled by
 default. To disable them, set `auto_download = false` in the `[community_maps]`
 section of `config.toml` beside the executable. Files go into the active game
@@ -179,11 +183,11 @@ Original stock maps and `ui.map` remain user-imported. A PC/Custom Edition map
 cannot be made compatible by renaming it or changing its version field.
 [Map conversion](community-maps.md) explains the supported pipeline.
 
-Cloudflare currently supplies complete playable `.map` files with embedded
-Halo dependencies. Downloading stripped community packages and rebuilding
-them automatically from your own XISO is a future distribution flow, not a
-feature of these testing packages. The separate
-[local reconstruction prototype](community-map-packages.md) has verified Downrush.
+Cloudflare supplies complete playable `.map` files with their embedded Halo
+dependencies. Downloads are verified and installed directly; players do not
+need a reconstruction toolchain. Original stock maps and disc data still come
+from the player's own copy. The package-reconstruction experiment has been set
+aside for this release path.
 
 ## Report a problem
 

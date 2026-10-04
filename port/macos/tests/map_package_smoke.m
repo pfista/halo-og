@@ -15,7 +15,7 @@ static NSUInteger mockCatalogRequests;
 - (void)startLoading {
     if ([self.request.URL.absoluteString isEqual:@"https://package-smoke.invalid/catalog.json"]) {
         @synchronized(HaloPackageOfflineGuard.class) { mockCatalogRequests++; }
-        NSData *bytes = [NSJSONSerialization dataWithJSONObject:@{@"schema_version":@2,
+        NSData *bytes = [NSJSONSerialization dataWithJSONObject:@{@"schema_version":@1,
             @"profile":@"stock-xbox-ntsc", @"maps":@[]} options:0 error:nil];
         NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL
             statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:@{@"Content-Type":@"application/json"}];
@@ -37,7 +37,7 @@ static void pump(void) {
 static NSDictionary *offlineConfiguration(void) {
     return @{@"schema_version":@1, @"catalog_url":NSNull.null, @"objects_base_url":NSNull.null,
         @"allowed_origins":@[], @"profile":@"stock-xbox-ntsc", @"cache_build":@"01.10.12.2276",
-        @"max_catalog_bytes":@1048576, @"max_map_bytes":@134217728, @"max_package_bytes":@268435456, @"max_cache_bytes":@134217728,
+        @"max_catalog_bytes":@1048576, @"max_map_bytes":@134217728, @"max_cache_bytes":@134217728,
         @"max_tag_bytes":@23068672, @"max_maps":@115};
 }
 static NSDictionary *fileDigest(NSURL *file, NSError **error) {

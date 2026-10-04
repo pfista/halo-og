@@ -26,7 +26,6 @@ from tools.community_packages import read_package
 SOURCES = [ROOT / "port/macos/tests/map_package_smoke.m",
            ROOT / "port/macos/native/HaloMapPackages.m",
            ROOT / "port/macos/native/HaloMapDownloads.m"]
-CODEC_SOURCES = [ROOT / "port/linux/src/community_mapog.c", ROOT / "port/third_party/miniz/tinfl_only.c"]
 
 
 def sha256(path: Path) -> str:
@@ -127,21 +126,17 @@ def main() -> int:
     support.mkdir()
     probe = output / "native-probe"
     report = output / "native-report.json"
-    objects = [output / (path.stem + ".o") for path in CODEC_SOURCES]
-    codec_commands = [["/usr/bin/clang", "-arch", "arm64", "-mmacosx-version-min=14.0", "-O2",
-        "-Wno-deprecated-declarations", "-I", str(ROOT / "port/linux/src"), "-I", str(ROOT / "port/third_party/miniz"),
-        "-c", str(source), "-o", str(target)] for source, target in zip(CODEC_SOURCES, objects)]
     compile_command = ["/usr/bin/clang", "-arch", "arm64", "-mmacosx-version-min=14.0",
         "-fobjc-arc", "-fblocks", "-O2", "-Wall", "-Wextra", "-Wno-deprecated-declarations",
-        "-I", str(ROOT / "port/macos/native"), "-I", str(ROOT / "port/linux/src"), *(str(path) for path in SOURCES + objects),
+        "-I", str(ROOT / "port/macos/native"), *(str(path) for path in SOURCES),
         "-framework", "Foundation", "-o", str(probe)]
     command = [str(probe), str(package), str(data_root), str(tools_app), str(support), str(report), str(args.timeout)]
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     provenance = {"schema_version": 1, "git_revision": revision,
         "started_at": datetime.now(timezone.utc).isoformat(), "manifest": manifest,
         "package_sha256": before["package"]["sha256"], "inputs_before": before,
-        "source_sha256": {str(path.relative_to(ROOT)): sha256(path) for path in SOURCES + CODEC_SOURCES + [Path(__file__).resolve()]},
-        "codec_compile_commands": codec_commands, "compile_command": compile_command, "probe_command": command,
+        "source_sha256": {str(path.relative_to(ROOT)): sha256(path) for path in SOURCES + [Path(__file__).resolve()]},
+        "compile_command": compile_command, "probe_command": command,
         "scope": "Local whole-tag reconstruction, receipt readiness, offline reuse and parser rejection; no gameplay/rights validation",
         "user_preferences_modified": False, "application_installed": False}
     write_json(output / "provenance.json", provenance)
@@ -149,8 +144,6 @@ def main() -> int:
     status = {"schema_version": 1, "success": False, "parser_cases": []}
     try:
         with (output / "compile.log").open("x") as log:
-            for codec_command in codec_commands:
-                subprocess.run(codec_command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
             subprocess.run(compile_command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
         with (output / "assembly.log").open("x") as log:
             result = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,

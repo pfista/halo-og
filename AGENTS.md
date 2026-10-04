@@ -35,4 +35,11 @@ settings; verify the installed signature and `Contents/Resources/BuildInfo.txt`.
 - [Building](docs/building.md): platform toolchains and validation.
 - [Fidelity policy](docs/xbox-fidelity.md): baseline, defaults and upstream decisions.
 - [Community maps](docs/community-maps.md): conversion and managed storage.
-- [Map packages](docs/community-map-packages.md): reconstruction format and status.
+- [Map publishing](docs/map-publishing.md): complete community maps on Cloudflare.
+
+## GitHub releases
+
+Keep release notes simple: a short description followed by direct download
+links for every included platform. Link to the playtesting guide for setup;
+keep platform requirements and any signing limitations brief. Publish matching
+platform builds from one source commit and include checksums and provenance.

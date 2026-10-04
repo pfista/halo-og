@@ -177,32 +177,27 @@ def check_platform_archive(path, name):
 def release_notes(record):
     url = "https://github.com/" + record["repository"]
     source = f"{url}/blob/{record['sha']}"
-    return (f"Halo OG testing build `{record['tag']}` from [{record['sha']}]({url}/commit/{record['sha']}).\n\n"
-            f"Network protocol: **{record['network_protocol']}**.\n\n"
-            f"Start with the [playtesting setup guide]({source}/docs/playtesting.md) "
-            f"or [project README]({source}/README.md). Download your platform's asset below; "
-            "all players should use this same testing release.\n\n"
-            "Mac, Windows, Linux and Android assets use the same source revision. "
-            "Supply your own original Xbox Halo game data. No maps or disc images are included.\n\n"
-            "The Apple Silicon DMG is ad-hoc signed and unnotarized; automatic updates are disabled. "
-            "See macos-README.txt for the required macOS version and first-launch instructions. "
-            f"Linux requires the [32-bit runtime dependencies]({source}/port/linux/README.md#requirements).\n\n"
-            "On Mac, choosing a maps folder offers **Copy and Manage**. Managed maps, saves "
-            "and preferences persist in `~/Library/Application Support/Halo OG/` across app updates. "
-            "With original Xbox NTSC 2276 data selected, opt into **Download approved community maps "
-            "in the background** in Settings. Mac downloads default off.\n\n"
-            "Windows and Linux community downloads default on after original NTSC game data is selected. "
-            "To disable them, set `auto_download = false` under `[community_maps]` in `config.toml` beside the executable. "
-            "Watch download and reconstruction status in terminal output, then restart after completion to discover the new maps.\n\n"
-            "Community maps are delivered as compressed `.mapog` packages and reconstructed locally with "
-            "the bundled, verified helpers and your original NTSC `bloodgulch.map`, `a10.map`, and `ui.map`. "
-            "Hosted packages omit whole byte-identical original tags; custom content and modified original assets remain. "
-            "Original stock caches and disc images are not hosted or bundled. Android community-cache placement "
-            "remains manual; local package reconstruction is available on desktop platforms. "
-            f"See [community package setup]({source}/docs/community-map-packages.md) for the format and requirements.\n\n"
-            "Check SHA256SUMS before installing. provenance.json records workflow runs, artifact IDs "
-            "and hashes. These are test builds; physical cross-platform and Internet/NAT play "
-            "still need testing. CI does not establish multiplayer interoperability.\n")
+    downloads = f"{url}/releases/download/{quote(record['tag'], safe='')}"
+    platforms = (("macOS (Apple Silicon)", DMG),
+                 ("Windows", "halo-windows-release.zip"),
+                 ("Linux", "halo-linux-release.zip"),
+                 ("Android", "halo-android-release.zip"))
+    table = "| Platform | Download |\n| --- | --- |\n" + "".join(
+        f"| {platform} | [{asset}]({downloads}/{quote(asset, safe='')}) |\n"
+        for platform, asset in platforms)
+    return ("Halo OG brings original Xbox Halo: Combat Evolved to native platforms, "
+            "with community maps downloaded in the background.\n\n"
+            + table + "\n"
+            f"Supply your own Xbox NTSC Halo XISO or extracted data (`01.10.12.2276`). "
+            f"See the [setup guide]({source}/docs/playtesting.md) "
+            f"and [README]({source}/README.md). Mac, Windows and Linux automatically download "
+            "all 40 complete community maps (~863 MiB); Android map setup remains manual.\n\n"
+            "The Mac app is ad-hoc signed and unnotarized; read `macos-README.txt` before first launch. "
+            f"Linux needs [32-bit runtime dependencies]({source}/port/linux/README.md#requirements).\n\n"
+            f"All four builds use source [{record['sha']}]({url}/commit/{record['sha']}) "
+            f"and network protocol **{record['network_protocol']}**; players should use this same release. "
+            "Checksums and CI provenance are attached. Physical cross-platform and "
+            "Internet/NAT play still need testing.\n")
 
 
 def prepare(api, repository, sha, tag, directory):

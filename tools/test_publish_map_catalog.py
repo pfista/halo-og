@@ -164,32 +164,6 @@ class PublisherTests(unittest.TestCase):
             self.publish()
         self.assertEqual(self.http.objects[self.catalog_key], b"competing catalog")
 
-    def test_objects_only_preserves_catalog_then_cutover_reads_fresh_etag(self):
-        self.http.objects[self.catalog_key] = b"previous"
-        result = publisher.publish(self.prepared, self.config, self.r2, self.http,
-            progress=self.progress.append, advance_catalog=False)
-        self.assertEqual(result["catalog_advanced"], False)
-        self.assertEqual(result["objects_verified"], 1)
-        self.assertEqual(self.http.objects[self.catalog_key], b"previous")
-        self.assertEqual(self.http.objects[self.key], self.data)
-        self.assertFalse(any(url.endswith("/" + self.catalog_key)
-                             for _, url, _, _ in self.http.requests))
-        self.assertFalse(any(method == "DELETE" for method, _, _, _ in self.http.requests))
-        self.http.objects[self.catalog_key] = b"later previous"
-        self.http.requests.clear()
-        self.publish()
-        self.assertEqual(len(self.writes()), 1)
-        self.assertEqual(self.writes()[0][2]["if-match"], FakeHTTPS.etag(b"later previous"))
-
-    def test_objects_only_does_not_weaken_later_catalog_race_guard(self):
-        publisher.publish(self.prepared, self.config, self.r2, self.http,
-            progress=self.progress.append, advance_catalog=False)
-        self.http.objects[self.catalog_key] = b"previous"
-        self.http.race = lambda key, objects: objects.update({key: b"competing catalog"})
-        with self.assertRaisesRegex(publisher.PublishError, "changed during publication"):
-            self.publish()
-        self.assertEqual(self.http.objects[self.catalog_key], b"competing catalog")
-
     def lose_map_put_response(self, after_store=None):
         request = self.http.request
         def lost_response(method, url, **kwargs):
@@ -448,7 +422,7 @@ class PublisherTests(unittest.TestCase):
             with self.assertRaises(publisher.PublishError) as error:
                 http.request("PUT", "https://example.test/map", headers={"If-None-Match": "*"}, body=b"x" * (1024 * 1024 + 1))
         self.assertNotIn("private", str(error.exception))
-        self.assertEqual(transport.call_args.kwargs["timeout"], 300)
+        self.assertEqual(transport.call_args.kwargs["timeout"], 60)
         self.assertEqual(transport.call_args.args[0].get_header("If-none-match"), "*")
 
 

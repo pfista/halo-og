@@ -27,7 +27,8 @@ static NSError *failure(NSString *message) {
 - (NSString *)isoPath { return [_settings[@"iso_path"] isKindOfClass:NSString.class] ? _settings[@"iso_path"] : nil; }
 - (BOOL)windowed { return [_settings[@"windowed"] isKindOfClass:NSNumber.class] && [_settings[@"windowed"] boolValue]; }
 - (BOOL)communityDownloadsEnabled {
-    return [_settings[@"community_downloads"] isKindOfClass:NSNumber.class] && [_settings[@"community_downloads"] boolValue];
+    id saved = _settings[@"community_downloads"];
+    return !saved || ([saved isKindOfClass:NSNumber.class] && [saved boolValue]);
 }
 - (BOOL)save:(NSMutableDictionary *)settings error:(NSError **)error {
     NSData *data = [NSJSONSerialization dataWithJSONObject:settings options:NSJSONWritingPrettyPrinted error:error];

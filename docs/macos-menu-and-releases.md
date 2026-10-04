@@ -29,6 +29,14 @@ dispatched on `main` with a new `test-...` tag, for example
 successful **Build** and **macOS DMG** workflow outputs from that exact commit.
 It does not rebuild, sign with a personal identity, or include game data.
 
+The `test-v0.3.0-net11-maps1` testing release adds automatic complete-map
+downloads on Mac, Windows and Linux. Fresh Mac settings enable downloads;
+previously saved opt-outs remain off. After compatible original NTSC data is
+selected, all 40 approved community maps queue in the background. The older
+`test-v0.3.0-net11-dmg2` Mac build still requires opt-in, and its Windows/Linux
+builds use manual community maps. See [player setup](playtesting.md#community-maps)
+for platform controls and the current download links.
+
 Wait for both build workflows to succeed on the same latest `main` commit. In GitHub Actions, choose **Publish testing prerelease → Run workflow**,
 select `main`, and enter an unused testing tag. This explicit dispatch publishes
 a prerelease; code pushes do not publish. Prepare/collection uses a read-only
@@ -49,10 +57,10 @@ The prerelease includes:
 - `SHA256SUMS` and `provenance.json` with source SHA, network protocol, CI run IDs,
   artifact IDs and SHA-256 hashes. Debug builds are omitted.
 
-For a tag such as `test-v0.3.0-net11`, the direct Mac download is:
+For the `test-v0.3.0-net11-maps1` tag, the direct Mac download is:
 
 ```text
-https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11/Halo-OG-macos-arm64.dmg
+https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-maps1/Halo-OG-macos-arm64.dmg
 ```
 
 The URL becomes usable only after that tag is published. Public release assets
@@ -118,8 +126,10 @@ the game or change user data. Existing output files are never replaced.
 The end user needs no Homebrew, XDK or build tools. SDL3, ANGLE, Sparkle and the
 compiled engine are bundled. First launch accepts the user's locally obtained
 original Xbox Halo XISO/ISO, or extracted game folder (its `maps` subfolder also
-works). Nothing is downloaded or uploaded by this selection. Disc imports copy
-maps to a fresh directory in:
+works). Original data is imported locally and is not uploaded. Selecting
+compatible original NTSC data enables background community downloads when the
+saved download preference allows them. Disc imports copy maps to a fresh
+directory in:
 
 ```text
 ~/Library/Application Support/Halo OG/Game Data/<import-id>/maps/
@@ -133,11 +143,15 @@ retain earlier imports rather than deleting the person's files.
 
 Extracted-folder selection offers **Copy and Manage**, **Use This Folder**, or
 **Cancel**. Managed copies use the same Application Support layout and preserve
-the original files. Community downloads have separate opt-in controls and a
+the original files. Community downloads have their own Settings control and a
 verified library under `Community Maps/maps/`; user-supplied files take priority.
 See [managed storage and map downloads](community-maps.md#managed-storage-and-downloads) for the catalog,
 missing-map readiness flow and hosting configuration. The selected publisher
-is `https://dl.oghalo.com`; downloads default off until the player opts in.
+is `https://dl.oghalo.com`. Fresh settings enable all 40 complete-map downloads
+(about 863 MiB); existing saved opt-outs remain off. Verified maps persist
+outside the app and remain usable offline. Hosted caches include their required
+embedded Halo dependencies; separate disc, stock, campaign and UI map files are
+not hosted. Local package reconstruction is set aside for this release path.
 
 `macos-settings.json` in the Halo OG Application Support directory records the
 data/source-image paths and fullscreen preference. Saves, profiles, cache and
@@ -159,7 +173,8 @@ UI handles update consent and downloads. Scheduled reminders wait in the menu
 while playing; installations requiring a relaunch wait for clean game exit.
 Local builds omit the feed and disable update controls.
 
-Hosting is intentionally unconfigured. The non-secret checked-in file
+Sparkle app-update hosting is intentionally unconfigured; community-map
+hosting above is configured independently. The non-secret checked-in file
 `port/macos/release-config.json` currently has null values for:
 
 | Field | Purpose |

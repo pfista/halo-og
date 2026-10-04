@@ -3,8 +3,9 @@
 Halo OG imports community content into its Xbox-derived engine. The reviewed
 JukkisP H1 Performance Build 2.0 Public Beta 3 collection contains 40 maps;
 conversion targets Xbox NTSC v5 build `01.10.12.2276`. Follow the
-[fidelity policy](xbox-fidelity.md), [player setup](playtesting.md#community-maps)
-and [package reconstruction guide](community-map-packages.md).
+[fidelity policy](xbox-fidelity.md) and [player setup](playtesting.md#community-maps).
+The current download path supplies complete playable `.map` files; the local
+package-reconstruction experiment has been set aside.
 
 ## Runtime support for compatible v5 maps
 
@@ -42,13 +43,27 @@ Windows saves use `%APPDATA%/Halo OG`; Linux uses `$XDG_DATA_HOME/halo-og`
 or `~/.local/share/halo-og`. See [player setup](playtesting.md) for each build's
 configuration, data location and download controls.
 
-Mac downloads require opt-in; Windows/Linux's `community_maps.auto_download`
-setting defaults to `true` in current source. Network transfers and local
-reconstruction run off the simulation thread. Maps become usable only after
-verification and exclusive publication; different same-name files are preserved.
-Verified local maps remain usable offline. Client/release support and package
-format are documented in the [reconstruction guide](community-map-packages.md);
-Android currently installs matching maps manually.
+The `test-v0.3.0-net11-maps1` testing release and current main builds enable
+background downloads on Mac, Windows and Linux with fresh settings. Once
+compatible original NTSC game data is available, they queue all 40 approved
+community maps, about 863 MiB. Saved opt-outs remain off. Mac Settings controls
+downloads; Windows/Linux use `community_maps.auto_download` in `config.toml`
+beside the executable. The older `test-v0.3.0-net11-dmg2` Mac build requires
+opt-in, and its Windows/Linux builds require manual community maps. Android
+still installs matching maps manually.
+
+Mac stores downloads in `Community Maps/maps/` above; Windows/Linux store them
+in the active game data root's `maps/` directory. Transfers run off the
+simulation thread. Exact size, SHA-256 and Xbox v5 identity are verified before
+exclusive publication; different same-name files are preserved. Verified maps
+remain usable offline. Restart Windows/Linux after completion to refresh map
+discovery; see [player setup](playtesting.md#community-maps) for progress,
+controls and manual downloads.
+
+Hosted community caches retain their required embedded Halo dependencies.
+They exclude standalone disc images and separate stock, campaign and UI map
+files; players supply original game data themselves. Downloads install directly
+without tag extraction, Invader or a reconstruction toolchain.
 
 The nonsecret Mac endpoint configuration is
 [`map-downloads.json`](../port/macos/map-downloads.json). The publisher is
@@ -120,7 +135,8 @@ Stock recompilation repairs are limited to unused vehicle-gun AI firing
 references, the Scorpion headlight flare bitmap index and its secondary-fire
 bullet effect-location index. Manifests record before/after hashes, substitutions,
 removed scripts, conversions, scenario identity and output SHA-256. Source files
-remain intact; extracted original tags and complete caches are local outputs.
+remain intact; extracted original tags are local conversion inputs. Reviewed
+complete community caches can be hosted separately from the client.
 
 ## Validation
 

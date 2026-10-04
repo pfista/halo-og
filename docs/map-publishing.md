@@ -10,8 +10,9 @@ helper binaries or private logs as map objects.
 
 The existing publisher handles complete converted community maps, including
 their embedded Halo dependencies. Prepare a new catalog directory with explicit
-`--map` arguments for the reviewed caches; add `--prefetch <map-id>` for each map
-that should download in the background.
+`--map` arguments for the reviewed caches. Current Mac, Windows, and Linux
+clients download all eligible catalog maps when automatic downloads are enabled.
+Retain `--prefetch <map-id>` for older clients that use this hint.
 
 ```sh
 python3 tools/map_catalog.py \
@@ -36,15 +37,12 @@ A failed public read can leave a published catalog; inspect its state before
 retrying. This publisher does not delete objects or automatically roll back.
 Run `python3 tools/publish_map_catalog.py --help` for the current CLI contract.
 
-## Transition to reconstructed packages
+## Distribution scope
 
-Package-only publication and retirement of complete maps are under development.
-Follow the [reconstruction guide](community-map-packages.md) for implementation
-status and package validation. Custom content and modified originals stay in
-scope; the removal target is whole, byte-identical unchanged original assets.
-
-Before replacing the hosted catalog, verify exact local reconstruction and
-public package delivery, then back up and retire the old complete-map objects.
+The live testing catalog contains the 40 complete playable community maps.
+Local reconstruction and package-only distribution are set aside. Keep using
+the complete-map publisher; no content-tool download or local map rebuild is
+required by the desktop release.
 
 Local validation, upload completion, old-object retirement and gameplay acceptance
 are separate results. See [playtesting](playtesting.md) for client acceptance.

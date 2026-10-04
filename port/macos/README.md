@@ -9,6 +9,10 @@ Use [playtesting](../../docs/playtesting.md#mac) for current packages, installat
 and first launch. [Release tooling](../../docs/macos-menu-and-releases.md) covers
 DMG packaging, CI artifacts and publication.
 
+The `test-v0.3.0-net11-maps1` testing release and current main builds enable
+automatic community-map downloads with fresh settings. Existing saved opt-outs
+remain off. The older `test-v0.3.0-net11-dmg2` Mac build requires opt-in.
+
 ## Launch
 
 Open `build/macos/Halo OG.app` in Finder. There is no automatic timeout.
@@ -17,7 +21,20 @@ your chosen local data location. Development builds can fall back to this
 checkout's `assets/` directory. The helmet menu icon opens Settings, changes
 fullscreen, and selects your own disc image or maps folder. See
 [Mac menu and releases](../../docs/macos-menu-and-releases.md) for first launch,
-data import and the intentionally unconfigured release hosting.
+data import and app-update hosting. Community-map hosting is configured
+separately at `https://dl.oghalo.com`.
+
+Once compatible original Xbox NTSC 2276 data is selected, enabled downloads
+queue all 40 approved complete community maps (about 863 MiB) in the background.
+Use Settings to disable downloads or **Check Maps / Retry** to retry. Files
+are verified before installation in
+`~/Library/Application Support/Halo OG/Community Maps/maps/`; conflicting files
+and originals are preserved, and verified maps remain usable offline. These
+complete caches contain their required embedded Halo dependencies. Players
+still supply original stock, campaign and UI data; no local reconstruction
+toolchain is required. Windows/Linux also enable background downloads by
+default in the new testing builds; Android map setup remains manual. See
+[community-map setup](../../docs/playtesting.md#community-maps) for each platform.
 
 The app defaults to borderless fullscreen at the desktop's aspect ratio, with
 Retina output. The 3D field of view widens; the image is not stretched. Rendering

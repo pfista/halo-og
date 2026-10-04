@@ -152,6 +152,8 @@ int main(int argc, const char **argv) {
         }
         if (argc == 3) assert(HaloValidateGameData([NSURL fileURLWithPath:@(argv[2])], &error));
         HaloPreferences *preferences = [[HaloPreferences alloc] initWithSupportDirectory:support];
+        assert(preferences.communityDownloadsEnabled);
+        assert(![NSFileManager.defaultManager fileExistsAtPath:[support URLByAppendingPathComponent:@"macos-settings.json"].path]);
         assert([preferences selectDataRoot:valid iso:nil error:&error]);
         NSURL *settings = [support URLByAppendingPathComponent:@"macos-settings.json"];
         NSMutableDictionary *saved = [[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:settings]
@@ -162,11 +164,15 @@ int main(int argc, const char **argv) {
         assert([@"[bindings]\nx = \"E\"\n" writeToURL:controls atomically:YES encoding:NSUTF8StringEncoding error:&error]);
         preferences = [[HaloPreferences alloc] initWithSupportDirectory:support];
         assert([preferences setWindowed:YES error:&error]);
-        assert(!preferences.communityDownloadsEnabled);
+        // Older settings with no saved choice inherit the enabled default.
+        assert(preferences.communityDownloadsEnabled);
         assert([preferences setCommunityDownloadsEnabled:YES error:&error]);
         assert([[HaloPreferences alloc] initWithSupportDirectory:support].communityDownloadsEnabled);
         assert([preferences setCommunityDownloadsEnabled:NO error:&error]);
         assert(![[HaloPreferences alloc] initWithSupportDirectory:support].communityDownloadsEnabled);
+        assert([preferences setWindowed:NO error:&error]);
+        assert(![[HaloPreferences alloc] initWithSupportDirectory:support].communityDownloadsEnabled);
+        assert([preferences setWindowed:YES error:&error]);
         NSData *before = [NSData dataWithContentsOfURL:settings];
         assert(![preferences selectDataRoot:[test URLByAppendingPathComponent:@"pc"] iso:nil error:&error]);
         assert([[NSData dataWithContentsOfURL:settings] isEqualToData:before]);

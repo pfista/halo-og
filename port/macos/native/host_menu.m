@@ -2,7 +2,6 @@
 #import <Sparkle/Sparkle.h>
 #import "HaloPreferences.h"
 #import "HaloMapDownloads.h"
-#import "HaloMapPackages.h"
 #include <SDL3/SDL.h>
 #include "host_menu.h"
 #include <stdlib.h>
@@ -20,8 +19,6 @@
 @property(nonatomic, strong) NSButton *communityDownloadsButton;
 @property(nonatomic, strong) NSTextField *downloadsLabel;
 @property(nonatomic, strong) HaloMapDownloads *mapDownloads;
-@property(nonatomic, strong) NSButton *packageImportButton;
-@property(nonatomic, copy) NSString *packageStatus;
 @property(nonatomic, strong) SPUStandardUpdaterController *updater;
 @property(nonatomic, strong) id previousDelegate;
 @property(nonatomic) BOOL gameRunning;
@@ -268,7 +265,7 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     else [NSApp terminate:self];
 }
 - (void)buildSettings {
-    self.settingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 520, 542)
+    self.settingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 520, 500)
         styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     self.settingsWindow.title = @"Halo OG Settings";
     self.settingsWindow.releasedWhenClosed = NO;
@@ -313,13 +310,6 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     button(content, @"Check Maps / Retry", @selector(checkMaps:), NSMakeRect(20, 108, 164, 32));
     button(content, @"Cancel Downloads", @selector(cancelMaps:), NSMakeRect(190, 108, 151, 32));
     button(content, @"Open Library", @selector(openMapLibrary:), NSMakeRect(347, 108, 149, 32));
-    for (NSView *view in content.subviews) {
-        if (view.frame.origin.y >= 108) {
-            NSRect frame = view.frame; frame.origin.y += 42; view.frame = frame;
-        }
-    }
-    self.packageImportButton = button(content, @"Import Community Package…", @selector(importCommunityPackage:), NSMakeRect(20, 108, 250, 32));
-    label(content, @"Uses your original disc data", NSMakeRect(278, 114, 218, 20), YES).font = [NSFont systemFontOfSize:11];
 }
 - (void)refreshSettings {
     self.dataLabel.stringValue = self.preferences.dataPath ?: self.launchDataPath ?: @"No maps selected";
@@ -328,11 +318,8 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     self.sourceLabel.toolTip = self.preferences.isoPath;
     self.automaticUpdatesButton.state = self.updater.updater.automaticallyChecksForUpdates ? NSControlStateValueOn : NSControlStateValueOff;
     self.communityDownloadsButton.state = self.preferences.communityDownloadsEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-    self.downloadsLabel.stringValue = self.packageStatus ?: self.mapDownloads.statusText ?: @"Map hosting is not configured for this build.";
+    self.downloadsLabel.stringValue = self.mapDownloads.statusText ?: @"Map hosting is not configured for this build.";
     self.downloadsLabel.toolTip = self.downloadsLabel.stringValue;
-    BOOL packageTools = [NSBundle.mainBundle URLForResource:@"ContentTools" withExtension:@"json"] != nil;
-    self.packageImportButton.enabled = packageTools && self.mapDownloads.compatibleData && !self.importing;
-    self.packageImportButton.toolTip = packageTools ? @"Rebuild a community map using your original Xbox game data." : @"This build does not include community package import.";
     [self refreshFullscreen];
 }
 - (void)showSettings:(id)sender {
@@ -368,7 +355,7 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     }
     NSAlert *alert = [[NSAlert alloc] init];
     alert.messageText = @"Allow community map downloads?";
-    alert.informativeText = @"Halo OG will download approved maps from this build's configured HTTPS catalog into Application Support. Missing maps and the catalog's selected launch maps can download while you play. Your original maps and disc images stay in place.";
+    alert.informativeText = @"Halo OG will download all approved community maps into Application Support in the background while you play. The current collection uses about 863 MiB. Your original maps and disc images stay in place.";
     [alert addButtonWithTitle:@"Allow Downloads"];
     [alert addButtonWithTitle:@"Cancel"];
     [alert beginSheetModalForWindow:self.settingsWindow completionHandler:^(NSModalResponse response) {
@@ -382,44 +369,6 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
 }
 - (void)checkMaps:(id)sender { (void)sender; [self.mapDownloads checkForMaps]; }
 - (void)cancelMaps:(id)sender { (void)sender; [self.mapDownloads cancelDownloads]; }
-- (void)importCommunityPackage:(id)sender {
-    (void)sender;
-    if (self.importing || !self.launchDataPath) return;
-    NSURL *recordURL = [NSBundle.mainBundle URLForResource:@"ContentTools" withExtension:@"json"];
-    NSData *recordBytes = recordURL ? [NSData dataWithContentsOfURL:recordURL] : nil;
-    NSDictionary *record = recordBytes ? [NSJSONSerialization JSONObjectWithData:recordBytes options:0 error:nil] : nil;
-    if (![record isKindOfClass:NSDictionary.class]) return;
-    NSOpenPanel *panel = NSOpenPanel.openPanel;
-    panel.canChooseDirectories = NO; panel.canChooseFiles = YES; panel.allowsMultipleSelection = NO;
-    panel.allowedFileTypes = @[@"mapog", @"hogpkg"]; panel.allowsOtherFileTypes = NO; panel.resolvesAliases = NO;
-    panel.message = @"Choose a Halo OG community package. Halo OG will build its playable map from this package and your original Xbox disc data, then keep it in your map library.";
-    [panel beginSheetModalForWindow:self.settingsWindow completionHandler:^(NSModalResponse response) {
-        if (response != NSModalResponseOK || self.importing) return;
-        self.importing = YES; self.packageStatus = @"Checking community package…"; [self refreshSettings];
-        NSURL *package = panel.URL;
-        NSURL *dataRoot = [NSURL fileURLWithPath:self.launchDataPath isDirectory:YES];
-        NSURL *support = self.preferences.supportDirectory;
-        NSURL *helpers = [NSBundle.mainBundle.bundleURL URLByAppendingPathComponent:@"Contents/Helpers" isDirectory:YES];
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-            NSError *error = nil;
-            NSDictionary *manifest = HaloInspectCommunityPackage(package, &error);
-            NSURL *map = manifest ? HaloAssembleCommunityPackage(package, dataRoot, support, helpers, record, ^(NSString *progress) {
-                dispatch_async(dispatch_get_main_queue(), ^{ self.packageStatus = progress; [self refreshSettings]; });
-            }, &error) : nil;
-            if (map) {
-                [self.mapDownloads registerAssembledMap:map manifest:manifest completion:^(NSError *registrationError) {
-                    self.importing = NO; self.packageStatus = nil; [self refreshSettings];
-                    if (registrationError) showError(registrationError);
-                }];
-            } else {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    self.importing = NO; self.packageStatus = error.localizedDescription ?: @"The community map could not be prepared.";
-                    [self refreshSettings]; if (error) showError(error);
-                });
-            }
-        });
-    }];
-}
 - (void)openMapLibrary:(id)sender {
     (void)sender;
     NSURL *library = [self.preferences.supportDirectory URLByAppendingPathComponent:@"Community Maps" isDirectory:YES];

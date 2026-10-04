@@ -1,7 +1,7 @@
 """Compile the production desktop prefetcher against isolated, network-free I/O.
 
-The bounded TLS transport is stubbed; package parsing, native helper spawning,
-whole-asset reconstruction, hashing and publication execute production C.
+The bounded TLS transport is stubbed; parsing, stock/cache checks, streaming
+SHA-256, filesystem safety and exclusive publication are the actual C module.
 No app, original game asset, user setting or network connection is involved.
 """
 import copy
@@ -16,13 +16,10 @@ import sys
 import tempfile
 import tomllib
 import unittest
-from tools import community_packages as packages
-from tools.test_native_community_packages import create_package, install_helpers, compressed_package, HELPER
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "port/linux/src/community_maps_download.c"
 MAX_MAP = 128 * 1024 * 1024
-MAX_PACKAGE = 256 * 1024 * 1024
 
 SDL_HEADER = r'''
 #ifndef SDL_TEST_STUB
@@ -34,7 +31,6 @@ int SDL_CompareAndSwapAtomicInt(SDL_AtomicInt *, int, int);
 SDL_Thread *SDL_CreateThread(int (*)(void *), const char *, void *);
 void SDL_DetachThread(SDL_Thread *);
 const char *SDL_GetError(void);
-const char *SDL_GetBasePath(void);
 uint64_t SDL_GetTicksNS(void);
 #endif
 '''
@@ -68,7 +64,6 @@ SDL_Thread *SDL_CreateThread(int (*function)(void *), const char *name, void *co
 }
 void SDL_DetachThread(SDL_Thread *thread) { (void)thread; }
 const char *SDL_GetError(void) { return "test fixture"; }
-const char *SDL_GetBasePath(void) { return fixtures; }
 uint64_t SDL_GetTicksNS(void) { return ++ticks; }
 static int copy(const char *source, const char *target, unsigned long long cap,
                 update_progress_proc progress, void *context, int partial) {
@@ -116,11 +111,9 @@ int update_download_limited(const char *url, const char *target, unsigned long l
         name[length] = 0; map_calls++;
         snprintf(source, sizeof(source), "%s/%s", fixtures, name);
         if (!strcmp(mode, "race") || !strcmp(mode, "race-exact")) {
-            char map_name[128], expected[2048]; strcpy(map_name, name);
-            char *extension = strrchr(map_name, '.'); if (!extension) abort(); strcpy(extension, ".map");
-            snprintf(raced, sizeof(raced), "%s/maps/%s", root, map_name);
+            snprintf(raced, sizeof(raced), "%s/maps/%s", root, name);
             if (!strcmp(mode, "race")) { FILE *file = fopen(raced, "wb"); if (!file) abort(); fputs("racing user bytes", file); fclose(file); }
-            else { snprintf(expected, sizeof(expected), "%s/%s", fixtures, map_name); if (!copy(expected, raced, 134217728, NULL, NULL, 0)) abort(); }
+            else if (!copy(source, raced, cap, NULL, NULL, 0)) abort();
         }
     }
     int result = copy(source, target, cap, progress, context, !catalog && !strcmp(mode, "fail-map"));
@@ -149,13 +142,11 @@ def cache(name, kind=1, declared=4096, tags=64, offset=2048, build="01.10.12.227
     return bytes(data)
 
 
-def entry(name, data, package_data=b"fixture-package"):
+def entry(name, data):
     sha = hashlib.sha256(data).hexdigest()
-    package_sha = hashlib.sha256(package_data).hexdigest()
     return {"id": name, "sha256": sha, "file_bytes": len(data), "cache_version": 5,
             "cache_build": "01.10.12.2276", "scenario_type": 1,
-            "package_sha256": package_sha, "package_bytes": len(package_data),
-            "object_key": f"packages/sha256/{package_sha}/{name}.mapog", "prefetch": True}
+            "object_key": f"maps/sha256/{sha}/{name}.map", "prefetch": True}
 
 
 @unittest.skipUnless(shutil.which("clang"), "clang required for production native fixture")
@@ -167,13 +158,9 @@ class DesktopMapDownloadTests(unittest.TestCase):
         (build / "SDL3").mkdir()
         (build / "SDL3/SDL.h").write_text(SDL_HEADER)
         (build / "harness.c").write_text(HARNESS)
-        (build / "helper.c").write_text(HELPER)
         cls.binary = build / ("prefetch.exe" if sys.platform == "win32" else "prefetch")
-        cls.helper = build / ("helper.exe" if sys.platform == "win32" else "helper")
         command = [shutil.which("clang"), "-std=c11", "-Werror", "-Wall", "-Wextra", "-D_GNU_SOURCE",
-                   "-Wno-deprecated-declarations", "-I" + str(build), "-I" + str(ROOT / "port/linux/src"),
-                   "-I" + str(ROOT / "port/third_party/miniz"), str(SOURCE), str(ROOT / "port/linux/src/community_packages.c"),
-                   str(ROOT / "port/linux/src/community_mapog.c"), str(ROOT / "port/third_party/miniz/tinfl_only.c"), str(build / "harness.c")]
+                   "-I" + str(build), "-I" + str(ROOT / "port/linux/src"), str(SOURCE), str(build / "harness.c")]
         if sys.platform == "win32":
             command += ["-D_CRT_SECURE_NO_WARNINGS", "-lbcrypt", "-ladvapi32"]
         else:
@@ -187,8 +174,6 @@ class DesktopMapDownloadTests(unittest.TestCase):
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode:
             raise AssertionError(result.stdout + result.stderr)
-        result = subprocess.run([shutil.which("clang"), "-std=c11", "-D_GNU_SOURCE", str(build / "helper.c"), "-o", str(cls.helper)], capture_output=True, text=True)
-        if result.returncode: raise AssertionError(result.stdout + result.stderr)
 
     @classmethod
     def tearDownClass(cls):
@@ -208,28 +193,7 @@ class DesktopMapDownloadTests(unittest.TestCase):
             self.stock[name] = data
         self.map = cache("authored")
         (self.fixtures / "authored.map").write_bytes(self.map)
-        self.tools = self.fixtures / "content-tools"
-        install_helpers(self.tools, self.helper, {"authored": self.map})
-        self.package, self.manifest = create_package(base / "producer", self.data / "maps", expected=self.map)
-        self.raw_package_bytes = self.package.read_bytes()
-        self.package_bytes = compressed_package(self.raw_package_bytes)
-        (self.fixtures / "authored.mapog").write_bytes(self.package_bytes)
-        self.catalog = {"schema_version": 2, "profile": "stock-xbox-ntsc", "maps": [entry("authored", self.map, self.package_bytes)]}
-        self.producer_count = 0
-
-    def package_output(self, data):
-        # Forge only expected output metadata to test the native final-cache
-        # gate separately from container/hash validity. Synthetic helper emits
-        # these bytes; original source fixtures remain unchanged.
-        m = copy.deepcopy(self.manifest)
-        m["output"] = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
-                       "declared_bytes": struct.unpack_from("<I", data, 8)[0], "tag_bytes": struct.unpack_from("<I", data, 20)[0]}
-        _, length = packages.HEADER.unpack_from(self.raw_package_bytes)
-        encoded = json.dumps(m).encode()
-        package_data = compressed_package(packages.HEADER.pack(packages.MAGIC, len(encoded)) + encoded + self.raw_package_bytes[16 + length:])
-        (self.fixtures / "authored.mapog").write_bytes(package_data)
-        (self.tools / "expected-authored.map").write_bytes(data)
-        self.catalog["maps"][0] = entry("authored", data, package_data)
+        self.catalog = {"schema_version": 1, "profile": "stock-xbox-ntsc", "maps": [entry("authored", self.map)]}
 
     def run_fixture(self, mode="normal", raw=None, data_root=None):
         (self.fixtures / "catalog.json").write_bytes(raw if raw is not None else json.dumps(self.catalog).encode())
@@ -242,18 +206,14 @@ class DesktopMapDownloadTests(unittest.TestCase):
             if target.exists() and not target.is_symlink(): self.assertEqual(target.read_bytes(), expected)
         return result
 
-    def test_exact_packages_reconstruct_all_maps_once(self):
-        named = cache("authored_map")
-        (self.fixtures / "authored_map.map").write_bytes(named)
-        (self.tools / "expected-authored_map.map").write_bytes(named)
-        package, _ = create_package(Path(self.temp.name).resolve() / "producer-two", self.data / "maps", name="authored_map", expected=named)
-        package_data = compressed_package(package.read_bytes()); (self.fixtures / "authored_map.mapog").write_bytes(package_data)
-        self.catalog["maps"].append(entry("authored_map", named, package_data))
+    def test_exact_compressed_map_published_once_and_encoded_spaces(self):
+        named = cache("authored map")
+        (self.fixtures / "authored map.map").write_bytes(named)
+        self.catalog["maps"].append(entry("authored map", named))
         result = self.run_fixture()
         self.assertIn("requests=3 maps=2", result.stdout)
         self.assertEqual((self.data / "maps/authored.map").read_bytes(), self.map)
-        self.assertEqual((self.data / "maps/authored_map.map").read_bytes(), named)
-        self.assertIn("reconstructed, verified", result.stderr)
+        self.assertEqual((self.data / "maps/authored map.map").read_bytes(), named)
         self.assertIn("Restart Halo OG", result.stderr)
 
     def test_existing_bytes_case_alias_and_exact_replay_never_download(self):
@@ -280,7 +240,7 @@ class DesktopMapDownloadTests(unittest.TestCase):
         self.assertIn("1 verified", result.stderr)
 
     def test_exclusive_link_and_flush_failure_preserve_final_boundary(self):
-        if sys.platform == "win32": self.skipTest("POSIX link/fsync fault injection; Windows exercises native exclusive MoveFileEx success")
+        if sys.platform == "win32": self.skipTest("POSIX link/fsync fault injection; Windows exercises native exclusive hard-link success")
         result = self.run_fixture("link-race")
         target = self.data / "maps/authored.map"
         self.assertEqual(target.read_bytes(), b"publication race winner")
@@ -292,7 +252,7 @@ class DesktopMapDownloadTests(unittest.TestCase):
         result = self.run_fixture("publish-failure")
         self.assertFalse(target.exists())
         self.assertIn("0 existing files preserved, 1 failed", result.stderr)
-        self.assertIn("could not be reconstructed/published safely", result.stderr)
+        self.assertIn("could not be published safely", result.stderr)
 
     def test_config_off_and_wrong_stock_profile_make_no_requests(self):
         self.assertIn("requests=0", self.run_fixture("disabled").stdout)
@@ -333,8 +293,7 @@ class DesktopMapDownloadTests(unittest.TestCase):
                            ("id", "UPPER"), ("sha256", "a" * 63), ("file_bytes", True), ("file_bytes", 1.5),
                            ("file_bytes", MAX_MAP + 1), ("cache_version", 7), ("scenario_type", 2),
                            ("cache_build", "01.00.00.0000"), ("object_key", "https://other.host/map"),
-                           ("prefetch", 1), ("unknown", "ignored"), ("package_bytes", MAX_PACKAGE + 1),
-                           ("package_bytes", True), ("package_sha256", "a" * 63)):
+                           ("prefetch", 1), ("unknown", "ignored")):
             changed = copy.deepcopy(self.catalog); changed["maps"][0][key] = value; changes.append(json.dumps(changed).encode())
         changed = copy.deepcopy(self.catalog); changed["maps"] *= 2; changes.append(json.dumps(changed).encode())
         changed = copy.deepcopy(self.catalog); changed["profile"] = "pal"; changes.append(json.dumps(changed).encode())
@@ -342,13 +301,11 @@ class DesktopMapDownloadTests(unittest.TestCase):
             changed = copy.deepcopy(self.catalog)
             changed["maps"] = []
             for index in range(count):
-                item = entry("authored" + str(index), self.map, self.package_bytes)
+                item = entry("authored" + str(index), self.map)
                 item["file_bytes"] = size
-                if count == 17: item["package_bytes"] = MAX_PACKAGE
                 changed["maps"].append(item)
             changes.append(json.dumps(changed).encode())
-        changes += [b'{"schema_version":2,"schema_version":2,"profile":"stock-xbox-ntsc","maps":[]}',
-                    json.dumps({**self.catalog, "schema_version": 1}).encode(),
+        changes += [b'{"schema_version":1,"schema_version":1,"profile":"stock-xbox-ntsc","maps":[]}',
                     json.dumps(self.catalog).encode() + b" garbage", b"{}", b"x" * (1048576 + 1)]
         for raw in changes:
             with self.subTest(raw=raw[:90]):
@@ -370,37 +327,13 @@ class DesktopMapDownloadTests(unittest.TestCase):
                 elif mutation == "tag-limit": struct.pack_into("<II", data, 16, 2048, 22 * 1024 * 1024 + 1)
                 elif mutation == "declared-limit": struct.pack_into("<I", data, 8, MAX_MAP + 1)
                 elif mutation == "magic": data[0] ^= 1
-                self.package_output(bytes(data))
-                if mutation in ("sha", "short", "long"):
-                    # Catalog's logical cache pins must match package output.
-                    self.catalog["maps"][0]["sha256"] = hashlib.sha256(self.map).hexdigest()
-                    self.catalog["maps"][0]["file_bytes"] = len(self.map)
+                (self.fixtures / "authored.map").write_bytes(data)
+                # Authenticate malformed header bytes to exercise compatibility
+                # separately from SHA mismatch. Transfer short/long keep pins.
+                self.catalog["maps"][0] = entry("authored", bytes(data)) if mutation not in ("sha", "short", "long") else entry("authored", self.map)
                 result = self.run_fixture()
                 self.assertFalse((self.data / "maps/authored.map").exists())
                 self.assertIn("failed", result.stderr)
-
-    def test_package_literal_tamper_and_logical_identity_mismatch_refused(self):
-        raw = bytearray(self.raw_package_bytes); raw[-1] ^= 1
-        data = compressed_package(raw)
-        (self.fixtures / "authored.mapog").write_bytes(data)
-        # Authenticate container bytes, so complete literal hash checking—not
-        # transport hash alone—must refuse this forged package.
-        self.catalog["maps"][0] = entry("authored", self.map, data)
-        self.assertIn("failed", self.run_fixture().stderr)
-        self.assertFalse((self.tools / "invocations.log").exists())
-        self.assertFalse((self.data / "maps/authored.map").exists())
-
-    def test_network_requires_compressed_mapog_even_with_valid_raw_package_hash(self):
-        (self.fixtures / "authored.mapog").write_bytes(self.raw_package_bytes)
-        self.catalog["maps"][0] = entry("authored", self.map, self.raw_package_bytes)
-        result = self.run_fixture()
-        self.assertIn("failed exact package", result.stderr)
-        self.assertFalse((self.tools / "invocations.log").exists())
-        self.assertFalse((self.data / "maps/authored.map").exists())
-
-    def test_missing_helpers_prevents_any_download(self):
-        (self.tools / "ContentTools.json").unlink()
-        self.assertIn("requests=0 maps=0", self.run_fixture().stdout)
 
     def test_partial_transfer_cleaned_without_publishing(self):
         result = self.run_fixture("fail-map")

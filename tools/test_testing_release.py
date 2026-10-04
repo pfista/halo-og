@@ -95,27 +95,36 @@ class TestingReleaseTests(unittest.TestCase):
         self.assertEqual(release.verify_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory), record)
         self.assertEqual({p.name for p in self.directory.iterdir()}, release.ASSETS | {"release-notes.md"})
 
-    def test_release_setup_links_match_selected_source_and_package_reconstruction(self):
+    def test_release_download_table_and_setup_match_selected_source_and_tag(self):
         self.prepare()
         notes = (self.directory / "release-notes.md").read_text()
         source = f"https://github.com/{release.REPOSITORY}/blob/{SHA}"
-        for path in ("README.md", "docs/playtesting.md", "port/linux/README.md#requirements", "docs/community-map-packages.md"):
+        for path in ("README.md", "docs/playtesting.md", "port/linux/README.md#requirements"):
             self.assertIn(f"({source}/{path})", notes)
-        self.assertNotIn("dl.oghalo.com/maps/", notes)
-        self.assertNotIn("[downrush.map]", notes)
-        self.assertIn("Mac downloads default off", notes)
-        self.assertIn("Windows and Linux community downloads default on", notes)
-        self.assertIn("compressed `.mapog` packages", notes)
-        self.assertIn("your original NTSC `bloodgulch.map`, `a10.map`, and `ui.map`", notes)
-        self.assertIn("whole byte-identical original tags", notes)
-        self.assertIn("modified original assets remain", notes)
-        self.assertIn("Android community-cache placement remains manual", notes)
-        self.assertIn("~/Library/Application Support/Halo OG/", notes)
-        self.assertIn("physical cross-platform and Internet/NAT play still need testing", notes)
+        self.assertIn("| Platform | Download |", notes)
+        for asset in (release.DMG, "halo-windows-release.zip", "halo-linux-release.zip", "halo-android-release.zip"):
+            self.assertIn(f"[{asset}](https://github.com/{release.REPOSITORY}/releases/download/{TAG}/{asset})", notes)
+        self.assertIn("automatically download all 40 complete community maps", notes)
+        self.assertIn("Android map setup remains manual", notes)
+        self.assertIn("ad-hoc signed and unnotarized", notes)
+        self.assertIn("Physical cross-platform and Internet/NAT play still need testing", notes)
+        self.assertNotIn("Downloads default off", notes)
+        self.assertNotIn(".hogpkg", notes)
+        self.assertNotIn(".mapog", notes)
         self.assertNotIn("/blob/main/", notes)
         (self.directory / "release-notes.md").write_text(notes.replace(SHA, "b" * 40))
         with self.assertRaisesRegex(RuntimeError, "notes changed"):
             release.verify_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
+
+    def test_release_links_and_protocol_follow_the_selected_candidate(self):
+        record = self.prepare()
+        record["tag"] = "test-next.1"
+        record["network_protocol"] = 12
+        notes = release.release_notes(record)
+        self.assertIn("/releases/download/test-next.1/" + release.DMG, notes)
+        self.assertIn("network protocol **12**", notes)
+        self.assertNotIn("/releases/download/" + TAG + "/", notes)
+        self.assertNotIn("network protocol **11**", notes)
 
     def test_runs_from_other_source_branch_repository_or_event_are_rejected(self):
         run = self.api.runs["build.yml"]

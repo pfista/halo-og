@@ -119,7 +119,7 @@ int main(int argc, const char *argv[]) {
         NSTimeInterval timeout = atof(argv[6]);
         NSMutableDictionary *report = [@{@"schema_version":@1, @"map_id":name, @"data_root":dataRoot.path,
             @"support_directory":support.path, @"transport":@"production NSURLSession HTTPS",
-            @"gameplay_verified":@NO, @"profile_gate":@"NTSC ui.map header plus exact package stock-cache identities during native reconstruction"} mutableCopy];
+            @"gameplay_verified":@NO, @"profile_gate":@"ui.map build header; not a full original-data or gameplay validation"} mutableCopy];
         NSError *error = nil;
         NSData *configBytes = [NSData dataWithContentsOfURL:configURL options:0 error:&error];
         id config = configBytes ? [NSJSONSerialization JSONObjectWithData:configBytes options:0 error:&error] : nil;
@@ -168,9 +168,6 @@ int main(int argc, const char *argv[]) {
         }
         report[@"map_path"] = file.path;
         report[@"catalog_entry"] = entry;
-        report[@"delivery"] = @"schema 2 community package and exact-base native reconstruction";
-        report[@"package_sha256"] = entry[@"package_sha256"];
-        report[@"package_bytes"] = entry[@"package_bytes"];
         report[@"actual_file"] = digest;
         report[@"native_full_file_verified"] = @YES;
         report[@"guest_hooks_ready"] = @(hostReady);

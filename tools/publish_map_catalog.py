@@ -64,8 +64,7 @@ def unique_object(pairs):
 def read_regular(path, limit):
     # Do not follow a selected file symlink, including a replaced file between
     # inventory validation and upload. The exact bytes are hashed again below.
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
-                         getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0))
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     with os.fdopen(descriptor, "rb") as stream:
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
             raise PublishError("Prepared input must contain regular files")
@@ -179,11 +178,7 @@ class HTTPS:
         request_headers.update(headers or {})
         request = Request(url, data=body, headers=request_headers, method=method)
         try:
-            # Large immutable objects can take minutes to upload on a home
-            # connection. Keep reads/control requests short while bounding a
-            # large PUT independently; create-only/readback guards still apply.
-            timeout = 300 if method == "PUT" and body is not None and len(body) > 1024 * 1024 else 60
-            with self.opener.open(request, timeout=timeout) as response:
+            with self.opener.open(request, timeout=60) as response:
                 result_headers = {key.lower(): value for key, value in response.headers.items()}
                 if result_headers.get("content-encoding", "identity").lower() != "identity":
                     raise PublishError("Remote response unexpectedly changed content encoding")
@@ -203,18 +198,7 @@ class HTTPS:
 def load_token(credential_file=None):
     if credential_file is not None:
         try:
-            # 1Password's approved local .env mount is a FIFO. Accept it only
-            # for this explicitly selected credential input, retaining strict
-            # regular-file-only rules for every public/retirement asset.
-            fd = os.open(credential_file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-            with os.fdopen(fd, "rb") as stream:
-                info = os.fstat(stream.fileno())
-                if not (stat.S_ISREG(info.st_mode) or stat.S_ISFIFO(info.st_mode)):
-                    raise PublishError("Credential input must be a regular file or 1Password local .env mount")
-                data = stream.read(65537)
-            if len(data) > 65536:
-                raise PublishError("Credential input exceeds its permitted byte limit")
-            content = data.decode("utf-8")
+            content = read_regular(credential_file, 65536).decode("utf-8")
             assignments = {"CLOUDFLARE_API_TOKEN": [], "CFTOKEN": []}
             for line in content.splitlines():
                 match = re.match(r"^\s*(?:export\s+)?(CLOUDFLARE_API_TOKEN|CFTOKEN)\s*=", line)
@@ -251,13 +235,10 @@ def derive_s3_credentials(token, config, http):
     return result["id"], hashlib.sha256(token.encode("ascii")).hexdigest()
 
 
-def sign_s3(method, url, body, headers, access_key, secret_key, *, now=None, region="auto", query_parameters=None):
-    """Sign an HTTPS object URL or an explicit canonical S3 listing query."""
+def sign_s3(method, url, body, headers, access_key, secret_key, *, now=None, region="auto"):
+    """Sign only an HTTPS S3 object URL without query parameters or redirects."""
     parsed = urlsplit(url)
-    query = "" if query_parameters is None else "&".join(
-        quote(str(key), safe="-_.~") + "=" + quote(str(value), safe="-_.~")
-        for key, value in sorted(query_parameters.items()))
-    if parsed.scheme != "https" or parsed.query != query or parsed.fragment or parsed.username or parsed.password:
+    if parsed.scheme != "https" or parsed.query or parsed.fragment or parsed.username or parsed.password:
         raise PublishError("S3 signing requires an HTTPS object URL without query parameters")
     now = now or datetime.now(timezone.utc)
     timestamp = now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -267,7 +248,7 @@ def sign_s3(method, url, body, headers, access_key, secret_key, *, now=None, reg
     signed.update({"host": parsed.netloc, "x-amz-date": timestamp, "x-amz-content-sha256": payload_hash})
     names = ";".join(sorted(signed))
     canonical_headers = "".join(key + ":" + signed[key] + "\n" for key in sorted(signed))
-    canonical = "\n".join((method, parsed.path or "/", query, canonical_headers, names, payload_hash))
+    canonical = "\n".join((method, parsed.path or "/", "", canonical_headers, names, payload_hash))
     scope = day + "/" + region + "/s3/aws4_request"
     to_sign = "\n".join(("AWS4-HMAC-SHA256", timestamp, scope, hashlib.sha256(canonical.encode()).hexdigest()))
     key = ("AWS4" + secret_key).encode()
@@ -303,26 +284,20 @@ def require_exact(response, data, label, *, catalog_pending=True):
         raise PublishError(label + " has different bytes" + state)
 
 
-def publish(prepared, config, r2, http, *, progress=print, package_delivery=False,
-            advance_catalog=True):
+def publish(prepared, config, r2, http, *, progress=print):
     # Capture the current catalog before changing any object, then condition the
     # final write on that ETag. A competing publisher cannot be silently replaced.
-    if advance_catalog:
-        old = r2.request("GET", config["catalog_key"], limit=MAX_CATALOG_BYTES)
-        if old.status == 404:
-            condition = {"If-None-Match": "*"}
-        elif old.status == 200 and re.fullmatch(r'"[A-Za-z0-9_-]{1,128}"', old.headers.get("etag", "")):
-            condition = {"If-Match": old.headers["etag"]}
-        else:
-            raise PublishError(f"Cannot safely inspect the current catalog (HTTP {old.status})")
+    old = r2.request("GET", config["catalog_key"], limit=MAX_CATALOG_BYTES)
+    if old.status == 404:
+        condition = {"If-None-Match": "*"}
+    elif old.status == 200 and re.fullmatch(r'"[A-Za-z0-9_-]{1,128}"', old.headers.get("etag", "")):
+        condition = {"If-Match": old.headers["etag"]}
+    else:
+        raise PublishError(f"Cannot safely inspect the current catalog (HTTP {old.status})")
     for entry in prepared.maps:
         key = entry["object_key"]
-        bytes_field = "package_bytes" if package_delivery else "file_bytes"
-        hash_field = "package_sha256" if package_delivery else "sha256"
-        if package_delivery and key != f"packages/sha256/{entry[hash_field]}/{entry['id']}.mapog":
-            raise PublishError("Package publication accepts only immutable .mapog objects")
-        data = read_regular(prepared.directory / key, entry[bytes_field])
-        if len(data) != entry[bytes_field] or hashlib.sha256(data).hexdigest() != entry[hash_field]:
+        data = read_regular(prepared.directory / key, entry["file_bytes"])
+        if len(data) != entry["file_bytes"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
             raise PublishError("Prepared map changed after validation; catalog was not advanced")
         existing = r2.request("GET", key, limit=len(data))
         if existing.status == 404:
@@ -353,11 +328,7 @@ def publish(prepared, config, r2, http, *, progress=print, package_delivery=Fals
         public = http.request("GET", config["public_base_url"] + key,
                               headers={"Accept-Encoding": "identity", "Cache-Control": "no-cache"}, limit=len(data))
         require_exact(public, data, "Public map " + entry["id"])
-        progress("Verified public " + ("package " if package_delivery else "map ") + entry["id"] + " (" + str(len(data)) + " bytes, SHA-256 " + entry[hash_field] + ")")
-    if not advance_catalog:
-        progress("Verified immutable objects; current catalog was preserved")
-        return {"catalog_advanced": False, "objects_verified": len(prepared.maps),
-                "catalog_sha256": hashlib.sha256(prepared.catalog).hexdigest()}
+        progress("Verified public map " + entry["id"] + " (" + str(len(data)) + " bytes, SHA-256 " + entry["sha256"] + ")")
     if old.status != 200 or old.body != prepared.catalog:
         result = r2.request("PUT", config["catalog_key"], body=prepared.catalog,
                             headers={**condition, "Content-Type": "application/json", "Cache-Control": "no-cache"})
@@ -383,8 +354,6 @@ def main():
     parser.add_argument("--credential-file", type=Path, help="Existing mounted file containing a literal CLOUDFLARE_API_TOKEN assignment")
     parser.add_argument("--publish", action="store_true", help="Upload and advance testing/current.json after verification")
     args = parser.parse_args()
-    if args.publish:
-        parser.error("Complete-map publication is retired. Use publish_package_catalog.py with audited .mapog objects")
     try:
         config = load_config(args.config)
         prepared = validate_prepared(args.prepared, config)
