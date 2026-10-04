@@ -205,6 +205,14 @@ static const struct config_setting config_settings[] =
 		"Look for a new version when the game starts, and offer to update to it;\n"
 		"false never looks (the game's \"Do not ask again\" writes false here)." },
 
+#if !defined(HALO_MACOS) && !defined(HALO_ANDROID)
+	{ "community_maps.auto_download", _config_boolean, "true", NULL, _environment_value, _platform_desktop,
+		"Download verified community maps from dl.oghalo.com in the background\n"
+		"after original NTSC Xbox data is available (about 863 MiB for all maps).\n"
+		"Restart after downloads complete to refresh the map list; false disables\n"
+		"network downloads while preserving already downloaded maps." },
+#endif
+
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
 		"\"host:<map>\" hosts a game on that map, \"join\" joins the first game found;\n"

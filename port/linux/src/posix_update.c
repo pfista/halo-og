@@ -302,11 +302,18 @@ struct download
 	FILE *file;
 	update_progress_proc progress;
 	void *context;
-	unsigned long long received, total;
+	unsigned long long received, total, maximum;
+	int limit_exceeded;
 };
 
 static int body_write(struct download *download, const unsigned char *data, size_t size)
 {
+	if (download->maximum && (download->received > download->maximum ||
+		(unsigned long long)size > download->maximum - download->received))
+	{
+		download->limit_exceeded = 1;
+		return 0;
+	}
 	if (fwrite(data, 1, size, download->file) != size)
 		return 0;
 	download->received += size;
@@ -439,9 +446,17 @@ static int https_get(const char *url, struct download *download, char *location,
 	if (status == 200)
 	{
 		download->total = have_length && !chunked ? length : 0;
-		if (!read_body(&connection, download, chunked, length, have_length && !chunked))
+		if (download->maximum && have_length && !chunked && length > download->maximum)
 		{
-			snprintf(error, (size_t)error_size, "the download from %s broke off", host);
+			snprintf(error, (size_t)error_size, "the download exceeds its byte limit");
+			status = 0;
+		}
+		else if (!read_body(&connection, download, chunked, length, have_length && !chunked))
+		{
+			if (download->limit_exceeded)
+				snprintf(error, (size_t)error_size, "the download exceeds its byte limit");
+			else
+				snprintf(error, (size_t)error_size, "the download from %s broke off", host);
 			status = 0;
 		}
 	}
@@ -449,8 +464,8 @@ static int https_get(const char *url, struct download *download, char *location,
 	return status;
 }
 
-int update_download(const char *url, const char *path, update_progress_proc progress, void *context, char *error,
-	int error_size)
+int update_download_limited(const char *url, const char *path, unsigned long long maximum_bytes,
+	update_progress_proc progress, void *context, char *error, int error_size)
 {
 	char current[2048];
 	char location[2048];
@@ -472,6 +487,7 @@ int update_download(const char *url, const char *path, update_progress_proc prog
 	memset(&download, 0, sizeof(download));
 	download.progress = progress;
 	download.context = context;
+	download.maximum = maximum_bytes;
 	download.file = fopen(path, "wb");
 	if (!download.file)
 	{
@@ -493,7 +509,7 @@ int update_download(const char *url, const char *path, update_progress_proc prog
 			}
 			return 1;
 		}
-		if (status >= 300 && status < 400 && location[0])
+		if (!maximum_bytes && status >= 300 && status < 400 && location[0])
 		{
 			/* (an address on the same host, or another's) */
 			if (location[0] == '/')
@@ -518,6 +534,13 @@ int update_download(const char *url, const char *path, update_progress_proc prog
 	fclose(download.file);
 	unlink(path);
 	return 0;
+}
+
+
+int update_download(const char *url, const char *path, update_progress_proc progress, void *context, char *error,
+	int error_size)
+{
+	return update_download_limited(url, path, 0, progress, context, error, error_size);
 }
 
 /* ---------- files and processes */

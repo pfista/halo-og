@@ -16,6 +16,7 @@ and the debug keyboard that the game's console reads.
 #include "input_bindings.h"
 #include "p2p.h"
 #include "xiso.h"
+#include "community_maps_download.h"
 #include "native_video.h"
 #include "native_input_events.h"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
@@ -94,6 +95,9 @@ BOOL platform_sdl_initialize(void)
 	platform_data_root();
 	/* (a new version looked for meanwhile, updater_poll asking about it) */
 	updater_start();
+#if !defined(HALO_MACOS)
+	community_maps_download_start();
+#endif
 #endif
 	return TRUE;
 }

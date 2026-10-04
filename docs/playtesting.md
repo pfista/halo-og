@@ -126,8 +126,17 @@ disabled and offline.
 Reopen map selection after completion; restart if the current session still
 holds an older selection. Downloads never replace your original maps.
 
-On **Windows/Linux/Android**, automatic map downloads are not implemented yet.
-Download the same approved
+New **Windows/Linux builds from main** download approved community maps in the
+background once original NTSC game data is available. Downloads are enabled by
+default. To disable them, set `auto_download = false` in the `[community_maps]`
+section of `config.toml` beside the executable. Files go into the active game
+data root's `maps` folder; existing files are never overwritten. Check the
+game's `debug.txt` log for status or errors, wait for downloads to finish, then
+restart the game to refresh its map list. Real Windows/Linux download and
+gameplay verification is still pending.
+
+The published **test-v0.3.0-net11-dmg2 Windows/Linux packages**, and **Android**,
+still need manual maps. Download the same approved
 [downrush.map](https://dl.oghalo.com/maps/sha256/3282e580e782f939ae00c63f01971238eb0f85db19a2467efe42b5cb5600d126/downrush.map)
 and put it into the active game's `maps` folder, keeping the exact filename.
 Windows/Linux usually keep this beside the executable; Android keeps it under
@@ -166,6 +175,12 @@ still needed. All 40 public downloads have been checked against their hashes.
 Original stock maps and `ui.map` remain user-imported. A PC/Custom Edition map
 cannot be made compatible by renaming it or changing its version field.
 [Map conversion](community-maps.md) explains the supported pipeline.
+
+Cloudflare currently supplies complete playable `.map` files with embedded
+Halo dependencies. Downloading stripped community packages and rebuilding
+them automatically from your own XISO is a future distribution flow, not a
+feature of these testing packages. The separate
+[local reconstruction prototype](community-map-packages.md) has verified Downrush.
 
 ## Report a problem
 
