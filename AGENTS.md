@@ -14,6 +14,12 @@ content imports; competitive features are optional and default off.
 - Prioritize matching accuracy, correctness, stability, performance and platform
   fixes that preserve Xbox behavior. Review netcode timing, authority, fairness,
   compatibility and service dependencies before adoption.
+- Use original Xbox behavior, including its quirks, as the acceptance criterion.
+  A baseline fidelity correction needs evidence that the port differs from the
+  original; passing regression tests alone does not establish that evidence.
+- Intentional departures from original behavior should generally be explicit
+  configuration options that default to the original behavior. Keep uncertain
+  netcode changes selectable while comparing their timing and feel with OG.
 - Maintain interoperability with cybersecurity games as a goal. Keep Halo OG's
   original presentation and local feel while respecting shared host-authoritative
   rules. A shared protocol number alone does not establish gameplay compatibility.
@@ -52,10 +58,14 @@ links for every included platform. Link to the playtesting guide for setup;
 keep platform requirements and any signing limitations brief. Publish matching
 platform builds from one source commit and include checksums and provenance.
 
+- Commit and push requests do not authorize tags or releases. Require the user's
+  explicit instruction for the specified source commit before creating or
+  pushing a tag, dispatching a release workflow, or publishing any GitHub release
+  (including a prerelease). Branch pushes may build, test and upload CI artifacts.
 - New release tags must be `vMAJOR.MINOR.PATCH`, with no suffix, and the title
   must be `Halo OG vMAJOR.MINOR.PATCH` (for example, `v0.3.1` and `Halo OG v0.3.1`).
-  Testing releases still use GitHub's prerelease flag; publication requires an
-  explicit request or manual workflow dispatch.
+  Testing releases still use GitHub's prerelease flag. Publication workflows are
+  manual-only and may be dispatched only after that user authorization.
 - The tag's version must match `HALO_OG_VERSION` in
   `port/linux/include/halo_og_version.h`. Bump and commit that header before
   building the matching platform artifacts. Never rewrite existing tags or

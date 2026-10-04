@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   prepare:
-    if: ${{ github.repository == 'pfista/halo-og' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'pfista/halo-og' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -48,6 +48,7 @@ jobs:
 
   publish:
     needs: prepare
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'pfista/halo-og' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
