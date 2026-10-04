@@ -1320,27 +1320,9 @@ boolean network_game_client_game_settings_updated(
 		struct network_game previous_game;
 		unsigned performance_flags = network_game_client_performance_settings_flags(client,
 			performance_variant_get_flags(&message_packet->variant));
-		char const *unsupported = game_variant_options_unsupported(&message_packet->variant,
-			&message_packet->variant_options);
-
-		if (!unsupported && !network_game_client_original_rules_host && !global_network_game_server_get() &&
-			message_packet->player_count >= 5 &&
-			TEST_FLAG(message_packet->variant.universal_variant.flags, _game_variant_infinite_grenades_bit))
-			unsupported = "infinite grenades with five or more players";
-
-		if (unsupported)
-		{
-			char explanation[512];
-
-			csprintf(explanation,
-				"This host uses a gametype option this build does not support: %s.\n\n"
-				"Ask the host to choose original Xbox gametype options to play together.", unsupported);
-			platform_show_message("Halo: unsupported game settings", explanation);
-			network_event("rejecting unsupported v11 gametype option: %s", unsupported);
-			display_error_when_main_menu_loaded(_error_network_failed_to_join_game);
-			return FALSE;
-		}
-
+		/* Best-effort interoperability for live testing: accept differing host
+		 * gametype options. Packet, protocol and map checks remain enforced.
+		 * This does not implement every upstream option's local behavior. */
 
 		if (csstrcmp(message_packet->map.name, client->game.map.name))
 		{

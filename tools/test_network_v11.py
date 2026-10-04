@@ -61,7 +61,6 @@ static unsigned network_game_client_performance_host_capabilities;
 static struct network_game network_game_client_settings_staging;
 static int32_t network_game_client_settings_staging_size;
 static unsigned precaches, dialogs, applied, applied_flags, errors;
-static char shown[600];
 static unsigned sent_capabilities, sent_settings_pieces;
 static boolean fail_capability_send;
 static struct network_game_server_client_machine *capability_failure_target;
@@ -137,12 +136,41 @@ static struct network_game *network_game_server_get_game(struct network_game_ser
 static unsigned performance_variant_get_flags(const struct game_variant *v) { return v->flags; }
 static void performance_variant_set_flags(struct game_variant *v, unsigned flags) { v->flags=flags; }
 static void performance_options_apply_host_flags(unsigned flags) { applied_flags=flags; applied++; }
-static void platform_show_message(const char *title,const char *message) {
-    (void)title; snprintf(shown,sizeof(shown),"%s",message); dialogs++;
-}
 static void display_error_when_main_menu_loaded(unsigned error) {
     assert(error==7); errors++;
 }
+enum { game_engine_ctf, game_engine_slayer, game_engine_oddball, game_engine_king, game_engine_race };
+static void *game_engine;
+static struct { int32_t postgame_state; } game_engine_globals;
+static boolean game_engine_network_state_read;
+static unsigned match_endings;
+static boolean read_host_state=TRUE;
+static int game_engine_get_type(void) { return game_engine_slayer; }
+static boolean game_engine_slayer_read_network_state(const byte *buffer,int32_t size,boolean first) {
+    (void)buffer; (void)size; (void)first; return read_host_state;
+}
+#define game_engine_ctf_read_network_state game_engine_slayer_read_network_state
+#define game_engine_oddball_read_network_state game_engine_slayer_read_network_state
+#define game_engine_king_read_network_state game_engine_slayer_read_network_state
+#define game_engine_race_read_network_state game_engine_slayer_read_network_state
+static void game_engine_end_game(void) { match_endings++; game_engine_globals.postgame_state=1; }
+struct player_datum {
+    int32_t team_index,unit_index,local_player_index,powerup_durations[2],action_result,action_object_index;
+};
+struct unit_datum {
+    struct { int32_t owner_player_index; short owner_team_index; } object;
+    struct { int32_t player_index; } unit;
+};
+static struct player_datum test_player;
+static struct unit_datum test_unit;
+static boolean team_game;
+enum { _player_action_result_reload=3 };
+static struct player_datum *player_get(int32_t index) { assert(index==7); return &test_player; }
+static struct unit_datum *unit_get(int32_t index) { assert(index==12); return &test_unit; }
+static boolean game_engine_has_teams(void) { return team_game; }
+static void unit_set_actively_controlled(int32_t index,boolean active) { assert(index==12 && active); }
+static void player_control_new_unit(int32_t local,int32_t index) { assert(local==0 && index==12); }
+static void observer_obsolete_position(int32_t local) { assert(local==0); }
 /* FUNCTIONS */
 '''
 
@@ -190,9 +218,10 @@ static void options(void) {
     for(unsigned field=0;field<28;field++) {
         struct game_variant_options changed=game.variant_options;
         ((byte *)&changed)[field]++;
-        /* Inactive counts, category weapons and padding are semantically ignored. */
+        /* Host-controlled options are accepted; counts, category weapons and
+         * padding are inactive. A high-byte friendly-fire change is invalid. */
         assert((game_variant_options_unsupported(&game.variant,&changed)!=NULL)==
-            (field<12 || field==24));
+            (field==3 || (field>=9 && field<12) || field==24));
     }
     game.variant.universal_variant.flags=1;
     game_variant_options_default(&game.variant,&game.variant_options);
@@ -210,25 +239,38 @@ static void admission(void) {
     assert(network_game_client_game_settings_updated(&client,&game));
     assert(precaches==1 && applied==1 && client.game.local_data.game_objects_loaded==1);
     struct network_game before=client.game;
-    strcpy(game.map.name,"bloodgulch"); game.variant_options.time_limit=10;
+    strcpy(game.map.name,"bloodgulch"); game.player_count=MAXIMUM_NUMBER_OF_PLAYERS+1;
     assert(!network_game_client_game_settings_updated(&client,&game));
-    assert(precaches==1 && applied==1 && dialogs==1 && errors==1);
-    assert(strstr(shown,"time limit") && !memcmp(&before,&client.game,sizeof(before)));
-    game=defaults(); game.player_count=5; game.variant.universal_variant.flags=4;
-    assert(!network_game_client_game_settings_updated(&client,&game));
-    assert(strstr(shown,"infinite grenades"));
-    network_game_client_original_rules_host=1;
+    assert(precaches==1 && applied==1 && !dialogs);
+    assert(!memcmp(&before,&client.game,sizeof(before)));
+    game=defaults(); game.player_count=16; game.variant.universal_variant.flags=4;
     assert(network_game_client_game_settings_updated(&client,&game));
+}
+static void host_time_limit(void) {
+    const short limits[]={0,1,10,32767};
+    for(unsigned i=0;i<sizeof(limits)/sizeof(limits[0]);i++) {
+        struct network_game game=defaults(); reset();
+        game.variant_options.time_limit=limits[i];
+        assert(network_game_client_game_settings_updated(&client,&game));
+        assert(client.game.variant_options.time_limit==limits[i]);
+        assert(precaches==1 && applied==1 && !dialogs && !errors);
+        /* Differing rules no longer block admission during live testing. */
+        game.variant_options.loadout=1;
+        assert(network_game_client_game_settings_updated(&client,&game));
+        assert(!dialogs && !errors);
+    }
+    struct network_game game=defaults();
+    assert(game.variant_options.time_limit==0);
 }
 static void active_input_delay(void) {
     struct network_game game=defaults(); reset();
     network_game_client_performance_host_capabilities=63;
     client.state=_network_game_client_state_ingame;
     client.game=defaults(); client.game.variant.flags=32;
-    game.variant.flags=7;
+    game.variant.flags=7; game.variant_options.time_limit=15;
     assert(network_game_client_game_settings_updated(&client,&game));
     assert(client.game.variant.flags==39 && applied_flags==39);
-    assert(!memcmp(&client.game.variant_options,&game.variant_options,sizeof(game.variant_options)));
+    assert(client.game.variant_options.time_limit==15);
     client.game.variant.flags=7; game.variant.flags=39;
     assert(network_game_client_game_settings_updated(&client,&game));
     assert(client.game.variant.flags==7 && applied_flags==7);
@@ -246,10 +288,10 @@ static void host_delay_acknowledgement(void) {
     for(unsigned i=0;i<sizeof(unknown_flags)/sizeof(unknown_flags[0]);i++) {
         struct network_game game=defaults(); reset();
         client.state=_network_game_client_state_pregame;
-        game.variant.flags=unknown_flags[i];
+        game.variant.flags=unknown_flags[i];game.variant_options.time_limit=15;game.variant_options.loadout=1;
         assert(network_game_client_game_settings_updated(&client,&game));
         assert(client.game.variant.flags==0 && applied_flags==0);
-        assert(!memcmp(&client.game.variant_options,&game.variant_options,sizeof(game.variant_options)));
+        assert(client.game.variant_options.time_limit==15 && client.game.variant_options.loadout==1);
     }
     /* The actual sender and reassembler establish support before applying
      * saved delay, without any discovery advertisement. Direct late joins
@@ -308,6 +350,93 @@ static void normal_start_delay_acknowledgement(void) {
     assert(sent_capabilities==2 && sent_settings_pieces>1 && applied==1 && applied_flags==32);
     assert(host.machines[0].closed && !host.machines[1].closed && network_game_settings_update_pending);
 }
+static void host_match_end(void) {
+    int32_t state=0;
+    game_engine=&state; game_engine_globals.postgame_state=0;
+    game_engine_network_state_read=FALSE; match_endings=0; read_host_state=TRUE;
+    game_engine_read_network_state((byte *)&state,sizeof(state));
+    assert(game_engine_network_state_read && !match_endings);
+    state=1; read_host_state=FALSE;
+    game_engine_read_network_state((byte *)&state,sizeof(state));
+    assert(!match_endings);
+    read_host_state=TRUE;
+    game_engine_read_network_state((byte *)&state,sizeof(state)-1);
+    assert(!match_endings);
+    game_engine_read_network_state((byte *)&state,sizeof(state));
+    assert(match_endings==1 && game_engine_globals.postgame_state==1);
+    game_engine_read_network_state((byte *)&state,sizeof(state));
+    assert(match_endings==1);
+}
+static void host_authority_options(void) {
+    struct network_game game=defaults(); reset();
+    game.variant_options.time_limit=15;
+    game.variant_options.friendly_fire=3;
+    game.variant_options.friendly_fire_penalty=10;
+    game.variant_options.vehicle_respawn_time=30;
+    game.variant_options.auto_team_balance=1;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(!memcmp(&client.game.variant_options,&game.variant_options,sizeof(game.variant_options)));
+    assert(precaches==1 && applied==1 && !dialogs && !errors);
+    struct network_game before=client.game;
+    /* Structural validation must still happen before live state changes. */
+    game.machine_count=MAXIMUM_NETWORK_MACHINE_COUNT+1;
+    assert(!network_game_client_game_settings_updated(&client,&game));
+    assert(!memcmp(&client.game,&before,sizeof(before)) && precaches==1 && applied==1);
+    game=defaults();
+    game.variant_options.radar_players=1;
+    game.variant_options.vehicle_set[0]=255;
+    game.variant_options.vehicle_set[1]=3;
+    game.variant_options.vehicle_counts[0][0]=4;
+    game.variant_options.loadout=1;
+    game.variant_options.primary_weapon=5;
+    game.variant_options.secondary_weapon=8;
+    game.variant.universal_variant.weapon_set=11;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(!memcmp(&client.game.variant_options,&game.variant_options,sizeof(game.variant_options)));
+    assert(client.game.variant.universal_variant.weapon_set==11 && !dialogs);
+    const short valid_seconds[]={0,1,30,32767};
+    for(unsigned i=0;i<sizeof(valid_seconds)/sizeof(valid_seconds[0]);i++) {
+        game=defaults();
+        game.variant_options.friendly_fire_penalty=valid_seconds[i];
+        game.variant_options.vehicle_respawn_time=valid_seconds[i];
+        for(short mode=0;mode<=3;mode++) {
+            game.variant_options.friendly_fire=mode;
+            assert(!game_variant_options_unsupported(&game.variant,&game.variant_options));
+        }
+    }
+    game=defaults(); game.variant_options.friendly_fire=-1;
+    assert(game_variant_options_unsupported(&game.variant,&game.variant_options));
+    game.variant_options.friendly_fire=4;
+    assert(game_variant_options_unsupported(&game.variant,&game.variant_options));
+    game=defaults(); game.variant_options.friendly_fire_penalty=-1;
+    assert(game_variant_options_unsupported(&game.variant,&game.variant_options));
+    game=defaults(); game.variant_options.auto_team_balance=2;
+    assert(game_variant_options_unsupported(&game.variant,&game.variant_options));
+    game=defaults();
+    assert(!game.variant_options.friendly_fire && !game.variant_options.friendly_fire_penalty);
+    assert(!game.variant_options.vehicle_respawn_time && !game.variant_options.auto_team_balance);
+}
+static void host_team_assignment(void) {
+    team_game=TRUE;
+    for(short team=0;team<2;team++) {
+        memset(&test_player,0,sizeof(test_player)); memset(&test_unit,0,sizeof(test_unit));
+        test_player.team_index=1-team; test_player.local_player_index=0;
+        test_unit.object.owner_team_index=team;
+        network_player_attach_unit(7,12);
+        assert(test_player.team_index==team && test_unit.object.owner_team_index==team);
+        assert(test_player.unit_index==12 && test_unit.unit.player_index==7);
+        assert(test_unit.object.owner_player_index==7);
+    }
+    const short invalid_teams[]={-1,2,127};
+    for(unsigned i=0;i<sizeof(invalid_teams)/sizeof(invalid_teams[0]);i++) {
+        test_player.team_index=0; test_unit.object.owner_team_index=invalid_teams[i];
+        network_player_attach_unit(7,12);
+        assert(test_player.team_index==0 && test_unit.object.owner_team_index==0);
+    }
+    team_game=FALSE; test_player.team_index=7; test_unit.object.owner_team_index=1;
+    network_player_attach_unit(7,12);
+    assert(test_player.team_index==7 && test_unit.object.owner_team_index==7);
+}
 static int send_record(struct network_game *game) {
     int result=1;
     for(unsigned offset=0;offset<sizeof(*game);offset+=HALO_PORT_NETWORK_GAME_SETTINGS_FRAGMENT_SIZE) {
@@ -324,8 +453,18 @@ static int send_record(struct network_game *game) {
 static void fragments(void) {
     struct network_game game=defaults(); reset();
     assert(send_record(&game) && applied==1 && precaches==1);
+    reset(); game.variant_options.time_limit=10;
+    game.variant_options.friendly_fire=1;
+    game.variant_options.friendly_fire_penalty=5;
+    game.variant_options.vehicle_respawn_time=60;
+    game.variant_options.auto_team_balance=1;
+    assert(send_record(&game) && applied==1 && precaches==1);
+    assert(client.game.variant_options.time_limit==10 && !dialogs);
+    assert(!memcmp(&client.game.variant_options,&game.variant_options,sizeof(game.variant_options)));
     reset(); game.variant_options.loadout=1;
-    assert(!send_record(&game) && !applied && !precaches && dialogs==1);
+    game.variant_options.vehicle_set[0]=255; game.variant_options.vehicle_set[1]=3;
+    assert(send_record(&game) && applied==1 && precaches==1 && !dialogs);
+    assert(!memcmp(&client.game.variant_options,&game.variant_options,sizeof(game.variant_options)));
     reset(); struct message_server_game_settings_update piece={0};
     piece.total_size=13092; piece.length=1;
     assert(!network_game_client_receive_game_settings_piece(&client,&piece));
@@ -341,9 +480,13 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"options")) options();
     else if(!strcmp(argv[1],"admission")) admission();
     else if(!strcmp(argv[1],"fragments")) fragments();
+    else if(!strcmp(argv[1],"host-time-limit")) host_time_limit();
     else if(!strcmp(argv[1],"active-input-delay")) active_input_delay();
     else if(!strcmp(argv[1],"host-delay-acknowledgement")) host_delay_acknowledgement();
     else if(!strcmp(argv[1],"normal-start-delay-acknowledgement")) normal_start_delay_acknowledgement();
+    else if(!strcmp(argv[1],"host-match-end")) host_match_end();
+    else if(!strcmp(argv[1],"host-authority-options")) host_authority_options();
+    else if(!strcmp(argv[1],"host-team-assignment")) host_team_assignment();
     else assert(0);
     return 0;
 }
@@ -374,6 +517,8 @@ class NetworkV11Tests(unittest.TestCase):
         functions += "\n" + block(server_handler, "static boolean network_game_server_send_performance_capability(\n")
         functions += "\n" + block(server_handler, "boolean network_game_server_send_game_settings_to_client_machine(\n")
         functions += "\n" + block(server_handler, "boolean network_game_server_send_game_settings_to_all_machines(\n")
+        functions += "\n" + block((ROOT / "source/game/game_engine.c").read_text(), "void game_engine_read_network_state(\n")
+        functions += "\n" + block((ROOT / "source/game/players.c").read_text(), "void network_player_attach_unit(\n")
         source = PREFIX.replace("/* DECLARATIONS */", declarations).replace("/* RECORD */", record)
         source = source.replace("/* FUNCTIONS */", functions) + HARNESS
         source = re.sub(r"\blong\b", "int32_t", source).replace("unsigned int32_t", "uint32_t")
@@ -405,6 +550,8 @@ class NetworkV11Tests(unittest.TestCase):
     def test_fragment_reassembly_and_mixed_version_rejection(self):
         self.run_case("fragments")
 
+    def test_host_time_limit_acceptance_preserves_other_boundaries(self):
+        self.run_case("host-time-limit")
 
     def test_full_settings_keep_active_input_delay(self):
         self.run_case("active-input-delay")
@@ -415,8 +562,14 @@ class NetworkV11Tests(unittest.TestCase):
     def test_normal_start_broadcast_acknowledges_before_settings(self):
         self.run_case("normal-start-delay-acknowledgement")
 
+    def test_client_ends_match_on_valid_host_state(self):
+        self.run_case("host-match-end")
 
+    def test_host_controlled_rules_acceptance_and_validation(self):
+        self.run_case("host-authority-options")
 
+    def test_spawn_takes_valid_host_team_assignment(self):
+        self.run_case("host-team-assignment")
 
 
 if __name__ == "__main__":

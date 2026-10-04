@@ -1,7 +1,8 @@
 /* Version 11's PC gametype-options wire record. Included after game_variant.
  * Keep its complete layout for interoperability while this fork continues to
- * play its existing Xbox rules. Unsupported active options are refused before
- * a received settings record can start precaching or change the client state.
+ * host its existing Xbox rules. The helper below classifies unsupported options
+ * for review; best-effort v11 client admission does not call it. Protocol,
+ * capability, packet and map checks remain separate admission requirements.
  */
 #ifndef __GAME_VARIANT_OPTIONS_H
 #define __GAME_VARIANT_OPTIONS_H
@@ -48,11 +49,17 @@ static inline char const *game_variant_options_unsupported(
 	struct game_variant_options defaults;
 
 	game_variant_options_default(variant, &defaults);
-	if (options->time_limit) return "time limit";
-	if (options->friendly_fire) return "friendly fire mode";
-	if (options->friendly_fire_penalty) return "friendly fire penalty";
-	if (options->vehicle_respawn_time) return "vehicle respawn time";
-	if (options->auto_team_balance) return "automatic team balancing";
+	/* Distributed clients receive the host's match end, damage, object
+	 * creations/deletions and player spawns/teams. These options only affect
+	 * those host decisions, so accept their valid v11 values. Our own hosts
+	 * still use the Xbox defaults above. Rules affecting the client's local
+	 * presentation or map initialization still need compatible support. */
+	if (options->time_limit < 0) return "invalid time limit";
+	/* v11: on, off, shields only, explosives only. Damage is host-owned. */
+	if (options->friendly_fire < 0 || options->friendly_fire > 3) return "invalid friendly fire mode";
+	if (options->friendly_fire_penalty < 0) return "invalid friendly fire penalty";
+	if (options->vehicle_respawn_time < 0) return "invalid vehicle respawn time";
+	if (options->auto_team_balance > 1) return "invalid automatic team balancing";
 	if (options->radar_players != defaults.radar_players) return "radar players";
 	if (options->vehicle_set[0] != defaults.vehicle_set[0] ||
 		options->vehicle_set[1] != defaults.vehicle_set[1]) return "per-team vehicle sets";

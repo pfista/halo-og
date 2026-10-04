@@ -1434,6 +1434,10 @@ void network_player_attach_unit(
 	struct player_datum *player = player_get(player_index);
 	struct unit_datum *unit = unit_get(unit_index);
 
+	/* The host can rebalance a player before spawning this unit. Take its
+	 * valid team before attaching, rather than overwriting the host's team. */
+	if (game_engine_has_teams() && unit->object.owner_team_index >= 0 && unit->object.owner_team_index < 2)
+		player->team_index = unit->object.owner_team_index;
 	unit->object.owner_player_index = player_index;
 	unit->object.owner_team_index = (short)player->team_index;
 	unit->unit.player_index = player_index;
