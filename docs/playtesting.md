@@ -1,5 +1,10 @@
 # Playtesting Halo OG
 
+New here? Start with the short installation and controls guide for
+[Mac](setup-macos.md), [Windows](setup-windows.md), [Linux](setup-linux.md), or
+[Android](setup-android.md). This page adds multiplayer tests, map details,
+and reporting instructions.
+
 Use the same Halo OG testing release as the other players. The
 [download table](../README.md#download) links published packages and explains
 matching-commit CI artifacts if a release is unavailable. You do not need to
@@ -41,8 +46,9 @@ remapped; see [Mac controls](../port/macos/README.md#launch).
 
 1. Extract `halo-windows-release.zip` into a writable folder. Keep `halo.exe`
    and `SDL3.dll` together; run the extracted executable, not one inside the ZIP.
-2. Open `halo.exe`. If no maps are found, choose your original Xbox disc image
-   in the game's import prompt. It extracts `maps` beside the executable.
+2. Put one original Xbox `.iso` / `.xiso` beside `halo.exe` and open it.
+   New setup builds import it automatically when no original data is found;
+   older releases use the disc-image chooser. It extracts `maps` beside the executable.
    An existing complete `maps` folder can also go there.
 3. Select/create a profile and try a stock map.
 
@@ -59,8 +65,9 @@ existing data. See [Windows setup](../port/windows/README.md#start-the-game).
    PipeWire or PulseAudio client libraries. The executable is 32-bit x86 and
    requires OpenGL 4.5. See [Linux runtime requirements](../port/linux/README.md#requirements)
    for package names; distribution compatibility still needs testing.
-3. From the extracted folder, run `./halo`. If necessary, first run
-   `chmod +x halo`. Select your original Xbox disc image when prompted, or
+3. Put one original Xbox `.iso` / `.xiso` beside `halo`, then run `./halo` from
+   that folder. If necessary, first run `chmod +x halo`. New setup builds import
+   automatically when no original data is found; select the image if prompted, or
    put a complete `maps` folder beside the executable.
 4. Select/create a profile and try a stock map.
 

@@ -18,8 +18,11 @@ instructions. Artifacts expire after 14 days.
 CI uses public dependencies and checked-in SDK declarations. It excludes game
 data, private inputs and checkout paths, and verifies every Mach-O architecture
 is ad-hoc signed without developer certificates. The displayed name is Halo OG;
-the stable bundle ID remains `local.halo.ce-universal`. CI testing builds disable
-Sparkle; Developer ID signing/notarization is a separate workflow.
+the stable bundle ID remains `local.halo.ce-universal`. CI testing builds leave
+Sparkle installation unconfigured. New setup builds instead check Halo OG's
+GitHub releases and offer a browser download in Settings. Developer ID signing,
+notarization, and automatic installation still need a configured release pipeline;
+see [client updates](client-updates.md).
 
 ## Manual testing prerelease
 
@@ -77,8 +80,10 @@ The DMG is Apple Silicon/macOS 26+, ad-hoc signed and unnotarized. Windows build
 are portable x86 executables; Linux builds still need the documented 32-bit
 OpenGL/SDL/audio runtime dependencies. Android signing depends on the existing
 CI signing configuration. Build success does not establish cross-platform play.
-Fork CI builds disable the updater that otherwise targets cybersecurity's
-different build; Sparkle also remains disabled in these Mac CI builds.
+Fork CI builds disable the upstream installer that targets cybersecurity's
+different build. New setup builds add Halo OG notices with manual downloads;
+the published `test-v0.3.0-net11-gameplay1` predates those notices. Sparkle
+installation remains unconfigured in current Mac testing builds.
 
 Read-only local preparation and verification are available without publication:
 
@@ -171,7 +176,13 @@ Sparkle 2.10.0 is pinned by checksum in `port/macos/dependencies.json`. It start
 only with a valid HTTPS feed and 32-byte public Ed25519 key. Standard Sparkle
 UI handles update consent and downloads. Scheduled reminders wait in the menu
 while playing; installations requiring a relaunch wait for clean game exit.
-Local builds omit the feed and disable update controls.
+When no Sparkle feed/key is configured, **Check for Updates…** opens Settings
+with Halo OG's GitHub release status, and **Download Update…** opens the Mac
+download in the browser. The checkbox **Automatically check for updates** checks
+metadata only; it does not install the download. Clean matching-main CI builds
+record source SHA/date for comparisons; local builds can open the releases page
+manually. See [client updates](client-updates.md) for current notice behavior and
+the planned signed GitHub Actions pipeline.
 
 Sparkle app-update hosting is intentionally unconfigured; community-map
 hosting above is configured independently. The non-secret checked-in file

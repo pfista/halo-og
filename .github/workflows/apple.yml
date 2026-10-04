@@ -59,7 +59,9 @@ jobs:
       - name: Native data import and packaging rules
         run: python3 tools/test_macos_menu.py
       - name: App installation and desktop data migration
-        run: python3 -m unittest tools.test_macos_installer tools.test_save_migration
+        run: python3 -m unittest tools.test_macos_installer tools.test_save_migration tools.test_desktop_first_run tools.test_release_discovery tools.test_download_transport_limits tools.test_desktop_map_downloads
+      - name: Native Mac release discovery fixtures
+        run: python3 tools/test_macos_release_updates.py
       - name: Native community map download fixtures
         run: python3 tools/test_macos_map_downloads.py
       - name: Managed map lookup and precache readiness

@@ -54,6 +54,10 @@ static pthread_once_t certificates_once = PTHREAD_ONCE_INIT;
 static mbedtls_x509_crt certificates;
 static int certificates_loaded;
 static int crypto_ready;
+/* The bundled Mbed TLS configuration has no threading backend. Its PSA RNG
+and key slots are shared even when connections are independent. Serialize
+complete transfers on these background workers, never on the game's thread. */
+static pthread_mutex_t download_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void load_certificates(void)
 {
@@ -381,7 +385,7 @@ the status, or 0 on failure */
 static int https_get(const char *url, struct download *download, char *location, size_t location_size, char *error,
 	int error_size)
 {
-	static struct connection connection;
+	struct connection *connection;
 	char host[256], port[16], path[2048];
 	char request[3072];
 	char line[MAXIMUM_HEADER_SIZE];
@@ -393,22 +397,24 @@ static int https_get(const char *url, struct download *download, char *location,
 		snprintf(error, (size_t)error_size, "not an https:// address: %s", url);
 		return 0;
 	}
-	if (!connection_open(&connection, host, port, error, error_size))
+	connection = calloc(1, sizeof(*connection));
+	if (!connection)
 	{
-		connection_free(&connection);
+		snprintf(error, (size_t)error_size, "could not allocate the TLS connection");
 		return 0;
 	}
+	if (!connection_open(connection, host, port, error, error_size)) goto done;
 	snprintf(request, sizeof(request),
 		"GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: " UPDATE_USER_AGENT "\r\n"
 		"Accept: */*\r\nConnection: close\r\n\r\n",
 		path, host);
-	if (!connection_write(&connection, request, strlen(request)) ||
-		!connection_read_line(&connection, line, sizeof(line)) ||
+	if (!connection_write(connection, request, strlen(request)) ||
+		!connection_read_line(connection, line, sizeof(line)) ||
 		sscanf(line, "HTTP/%*d.%*d %d", &status) != 1)
 	{
 		snprintf(error, (size_t)error_size, "no answer from %s", host);
-		connection_free(&connection);
-		return 0;
+		status = 0;
+		goto done;
 	}
 	location[0] = 0;
 	/* the headers */
@@ -416,11 +422,11 @@ static int https_get(const char *url, struct download *download, char *location,
 	{
 		char *value;
 
-		if (!connection_read_line(&connection, line, sizeof(line)))
+		if (!connection_read_line(connection, line, sizeof(line)))
 		{
 			snprintf(error, (size_t)error_size, "a broken answer from %s", host);
-			connection_free(&connection);
-			return 0;
+			status = 0;
+			goto done;
 		}
 		if (!line[0])
 			break;
@@ -451,7 +457,7 @@ static int https_get(const char *url, struct download *download, char *location,
 			snprintf(error, (size_t)error_size, "the download exceeds its byte limit");
 			status = 0;
 		}
-		else if (!read_body(&connection, download, chunked, length, have_length && !chunked))
+		else if (!read_body(connection, download, chunked, length, have_length && !chunked))
 		{
 			if (download->limit_exceeded)
 				snprintf(error, (size_t)error_size, "the download exceeds its byte limit");
@@ -460,11 +466,13 @@ static int https_get(const char *url, struct download *download, char *location,
 			status = 0;
 		}
 	}
-	connection_free(&connection);
+done:
+	connection_free(connection);
+	free(connection);
 	return status;
 }
 
-int update_download_limited(const char *url, const char *path, unsigned long long maximum_bytes,
+static int update_download_serialized(const char *url, const char *path, unsigned long long maximum_bytes,
 	update_progress_proc progress, void *context, char *error, int error_size)
 {
 	char current[2048];
@@ -536,6 +544,15 @@ int update_download_limited(const char *url, const char *path, unsigned long lon
 	return 0;
 }
 
+int update_download_limited(const char *url, const char *path, unsigned long long maximum_bytes,
+	update_progress_proc progress, void *context, char *error, int error_size)
+{
+	int result;
+	pthread_mutex_lock(&download_lock);
+	result = update_download_serialized(url, path, maximum_bytes, progress, context, error, error_size);
+	pthread_mutex_unlock(&download_lock);
+	return result;
+}
 
 int update_download(const char *url, const char *path, update_progress_proc progress, void *context, char *error,
 	int error_size)
@@ -583,6 +600,15 @@ void update_delete_file(const char *path)
 int update_make_directory(const char *path)
 {
 	return mkdir(path, 0755) == 0 || errno == EEXIST;
+}
+
+int update_make_private_temporary_directory(char *path, int size)
+{
+	const char *temporary = getenv("TMPDIR");
+	int length;
+	if (!temporary || !*temporary) temporary = "/tmp";
+	length = snprintf(path, (size_t)size, "%s/halo-og-update-XXXXXX", temporary);
+	return length > 0 && length < size && mkdtemp(path) != NULL;
 }
 
 int update_launch(const char *path)

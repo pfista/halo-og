@@ -11,7 +11,8 @@ competitive/practice features give serious players more ways to play while
 keeping OG rules as the default. This is the target we test against; complete
 retail parity and matching Xbox LAN feel across platforms remain validation work.
 
-**[Get running and join the playtest →](docs/playtesting.md)**
+**Getting started: [Mac](docs/setup-macos.md) · [Windows](docs/setup-windows.md) ·
+[Linux](docs/setup-linux.md) · [Android](docs/setup-android.md)**
 
 ![Original Halo main menu running on Apple Silicon](docs/images/main-menu.png)
 
@@ -50,25 +51,34 @@ evidence, and the [upstream credits](#build-and-contribute) for the work we buil
 
 ## Download
 
-Use the **[test-v0.3.0-net11-gameplay1 testing release](https://github.com/pfista/halo-og/releases/tag/test-v0.3.0-net11-gameplay1)**.
-This build corrects client spawn inventory ordering and teleport prediction,
-and starts loading projectile trail textures before firing. Choose your platform:
+Use the **[test-v0.3.0-net11-setup1 testing release](https://github.com/pfista/halo-og/releases/tag/test-v0.3.0-net11-setup1)**.
+This build adds automatic disc-image setup and Halo OG update notices on Mac,
+Windows, and Linux, with short setup guides for every platform. It also includes
+the prior spawn, teleporter, and projectile-trail fixes. Choose your platform:
 
 | Platform | Testing package | Requirements |
 | --- | --- | --- |
-| Mac | [Halo-OG-macos-arm64.dmg](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-gameplay1/Halo-OG-macos-arm64.dmg) | Apple Silicon, macOS 26+ |
-| Windows | [halo-windows-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-gameplay1/halo-windows-release.zip) | x86/x86-64 PC, OpenGL 4.5 |
-| Linux | [halo-linux-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-gameplay1/halo-linux-release.zip) | x86, OpenGL 4.5, [32-bit runtime libraries](port/linux/README.md#requirements) |
-| Android | [halo-android-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-gameplay1/halo-android-release.zip) | ARM64, Android 9+, OpenGL ES 3; controller or keyboard |
+| Mac | [Halo-OG-macos-arm64.dmg](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup1/Halo-OG-macos-arm64.dmg) | Apple Silicon, macOS 26+ |
+| Windows | [halo-windows-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup1/halo-windows-release.zip) | x86/x86-64 PC, OpenGL 4.5 |
+| Linux | [halo-linux-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup1/halo-linux-release.zip) | x86, OpenGL 4.5, [32-bit runtime libraries](port/linux/README.md#requirements) |
+| Android | [halo-android-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup1/halo-android-release.zip) | ARM64, Android 9+, OpenGL ES 3; controller or keyboard |
 
 All packages in the release come from the **same source commit**. Use the same
 tag when playing together. The release includes `SHA256SUMS`, `provenance.json`,
 and Mac installation notes. These are experimental builds.
-The Mac test build is ad-hoc signed and unnotarized, with automatic updates
-disabled. Use [playtesting](docs/playtesting.md) for installation, dependencies,
+The Mac test build is ad-hoc signed and unnotarized, with update notices and manual
+installation; signed automatic installation is not configured. Use [playtesting](docs/playtesting.md) for installation, dependencies,
 CI artifact downloads and updating.
 
-## Get running
+## Getting started
+
+Choose your platform's short guide for installation, importing your disc,
+keyboard controls, settings, and hosting or joining a game:
+
+- [Mac setup](docs/setup-macos.md)
+- [Windows setup](docs/setup-windows.md)
+- [Linux setup](docs/setup-linux.md)
+- [Android setup](docs/setup-android.md)
 
 1. Download and install the package for your platform.
 2. Supply your own original Xbox Halo disc image (`.iso` / `.xiso`) or complete
@@ -83,6 +93,15 @@ Data, saves, and settings live in `~/Library/Application Support/Halo OG/`.
 Prior `Halo CE Universal` data is copied where needed, preserving the old folder
 and existing files. External map folders can remain selected.
 [Data management details](docs/macos-menu-and-releases.md#independently-supplied-data).
+
+For the simplest Windows/Linux setup, extract the package, put one original
+Xbox `.iso` / `.xiso` beside the executable, then open the game. New setup builds
+import it automatically when no original data is already available; older
+downloads may ask you to choose it. Community maps download in the background.
+Mac also supports an adjacent image in new setup builds, with its usual disc
+chooser available. Keyboard remapping currently uses the commented `[bindings]`
+section in `config.toml`; the platform guides show its location and examples.
+Audio and Video settings are available through in-game **Game Settings**.
 
 ## Community maps and competitive options
 

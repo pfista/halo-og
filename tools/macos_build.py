@@ -24,6 +24,7 @@ from tools.linux_build import MINIUPNPC_DEFINES, MINIUPNPC_DIR, miniupnpc_source
 from tools.macos_menu_icon import render as render_menu_icon
 from tools.macos_sparkle import setup_sparkle, DIRECTORY as SPARKLE_DIRECTORY
 from tools.macos_content_tools import stage_content_tools
+from tools.release_discovery import ci_source_identity
 BUILD = ROOT / "build/macos"
 LLVM = Path(os.environ.get("HALO_MACOS_LLVM_BIN", "/opt/homebrew/opt/llvm/bin"))
 SDL = Path(os.environ.get("HALO_MACOS_SDL_PREFIX", "/opt/homebrew/opt/sdl3"))
@@ -76,7 +77,7 @@ def build_host():
              f"-I{MINIUPNPC_DIR / 'include'}", f"-I{MINIUPNPC_DIR / 'src'}", *MINIUPNPC_DEFINES]
     sources = sorted((ROOT / "port/macos/host").glob("*.c"))
     sources += sorted((ROOT / "port/macos/native").glob("*.m"))
-    sources += [ROOT / "port/linux/src/xiso.c"]
+    sources += [ROOT / "port/linux/src/xiso.c", ROOT / "port/linux/src/release_discovery.c"]
     sources += miniupnpc_sources()
     sources += [BUILD / "host/host_import_table.c", ROOT / "port/macos/host/entry.s"]
     objects = []
@@ -242,6 +243,12 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
         "NSHighResolutionCapable": True,
         "NSHumanReadableCopyright": "Local experimental Apple Silicon port",
     }
+    # Only clean, matching main CI builds can compare immutable source dates.
+    # A development bundle stays a manual link to this fork's release page.
+    source = ci_source_identity()
+    if source:
+        info["HaloSourceSHA"] = source["source_sha"]
+        info["HaloSourceDate"] = source["source_date"]
     configuration = json.loads((ROOT / "port/macos/release-config.json").read_text())
     if release:
         updates = update_configuration(configuration)

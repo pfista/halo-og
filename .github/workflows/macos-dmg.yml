@@ -58,6 +58,7 @@ jobs:
           import sys
           from tools.macos_release import audit_bundle, audit_adhoc_signing
           from tools.macos_dmg import audit_dmg_layout
+          from tools.release_discovery import ci_source_identity
 
           app = Path(sys.argv[1])
           audit_dmg_layout(app.parent)
@@ -66,6 +67,9 @@ jobs:
           contents = app / "Contents"
           info = plistlib.loads((contents / "Info.plist").read_bytes())
           assert info["CFBundleName"] == info["CFBundleDisplayName"] == "Halo OG", info
+          identity = ci_source_identity()
+          assert identity and info["HaloSourceSHA"] == identity["source_sha"], info
+          assert info["HaloSourceDate"] == identity["source_date"], info
           build_info = (contents / "Resources/BuildInfo.txt").read_text()
           assert f"Source: {os.environ['GITHUB_SHA']}\n" in build_info, build_info
           output = Path("dist/macos")
@@ -75,11 +79,15 @@ jobs:
               f"Requires Apple Silicon and macOS {info['LSMinimumSystemVersion']} or later.\n"
               "Open the DMG and drag Halo OG to Applications.\n"
               "Supply your own original Xbox Halo game data on first launch.\n"
+              "Select one ISO/XISO in the app, or place it beside Halo OG.app before opening.\n"
+              "Compatible data enables community-map downloads in the background.\n"
               "No game maps, disc images, or local data paths are included.\n"
               "This build is ad-hoc signed and not notarized; macOS may block first launch.\n"
               "Signing uses no personal developer certificate or Apple Team ID.\n"
               "See https://support.apple.com/en-us/102445 for Apple's opening instructions.\n"
-              "Automatic updates are disabled for CI builds.\n\n"
+              "Check for Updates opens availability in Settings; Download Update opens GitHub.\n"
+              "Install updates manually after quitting. Signed automatic installation is not configured.\n"
+              f"Setup, controls and joining games: https://github.com/pfista/halo-og/blob/{os.environ['GITHUB_SHA']}/docs/setup-macos.md\n\n"
               + build_info
           )
           (output / "README.txt").write_text(notes)

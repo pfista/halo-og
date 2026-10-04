@@ -40,13 +40,24 @@ static BOOL directory_exists(const char *path)
 	return posix_stat(path, &information) == 0;
 }
 
-/* whether directory has a maps folder, in any case */
+/* Original game data needs maps/ui.map, in any case. A directory containing
+only downloaded community maps must not bypass the first-run import. */
 static BOOL has_maps(const char *directory)
 {
-	char on_disk[256];
+	char on_disk[256], maps[1024], ui[1300];
+	struct posix_file_information information;
+	int length;
 
-	return directory_exists(directory) &&
-		posix_find_entry_case_insensitive(directory, "maps", on_disk, sizeof(on_disk));
+	if (!directory_exists(directory) ||
+		!posix_find_entry_case_insensitive(directory, "maps", on_disk, sizeof(on_disk)))
+		return FALSE;
+	length = snprintf(maps, sizeof(maps), "%s/%s", directory, on_disk);
+	if (length < 0 || length >= (int)sizeof(maps) || posix_stat(maps, &information) != 0 ||
+		!(information.flags & _posix_file_is_directory) ||
+		!posix_find_entry_case_insensitive(maps, "ui.map", on_disk, sizeof(on_disk)))
+		return FALSE;
+	snprintf(ui, sizeof(ui), "%s/%s", maps, on_disk);
+	return posix_stat(ui, &information) == 0 && !(information.flags & _posix_file_is_directory);
 }
 
 static void trim_separators(char *path)
@@ -66,6 +77,12 @@ const char *platform_data_root(void)
 		if (*environment)
 		{
 			snprintf(root, sizeof(root), "%s", environment);
+#ifndef HALO_ANDROID
+			/* Keep the chosen destination, but an incomplete configured folder
+			needs the same explanation/import flow as a fresh installation. */
+			if (!has_maps(root))
+				platform_offer_game_data(root);
+#endif
 		}
 		else if (has_maps("."))
 		{

@@ -2,6 +2,7 @@
 #import <Sparkle/Sparkle.h>
 #import "HaloPreferences.h"
 #import "HaloMapDownloads.h"
+#import "HaloReleaseUpdates.h"
 #include <SDL3/SDL.h>
 #include "host_menu.h"
 #include <stdlib.h>
@@ -16,10 +17,13 @@
 @property(nonatomic, strong) NSTextField *sourceLabel;
 @property(nonatomic, strong) NSButton *fullscreenButton;
 @property(nonatomic, strong) NSButton *automaticUpdatesButton;
+@property(nonatomic, strong) NSTextField *updateStatusLabel;
+@property(nonatomic, strong) NSButton *downloadUpdateButton;
 @property(nonatomic, strong) NSButton *communityDownloadsButton;
 @property(nonatomic, strong) NSTextField *downloadsLabel;
 @property(nonatomic, strong) HaloMapDownloads *mapDownloads;
 @property(nonatomic, strong) SPUStandardUpdaterController *updater;
+@property(nonatomic, strong) HaloReleaseUpdates *releaseUpdates;
 @property(nonatomic, strong) id previousDelegate;
 @property(nonatomic) BOOL gameRunning;
 @property(nonatomic) BOOL waitingForUpdate;
@@ -222,14 +226,16 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
             entry.title = host_sdl_is_fullscreen() ? @"Exit Full Screen" : @"Enter Full Screen";
         if (entry.action == @selector(checkUpdates:))
             entry.title = self.pendingInstall ? @"Update Ready — Quit to Install" : self.availableVersion
-                ? [NSString stringWithFormat:@"Update to Halo OG %@…", self.availableVersion] : @"Check for Updates…";
+                ? [NSString stringWithFormat:@"Update to Halo OG %@…", self.availableVersion]
+                : self.releaseUpdates.updateAvailable ? @"Halo OG Update Available…" : @"Check for Updates…";
     }
 }
 - (BOOL)validateMenuItem:(NSMenuItem *)entry {
     if (self.importing) return NO;
     if (entry.action == @selector(showGame:)) return self.gameRunning;
     if (entry.action == @selector(toggleFullscreen:)) return self.gameRunning;
-    if (entry.action == @selector(checkUpdates:)) return self.updater.updater.canCheckForUpdates && !self.pendingInstall;
+    if (entry.action == @selector(checkUpdates:)) return self.updater
+        ? self.updater.updater.canCheckForUpdates && !self.pendingInstall : !self.releaseUpdates.checking;
     return YES;
 }
 - (void)refreshFullscreen {
@@ -286,9 +292,12 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     self.automaticUpdatesButton = [NSButton checkboxWithTitle:@"Automatically check for updates"
                                                                   target:self action:@selector(automaticUpdates:)];
     self.automaticUpdatesButton.frame = NSMakeRect(24, 78, 472, 24);
-    self.automaticUpdatesButton.enabled = self.updater != nil;
+    self.automaticUpdatesButton.enabled = self.updater != nil || self.releaseUpdates.automaticChecksAvailable;
     [content addSubview:self.automaticUpdatesButton];
-    if (!self.updater) label(content, @"Updates aren’t available for this build.", NSMakeRect(24, 58, 472, 17), YES).font = [NSFont systemFontOfSize:11];
+    self.updateStatusLabel = label(content, @"", NSMakeRect(24, 49, 472, 26), YES);
+    self.updateStatusLabel.font = [NSFont systemFontOfSize:11];
+    self.downloadUpdateButton = button(content, @"Download Update…", @selector(downloadUpdate:), NSMakeRect(211, 14, 185, 32));
+    self.downloadUpdateButton.hidden = self.updater != nil;
     button(content, @"Advanced Settings…", @selector(openConfig:), NSMakeRect(20, 14, 185, 32));
     NSButton *done = button(content, @"Done", @selector(closeSettings:), NSMakeRect(401, 14, 95, 32));
     done.keyEquivalent = @"\r";
@@ -316,7 +325,11 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     self.dataLabel.toolTip = self.dataLabel.stringValue;
     self.sourceLabel.stringValue = self.preferences.isoPath ? [@"Disc image: " stringByAppendingString:self.preferences.isoPath] : @"Using an extracted maps folder";
     self.sourceLabel.toolTip = self.preferences.isoPath;
-    self.automaticUpdatesButton.state = self.updater.updater.automaticallyChecksForUpdates ? NSControlStateValueOn : NSControlStateValueOff;
+    BOOL automatic = self.updater ? self.updater.updater.automaticallyChecksForUpdates : self.preferences.releaseChecksEnabled;
+    self.automaticUpdatesButton.state = automatic ? NSControlStateValueOn : NSControlStateValueOff;
+    self.updateStatusLabel.stringValue = self.updater ? @"Updates install after the game quits." : self.releaseUpdates.statusText ?: @"";
+    self.updateStatusLabel.toolTip = self.updateStatusLabel.stringValue;
+    self.downloadUpdateButton.enabled = self.releaseUpdates.downloadURL != nil && !self.releaseUpdates.checking;
     self.communityDownloadsButton.state = self.preferences.communityDownloadsEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     self.downloadsLabel.stringValue = self.mapDownloads.statusText ?: @"Map hosting is not configured for this build.";
     self.downloadsLabel.toolTip = self.downloadsLabel.stringValue;
@@ -343,7 +356,14 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     if (self.gameRunning && !self.quitting) host_sdl_show_game();
 }
 - (void)automaticUpdates:(NSButton *)sender {
-    self.updater.updater.automaticallyChecksForUpdates = sender.state == NSControlStateValueOn;
+    BOOL enabled = sender.state == NSControlStateValueOn;
+    if (self.updater) self.updater.updater.automaticallyChecksForUpdates = enabled;
+    else {
+        NSError *error = nil;
+        if (![self.preferences setReleaseChecksEnabled:enabled error:&error]) showError(error);
+        else if (enabled) [self.releaseUpdates checkForUpdates];
+        [self refreshSettings];
+    }
 }
 - (void)communityDownloads:(NSButton *)sender {
     BOOL enabled = sender.state == NSControlStateValueOn;
@@ -565,7 +585,16 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
 - (void)checkUpdates:(id)sender {
     (void)sender;
     host_sdl_release_mouse();
-    [self.updater checkForUpdates:self];
+    if (self.updater) [self.updater checkForUpdates:self];
+    else {
+        [self showSettings:nil];
+        if (!self.releaseUpdates.updateAvailable) [self.releaseUpdates checkForUpdates];
+    }
+}
+- (void)downloadUpdate:(id)sender {
+    (void)sender;
+    NSURL *download = self.releaseUpdates.downloadURL;
+    if (download && !self.releaseUpdates.checking) [NSWorkspace.sharedWorkspace openURL:download];
 }
 - (BOOL)supportsGentleScheduledUpdateReminders { return YES; }
 - (BOOL)standardUserDriverShouldHandleShowingScheduledUpdate:(SUAppcastItem *)update andInImmediateFocus:(BOOL)focus {
@@ -649,6 +678,16 @@ int host_menu_prepare(const char *support, const char *fallback, char *data, siz
         NSURL *supportDirectory = [NSURL fileURLWithPath:@(support) isDirectory:YES];
         if (![menu migrateSupportIfNeeded:supportDirectory]) return 0;
         menu.preferences = [[HaloPreferences alloc] initWithSupportDirectory:supportDirectory];
+        if (!menu.updater) {
+            NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+            menu.releaseUpdates = [[HaloReleaseUpdates alloc] initWithSourceSHA:info[@"HaloSourceSHA"] sourceDate:info[@"HaloSourceDate"]];
+            __weak HaloMenu *weakMenu = menu;
+            menu.releaseUpdates.statusChanged = ^{
+                [weakMenu refreshSettings];
+                weakMenu.status.button.toolTip = weakMenu.releaseUpdates.updateAvailable
+                    ? @"A Halo OG update is available — open Settings to download" : @"Halo OG";
+            };
+        }
         NSString *selected = menu.preferences.dataPath;
         const char *override = getenv("HALO_DATA_ROOT");
         if (override && *override) selected = @(override);
@@ -658,10 +697,24 @@ int host_menu_prepare(const char *support, const char *fallback, char *data, siz
             NSError *error = nil;
             if (![menu.preferences selectDataRoot:valid iso:nil error:&error]) { showError(error); return 0; }
         }
+        NSError *discoveryError = nil;
+        if (!valid && !(override && *override)) {
+            NSURL *bundle = NSBundle.mainBundle.bundleURL;
+            NSURL *adjacent = [bundle.pathExtension.lowercaseString isEqualToString:@"app"]
+                ? bundle.URLByDeletingLastPathComponent : NSBundle.mainBundle.executableURL.URLByDeletingLastPathComponent;
+            NSURL *image = adjacent ? HaloFindAdjacentDiscImage(adjacent, &discoveryError) : nil;
+            if (image) {
+                __block BOOL finished = NO, imported = NO;
+                [menu importImage:image completion:^(BOOL success) { imported = success; finished = YES; }];
+                while (!finished)
+                    [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+                if (imported) valid = [NSURL fileURLWithPath:menu.preferences.dataPath];
+            }
+        }
         while (!valid) {
             NSAlert *alert = [[NSAlert alloc] init];
             alert.messageText = @"Choose your Halo OG game data";
-            alert.informativeText = @"Use your own original Xbox Halo disc image or extracted maps folder. The app does not include game data.";
+            alert.informativeText = discoveryError.localizedDescription ?: @"Choose your original Xbox Halo ISO/XISO once. Halo OG will copy its maps into Application Support, remember them, and download community maps automatically. You can also place one ISO/XISO beside Halo OG.app before opening it.";
             [alert addButtonWithTitle:@"Choose Disc Image…"];
             [alert addButtonWithTitle:@"Choose Maps Folder…"];
             [alert addButtonWithTitle:@"Quit"];
@@ -683,6 +736,8 @@ int host_menu_prepare(const char *support, const char *fallback, char *data, siz
         __weak HaloMenu *weakMenu = menu;
         menu.mapDownloads.statusChanged = ^{ [weakMenu refreshSettings]; };
         [menu.mapDownloads startEnabled:menu.preferences.communityDownloadsEnabled];
+        if (menu.preferences.releaseChecksEnabled && menu.releaseUpdates.automaticChecksAvailable)
+            [menu.releaseUpdates checkForUpdates];
         if (!getenv("HALO_WINDOWED")) SDL_setenv_unsafe("HALO_WINDOWED", menu.preferences.windowed ? "1" : "0", 1);
         return [valid.path getCString:data maxLength:capacity encoding:NSUTF8StringEncoding] ? 1 : 0;
     }

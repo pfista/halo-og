@@ -142,22 +142,19 @@ drop it, and when it hosts, its players leave.
 
 ## Updates
 
-The app from GitHub Actions can update itself, as on Linux (refer to
-"Updates" in [port/linux/README.md](../linux/README.md#updates)). When you
-select "Yes":
+Halo OG's Android builds do not currently check for app updates. The inherited
+Java updater targets cybersecurity's releases and remains disabled for this
+fork. Download the Android ZIP from the [Halo OG release](../../README.md#download),
+extract its APK and install it manually. The new Windows/Linux browser notice
+does not enable Android updates.
 
-1. The app downloads the new version.
-2. The package installer of Android opens. At the first update, Android asks
-   you to let Halo install apps. Allow it.
-3. Select "Update". Android replaces the app.
-4. Select "Open" to start the new version.
-
-To install over the previous version, each build must have the same
-signature. GitHub Actions signs each build with the key in the
-`ANDROID_KEYSTORE_BASE64` and `ANDROID_KEYSTORE_PASSWORD` secrets of the
-repository. If you installed a build that has a different signature, remove
-that build before you install a new build. Removing the app deletes its data
-folder: first make a copy of `maps/` and `save/`.
+To install over a previous version while retaining its data, both APKs must use
+the same signing key and the new version code must be higher. CI supports a
+persistent key through the existing `ANDROID_KEYSTORE_BASE64` and
+`ANDROID_KEYSTORE_PASSWORD` repository secrets; without it, builds use the
+runner's debug key and may not install over one another. Back up `maps/`,
+`save/` and settings before uninstalling an incompatible build: uninstalling
+deletes the app's data folder.
 
 ## Widescreen
 

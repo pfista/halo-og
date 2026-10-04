@@ -24,6 +24,7 @@ from .linux_build import (LINUX_PROFILE, MINIUPNPC_DIR, OPTIMISATION, WINDOWS_PR
                           xdk_headers)
 from .embed_assets import hud_assets_build, hud_configure_inputs
 from .ninja_syntax import Writer
+from .release_discovery import desktop_discovery_defines
 
 LINUX_DIR = Path("port/linux")
 PORT_DIR = Path("port/windows")
@@ -60,7 +61,7 @@ def updater_defines(release: bool) -> str:
     if not number.isdigit():
         number = "0"
     flavor = "release" if release else "debug"
-    return f'-DHALO_BUILD_NUMBER={number} -DHALO_BUILD_FLAVOR=\\"{flavor}\\"'
+    return f'-DHALO_BUILD_NUMBER={number} -DHALO_BUILD_FLAVOR=\\"{flavor}\\" ' + desktop_discovery_defines()
 
 WINDOWS_ABI_FLAGS = [
     "--target=i686-pc-windows-msvc",
@@ -374,7 +375,7 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
                 continue
             if source.name == "community_maps_download.c":
                 add_object(source, win32_cflags)
-            elif source.name == "updater.c":
+            elif source.name in ("updater.c", "release_discovery.c"):
                 add_object(source, f"{platform_cflags} {updater_defines(getattr(sln, 'port_release', False))}")
             else:
                 add_object(source, platform_cflags)

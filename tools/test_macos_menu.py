@@ -135,9 +135,9 @@ def native_menu_loop():
              "-Iport/macos/native", "-Iport/linux/src", "-Iport/android/include",
              "-Ibuild/macos/toolchain/gl", f"-I{SDL / 'include'}", f"-F{sparkle}"]
     sources = ("port/macos/tests/menu_ui.m", "port/macos/tests/menu_support.c",
-               "port/macos/native/host_menu.m", "port/macos/native/HaloPreferences.m", "port/macos/native/HaloMapDownloads.m", "port/macos/native/HaloMapPackages.m",
+               "port/macos/native/host_menu.m", "port/macos/native/HaloPreferences.m", "port/macos/native/HaloMapDownloads.m", "port/macos/native/HaloMapPackages.m", "port/macos/native/HaloReleaseUpdates.m",
                "port/macos/host/host_sdl.c", "port/macos/host/host_invite.c",
-               "port/macos/host/posix_files.c", "port/linux/src/xiso.c")
+               "port/macos/host/posix_files.c", "port/linux/src/xiso.c", "port/linux/src/release_discovery.c")
     objects = []
     for source in sources:
         obj = output / (Path(source).name + '.o')

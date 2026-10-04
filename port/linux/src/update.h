@@ -43,6 +43,10 @@ void update_delete_file(const char *path);
 /* makes the directory at path, if there is none; 1 when it is there */
 int update_make_directory(const char *path);
 
+/* Fresh owner-only temporary directory for bounded metadata. Never reuses an
+existing path. The caller removes its own files and then this directory. */
+int update_make_private_temporary_directory(char *path, int size);
+
 /* starts the executable at path as a process of its own, with no arguments,
 this process's environment and none of its files; 1 on success */
 int update_launch(const char *path);

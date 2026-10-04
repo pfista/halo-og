@@ -13,7 +13,10 @@ Paths are UTF-8, as SDL gives them.
 
 #include <windows.h>
 #include <winhttp.h>
+#include <aclapi.h>
+#include <bcrypt.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "update.h"
@@ -271,6 +274,53 @@ int update_make_directory(const char *path)
 
 	return wide_from_utf8(path, wide, MAX_PATH * 2) &&
 		(CreateDirectoryW(wide, NULL) || GetLastError() == ERROR_ALREADY_EXISTS);
+}
+
+int update_make_private_temporary_directory(char *path, int size)
+{
+	wchar_t temporary[MAX_PATH * 2], directory[MAX_PATH * 2];
+	HANDLE token = NULL;
+	DWORD bytes = 0, length;
+	TOKEN_USER *user = NULL;
+	PACL acl = NULL;
+	EXPLICIT_ACCESSW access;
+	SECURITY_DESCRIPTOR descriptor;
+	SECURITY_ATTRIBUTES attributes = { sizeof(attributes), &descriptor, FALSE };
+	unsigned char random[16];
+	wchar_t suffix[33];
+	int result = 0;
+	length = GetTempPathW(MAX_PATH * 2, temporary);
+	if (!length || length >= MAX_PATH * 2 || !OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) goto done;
+	GetTokenInformation(token, TokenUser, NULL, 0, &bytes);
+	if (!bytes || !(user = malloc(bytes)) || !GetTokenInformation(token, TokenUser, user, bytes, &bytes)) goto done;
+	memset(&access, 0, sizeof(access));
+	access.grfAccessPermissions = FILE_ALL_ACCESS;
+	access.grfAccessMode = SET_ACCESS;
+	access.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+	access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	access.Trustee.TrusteeType = TRUSTEE_IS_USER;
+	access.Trustee.ptstrName = (wchar_t *)user->User.Sid;
+	if (SetEntriesInAclW(1, &access, NULL, &acl) != ERROR_SUCCESS ||
+		!InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION) ||
+		!SetSecurityDescriptorDacl(&descriptor, TRUE, acl, FALSE) ||
+		!SetSecurityDescriptorControl(&descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED)) goto done;
+	for (unsigned attempt = 0; attempt < 8; attempt++) {
+		if (BCryptGenRandom(NULL, random, sizeof(random), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0) goto done;
+		for (unsigned i = 0; i < 16; i++) {
+			suffix[i * 2] = L"0123456789abcdef"[random[i] >> 4];
+			suffix[i * 2 + 1] = L"0123456789abcdef"[random[i] & 15];
+		}
+		suffix[32] = 0;
+		if (_snwprintf(directory, MAX_PATH * 2, L"%lshalo-og-update-%ls", temporary, suffix) < 0) goto done;
+		if (!WideCharToMultiByte(CP_UTF8, 0, directory, -1, path, size, NULL, NULL)) goto done;
+		if (CreateDirectoryW(directory, &attributes)) { result = 1; break; }
+		if (GetLastError() != ERROR_ALREADY_EXISTS) goto done;
+	}
+done:
+	if (acl) LocalFree(acl);
+	free(user);
+	if (token) CloseHandle(token);
+	return result;
 }
 
 int update_launch(const char *path)
