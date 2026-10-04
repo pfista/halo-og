@@ -48,6 +48,8 @@ jobs:
           python3 tools/ios_build.py --plugin-only
       - name: Mac ABI, allocation, networking and audio
         run: python3 tools/test_macos_runtime.py --standalone
+      - name: Guest directory and map service imports
+        run: python3 -m unittest tools.test_macos_service_imports
       - name: Signed iOS instruction image
         run: python3 tools/test_ios_runtime.py
       - name: Controls, rendering and workload verification

@@ -25,6 +25,10 @@ int game_directory_snapshot(struct halo_directory_game *games, int capacity);
 
 /* Synchronous only on a directory worker. Certificate/hostname verification,
    bounded response, no redirects. Returns response bytes, or -1 on failure. */
+#if defined(HALO_MACOS) && defined(__ILP32__)
+/* The guest compiler rebases pointer arguments to host-prefixed imports. */
+#define halo_directory_http host_halo_directory_http
+#endif
 int halo_directory_http(const char *method, const char *url, const char *lease,
     const char *body, char *response, int capacity, int *status);
 

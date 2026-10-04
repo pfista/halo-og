@@ -9,6 +9,11 @@ enum halo_map_download_status {
 };
 /* These guest-facing hooks consult cached state/schedule work, never read files
    or wait for HTTP. The directory already includes the maps component. */
+#if defined(HALO_MACOS) && defined(__ILP32__)
+/* Only guest calls cross the rebase ABI; native callers keep the native API. */
+#define halo_map_download_directory host_halo_map_download_directory
+#define halo_map_download_request host_halo_map_download_request
+#endif
 int halo_map_download_directory(char *out, size_t capacity);
 int halo_map_download_request(const char *map_name);
 
