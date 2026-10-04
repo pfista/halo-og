@@ -14,9 +14,11 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import shlex
 import stat
 import sys
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import build_opener, HTTPRedirectHandler, Request
@@ -32,6 +34,7 @@ ENTRY_FIELDS = {"id", "sha256", "file_bytes", "cache_version", "cache_build",
                 "scenario_type", "object_key", "prefetch"}
 MAP_ID = re.compile(r"[a-z0-9][a-z0-9_-]{0,30}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+CREDENTIAL_FIFO_TIMEOUT = 15.0
 
 
 class PublishError(Exception):
@@ -72,6 +75,72 @@ def read_regular(path, limit):
     if len(data) > limit:
         raise PublishError("Input exceeds its permitted byte limit")
     return data
+
+
+def read_credential_file(path, limit=65536, *, timeout=None):
+    """Read a literal file or owner-only 1Password FIFO without blocking open.
+
+    Prepared assets deliberately continue to use read_regular. FIFO readers
+    can precede their writer, so an initial empty read must not be parsed as an
+    empty credential. Both waiting for the writer and reading are deadline-bound.
+    """
+    descriptor = None
+    try:
+        if Path(path).is_symlink():
+            raise PublishError("Credential input must not be a symlink")
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        metadata = os.fstat(descriptor)
+        if stat.S_ISREG(metadata.st_mode):
+            data = bytearray()
+            while len(data) <= limit:
+                chunk = os.read(descriptor, min(4096, limit + 1 - len(data)))
+                if not chunk:
+                    break
+                data.extend(chunk)
+            data = bytes(data)
+        elif (stat.S_ISFIFO(metadata.st_mode) and hasattr(os, "getuid")
+              and metadata.st_uid == os.getuid() and stat.S_IMODE(metadata.st_mode) == 0o600):
+            deadline = time.monotonic() + (CREDENTIAL_FIFO_TIMEOUT if timeout is None else timeout)
+            data = bytearray()
+            with selectors.DefaultSelector() as selector:
+                selector.register(descriptor, selectors.EVENT_READ)
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise PublishError("Timed out waiting for the mounted credential FIFO")
+                    try:
+                        # Try the nonblocking read before waiting: macOS kqueue
+                        # can omit a FIFO readiness event after a writer closes.
+                        chunk = os.read(descriptor, min(4096, limit + 1 - len(data)))
+                    except BlockingIOError:
+                        selector.select(min(remaining, 0.1))
+                        continue
+                    if chunk:
+                        data.extend(chunk)
+                        if len(data) > limit:
+                            raise PublishError("Credential input exceeds its permitted byte limit")
+                    elif data:
+                        data = bytes(data)
+                        break
+                    else:
+                        # An empty writer may close before the real 1Password
+                        # writer arrives. Avoid a busy EOF loop while waiting.
+                        time.sleep(min(remaining, 0.05))
+        else:
+            raise PublishError("Credential input must be a regular file or current-user-owned mode0600 FIFO")
+        if len(data) > limit:
+            raise PublishError("Credential input exceeds its permitted byte limit")
+        return data
+    except OSError:
+        raise PublishError("Mounted credential input could not be read safely") from None
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                # Closing must never replace a safe credential error with an
+                # operating-system exception containing private path text.
+                pass
 
 
 def parse_json(data):
@@ -198,7 +267,7 @@ class HTTPS:
 def load_token(credential_file=None):
     if credential_file is not None:
         try:
-            content = read_regular(credential_file, 65536).decode("utf-8")
+            content = read_credential_file(credential_file).decode("utf-8")
             assignments = {"CLOUDFLARE_API_TOKEN": [], "CFTOKEN": []}
             for line in content.splitlines():
                 match = re.match(r"^\s*(?:export\s+)?(CLOUDFLARE_API_TOKEN|CFTOKEN)\s*=", line)
