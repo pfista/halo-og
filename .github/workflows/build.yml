@@ -75,6 +75,7 @@ jobs:
           python -m unittest tools.test_device_settings tools.test_windows_shared_headers
           tools.test_game_settings.NativeGameSettingsTests.test_native_menu
           tools.test_performance_mouse tools.test_save_migration
+          tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail
 
       - name: Compile cache
         run: ccache --show-stats
@@ -212,6 +213,7 @@ jobs:
           python -m unittest tools.test_device_settings tools.test_windows_shared_headers
           tools.test_game_settings.NativeGameSettingsTests.test_native_menu
           tools.test_performance_mouse tools.test_save_migration
+          tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail
 
       - name: Compile cache
         run: ccache --show-stats

@@ -80,6 +80,34 @@ reference is separate from normal-play performance choices. Native maps can use
 
 ## Reconstruction target and validation
 
+### Native gameplay corrections
+
+The native inventory receiver retains a spawn snapshot until its unit and
+weapons exist. Weapon/slot/grenade changes use the existing reliable stream
+after object creation; ammunition keeps its 10 Hz cadence. This corrects a
+reproduced client ordering failure that otherwise waits for the next refresh.
+It does not change loadouts or the original weapon-ready animation. A prolonged
+host-side spawn delay has not yet been reproduced.
+
+Teleports split native prediction history and clear pre-jump host prediction
+anchors. Corrections following an actual scenario source/target pair restore
+the original destination latch. Fixtures reproduce the doubled displacement
+and immediate return trip, and preserve ordinary movement corrections plus
+the original 0.5-unit trigger and 1-unit destination search.
+
+Weapon creation and ready/equip request their projectile trail textures through
+the existing nonblocking cache. A production-function fixture demonstrates
+that a cold texture suppresses the first draw and that an early completed read
+permits it. The reported first-shot visual symptom still needs physical
+playtesting; an early request cannot guarantee immediate disk completion.
+
+These are native integration corrections, with no wire-layout/version change
+and no change to the 30 Hz simulation, trail tags/lifetimes, ammunition rules,
+or original teleport cooldown. Regression fixtures run on Mac, Windows and
+Linux; they do not establish reference-Xbox or cross-platform gameplay parity.
+
+### Original target
+
 The executable target is Xbox build **2342**, `cachebeta.exe`, SHA-256
 `4cc87b45f721270392a96f1674ed2b5cd4a7bb4355faeab4531d1cf1884d9520`.
 The original data baseline is USA NTSC cache v5 build **2276**,

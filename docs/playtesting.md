@@ -109,6 +109,25 @@ multiplayer pause menu; all peers need compatible options support. Timer Sounds
 additionally require a separately supplied local audio pack.
 [PB Options](performance-options.md) explains these settings.
 
+### Spawn, sniper and teleporter regression test
+
+Use the same release on both machines, with stock options. Test stock Derelict
+and custom Downrush, then swap host/client roles between Mac and Windows
+(include Linux when available). Record which player's view shows each symptom.
+
+- Respawn repeatedly and watch for a prolonged bare reticle before weapons
+  appear. Distinguish the brief original ready animation from a delay lasting
+  several ticks; report host and joining-player observations separately.
+- On a freshly loaded map, watch the first sniper shot from both the shooter's
+  view and another player's view, then compare subsequent shots. Repeat after
+  picking up a sniper later in the match.
+- Enter each teleporter once and stop at the destination. It should keep you
+  there; walk away and re-enter to test the normal return trip. Repeat while
+  moving and with ordinary network latency.
+
+The automated fixtures cover packet ordering, prediction and texture readiness.
+These physical checks confirm whether the reported gameplay symptoms are gone.
+
 ## Community maps
 
 First verify a stock-map match. The public collection contains **40 approved
@@ -116,7 +135,7 @@ community maps** for original Xbox v5 NTSC data, about **863 MiB** in total.
 This includes PB community variants with their normal embedded Halo dependencies;
 original disc images, stock map files, campaign files, and `ui.map` are excluded.
 
-The **test-v0.3.0-net11-maps1 Mac build** enables **Download approved community maps in the
+The **test-v0.3.0-net11-gameplay1 Mac build** enables **Download approved community maps in the
 background** for fresh settings and queues **all 40** approved maps at launch
 once original NTSC data is available. A saved opt-out stays off. Open
 **Halo OG → Settings…** to disable downloads or use **Check Maps / Retry** when
@@ -130,7 +149,7 @@ The published **test-v0.3.0-net11-dmg2 Mac build** still needs you to enable
 that checkbox and accept its prompt. It can download the existing complete-map
 collection, but it does not have the new fresh-settings default.
 
-The **test-v0.3.0-net11-maps1 Windows/Linux builds** download all 40 approved community maps in the
+The **test-v0.3.0-net11-gameplay1 Windows/Linux builds** download all 40 approved community maps in the
 background once original NTSC game data is available. Downloads are enabled by
 default. To disable them, set `auto_download = false` in the `[community_maps]`
 section of `config.toml` beside the executable. Files go into the active game

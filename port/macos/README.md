@@ -9,7 +9,7 @@ Use [playtesting](../../docs/playtesting.md#mac) for current packages, installat
 and first launch. [Release tooling](../../docs/macos-menu-and-releases.md) covers
 DMG packaging, CI artifacts and publication.
 
-The `test-v0.3.0-net11-maps1` testing release and current main builds enable
+The `test-v0.3.0-net11-gameplay1` testing release and current main builds enable
 automatic community-map downloads with fresh settings. Existing saved opt-outs
 remain off. The older `test-v0.3.0-net11-dmg2` Mac build requires opt-in.
 

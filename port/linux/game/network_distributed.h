@@ -26,7 +26,8 @@ enum
 	_distributed_message_unit_states,
 	/* the players' statistics (unreliable) */
 	_distributed_message_player_statistics,
-	/* what units carry (unreliable) */
+	/* what units carry (weapon/grenade changes reliable; ammunition and
+	unchanged refreshes unreliable) */
 	_distributed_message_inventories,
 	/* objects created and deleted (reliable) */
 	_distributed_message_object_changes,
@@ -206,7 +207,7 @@ void network_objects_client_asked(long machine_index, boolean again);
 void network_objects_handle_changes(void const *entries, short count);
 void network_objects_handle_synchronized(void);
 void network_objects_handle_states(void const *entries, short count);
-void network_objects_handle_inventories(void const *entries, short count);
+void network_objects_handle_inventories(void const *entries, short count, long time);
 void network_objects_handle_vehicle_prediction(long machine_index, void const *entries, short count);
 /* (the host) the vehicle predictions come in since the last tick, taken */
 void network_objects_apply_vehicle_predictions(void);
