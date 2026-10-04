@@ -13,6 +13,17 @@ def buildNumber = buildNumberText.isInteger() ? buildNumberText.toInteger() : 0
 def installBuildNumberText = providers.gradleProperty("haloInstallBuildNumber").getOrElse(buildNumberText)
 def installBuildNumber = installBuildNumberText.isInteger() ? installBuildNumberText.toInteger() : 0
 
+// Keep the APK's product version aligned with the native menu and Mac bundle.
+def versionHeader = new File(rootDir, "../linux/include/halo_og_version.h")
+def versionMatcher = versionHeader.getText("UTF-8") =~ /(?m)^[ \t]*#define[ \t]+HALO_OG_VERSION[ \t]+"(\d+(?:\.\d+){0,2})"[ \t]*$/
+if (!versionMatcher.find()) {
+    throw new GradleException("Expected one numeric HALO_OG_VERSION in " + versionHeader)
+}
+def haloOgVersion = versionMatcher.group(1)
+if (versionMatcher.find()) {
+    throw new GradleException("Expected one numeric HALO_OG_VERSION in " + versionHeader)
+}
+
 // the workflow's signing key (.github/workflows/build.yml): every build of
 // main signed with it can install over the one before; without it, the
 // debug key of the computer that builds
@@ -27,7 +38,7 @@ android {
         minSdk 28
         targetSdk 35
         versionCode Math.max(1, installBuildNumber)
-        versionName installBuildNumber > 0 ? "build " + installBuildNumber : "1.0"
+        versionName haloOgVersion
         buildConfigField "int", "HALO_BUILD_NUMBER", "${buildNumber}"
         ndk {
             abiFilters "arm64-v8a"

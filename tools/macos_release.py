@@ -24,6 +24,7 @@ from tools.macos_build import APP_NAME, APP_VERSION, update_configuration
 from tools.macos_sparkle import setup_sparkle, DIRECTORY as SPARKLE
 from tools.macos_dmg import create_dmg
 from tools.macos_content_tools import audit_content_tools
+from tools.halo_og_version import require_version
 
 CONFIG = ROOT / "port/macos/release-config.json"
 APP = ROOT / "build/macos" / (APP_NAME + ".app")
@@ -151,6 +152,7 @@ def local_dmg(args):
 
 
 def build_release(args):
+    require_version(args.version)
     settings = config()
     if not update_configuration(settings):
         raise RuntimeError("Choose release hosting and configure Halo's public update key first")
@@ -268,7 +270,8 @@ def main():
     local.add_argument("--app", type=Path, default=APP, help="Existing signed Halo OG.app to package")
     local.add_argument("--output", type=Path)
     build = commands.add_parser("build")
-    build.add_argument("--version", default=APP_VERSION)
+    build.add_argument("--version", default=APP_VERSION,
+                       help="Must match HALO_OG_VERSION in port/linux/include/halo_og_version.h")
     build.add_argument("--build-number", required=True)
     build.add_argument("--sign-identity", required=True)
     build.add_argument("--notary-profile", required=True)

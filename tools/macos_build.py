@@ -25,13 +25,14 @@ from tools.macos_menu_icon import render as render_menu_icon
 from tools.macos_sparkle import setup_sparkle, DIRECTORY as SPARKLE_DIRECTORY
 from tools.macos_content_tools import stage_content_tools
 from tools.release_discovery import ci_source_identity
+from tools.halo_og_version import read_version, require_version
 BUILD = ROOT / "build/macos"
 LLVM = Path(os.environ.get("HALO_MACOS_LLVM_BIN", "/opt/homebrew/opt/llvm/bin"))
 SDL = Path(os.environ.get("HALO_MACOS_SDL_PREFIX", "/opt/homebrew/opt/sdl3"))
 ANGLE = Path(os.environ.get("HALO_MACOS_ANGLE_DIR", str(BUILD / "angle/dist")))
 GL = BUILD / "toolchain/gl"
 APP_ICON = "AppIcon.icns"
-APP_VERSION = "0.3.0"
+APP_VERSION = read_version()
 APP_BUILD = "11"
 APP_NAME = "Halo OG"
 LEGACY_APP_NAMES = ("Halo CE Universal.app",)
@@ -146,6 +147,7 @@ def update_configuration(config):
 
 
 def package(data_root, *, sign_identity="-", release=False, version=APP_VERSION, build=APP_BUILD, content_tools=None):
+    require_version(version)
     configuration = json.loads((ROOT / "port/macos/release-config.json").read_text())
     if release:
         if not update_configuration(configuration):
@@ -173,6 +175,7 @@ def package(data_root, *, sign_identity="-", release=False, version=APP_VERSION,
 
 
 def package_into(app, data_root, *, sign_identity, release, version, build, content_tools=None):
+    require_version(version)
     contents = app / "Contents"
     macos = contents / "MacOS"
     frameworks = contents / "Frameworks"
@@ -426,7 +429,8 @@ def main():
     parser.add_argument("--no-data-path", action="store_true", help="First launch asks for independently supplied game data")
     parser.add_argument("--release", action="store_true", help="Developer ID signed, hardened runtime build; does not notarize or publish")
     parser.add_argument("--sign-identity", default="-")
-    parser.add_argument("--version", default=APP_VERSION)
+    parser.add_argument("--version", default=APP_VERSION,
+                        help="Must match HALO_OG_VERSION in port/linux/include/halo_og_version.h")
     parser.add_argument("--build-number", default=APP_BUILD)
     parser.add_argument("--content-tools", type=Path, metavar="TOOLCHAIN_DIRECTORY",
                         help="Opt in to reviewed Invader helpers for local community package import")
@@ -434,6 +438,7 @@ def main():
                         metavar="DIRECTORY", help="Install in /Applications, or the given directory, for Spotlight")
     parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 4, 6))
     args = parser.parse_args()
+    require_version(args.version)
     os.chdir(ROOT)
     if args.release:
         if not update_configuration(json.loads((ROOT / "port/macos/release-config.json").read_text())):
