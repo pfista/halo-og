@@ -54,8 +54,9 @@ static pthread_mutex_t mixer_lock=PTHREAD_MUTEX_INITIALIZER;
 static int enabled=1,created,played,released,start_count;
 static unsigned long played_bytes;
 static float master_volume=0.4f, configured_master=0.4f, configured_timer=1.0f;
-static const char *root;
+static const char *root, *save_root;
 static const char *platform_data_root(void) { return root; }
+static const char *platform_save_root(void) { return save_root; }
 static int config_boolean(const char *key) { assert(!strcmp(key,"audio.enabled")); return enabled; }
 static double config_real(const char *key) {
  if(!strcmp(key,"audio.volume")) return configured_master;
@@ -184,6 +185,62 @@ class PerformanceAudioTest(unittest.TestCase):
             struct.pack_into("<I", damaged, 40, 0xFFFFFFFF)
             (directory / "rocket.wav").write_bytes(damaged)
             self.compile_and_run(fixture, str(root))
+
+    def test_complete_pack_roots_and_priority(self):
+        source = (ROOT / "port/linux/src/dsound_sdl.c").read_text()
+        fixture = PREFIX + block(source, "static float audio_setting_volume(") + (ROOT / "port/linux/src/performance_audio.inc").read_text() + r'''
+int main(int argc, char **argv) {
+ assert(argc == 6); root = argv[1]; save_root = argv[2]; (void)spatialize;
+ int expected = atoi(argv[3]), sample = atoi(argv[4]);
+ assert(halo_performance_audio_available() == expected);
+ assert(performance_audio_loaded && halo_performance_audio_available() == expected);
+ for (unsigned i = 0; i < 43; i++) {
+  if (expected) assert(performance_audio_clips[i].samples && performance_audio_clips[i].samples[0] == sample);
+  else assert(!performance_audio_clips[i].samples && !performance_audio_clips[i].bytes);
+ }
+ /* Optional cues remain in the chosen pack; they never fall through alone. */
+ assert(!performance_audio_clips[43].samples);
+ if (!expected) {
+  root = argv[5]; /* A ready pack cannot change capabilities during this run. */
+  assert(!halo_performance_audio_available());
+ }
+ performance_audio_clear_clips();
+ return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="halo-audio-roots-") as temporary:
+            root = Path(temporary)
+            data, managed, ready = root / "data", root / "managed", root / "ready"
+
+            def pack(destination, cues, sample):
+                folder = destination / "sounds/performance"
+                folder.mkdir(parents=True, exist_ok=True)
+                for cue in cues:
+                    (folder / f"{cue}.wav").write_bytes(importer.canonical_wav(22050, 1, bytes([sample, 0]) * 64))
+
+            pack(ready, importer.CUES[:43], 31)
+            pack(data, importer.CUES[:43], 17)
+            self.compile_and_run(fixture, str(data), str(managed), "1", "17", str(ready))
+            pack(managed, importer.CUES, 29)
+            # The optional managed rocket must not supplement the local pack.
+            self.compile_and_run(fixture, str(data), str(managed), "1", "17", str(ready))
+            (data / "sounds/performance/1.wav").unlink()
+            # Free the incomplete first pack before selecting the managed root.
+            (managed / "sounds/performance/rocket.wav").unlink()
+            self.compile_and_run(fixture, str(data), str(managed), "1", "29", str(ready))
+            for cue in importer.CUES[:43]:
+                (data / f"sounds/performance/{cue}.wav").unlink(missing_ok=True)
+            self.compile_and_run(fixture, str(data), str(managed), "1", "29", str(ready))
+            # Different partial roots cannot jointly satisfy availability.
+            pack(data, importer.CUES[:20], 17)
+            for cue in importer.CUES[:20]:
+                (managed / f"sounds/performance/{cue}.wav").unlink()
+            self.compile_and_run(fixture, str(data), str(managed), "0", "0", str(ready))
+            pack(managed, importer.CUES[:43], 29)
+            malformed = bytearray(importer.canonical_wav(22050, 1, bytes(128)))
+            struct.pack_into("<I", malformed, 40, 0xFFFFFFFF)
+            (managed / "sounds/performance/1.wav").write_bytes(malformed)
+            self.compile_and_run(fixture, str(data), str(managed), "0", "0", str(ready))
 
     def compile_and_run(self, fixture, *arguments):
         with tempfile.TemporaryDirectory(prefix="halo-audio-test-") as temporary:

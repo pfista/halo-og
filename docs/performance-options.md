@@ -113,14 +113,20 @@ backfilling. Repeated host ticks do not repeat cues. Turning the option
 off or leaving the map stops an active announcement. Playback uses the existing
 audio mixer, output device, audio-enabled setting and master volume.
 
-The recordings are a separate local pack at `sounds/performance/` beneath the
-existing game data root. They work with stock maps without changing map files
-or checksums. The importer [`import_performance_audio.py`](../tools/import_performance_audio.py)
+The recordings are a separate pack at `sounds/performance/` beneath the
+existing game data root, or beneath the save root for managed optional content
+(Application Support on macOS). A complete user-provided game-data pack takes
+priority. Partial packs from different roots are never combined, and Halo must
+restart after installation to refresh its recording capability. They work with
+stock maps without changing map files or checksums. The importer
+[`import_performance_audio.py`](../tools/import_performance_audio.py)
 converts already extracted, user-owned NHE sound tags into bounded PCM WAVs and
 writes source/output hashes. It preserves existing destination files and does
 not download assets. The recordings themselves are not committed to this repo.
-The local installation includes the pack. A host without the required recordings
-cannot enable Timer Sounds; a peer without them omits timer-audio support while
+Mac users can download the [optional recording pack](timer-audio.md) from
+**Halo OG → Settings → Download Recordings**, then restart the game. Downloading
+it does not enable Timer Sounds. A host without the required recordings cannot
+enable Timer Sounds; a peer without them omits timer-audio support while
 retaining the other capabilities. The debug console reports whether the
 recordings are installed.
 

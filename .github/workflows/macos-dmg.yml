@@ -81,6 +81,7 @@ jobs:
               "Supply your own original Xbox Halo game data on first launch.\n"
               "Select one ISO/XISO in the app, or place it beside Halo OG.app before opening.\n"
               "Compatible data enables community-map downloads in the background.\n"
+              "Timer Audio recordings are optional: use Settings > Download Recordings, then restart.\n"
               "No game maps, disc images, or local data paths are included.\n"
               "This build is ad-hoc signed and not notarized; macOS may block first launch.\n"
               "Signing uses no personal developer certificate or Apple Team ID.\n"

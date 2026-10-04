@@ -50,6 +50,12 @@ draft; its Cancel restores the values present when entering that child page.
 Accept on Audio writes the complete audio draft. Cancel on Audio discards all
 pending child changes. The footer explains that the host must enable Timer Sounds.
 
+The recordings are separate optional content. On Mac, open **Halo OG → Settings**
+and choose **Download Recordings**, then restart the game. A complete pack in
+the selected game-data folder takes priority over the managed recordings in
+the saves folder. Downloading the pack does not enable Timer Sounds. See
+[timer recording installation and publishing](timer-audio.md).
+
 Volumes range from 0 to 100 percent. Left/right or clicking either arrow changes
 the selection; compact pause controls also respond to either side of their row.
 An untouched value from the config, such as 15 percent,

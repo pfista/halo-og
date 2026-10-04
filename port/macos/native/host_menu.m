@@ -2,6 +2,7 @@
 #import <Sparkle/Sparkle.h>
 #import "HaloPreferences.h"
 #import "HaloMapDownloads.h"
+#import "HaloTimerAudio.h"
 #import "HaloReleaseUpdates.h"
 #include <SDL3/SDL.h>
 #include "host_menu.h"
@@ -22,6 +23,9 @@
 @property(nonatomic, strong) NSButton *communityDownloadsButton;
 @property(nonatomic, strong) NSTextField *downloadsLabel;
 @property(nonatomic, strong) HaloMapDownloads *mapDownloads;
+@property(nonatomic, strong) HaloTimerAudio *timerAudio;
+@property(nonatomic, strong) NSButton *timerDownloadButton;
+@property(nonatomic, strong) NSTextField *timerAudioLabel;
 @property(nonatomic, strong) SPUStandardUpdaterController *updater;
 @property(nonatomic, strong) HaloReleaseUpdates *releaseUpdates;
 @property(nonatomic, strong) id previousDelegate;
@@ -271,7 +275,7 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     else [NSApp terminate:self];
 }
 - (void)buildSettings {
-    self.settingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 520, 500)
+    self.settingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 520, 615)
         styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     self.settingsWindow.title = @"Halo OG Settings";
     self.settingsWindow.releasedWhenClosed = NO;
@@ -319,6 +323,20 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     button(content, @"Check Maps / Retry", @selector(checkMaps:), NSMakeRect(20, 108, 164, 32));
     button(content, @"Cancel Downloads", @selector(cancelMaps:), NSMakeRect(190, 108, 151, 32));
     button(content, @"Open Library", @selector(openMapLibrary:), NSMakeRect(347, 108, 149, 32));
+    /* Leave the update/footer controls at the bottom and make room for the
+       optional recordings between them and the managed maps controls. */
+    for (NSView *view in content.subviews) {
+        if (view.frame.origin.y >= 108) {
+            NSRect frame = view.frame; frame.origin.y += 115; view.frame = frame;
+        }
+    }
+    label(content, @"Timer Audio Recordings", NSMakeRect(24, 190, 472, 22), NO).font = [NSFont boldSystemFontOfSize:13];
+    self.timerAudioLabel = label(content, @"", NSMakeRect(24, 147, 472, 40), YES);
+    self.timerAudioLabel.lineBreakMode = NSLineBreakByWordWrapping;
+    self.timerAudioLabel.maximumNumberOfLines = 2;
+    self.timerAudioLabel.font = [NSFont systemFontOfSize:11];
+    self.timerDownloadButton = button(content, @"Download Recordings", @selector(downloadTimerAudio:), NSMakeRect(20, 108, 205, 32));
+    button(content, @"Cancel Download", @selector(cancelTimerAudio:), NSMakeRect(232, 108, 170, 32));
 }
 - (void)refreshSettings {
     self.dataLabel.stringValue = self.preferences.dataPath ?: self.launchDataPath ?: @"No maps selected";
@@ -333,6 +351,9 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     self.communityDownloadsButton.state = self.preferences.communityDownloadsEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     self.downloadsLabel.stringValue = self.mapDownloads.statusText ?: @"Map hosting is not configured for this build.";
     self.downloadsLabel.toolTip = self.downloadsLabel.stringValue;
+    self.timerAudioLabel.stringValue = self.timerAudio.statusText ?: @"Optional timer recordings are not available in this build.";
+    self.timerAudioLabel.toolTip = self.timerAudioLabel.stringValue;
+    self.timerDownloadButton.enabled = self.timerAudio != nil && !self.timerAudio.downloading && !self.timerAudio.installed;
     [self refreshFullscreen];
 }
 - (void)showSettings:(id)sender {
@@ -389,6 +410,8 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
 }
 - (void)checkMaps:(id)sender { (void)sender; [self.mapDownloads checkForMaps]; }
 - (void)cancelMaps:(id)sender { (void)sender; [self.mapDownloads cancelDownloads]; }
+- (void)downloadTimerAudio:(id)sender { (void)sender; [self.timerAudio downloadRecordings]; }
+- (void)cancelTimerAudio:(id)sender { (void)sender; [self.timerAudio cancelDownloads]; }
 - (void)openMapLibrary:(id)sender {
     (void)sender;
     NSURL *library = [self.preferences.supportDirectory URLByAppendingPathComponent:@"Community Maps" isDirectory:YES];
@@ -736,6 +759,8 @@ int host_menu_prepare(const char *support, const char *fallback, char *data, siz
         __weak HaloMenu *weakMenu = menu;
         menu.mapDownloads.statusChanged = ^{ [weakMenu refreshSettings]; };
         [menu.mapDownloads startEnabled:menu.preferences.communityDownloadsEnabled];
+        menu.timerAudio = [[HaloTimerAudio alloc] initWithSupportDirectory:menu.preferences.supportDirectory sessionConfiguration:nil];
+        menu.timerAudio.statusChanged = ^{ [weakMenu refreshSettings]; };
         if (menu.preferences.releaseChecksEnabled && menu.releaseUpdates.automaticChecksAvailable)
             [menu.releaseUpdates checkForUpdates];
         if (!getenv("HALO_WINDOWED")) SDL_setenv_unsafe("HALO_WINDOWED", menu.preferences.windowed ? "1" : "0", 1);
@@ -748,6 +773,7 @@ void host_menu_finish_game(int exit_code) {
     @autoreleasepool {
         menu.quitting = YES;
         [menu.mapDownloads cancelDownloads];
+        [menu.timerAudio cancelDownloads];
         [menu closeSettings:nil];
         menu.gameRunning = NO;
         if (!exit_code && menu.pendingInstall) {

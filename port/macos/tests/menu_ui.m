@@ -1,5 +1,6 @@
 /* The real menu/settings and SDL bridge, in a separate bundle with test saves. */
 #import <Cocoa/Cocoa.h>
+#import "HaloTimerAudio.h"
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -50,6 +51,13 @@ static void check_main_loop(const char *image, const char *data) {
         } else if (step == 1 && elapsed > 400) {
             assert(window.visible);
             assert([window.title isEqualToString:@"Halo OG Settings"]);
+            NSButton *recordings = [(id)target valueForKey:@"timerDownloadButton"];
+            assert([recordings.title isEqualToString:@"Download Recordings"] && recordings.enabled);
+            HaloTimerAudio *timerAudio = [(id)target valueForKey:@"timerAudio"];
+            assert(!timerAudio.downloading);
+            /* All settings remain reachable after adding the optional pack. */
+            for (NSView *view in window.contentView.subviews)
+                assert(NSContainsRect(window.contentView.bounds, view.frame));
             [target selectFolder:nil];
             assert(window.attachedSheet && !NSApp.modalWindow);
             step++;

@@ -906,8 +906,13 @@ static boolean network_game_server_performance_peers_support(
 #endif
 		{
 			platform_show_message("Halo: timer recordings missing",
-				"Timer audio needs the complete timer recording pack in the game data folder.\n\n"
-				"Install the recordings and restart Halo, or turn Timer Audio off for this game type.");
+				"Timer Audio needs the complete timer recording pack.\n\n"
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+				"Open Halo OG Settings, choose Download Recordings, then restart Halo. "
+#else
+				"Install the recordings in sounds/performance in your game data or saves folder, then restart Halo. "
+#endif
+				"You can also turn Timer Audio off for this game type.");
 			return FALSE;
 		}
 	}
