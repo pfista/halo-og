@@ -2,9 +2,11 @@
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import tarfile
 import tempfile
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -85,6 +87,28 @@ class ToolchainTests(unittest.TestCase):
             tools.git_source("https://github.com/example/repo", "a" * 40, self.root / "source",
                              self.root / "invader.tar", cache, None, "0" * 64)
         self.assertFalse((self.root / "source").exists())
+
+    def test_actual_git_source_archive_is_canonical_despite_windows_crlf_config(self):
+        cache = self.root / "cache"
+        repository = cache / "invader"; repository.mkdir(parents=True)
+        subprocess.run(["git", "init", str(repository)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        def git(*args, **kwargs):
+            return subprocess.check_output(["git", "-C", str(repository), *args], **kwargs)
+        git("config", "core.autocrlf", "true")
+        blob = git("hash-object", "-w", "--stdin", input=b"source\nLF bytes\n").decode().strip()
+        tree = git("mktree", input=("100644 blob " + blob + "\tREADME.txt\n").encode()).decode().strip()
+        env = {**os.environ, "GIT_AUTHOR_NAME": "Fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+               "GIT_COMMITTER_NAME": "Fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+               "GIT_AUTHOR_DATE": "2000-01-01T00:00:00+00:00", "GIT_COMMITTER_DATE": "2000-01-01T00:00:00+00:00"}
+        commit = git("commit-tree", tree, input=b"fixture\n", env=env).decode().strip()
+        canonical = git("-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "tar.umask=0002", "archive", "--format=tar", "--prefix=source/", commit)
+        converted = git("archive", "--format=tar", "--prefix=source/", commit)
+        self.assertNotEqual(canonical, converted)
+        archive = self.root / "invader.tar"
+        tools.git_source("https://example.invalid/never-fetched", commit, self.root / "invader", archive,
+                         cache, None, hashlib.sha256(canonical).hexdigest())
+        self.assertEqual(archive.read_bytes(), canonical)
+        self.assertEqual((self.root / "invader/README.txt").read_bytes(), b"source\nLF bytes\n")
 
     def test_corresponding_source_archive_is_stable_and_has_recipe(self):
         sources = self.root / "sources"; sources.mkdir()

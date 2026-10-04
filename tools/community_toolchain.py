@@ -142,7 +142,10 @@ def git_source(repository, commit, directory, archive, cache, log, expected):
         if actual != commit:
             raise RuntimeError("Source Git object differs from the pinned commit")
         with archive.open("xb") as output:
-            subprocess.run(["git", "-C", str(git_dir), "archive", "--format=tar", "--prefix=source/", commit], check=True, stdout=output, stderr=log)
+            # git archive applies core.autocrlf too. Canonicalize this command
+            # only so Windows emits the same reviewed Git object bytes/modes.
+            subprocess.run(["git", "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "tar.umask=0002",
+                            "-C", str(git_dir), "archive", "--format=tar", "--prefix=source/", commit], check=True, stdout=output, stderr=log)
     if sha256(archive) != expected:
         raise RuntimeError("Git source archive differs from reviewed pin")
     extract_archive(archive, directory)
