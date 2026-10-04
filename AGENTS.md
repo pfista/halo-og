@@ -51,3 +51,18 @@ Keep release notes simple: a short description followed by direct download
 links for every included platform. Link to the playtesting guide for setup;
 keep platform requirements and any signing limitations brief. Publish matching
 platform builds from one source commit and include checksums and provenance.
+
+- New release tags must be `vMAJOR.MINOR.PATCH`, with no suffix, and the title
+  must be `Halo OG vMAJOR.MINOR.PATCH` (for example, `v0.3.1` and `Halo OG v0.3.1`).
+  Testing releases still use GitHub's prerelease flag; publication requires an
+  explicit request or manual workflow dispatch.
+- The tag's version must match `HALO_OG_VERSION` in
+  `port/linux/include/halo_og_version.h`. Bump and commit that header before
+  building the matching platform artifacts. Never rewrite existing tags or
+  replace their published assets.
+- Both the annotated tag message and GitHub release notes must include concise
+  commit subjects with short SHAs since the previous reachable Halo OG release
+  tag, plus a compare link. Keep key highlights and the full commit list in the
+  release notes after the description and platform download links.
+- Preserve the established platform asset filenames and direct download links.
+  Older `test-...` tags remain historical releases; do not rename them.

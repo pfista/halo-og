@@ -27,12 +27,20 @@ see [client updates](client-updates.md).
 ## Manual testing prerelease
 
 The fork's **Publish testing prerelease** workflow runs only when explicitly
-dispatched on `main` with a new `test-...` tag, for example
-`test-v0.3.0-net11`. It publishes the latest `main` commit using existing,
+dispatched on `main` with a new `vMAJOR.MINOR.PATCH` tag, for example `v0.3.1`.
+The release title is `Halo OG v0.3.1`; tags have no testing or feature suffix.
+Testing releases still use GitHub's prerelease flag. It publishes the latest
+`main` commit using existing,
 successful **Build** and **macOS DMG** workflow outputs from that exact commit.
 It does not rebuild, sign with a personal identity, or include game data.
 
-The `test-v0.3.0-net11-maps1` testing release adds automatic complete-map
+The version after `v` must match `HALO_OG_VERSION` in
+`port/linux/include/halo_og_version.h`. Before building `v0.3.1`, change that
+header to `0.3.1` and commit it, then wait for matching platform builds. The
+examples below describe that future release; they do not bump the current
+version or relabel an existing build. Existing tags and assets remain immutable.
+
+The historical `test-v0.3.0-net11-maps1` testing release added automatic complete-map
 downloads on Mac, Windows and Linux. Fresh Mac settings enable downloads;
 previously saved opt-outs remain off. After compatible original NTSC data is
 selected, all 40 approved community maps queue in the background. The older
@@ -41,7 +49,7 @@ builds use manual community maps. See [player setup](playtesting.md#community-ma
 for platform controls and the current download links.
 
 Wait for both build workflows to succeed on the same latest `main` commit. In GitHub Actions, choose **Publish testing prerelease → Run workflow**,
-select `main`, and enter an unused testing tag. This explicit dispatch publishes
+select `main`, and enter an unused version tag such as `v0.3.1`. This explicit dispatch publishes
 a prerelease; code pushes do not publish. Prepare/collection uses a read-only
 token; the separate publication job alone receives `contents: write`.
 
@@ -60,7 +68,22 @@ The prerelease includes:
 - `SHA256SUMS` and `provenance.json` with source SHA, network protocol, CI run IDs,
   artifact IDs and SHA-256 hashes. Debug builds are omitted.
 
-For the `test-v0.3.0-net11-maps1` tag, the direct Mac download is:
+Release notes start with a short description and direct platform download links,
+followed by key highlights and the full commit list. Both the annotated tag
+message and release notes include concise commit subjects with short SHAs since
+the previous reachable Halo OG release tag, plus a GitHub compare link for that
+range. The platform asset filenames and download-link layout stay unchanged.
+
+History comes from GitHub's published Halo OG releases, including legacy
+`test-v...` releases for the first version-only tag. The nearest ancestor is
+selected regardless of publication order; upstream build/launcher and content
+tool tags are excluded. New version-only releases must increase the version.
+Highlights use up to five recent non-merge commit subjects; the complete list
+includes merges and every commit in the range. Publication rechecks that history.
+Notes must fit the 16 KiB limit in existing desktop clients; oversized complete
+changelogs are rejected rather than silently truncated.
+
+Historical download example for the `test-v0.3.0-net11-maps1` tag:
 
 ```text
 https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-maps1/Halo-OG-macos-arm64.dmg
@@ -89,9 +112,9 @@ Read-only local preparation and verification are available without publication:
 
 ```sh
 python3 tools/testing_release.py prepare --sha FULL_LATEST_MAIN_SHA \
-  --tag test-v0.3.0-net11 --directory /tmp/halo-testing-candidate
+  --tag v0.3.1 --directory /tmp/halo-testing-candidate
 python3 tools/testing_release.py verify --sha FULL_LATEST_MAIN_SHA \
-  --tag test-v0.3.0-net11 --directory /tmp/halo-testing-candidate
+  --tag v0.3.1 --directory /tmp/halo-testing-candidate
 ```
 
 Use Python 3.11 or later, a fresh directory and the authenticated GitHub CLI. `prepare` downloads the
@@ -115,7 +138,8 @@ build/macos/dmg-packaging-venv/bin/python -m pip install -r tools/macos-dmg-requ
 build/macos/dmg-packaging-venv/bin/python tools/macos_release.py local-dmg
 ```
 
-The resulting `build/macos/Halo-OG-0.3.0-local.dmg` is a local test artifact. It has
+The resulting `build/macos/Halo-OG-<version>-local.dmg` uses the app's canonical
+product version and is a local test artifact. It has
 no notarization ticket and is not a verified public release. It includes an
 Applications shortcut and the app, without maps, ISOs or a local checkout path.
 The Finder window has a Retina background, positioned app/folder icons and a
@@ -213,12 +237,14 @@ the established 1Password workflow. Use the 1Password MCP server when preparing
 developer environments. Signing/notary use existing Keychain identities and
 profiles; storage uses an existing AWS profile.
 
-From a clean, committed tree, prepare a release with an explicit identity:
+From a clean, committed tree, prepare a release with an explicit identity.
+For this `v0.3.1` example, first update the canonical version header as described
+above; `--version` must match it.
 Use the packaging virtual environment prepared above so the Finder metadata
 dependencies are available.
 
 ```sh
-build/macos/dmg-packaging-venv/bin/python tools/macos_release.py build --version 0.3.0 --build-number 8 \
+build/macos/dmg-packaging-venv/bin/python tools/macos_release.py build --version 0.3.1 --build-number 8 \
   --sign-identity 'Developer ID Application: YOUR NAME (TEAMID)' \
   --notary-profile YOUR_EXISTING_KEYCHAIN_PROFILE
 ```

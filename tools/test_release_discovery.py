@@ -186,6 +186,20 @@ class ReleaseDiscoveryTests(unittest.TestCase):
         self.assertTrue(self.run_fixture("parse", [release(asset="Halo-OG-macos-arm64.dmg")], asset="Halo-OG-macos-arm64.dmg"))
         self.assertEqual(self.run_fixture("parse", [release()], asset="halo-android-release.zip"), [])
 
+    def test_versioned_changelog_notes_are_readable_by_existing_clients(self):
+        from tools.testing_release import release_notes
+        record = {"repository": "pfista/halo-og", "tag": "v0.3.1", "sha": OTHER, "network_protocol": 11,
+                  "changelog": {"previous_tag": "test-v0.3.0-net11-setup2", "previous_sha": "c" * 40,
+                                "commits": [{"sha": "d" * 40, "subject": "Fix spawning and teleporters"},
+                                            {"sha": OTHER, "subject": f"Document https://github.com/pfista/halo-og/commit/{SHA})"}]}}
+        for asset in (ASSET, "Halo-OG-macos-arm64.dmg"):
+            with self.subTest(asset=asset):
+                candidate = release(tag=record["tag"], asset=asset)
+                candidate["body"] = release_notes(record)
+                self.assertEqual(candidate["body"].count("https://github.com/pfista/halo-og/commit/"), 1)
+                result = self.run_fixture("parse", [candidate], asset=asset)
+                self.assertEqual(result[:2], ["v0.3.1", OTHER])
+
     def test_rejects_foreign_redirect_urls_traversal_duplicate_and_ambiguous_identity(self):
         for url in ("http://github.com/pfista/halo-og/asset", "https://github.com.evil.test/asset",
                     "https://github.com/cybersecurity/halo-ce-universal/asset",

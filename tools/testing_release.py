@@ -15,9 +15,13 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from urllib.parse import quote, urlencode
 import zipfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.release_changelog import format_changelog, generate_changelog, version_tuple
 
 
 REPOSITORY = "pfista/halo-og"
@@ -52,6 +56,11 @@ class GitHub:
         if result.returncode:
             raise RuntimeError(f"Artifact {artifact_id} download failed")
 
+    def post(self, path, payload):
+        result = subprocess.run(["gh", "api", self.prefix + path, "--method", "POST", "--input", "-"],
+                                input=json.dumps(payload), capture_output=True, text=True, check=True)
+        return json.loads(result.stdout)
+
 
 def digest(path):
     with path.open("rb") as stream:
@@ -63,8 +72,7 @@ def validate_inputs(repository, sha, tag):
         raise RuntimeError("Testing publication is limited to " + REPOSITORY)
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise RuntimeError("Use a full source commit SHA")
-    if not re.fullmatch(r"test-[A-Za-z0-9][A-Za-z0-9._-]{0,79}", tag) or ".." in tag or tag.endswith("."):
-        raise RuntimeError("Use a new test- tag with letters, digits, dots, underscores or hyphens")
+    version_tuple(tag)
 
 
 def check_main_and_tag(api, sha, tag):
@@ -72,7 +80,23 @@ def check_main_and_tag(api, sha, tag):
         raise RuntimeError("The selected source is no longer latest main; wait for its builds and dispatch again")
     for path in ("git/ref/tags/" + quote(tag, safe=""), "releases/tags/" + quote(tag, safe="")):
         if api.get(path, missing_ok=True) is not None:
-            raise RuntimeError("The requested tag or release already exists; choose a new testing tag")
+            raise RuntimeError("The requested tag or release already exists; choose a new version")
+
+
+def check_source_version(api, sha, tag):
+    source = api.get("contents/port/linux/include/halo_og_version.h?ref=" + sha)
+    text = base64.b64decode(source["content"]).decode()
+    versions = re.findall(r'^[ \t]*#define[ \t]+HALO_OG_VERSION[ \t]+"([^"]+)"[ \t]*$', text, re.MULTILINE)
+    if len(versions) != 1 or "v" + versions[0] != tag:
+        raise RuntimeError("Release tag must match HALO_OG_VERSION in the selected source; bump the header before building")
+
+
+def release_title(record):
+    return "Halo OG " + record["tag"]
+
+
+def tag_message(record):
+    return release_title(record) + "\n\n" + format_changelog(record) + f"\nSource: {record['sha']}\n"
 
 
 def source_protocol(api, sha):
@@ -206,9 +230,9 @@ def release_notes(record):
     table = "| Platform | Download |\n| --- | --- |\n" + "".join(
         f"| {platform} | [{asset}]({downloads}/{quote(asset, safe='')}) |\n"
         for platform, asset in platforms)
-    return ("Halo OG brings original Xbox Halo: Combat Evolved to native platforms, "
+    notes = ("Halo OG brings original Xbox Halo: Combat Evolved to native platforms, "
             "with community maps downloaded in the background.\n\n"
-            + table + "\n"
+            + table + "\n" + format_changelog(record, markdown=True) + "\n"
             f"Supply your own Xbox NTSC Halo XISO or extracted data (`01.10.12.2276`). "
             f"See the [platform setup guides]({source}/README.md#getting-started) "
             f"and [playtesting guide]({source}/docs/playtesting.md); "
@@ -220,10 +244,17 @@ def release_notes(record):
             f"and network protocol **{record['network_protocol']}**; players should use this same release. "
             "Checksums and CI provenance are attached. Physical cross-platform and "
             "Internet/NAT play still need testing.\n")
+    # Already-shipped desktop clients have a 16 KiB release-body buffer.
+    # Preserve every commit rather than publish a truncated or unreadable feed.
+    if len(notes.encode("utf-8")) >= 16384:
+        raise RuntimeError("Complete release notes exceed the existing clients' 16 KiB limit; use a smaller release range")
+    return notes
 
 
 def prepare(api, repository, sha, tag, directory):
+    validate_inputs(repository, sha, tag)
     check_main_and_tag(api, sha, tag)
+    check_source_version(api, sha, tag)
     if directory.exists():
         raise RuntimeError("Candidate directory already exists; choose a fresh path")
     selected = []
@@ -232,10 +263,13 @@ def prepare(api, repository, sha, tag, directory):
         for name, output in outputs.items():
             artifact = select_artifact(api, name, run, sha)
             selected.append((workflow, run, artifact, output))
-    directory.mkdir(parents=True)
     record = {"repository": repository, "sha": sha, "tag": tag,
               "network_protocol": source_protocol(api, sha), "source_date": source_date(api, sha),
+              "changelog": generate_changelog(api, repository, sha, tag),
               "artifacts": [], "files": {}}
+    # Check note compatibility before downloading the build assets.
+    notes = release_notes(record)
+    directory.mkdir(parents=True)
     with tempfile.TemporaryDirectory(prefix="halo-testing-release-") as temporary:
         for workflow, run, artifact, output in selected:
             archive = Path(temporary) / f"{artifact['id']}.zip"
@@ -253,15 +287,19 @@ def prepare(api, repository, sha, tag, directory):
     (directory / "provenance.json").write_text(json.dumps(record, indent=2) + "\n")
     (directory / "SHA256SUMS").write_text("".join(
         f"{digest(path)}  {path.name}\n" for path in sorted(directory.iterdir()) if path.name != "SHA256SUMS"))
-    (directory / "release-notes.md").write_text(release_notes(record))
+    (directory / "release-notes.md").write_text(notes)
     return record
 
 
 def verify_candidate(api, repository, sha, tag, directory):
+    validate_inputs(repository, sha, tag)
     check_main_and_tag(api, sha, tag)
+    check_source_version(api, sha, tag)
     record = json.loads((directory / "provenance.json").read_text())
     if (record.get("repository"), record.get("sha"), record.get("tag")) != (repository, sha, tag):
-        raise RuntimeError("Prepared source or testing tag changed")
+        raise RuntimeError("Prepared source or release tag changed")
+    if record.get("changelog") != generate_changelog(api, repository, sha, tag):
+        raise RuntimeError("Prepared changelog or previous release tag changed")
     if record.get("network_protocol") != source_protocol(api, sha):
         raise RuntimeError("Prepared network protocol does not match selected source")
     if record.get("source_date") != source_date(api, sha):
@@ -297,6 +335,29 @@ def verify_candidate(api, repository, sha, tag, directory):
     return record
 
 
+def publish_candidate(api, repository, sha, tag, directory):
+    record = verify_candidate(api, repository, sha, tag, directory)
+    check_main_and_tag(api, sha, tag)
+    # The changelog lives in an annotated Git tag, not just GitHub's release body.
+    # Creating the ref still fails if another caller claimed it after verification.
+    annotated = api.post("git/tags", {"tag": tag, "message": tag_message(record),
+                                      "object": sha, "type": "commit"})
+    if (not re.fullmatch(r"[0-9a-f]{40}", annotated.get("sha", ""))
+            or annotated.get("tag") != tag or annotated.get("message") != tag_message(record)
+            or annotated.get("object", {}).get("sha") != sha
+            or annotated.get("object", {}).get("type") != "commit"):
+        raise RuntimeError("Created annotated tag does not match the verified source and changelog")
+    ref = api.post("git/refs", {"ref": "refs/tags/" + tag, "sha": annotated["sha"]})
+    if (ref.get("ref") != "refs/tags/" + tag or ref.get("object", {}).get("type") != "tag"
+            or ref.get("object", {}).get("sha") != annotated["sha"]):
+        raise RuntimeError("Created tag reference does not point to the verified annotation")
+    subprocess.run(["gh", "release", "create", tag, "--repo", repository,
+        "--verify-tag", "--prerelease", "--latest=false",
+        "--title", release_title(record), "--notes-file", str(directory / "release-notes.md"),
+        *(str(directory / name) for name in sorted(ASSETS))], check=True)
+    print(f"DMG: https://github.com/{repository}/releases/download/{tag}/{DMG}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("prepare", "verify", "publish"))
@@ -311,19 +372,10 @@ def main():
         prepare(api, args.repository, args.sha, args.tag, args.directory)
         print("Prepared read-only candidate: " + str(args.directory))
     else:
-        verify_candidate(api, args.repository, args.sha, args.tag, args.directory)
         if args.command == "publish":
-            # Creating the ref fails if another caller claimed the tag since
-            # verification. Never reuse or move an existing tag.
-            subprocess.run(["gh", "api", f"repos/{args.repository}/git/refs", "--method", "POST", "--input", "-"],
-                input=json.dumps({"ref": "refs/tags/" + args.tag, "sha": args.sha}), text=True, check=True,
-                stdout=subprocess.DEVNULL)
-            subprocess.run(["gh", "release", "create", args.tag, "--repo", args.repository,
-                "--verify-tag", "--prerelease", "--latest=false",
-                "--title", "Halo OG testing " + args.tag, "--notes-file", str(args.directory / "release-notes.md"),
-                *(str(args.directory / name) for name in sorted(ASSETS))], check=True)
-            print(f"DMG: https://github.com/{args.repository}/releases/download/{args.tag}/{DMG}")
+            publish_candidate(api, args.repository, args.sha, args.tag, args.directory)
         else:
+            verify_candidate(api, args.repository, args.sha, args.tag, args.directory)
             print("Verified candidate; nothing published")
 
 

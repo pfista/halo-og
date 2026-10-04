@@ -3,6 +3,7 @@
 import base64
 import copy
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -15,8 +16,11 @@ from tools import ci_build, testing_release as release
 
 
 SHA = "a" * 40
-TAG = "test-v0.3.0-net11"
+TAG = "v0.3.0"
 DATE = "2026-10-03T00:00:00Z"
+CHANGELOG = {"previous_tag": "test-v0.3.0-net11-setup2", "previous_sha": "b" * 40,
+             "commits": [{"sha": "c" * 40, "subject": "Fix first launch setup"},
+                         {"sha": SHA, "subject": "Show version on the home menu"}]}
 DESKTOP_BINARY = ("synthetic executable\0" + SHA + "\0" + DATE + "\0"
                   "https://api.github.com/repos/pfista/halo-og/releases?per_page=5\0"
                   "Halo OG update available\0Open download\0Stop checking\0").encode()
@@ -26,6 +30,8 @@ class FixtureAPI:
     def __init__(self, root):
         self.sha = SHA
         self.claimed = False
+        self.version = "0.3.0"
+        self.posts = []
         self.runs, self.artifacts, self.archives = {}, {}, {}
         for run_id, (workflow, outputs) in enumerate(release.WORKFLOWS.items(), 1):
             run = {"id": run_id, "head_sha": SHA, "head_branch": "main", "status": "completed",
@@ -67,6 +73,8 @@ class FixtureAPI:
         if path.startswith(("git/ref/tags/", "releases/tags/")):
             return {"id": 1} if self.claimed else None
         if path.startswith("contents/"):
+            if "halo_og_version.h" in path:
+                return {"content": base64.b64encode(f'#define HALO_OG_VERSION "{self.version}"\n'.encode()).decode()}
             return {"content": base64.b64encode(b"#define HALO_PORT_NETWORK_VERSION 11\n").decode()}
         if path.startswith("actions/workflows/"):
             return {"workflow_runs": [copy.deepcopy(self.runs[path.split("/")[2]])]}
@@ -82,6 +90,16 @@ class FixtureAPI:
     def download(self, artifact_id, destination):
         shutil.copyfile(self.archives[artifact_id], destination)
 
+    def post(self, path, payload):
+        self.posts.append((path, payload))
+        if path == "git/tags":
+            return {"tag": payload["tag"], "sha": "d" * 40, "message": payload["message"],
+                    "object": {"type": payload["type"], "sha": payload["object"]}}
+        if path == "git/refs":
+            self.claimed = True
+            return {"ref": payload["ref"], "object": {"type": "tag", "sha": payload["sha"]}}
+        raise AssertionError("Unexpected write: " + path)
+
 
 class TestingReleaseTests(unittest.TestCase):
     def setUp(self):
@@ -90,6 +108,9 @@ class TestingReleaseTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.api = FixtureAPI(self.root)
         self.directory = self.root / "candidate"
+        changelog = patch.object(release, "generate_changelog", side_effect=lambda *args: copy.deepcopy(CHANGELOG))
+        self.changelog = changelog.start()
+        self.addCleanup(changelog.stop)
 
     def prepare(self):
         return release.prepare(self.api, release.REPOSITORY, SHA, TAG, self.directory)
@@ -125,13 +146,105 @@ class TestingReleaseTests(unittest.TestCase):
 
     def test_release_links_and_protocol_follow_the_selected_candidate(self):
         record = self.prepare()
-        record["tag"] = "test-next.1"
+        record["tag"] = "v0.3.1"
         record["network_protocol"] = 12
         notes = release.release_notes(record)
-        self.assertIn("/releases/download/test-next.1/" + release.DMG, notes)
+        self.assertIn("/releases/download/v0.3.1/" + release.DMG, notes)
         self.assertIn("network protocol **12**", notes)
         self.assertNotIn("/releases/download/" + TAG + "/", notes)
         self.assertNotIn("network protocol **11**", notes)
+
+    def test_version_only_tags_and_compiled_version_must_agree(self):
+        release.validate_inputs(release.REPOSITORY, SHA, TAG)
+        for tag in ("test-v0.3.0-net11", "v0.3", "0.3.0", "v0.3.0-beta", "v00.3.0", "v0.3.0+build1"):
+            with self.subTest(tag=tag), self.assertRaises(RuntimeError):
+                release.validate_inputs(release.REPOSITORY, SHA, tag)
+        self.api.version = "0.3.1"
+        with self.assertRaisesRegex(RuntimeError, "must match HALO_OG_VERSION"):
+            self.prepare()
+        self.assertFalse(self.directory.exists())
+
+    def test_tag_and_release_share_the_complete_commit_changelog(self):
+        record = self.prepare()
+        notes = (self.directory / "release-notes.md").read_text()
+        annotation = release.tag_message(record)
+        self.assertEqual(release.release_title(record), "Halo OG v0.3.0")
+        for commit in CHANGELOG["commits"]:
+            self.assertIn(commit["sha"][:7], notes)
+            self.assertIn(commit["sha"][:7], annotation)
+            self.assertIn(commit["subject"], notes)
+            self.assertIn(commit["subject"], annotation)
+        self.assertIn(CHANGELOG["previous_tag"], notes)
+        self.assertIn(CHANGELOG["previous_tag"], annotation)
+        self.assertIn(f'/compare/{CHANGELOG["previous_sha"]}...{SHA}', notes)
+        self.assertEqual(notes.count("https://github.com/pfista/halo-og/commit/"), 1)
+
+    def test_publication_creates_annotation_then_ref_and_versioned_release(self):
+        record = self.prepare()
+        with patch.object(release.subprocess, "run") as publish:
+            release.publish_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
+        self.assertEqual(self.api.posts, [
+            ("git/tags", {"tag": TAG, "message": release.tag_message(record), "object": SHA, "type": "commit"}),
+            ("git/refs", {"ref": "refs/tags/" + TAG, "sha": "d" * 40})])
+        command = publish.call_args.args[0]
+        self.assertEqual(command[command.index("--title") + 1], "Halo OG v0.3.0")
+        self.assertIn("--verify-tag", command)
+        self.assertIn("--prerelease", command)
+        self.assertIn("--latest=false", command)
+        self.assertEqual(set(command[-len(release.ASSETS):]), {str(self.directory / name) for name in release.ASSETS})
+
+    def test_changed_changelog_is_rejected_before_any_publication(self):
+        self.prepare()
+        record = json.loads((self.directory / "provenance.json").read_text())
+        record["changelog"]["commits"].pop()
+        (self.directory / "provenance.json").write_text(json.dumps(record))
+        with patch.object(release.subprocess, "run") as publish, self.assertRaisesRegex(RuntimeError, "changelog"):
+            release.publish_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
+        self.assertEqual(self.api.posts, [])
+        publish.assert_not_called()
+
+    def test_new_baseline_is_rejected_before_any_publication(self):
+        self.prepare()
+        self.changelog.side_effect = lambda *args: {**CHANGELOG, "previous_tag": "v0.2.9"}
+        with patch.object(release.subprocess, "run") as publish, self.assertRaisesRegex(RuntimeError, "previous release"):
+            release.publish_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
+        self.assertEqual(self.api.posts, [])
+        publish.assert_not_called()
+
+    def test_annotation_for_wrong_commit_cannot_be_referenced_or_released(self):
+        record = self.prepare()
+        response = {"tag": TAG, "sha": "d" * 40, "message": release.tag_message(record),
+                    "object": {"type": "commit", "sha": "e" * 40}}
+        with patch.object(self.api, "post", return_value=response) as write, \
+                patch.object(release.subprocess, "run") as publish, self.assertRaisesRegex(RuntimeError, "annotated tag"):
+            release.publish_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
+        write.assert_called_once()
+        publish.assert_not_called()
+
+    def test_main_advancement_during_verification_is_rechecked_before_writing(self):
+        self.prepare()
+        get = self.api.get
+        reads = 0
+        def advance(path, **kwargs):
+            nonlocal reads
+            if path == "git/ref/heads/main":
+                reads += 1
+                if reads == 2:
+                    self.api.sha = "e" * 40
+            return get(path, **kwargs)
+        with patch.object(self.api, "get", side_effect=advance), patch.object(release.subprocess, "run") as publish, \
+                self.assertRaisesRegex(RuntimeError, "latest main"):
+            release.publish_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
+        self.assertEqual(self.api.posts, [])
+        publish.assert_not_called()
+
+    def test_oversized_complete_notes_are_rejected_instead_of_truncated(self):
+        self.changelog.side_effect = lambda *args: {
+            **CHANGELOG, "commits": [{"sha": f"{index:040x}", "subject": "Map fix " + "x" * 200}
+                                      for index in range(100)]}
+        with self.assertRaisesRegex(RuntimeError, "16 KiB"):
+            self.prepare()
+        self.assertFalse(self.directory.exists())
 
     def test_runs_from_other_source_branch_repository_or_event_are_rejected(self):
         run = self.api.runs["build.yml"]
