@@ -24,6 +24,7 @@
 @property(nonatomic, strong) NSTextField *downloadsLabel;
 @property(nonatomic, strong) HaloMapDownloads *mapDownloads;
 @property(nonatomic, strong) HaloTimerAudio *timerAudio;
+@property(nonatomic, strong) NSButton *timerDownloadsButton;
 @property(nonatomic, strong) NSButton *timerDownloadButton;
 @property(nonatomic, strong) NSTextField *timerAudioLabel;
 @property(nonatomic, strong) SPUStandardUpdaterController *updater;
@@ -275,7 +276,7 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     else [NSApp terminate:self];
 }
 - (void)buildSettings {
-    self.settingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 520, 615)
+    self.settingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 520, 645)
         styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     self.settingsWindow.title = @"Halo OG Settings";
     self.settingsWindow.releasedWhenClosed = NO;
@@ -327,15 +328,19 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
        optional recordings between them and the managed maps controls. */
     for (NSView *view in content.subviews) {
         if (view.frame.origin.y >= 108) {
-            NSRect frame = view.frame; frame.origin.y += 115; view.frame = frame;
+            NSRect frame = view.frame; frame.origin.y += 145; view.frame = frame;
         }
     }
-    label(content, @"Timer Audio Recordings", NSMakeRect(24, 190, 472, 22), NO).font = [NSFont boldSystemFontOfSize:13];
+    label(content, @"Timer Audio Recordings", NSMakeRect(24, 220, 472, 22), NO).font = [NSFont boldSystemFontOfSize:13];
+    self.timerDownloadsButton = [NSButton checkboxWithTitle:@"Download Timer Audio recordings in the background"
+        target:self action:@selector(timerDownloads:)];
+    self.timerDownloadsButton.frame = NSMakeRect(24, 190, 472, 24);
+    [content addSubview:self.timerDownloadsButton];
     self.timerAudioLabel = label(content, @"", NSMakeRect(24, 147, 472, 40), YES);
     self.timerAudioLabel.lineBreakMode = NSLineBreakByWordWrapping;
     self.timerAudioLabel.maximumNumberOfLines = 2;
     self.timerAudioLabel.font = [NSFont systemFontOfSize:11];
-    self.timerDownloadButton = button(content, @"Download Recordings", @selector(downloadTimerAudio:), NSMakeRect(20, 108, 205, 32));
+    self.timerDownloadButton = button(content, @"Check Recordings / Retry", @selector(downloadTimerAudio:), NSMakeRect(20, 108, 205, 32));
     button(content, @"Cancel Download", @selector(cancelTimerAudio:), NSMakeRect(232, 108, 170, 32));
 }
 - (void)refreshSettings {
@@ -353,7 +358,8 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     self.downloadsLabel.toolTip = self.downloadsLabel.stringValue;
     self.timerAudioLabel.stringValue = self.timerAudio.statusText ?: @"Optional timer recordings are not available in this build.";
     self.timerAudioLabel.toolTip = self.timerAudioLabel.stringValue;
-    self.timerDownloadButton.enabled = self.timerAudio != nil && !self.timerAudio.downloading && !self.timerAudio.installed;
+    self.timerDownloadsButton.state = self.preferences.timerAudioDownloadsEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    self.timerDownloadButton.enabled = self.preferences.timerAudioDownloadsEnabled && self.timerAudio != nil && !self.timerAudio.downloading && !self.timerAudio.installed;
     [self refreshFullscreen];
 }
 - (void)showSettings:(id)sender {
@@ -410,7 +416,15 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
 }
 - (void)checkMaps:(id)sender { (void)sender; [self.mapDownloads checkForMaps]; }
 - (void)cancelMaps:(id)sender { (void)sender; [self.mapDownloads cancelDownloads]; }
-- (void)downloadTimerAudio:(id)sender { (void)sender; [self.timerAudio downloadRecordings]; }
+- (void)downloadTimerAudio:(id)sender { (void)sender; if (self.preferences.timerAudioDownloadsEnabled) [self.timerAudio downloadRecordings]; }
+- (void)timerDownloads:(NSButton *)sender {
+    NSError *error = nil;
+    BOOL enabled = sender.state == NSControlStateValueOn;
+    if (![self.preferences setTimerAudioDownloadsEnabled:enabled error:&error]) showError(error);
+    else if (enabled) [self.timerAudio downloadRecordings];
+    else [self.timerAudio cancelDownloads];
+    [self refreshSettings];
+}
 - (void)cancelTimerAudio:(id)sender { (void)sender; [self.timerAudio cancelDownloads]; }
 - (void)openMapLibrary:(id)sender {
     (void)sender;
@@ -761,6 +775,7 @@ int host_menu_prepare(const char *support, const char *fallback, char *data, siz
         [menu.mapDownloads startEnabled:menu.preferences.communityDownloadsEnabled];
         menu.timerAudio = [[HaloTimerAudio alloc] initWithSupportDirectory:menu.preferences.supportDirectory sessionConfiguration:nil];
         menu.timerAudio.statusChanged = ^{ [weakMenu refreshSettings]; };
+        if (menu.preferences.timerAudioDownloadsEnabled) [menu.timerAudio downloadRecordings];
         if (menu.preferences.releaseChecksEnabled && menu.releaseUpdates.automaticChecksAvailable)
             [menu.releaseUpdates checkForUpdates];
         if (!getenv("HALO_WINDOWED")) SDL_setenv_unsafe("HALO_WINDOWED", menu.preferences.windowed ? "1" : "0", 1);

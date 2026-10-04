@@ -908,9 +908,11 @@ static boolean network_game_server_performance_peers_support(
 			platform_show_message("Halo: timer recordings missing",
 				"Timer Audio needs the complete timer recording pack.\n\n"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-				"Open Halo OG Settings, choose Download Recordings, then restart Halo. "
-#else
+				"The recordings download automatically. Check their progress in Halo OG Settings, then restart Halo. "
+#elif defined(HALO_IOS)
 				"Install the recordings in sounds/performance in your game data or saves folder, then restart Halo. "
+#else
+				"The recordings download automatically in the background. Wait for the download to finish, then restart Halo. "
 #endif
 				"You can also turn Timer Audio off for this game type.");
 			return FALSE;

@@ -52,7 +52,9 @@ static void check_main_loop(const char *image, const char *data) {
             assert(window.visible);
             assert([window.title isEqualToString:@"Halo OG Settings"]);
             NSButton *recordings = [(id)target valueForKey:@"timerDownloadButton"];
-            assert([recordings.title isEqualToString:@"Download Recordings"] && recordings.enabled);
+            assert([recordings.title isEqualToString:@"Check Recordings / Retry"] && !recordings.enabled);
+            NSButton *automaticRecordings = [(id)target valueForKey:@"timerDownloadsButton"];
+            assert(automaticRecordings.state == NSControlStateValueOff);
             HaloTimerAudio *timerAudio = [(id)target valueForKey:@"timerAudio"];
             assert(!timerAudio.downloading);
             /* All settings remain reachable after adding the optional pack. */

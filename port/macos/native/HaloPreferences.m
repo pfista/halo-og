@@ -30,6 +30,10 @@ static NSError *failure(NSString *message) {
     id saved = _settings[@"community_downloads"];
     return !saved || ([saved isKindOfClass:NSNumber.class] && [saved boolValue]);
 }
+- (BOOL)timerAudioDownloadsEnabled {
+    id saved = _settings[@"timer_audio_downloads"];
+    return [saved isKindOfClass:NSNumber.class] ? [saved boolValue] : YES;
+}
 - (BOOL)releaseChecksEnabled {
     id saved = _settings[@"release_checks"];
     return !saved || ([saved isKindOfClass:NSNumber.class] && [saved boolValue]);
@@ -60,6 +64,11 @@ static NSError *failure(NSString *message) {
 - (BOOL)setCommunityDownloadsEnabled:(BOOL)enabled error:(NSError **)error {
     NSMutableDictionary *settings = [_settings mutableCopy];
     settings[@"community_downloads"] = @(enabled);
+    return [self save:settings error:error];
+}
+- (BOOL)setTimerAudioDownloadsEnabled:(BOOL)enabled error:(NSError **)error {
+    NSMutableDictionary *settings = [_settings mutableCopy];
+    settings[@"timer_audio_downloads"] = @(enabled);
     return [self save:settings error:error];
 }
 - (BOOL)setReleaseChecksEnabled:(BOOL)enabled error:(NSError **)error {

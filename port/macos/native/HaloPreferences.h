@@ -7,11 +7,13 @@
 @property(nonatomic, readonly) NSString *isoPath;
 @property(nonatomic, readonly) BOOL windowed;
 @property(nonatomic, readonly) BOOL communityDownloadsEnabled;
+@property(nonatomic, readonly) BOOL timerAudioDownloadsEnabled;
 @property(nonatomic, readonly) BOOL releaseChecksEnabled;
 - (instancetype)initWithSupportDirectory:(NSURL *)directory;
 - (BOOL)selectDataRoot:(NSURL *)root iso:(NSURL *)iso error:(NSError **)error;
 - (BOOL)setWindowed:(BOOL)windowed error:(NSError **)error;
 - (BOOL)setCommunityDownloadsEnabled:(BOOL)enabled error:(NSError **)error;
+- (BOOL)setTimerAudioDownloadsEnabled:(BOOL)enabled error:(NSError **)error;
 - (BOOL)setReleaseChecksEnabled:(BOOL)enabled error:(NSError **)error;
 @end
 

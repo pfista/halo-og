@@ -18,6 +18,7 @@ and the debug keyboard that the game's console reads.
 #include "xiso.h"
 #include "posix.h"
 #include "community_maps_download.h"
+#include "timer_audio_download.h"
 #include "native_video.h"
 #include "native_input_events.h"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
@@ -98,6 +99,7 @@ BOOL platform_sdl_initialize(void)
 	updater_start();
 #if !defined(HALO_MACOS)
 	community_maps_download_start();
+	timer_audio_download_start();
 #endif
 #endif
 	return TRUE;

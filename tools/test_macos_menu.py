@@ -6,6 +6,7 @@ Creates tiny authored XDVDFS/map-header fixtures; contains no game assets.
 import base64
 from contextlib import redirect_stderr, redirect_stdout
 import io
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -165,6 +166,12 @@ def native_menu_loop():
         image.write_bytes(disc_image(map_header('ui'), map_header('a10')))
         environment = {k: v for k, v in os.environ.items() if not k.startswith('HALO_')}
         environment['HALO_WINDOWED'] = '1'
+        saves = directory / 'saves'
+        saves.mkdir()
+        (saves / 'macos-settings.json').write_text(json.dumps({
+            'timer_audio_downloads': False, 'community_downloads': False,
+            'release_checks': False,
+        }))
         subprocess.run([executable, directory / 'saves', maps.parent, image],
                        env=environment, check=True, timeout=20)
 

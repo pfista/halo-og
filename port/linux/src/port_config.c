@@ -222,6 +222,14 @@ static const struct config_setting config_settings[] =
 		"network downloads while preserving already downloaded maps." },
 #endif
 
+	/* Android's Java content backend reads this same saved TOML choice. */
+#if !defined(HALO_MACOS)
+	{ "timer_audio.auto_download", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Download the complete optional timer recording pack in the background.\n"
+		"Restart after installation to refresh Timer Audio support; this does\n"
+		"not enable Timer Sounds. False preserves installed recordings." },
+#endif
+
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
 		"\"host:<map>\" hosts a game on that map, \"join\" joins the first game found;\n"

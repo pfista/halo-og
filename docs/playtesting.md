@@ -117,8 +117,10 @@ and [Mac networking](../port/macos/README.md#launch) cover troubleshooting.
 
 PB Options are optional. The host chooses them in the game type editor or
 multiplayer pause menu; all peers need compatible options support. Timer Sounds
-additionally require the separate [timer recording pack](timer-audio.md). On
-Mac, use **Halo OG → Settings → Download Recordings**, then restart Halo OG.
+additionally require the separate [timer recording pack](timer-audio.md).
+Mac, Windows, Linux and Android download it automatically in the background.
+Restart Halo OG after its first installation; Mac shows progress in
+**Halo OG → Settings**.
 [PB Options](performance-options.md) explains these settings.
 
 ### Spawn, sniper and teleporter regression test

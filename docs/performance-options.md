@@ -123,8 +123,9 @@ stock maps without changing map files or checksums. The importer
 converts already extracted, user-owned NHE sound tags into bounded PCM WAVs and
 writes source/output hashes. It preserves existing destination files and does
 not download assets. The recordings themselves are not committed to this repo.
-Mac users can download the [optional recording pack](timer-audio.md) from
-**Halo OG → Settings → Download Recordings**, then restart the game. Downloading
+Mac downloads the [recording pack](timer-audio.md) automatically in the background
+by default. **Halo OG → Settings** shows progress and allows opting out; restart
+the game after the first installation. Downloading
 it does not enable Timer Sounds. A host without the required recordings cannot
 enable Timer Sounds; a peer without them omits timer-audio support while
 retaining the other capabilities. The debug console reports whether the

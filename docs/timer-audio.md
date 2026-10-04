@@ -15,9 +15,13 @@ Preparing or validating a different pack does not authorize uploading it.
 
 ## Install the recordings
 
-On Mac, open **Halo OG → Settings**, choose **Download Recordings**, and wait
-until the pack is installed. Restart Halo OG before enabling Timer Sounds in
-the host's game type. Downloads are explicit and do not change game options.
+Mac, Windows, Linux and Android download recordings automatically in the
+background by default after game data is selected. On Mac, **Halo OG → Settings**
+shows progress and lets you opt out or retry a failed download. On Windows,
+Linux and Android, set `auto_download = false` under `[timer_audio]` in
+`config.toml` to opt out. Restart Halo OG after the first installation
+before enabling Timer Sounds in the host's game type. Downloading recordings
+does not change game options.
 The pack contains 46 clips, about 7.4 MB, downloaded from Cloudflare over HTTPS.
 Each clip is checked against its exact size, SHA-256 and PCM format; the complete
 pack becomes available together. A failed or cancelled download can be retried.
@@ -28,9 +32,9 @@ recordings are preserved; a conflicting managed folder must be moved manually
 before downloading a replacement. Availability is fixed for each game launch
 to keep network capabilities consistent, so restart after installation.
 
-Linux, Windows and Android do not yet have the native download button. With
-Python 3 and this repository, download the same verified pack explicitly into
-the selected game-data or saves folder:
+An explicit helper is also available for offline preparation or troubleshooting.
+With Python 3 and this repository, download the same verified pack into a
+selected game-data or saves folder:
 
 ```sh
 python3 tools/download_timer_audio.py \
