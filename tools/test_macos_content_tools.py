@@ -1,9 +1,11 @@
 """Tests for explicit reviewed-helper staging; no Invader programs execute."""
 import hashlib
 import json
+import ntpath
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -157,6 +159,11 @@ class ContentToolsTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "arm64"):
             self.stage()
         self.run.assert_not_called()
+
+    def test_mac_library_paths_do_not_depend_on_test_host_path_separator(self):
+        with patch.object(tools, "os", SimpleNamespace(path=ntpath)):
+            self.assertEqual(tools._inspect(self.toolchain / "build/invader-extract"),
+                             ["/usr/lib/libSystem.B.dylib"])
 
     def test_non_system_library_and_system_path_traversal_refused(self):
         for library in ("@rpath/unreviewed.dylib", "/opt/homebrew/lib/libz.dylib", "/usr/lib/../../tmp/tool.dylib"):

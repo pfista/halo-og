@@ -1,0 +1,5 @@
+# Cargo.lock is a byte-pinned input, including on native Windows checkouts.
+Cargo.lock text eol=lf
+*.json text eol=lf
+*.cmake text eol=lf
+README.md text eol=lf

@@ -55,6 +55,20 @@ class ToolchainTests(unittest.TestCase):
                 tools.download_pinned("https://example.invalid/source", "0" * 64, self.root / "dep.tar", cache)
             network.assert_not_called()
 
+    def test_build_creates_missing_parents_but_preserves_existing_output(self):
+        output = self.root / "fresh-checkout/build/content-tools"
+        with patch.object(tools, "host_platform", return_value="linux-x86_64"), \
+                patch.object(tools.subprocess, "check_output", side_effect=RuntimeError("stop before build")):
+            with self.assertRaisesRegex(RuntimeError, "stop before build"):
+                tools.build(output)
+            self.assertTrue((output / "sources").is_dir())
+            self.assertTrue((output / "archives").is_dir())
+            prior = output / "keep"
+            prior.write_bytes(b"existing candidate")
+            with self.assertRaises(FileExistsError):
+                tools.build(output)
+            self.assertEqual(prior.read_bytes(), b"existing candidate")
+
     def test_git_archive_cache_is_verified_without_using_working_files(self):
         cache = self.root / "cache"; cache.mkdir()
         archive = self.archive([("source/a", tarfile.REGTYPE, b"pinned source")])

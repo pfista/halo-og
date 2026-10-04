@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import shutil
 import stat
@@ -56,7 +57,7 @@ def _inspect(binary):
             raise RuntimeError("Could not validate content tool runtime libraries")
         library = match[1]
         if (not library.startswith(("/usr/lib/", "/System/Library/"))
-                or os.path.normpath(library) != library):
+                or posixpath.normpath(library) != library):
             raise RuntimeError("Content tools may link only macOS system libraries")
         libraries.append(library)
     if not libraries:

@@ -272,6 +272,7 @@ def build(output, source_cache=None, rust_bin=None, jobs=4):
     selected = pins["platforms"][key]
     consumer = selected["consumer_platform"]
     output = Path(output).absolute()
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.mkdir()  # existing output is never changed
     sources, archives = output / "sources", output / "archives"
     sources.mkdir(); archives.mkdir()
@@ -399,6 +400,7 @@ def finalize_toolchain(output, rust_bin):
     source_archive(sources, {"tools/community_toolchain.py": __file__, "tools/macos_content_tools.py": ROOT / "tools/macos_content_tools.py", "tools/community-toolchain/pins.json": delivered_pins,
                             "tools/community-toolchain/Cargo.lock": CONFIG / "Cargo.lock", "tools/community-toolchain/dependencies.cmake": CONFIG / "dependencies.cmake",
                             "tools/community-toolchain/notices.json": CONFIG / "notices.json",
+                            "tools/community-toolchain/.gitattributes": CONFIG / ".gitattributes",
                             "tools/community-toolchain/README.md": CONFIG / "README.md"}, output / archive_name, pins["source_epoch"], archives)
     manifest = {key: pins[key] for key in ("schema", "invader_repository", "invader_commit", "riat_repository", "riat_commit", "rust_version")}
     manifest.update({"consumer_platform": consumer, "architecture": selected["architecture"], "build_versions": versions,
