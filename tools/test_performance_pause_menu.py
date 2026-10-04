@@ -37,7 +37,7 @@ enum { _gamepad_analog_button_a=0, _gamepad_analog_button_b=1,
 enum { UNICODE_STRING_LIST_TAG='ustr', _performance_option_match_timer=1,
  _performance_option_spawn_markers=2, _performance_option_timer_audio=4,
  _performance_option_silent_movement=8, _performance_option_silent_weapon_ready=16,
- PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=31 };
+ _performance_option_input_delay=32, PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=63 };
 struct tag_block { long count; void *address; void *definition; };
 struct tag_reference { unsigned long group_tag; char *name; long name_length,index; };
 struct tag_data { long size; unsigned long pad; long file_offset; void *address,*definition; };
@@ -213,7 +213,8 @@ int main(void) {
    host_flags=flags;
    struct widget_instance *w=open_options(flags%3,flags%MAXIMUM_NUMBER_OF_LOCAL_PLAYERS);
    assert(performance_pause_drafts[flags%MAXIMUM_NUMBER_OF_LOCAL_PLAYERS].flags==flags);
-   assert(control(w,_pp_preset)->parameters.list.selected_index==(flags==0 ? 0:flags==7 ? 1:2));
+   unsigned aids=flags&31;
+   assert(control(w,_pp_preset)->parameters.list.selected_index==(aids==0 ? 0:aids==7 ? 1:2));
    assert(control(w,_pp_movement)->parameters.list.selected_index==!!(flags&8));
    assert(control(w,_pp_weapon)->parameters.list.selected_index==!!(flags&16));
    assert(performance_pause_event(control(w,_pp_apply),_performance_pause_apply) && host_flags==flags);
@@ -273,7 +274,20 @@ int main(void) {
  assert(!performance_pause_event(control(other,_pp_weapon),_performance_pause_next));
  assert(performance_pause_event(control(other,_pp_apply),_performance_pause_apply) && set_calls==3);
  host_flags=1; performance_pause_update(other); assert(performance_pause_drafts[1].flags==1);
- free_widget(root); free_widget(other); long old=performance_pause_tags[_pp_pause_1p];
+ free_widget(root); free_widget(other);
+ /* Pause exposes only the six existing controls; every edit preserves the
+  * host's match-start delay, including either practice-aid preset. */
+ host=TRUE; host_flags=40; root=open_options(0,0);
+ control(root,_pp_preset)->parameters.list.selected_index=0; performance_pause_update(root);
+ assert(performance_pause_drafts[0].flags==32 && control(root,_pp_preset)->parameters.list.selected_index==0);
+ control(root,_pp_timer)->parameters.list.selected_index=1; performance_pause_update(root);
+ assert(performance_pause_drafts[0].flags==33);
+ control(root,_pp_preset)->parameters.list.selected_index=1; performance_pause_update(root);
+ assert(performance_pause_drafts[0].flags==39);
+ assert(performance_pause_event(control(root,_pp_apply),_performance_pause_apply) && host_flags==39);
+ control(root,_pp_preset)->parameters.list.selected_index=0; performance_pause_update(root);
+ assert(performance_pause_event(control(root,_pp_apply),_performance_pause_apply) && host_flags==32);
+ free_widget(root); long old=performance_pause_tags[_pp_pause_1p];
  registry_count=0; generation++; assert(performance_pause_remap_tag(1)!=old && registry_count==32);
  assert(!performance_pause_drafts[0].root && !performance_pause_drafts[1].root);
  return 0;

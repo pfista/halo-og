@@ -1516,6 +1516,8 @@ void network_distributed_player_teleported(
 	player = distributed_player((short)absolute_index);
 	if (!player)
 		return;
+	update_queues_reset_local_input_delay(player->local_player_index,
+		player->unit_index != NONE ? &object_get(player->unit_index)->object.forward : NULL);
 	if (game_connection() == _game_connection_network_server)
 	{
 		/* A queued pre-teleport prediction and its echo/height anchor are

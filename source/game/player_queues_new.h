@@ -6,6 +6,8 @@ PLAYER_QUEUES_NEW.H
 #define __PLAYER_QUEUES_NEW_H
 #pragma once
 
+#include "math/real_math.h"
+
 /* ---------- structures */
 
 struct player_action_collection;
@@ -86,6 +88,15 @@ struct player_action const *update_server_update_actions(
 /* each player's latest input forgotten, for a new game */
 void update_queues_distributed_reset(
 	void);
+/* Clear only enabled local delay state when the simulation clock jumps. */
+void update_queues_reset_input_delays(void);
+/* Forget a local controller's pre-teleport action after absolute aim rotates. */
+void update_queues_reset_local_input_delay(
+	short local_player_index,
+	real_vector3d const *new_facing);
+void update_queues_input_delay_new_unit_action(
+	short local_player_index,
+	struct player_action *action);
 /* (a client) the host's action for the player at that absolute index, of
 the host's update */
 void update_client_handle_relayed_action(

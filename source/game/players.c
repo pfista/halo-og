@@ -3681,7 +3681,10 @@ void players_update_before_game(
 						game_engine_prespawn_player_update(iterator.datum_index);
 						player_spawn(iterator.datum_index);
 						if (player->unit_index != NONE)
+						{
 							game_engine_postspawn_player_update(iterator.datum_index);
+							update_queues_input_delay_new_unit_action(player->local_player_index, action);
+						}
 						else
 							player->respawn_timer = 1;
 					}

@@ -891,6 +891,14 @@ static boolean network_game_server_performance_peers_support(
 {
 	long index;
 
+#ifndef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (flags & _performance_option_input_delay)
+	{
+		platform_show_message("Halo: input delay unavailable",
+			"This build does not support the game type's input delay. Turn Input Delay off, or use a compatible build.");
+		return FALSE;
+	}
+#endif
 	if (flags & _performance_option_timer_audio)
 	{
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
@@ -910,12 +918,34 @@ static boolean network_game_server_performance_peers_support(
 			!network_game_server_client_machine_is_local(server, machine) &&
 			!network_game_server_performance_supported(machine, flags))
 		{
+			if ((flags & _performance_option_input_delay) &&
+				!network_game_server_performance_supported(machine, _performance_option_input_delay))
+			{
+				platform_show_message("Halo: input delay unavailable",
+					"A connected player does not support Input Delay.\n\n"
+					"Turn Input Delay off for this game type, or have that player update or leave before starting.");
+				return FALSE;
+			}
 			platform_show_message("Halo: practice options unavailable",
 				"A connected player does not support these practice options.\n\n"
 				"Every player needs a compatible build and the timer recordings before Timer Audio can be enabled. "
 				"Turn off unsupported options, or have that player update or leave.");
 			return FALSE;
 		}
+	}
+	return TRUE;
+}
+
+static boolean network_game_server_input_delay_change_allowed(
+	struct network_game_server *server,
+	unsigned flags)
+{
+	if (((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_input_delay) &&
+		(server->state != _network_game_server_state_pregame || server->sent_start_game_message))
+	{
+		platform_show_message("Halo: input delay locked",
+			"Input Delay is fixed for the match. Choose it in the game type before starting the next match.");
+		return FALSE;
 	}
 	return TRUE;
 }
@@ -928,6 +958,7 @@ boolean performance_options_set_host_flags(
 	long index;
 
 	if (!server || (flags & ~((unsigned long)PERFORMANCE_OPTIONS_MASK)) ||
+		!network_game_server_input_delay_change_allowed(server, (unsigned)flags) ||
 		!network_game_server_performance_peers_support(server, (unsigned)flags))
 		return FALSE;
 
@@ -3267,7 +3298,8 @@ void network_game_server_change_game_variant(
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x7BE, server && variant);
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x7BF,
 		server->state == _network_game_server_state_pregame);
-	if (!network_game_server_performance_peers_support(server, performance_variant_get_flags(variant)) ||
+	if (!network_game_server_input_delay_change_allowed(server, performance_variant_get_flags(variant)) ||
+		!network_game_server_performance_peers_support(server, performance_variant_get_flags(variant)) ||
 		!network_game_server_original_grenade_peers_support(server, variant, server->game.player_count))
 		return;
 

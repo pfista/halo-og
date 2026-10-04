@@ -209,6 +209,30 @@ static void early_weapon(void) {
     receive(&inv,1,1); create(WEAPON,_object_mask_weapon);
     assert(unit_get(UNIT)->unit.weapon_object_indices[0]==WEAPON && adds==1);
 }
+static void delayed_secondary(void) {
+    reset(); create(UNIT,_object_mask_unit); create(WEAPON,_object_mask_weapon);
+    struct distributed_inventory inv=snapshot(UNIT,WEAPON);
+    struct unit_datum *unit=unit_get(UNIT);
+    inv.weapon_indices[1]=SECOND; inv.current_weapon_index=1;
+    inv.rounds_loaded[1][0]=7; inv.rounds_total[1][0]=20;
+    receive(&inv,1,1);
+    /* A known primary must not partially apply the two-weapon spawn. */
+    assert(objects_client_inventories[UNIT&0xffff].pending && !adds);
+    assert(unit->unit.weapon_object_indices[0]==NONE && unit->unit.weapon_object_indices[1]==NONE);
+    assert(unit->unit.desired_weapon_index==NONE);
+    assert(weapon_try_and_get(WEAPON)->weapon.magazines[0].rounds_loaded==0);
+    distributed_client_retry_inventories(); assert(!adds);
+    create(SECOND,_object_mask_weapon);
+    assert(!objects_client_inventories[UNIT&0xffff].pending && adds==2 && !drops);
+    assert(unit->unit.weapon_object_indices[0]==WEAPON && unit->unit.weapon_object_indices[1]==SECOND);
+    assert(unit->unit.desired_weapon_index==1);
+    assert(weapon_try_and_get(WEAPON)->weapon.magazines[0].rounds_loaded==4);
+    assert(weapon_try_and_get(WEAPON)->weapon.magazines[0].rounds_total==12);
+    assert(weapon_try_and_get(SECOND)->weapon.magazines[0].rounds_loaded==7);
+    assert(weapon_try_and_get(SECOND)->weapon.magazines[0].rounds_total==20);
+    distributed_client_retry_inventories(); create(SECOND,_object_mask_weapon);
+    assert(adds==2 && !drops); /* retry and duplicate create do not reattach either slot */
+}
 static void newer_inventory(void) {
     reset(); create(UNIT,_object_mask_unit);
     struct distributed_inventory old=snapshot(UNIT,WEAPON), newer=snapshot(UNIT,SECOND);
@@ -255,6 +279,7 @@ int main(int argc,char **argv) {
     if(!strcmp(argv[1],"ordered")) ordered_spawn();
     else if(!strcmp(argv[1],"early")) early_inventory();
     else if(!strcmp(argv[1],"weapon")) early_weapon();
+    else if(!strcmp(argv[1],"secondary")) delayed_secondary();
     else if(!strcmp(argv[1],"newer")) newer_inventory();
     else if(!strcmp(argv[1],"independent")) independent_units();
     else if(!strcmp(argv[1],"generation")) generation();
@@ -334,6 +359,7 @@ class SpawnInventoryTests(unittest.TestCase):
     def test_ordered_spawn(self): self.run_case("ordered")
     def test_inventory_before_unit_and_weapons(self): self.run_case("early")
     def test_inventory_before_weapon(self): self.run_case("weapon")
+    def test_two_weapon_spawn_waits_for_delayed_secondary(self): self.run_case("secondary")
     def test_latest_pending_and_older_reliable_snapshot(self): self.run_case("newer")
     def test_other_units_do_not_discard_spawn_snapshot(self): self.run_case("independent")
     def test_deleted_life_and_reused_absolute_index(self): self.run_case("generation")

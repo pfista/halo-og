@@ -131,7 +131,7 @@ static void fixture_setup(void) {
 }
 static void all_arrow_rows_and_staging(void) {
     fixture_setup(); struct widget_instance *root=open_pb();
-    for(short row=0;row<6;row++) {
+    for(short row=0;row<7;row++) {
         arrow(root,row,TRUE); assert(edited.flags==0 && mutation_calls==0);
         arrow(root,row,FALSE); assert(edited.flags==0 && mutation_calls==0);
     }

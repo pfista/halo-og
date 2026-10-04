@@ -108,8 +108,10 @@ symbols in this file:
 #include "cseries/cseries_windows.h"
 #include "cseries/errors.h"
 #include "game/game.h"
+#include "game/performance_variant.h"
 #include "game/player_queues_new.h"
 #include "game/players.h"
+#include "game/player_input_delay.h"
 #include "interface/ui_widget.h"
 #include "main/main.h"
 #include "memory/data.h"
@@ -239,6 +241,11 @@ static struct update *update_client_get_update(
 	long update_number);
 static void update_server_take_local_actions(
 	void);
+static boolean update_client_input_delay_enabled(void);
+static struct player_action update_client_take_local_action(
+	short local_player_index,
+	long update_number,
+	struct player_action const *sampled);
 
 /* ---------- globals */
 
@@ -281,6 +288,9 @@ static struct
 
 static struct update_server_globals update_server_globals = { 0 };
 static struct update_client_globals update_client_globals = { 0 };
+static struct player_input_delay update_client_input_delays[MAXIMUM_LOCAL_PLAYERS];
+static boolean update_client_input_delay_idle_valid[MAXIMUM_LOCAL_PLAYERS];
+static real_euler_angles2d update_client_input_delay_idle_facings[MAXIMUM_LOCAL_PLAYERS];
 
 /* ---------- public code */
 
@@ -383,7 +393,8 @@ void update_server_next_update(
 		0xFA,
 		update_server_globals.initialized);
 	update_server_globals.next_update_number_to_build += 1;
-	if (game_connection() == _game_connection_network_server)
+	if (game_connection() == _game_connection_network_server ||
+		(game_connection() == _game_connection_local && update_client_input_delay_enabled()))
 	{
 		update_server_take_local_actions();
 	}
@@ -538,6 +549,7 @@ void update_client_start(
 		"c:\\halo\\SOURCE\\game\\player_queues_new.c",
 		0x168,
 		update_client_globals.initialized);
+	update_queues_distributed_reset();
 	data_make_valid(update_client_globals.queues);
 	data_delete_all(update_client_globals.queues);
 	data_iterator_new(&iterator, player_data);
@@ -629,6 +641,11 @@ void update_client_queue_push(
 			0,
 			sizeof(update_client_pending_primary_triggers));
 	}
+	if (game_time_get_paused() || game_time_held())
+	{
+		csmemset(update_client_input_delays, 0, sizeof(update_client_input_delays));
+		csmemset(update_client_input_delay_idle_valid, 0, sizeof(update_client_input_delay_idle_valid));
+	}
 	update_client_globals.current_local_player = 0;
 	csmemset(
 		&update_client_globals.saved_action_collection,
@@ -675,7 +692,9 @@ static boolean update_client_dequeue_distributed(
 		action.desired_zoom_level = NONE;
 		if (local_player_index != NONE)
 		{
-			action = update_client_globals.saved_action_collection.actions[local_player_index];
+			action = update_client_take_local_action(local_player_index,
+				update_client_globals.next_update_number_to_dequeue,
+				&update_client_globals.saved_action_collection.actions[local_player_index]);
 			if (local_player_index < MAXIMUM_LOCAL_PLAYERS)
 			{
 				/* (for the host: network_distributed.c) */
@@ -735,6 +754,22 @@ boolean update_client_dequeue(
 		if (queue_index<update->update.action_count)
 		{
 			struct player_action *action = &update->update.actions[queue_index];
+			short local_player_index = update_client_local_player_index(queue_index);
+
+			if (local_player_index != NONE && update_client_input_delay_enabled())
+			{
+				struct update *server_update;
+
+				*action = update_client_take_local_action(local_player_index,
+					update_client_globals.next_update_number_to_dequeue, action);
+				/* Distributed relays must describe the action this tick actually
+				 * consumed, including when hosts prebuilt multiple updates. */
+				server_update = update_server_globals.initialized ?
+					update_server_get_update(update_client_globals.next_update_number_to_dequeue) : NULL;
+				if (server_update && server_update->update_number == update->update_number &&
+					queue_index < server_update->update.action_count)
+					server_update->update.actions[queue_index] = *action;
+			}
 
 			queue->control_flags = action->control_flags;
 			queue->desired_facing = action->desired_facing;
@@ -821,7 +856,11 @@ void update_client_local_ticks(
 		0x20B,
 		game_connection()==_game_connection_local);
 	update_client_build_client_update(&action_collection);
-	update_server_handle_client_update(machine_index, action_collection.actions);
+	/* Delay-enabled local matches select complete actions per logical update.
+	 * The old collection handler also accumulates raw buttons, which would
+	 * otherwise bypass the delayed action when building the server update. */
+	if (!update_client_input_delay_enabled())
+		update_server_handle_client_update(machine_index, action_collection.actions);
 	while (ticks-->0)
 	{
 		update_server_next_update();
@@ -953,6 +992,100 @@ void update_queues_distributed_reset(
 	csmemset(update_client_relayed_actions, 0, sizeof(update_client_relayed_actions));
 	csmemset(update_server_distributed_inputs, 0, sizeof(update_server_distributed_inputs));
 	csmemset(update_client_local_inputs, 0, sizeof(update_client_local_inputs));
+	csmemset(update_client_input_delays, 0, sizeof(update_client_input_delays));
+	csmemset(update_client_input_delay_idle_valid, 0, sizeof(update_client_input_delay_idle_valid));
+	csmemset(update_client_pending_control_flags, 0, sizeof(update_client_pending_control_flags));
+	csmemset(update_client_pending_primary_triggers, 0, sizeof(update_client_pending_primary_triggers));
+	update_client_pending_game_time = NONE;
+}
+
+/* A clock jump must not consume an action sampled before a long stall. */
+void update_queues_reset_input_delays(void)
+{
+	short local_player_index;
+
+	if (!update_client_input_delay_enabled())
+		return;
+	for (local_player_index = 0; local_player_index < MAXIMUM_LOCAL_PLAYERS; ++local_player_index)
+		if (local_player_get_player_index(local_player_index) != NONE)
+			update_queues_reset_local_input_delay(local_player_index, NULL);
+}
+
+/* A teleport rotates absolute aim. Only the traversing local controller loses
+ * its old sample; otherwise it would aim back into the previous portal frame. */
+void update_queues_reset_local_input_delay(
+	short local_player_index,
+	real_vector3d const *new_facing)
+{
+	if (local_player_index >= 0 && local_player_index < MAXIMUM_LOCAL_PLAYERS &&
+		update_client_input_delay_enabled())
+	{
+		struct player_action idle;
+		long player_index = local_player_get_player_index(local_player_index);
+		long update_number;
+
+		if (new_facing)
+			player_control_set_facing(local_player_index, new_facing);
+		csmemset(&idle, 0, sizeof(idle));
+		idle.desired_facing = *player_control_get_facing_angles(local_player_index);
+		idle.desired_weapon_index = NONE;
+		idle.desired_grenade_index = NONE;
+		idle.desired_zoom_level = NONE;
+		player_input_delay_reset(&update_client_input_delays[local_player_index]);
+		update_client_input_delay_idle_valid[local_player_index] = TRUE;
+		update_client_input_delay_idle_facings[local_player_index] = idle.desired_facing;
+		update_client_globals.saved_action_collection.actions[local_player_index] = idle;
+		csmemset(&update_client_local_inputs[local_player_index], 0,
+			sizeof(update_client_local_inputs[local_player_index]));
+		update_client_pending_control_flags[local_player_index] = 0;
+		update_client_pending_primary_triggers[local_player_index] = 0.f;
+		/* Hosts build updates before running their ticks. Discard remaining
+		 * old-life/old-portal samples belonging only to this controller. */
+		if (player_index != NONE && update_server_globals.initialized && update_client_globals.initialized)
+		{
+			long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index);
+
+			update_server_pending_control_flags[absolute_index] = 0;
+			for (update_number = update_client_globals.next_update_number_to_dequeue;
+				update_number < update_server_globals.next_update_number_to_build; ++update_number)
+			{
+				struct update *server_update = update_server_get_update(update_number);
+				struct update *client_update = update_client_get_update(update_number);
+
+				if (server_update && server_update->update_number == update_number &&
+					absolute_index < server_update->update.action_count)
+					server_update->update.actions[absolute_index] = idle;
+				if (client_update && client_update->update_number == update_number &&
+					absolute_index < client_update->update.action_count)
+					client_update->update.actions[absolute_index] = idle;
+			}
+		}
+	}
+}
+
+/* Local spawning happens after dequeue. That tick must hold the newly spawned
+ * unit's facing instead of applying the neutral action of its previous life. */
+void update_queues_input_delay_new_unit_action(
+	short local_player_index,
+	struct player_action *action)
+{
+	if (local_player_index >= 0 && local_player_index < MAXIMUM_LOCAL_PLAYERS &&
+		update_client_input_delay_enabled())
+	{
+		long player_index = local_player_get_player_index(local_player_index);
+		struct update *server_update = update_server_globals.initialized && update_client_globals.initialized ?
+			update_server_get_update(update_client_globals.next_update_number_to_dequeue - 1) : NULL;
+
+		csmemset(action, 0, sizeof(*action));
+		action->desired_facing = *player_control_get_facing_angles(local_player_index);
+		action->desired_weapon_index = NONE;
+		action->desired_grenade_index = NONE;
+		action->desired_zoom_level = NONE;
+		if (player_index != NONE && server_update &&
+			server_update->update_number == update_client_globals.next_update_number_to_dequeue - 1 &&
+			DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index) < server_update->update.action_count)
+			server_update->update.actions[DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index)] = *action;
+	}
 }
 
 void update_queues_reset_and_fill_with_lies(
@@ -1041,7 +1174,38 @@ static void update_server_take_local_actions(
 		{
 			queue->current_action = update_client_globals.saved_action_collection.actions[local_player_index];
 		}
+		else
+			player_input_delay_reset(&update_client_input_delays[local_player_index]);
 	}
+}
+
+static boolean update_client_input_delay_enabled(void)
+{
+	return game_engine_running() &&
+		performance_variant_get_input_delay_milliseconds(game_engine_get_variant()) ==
+			PERFORMANCE_INPUT_DELAY_MILLISECONDS;
+}
+
+static struct player_action update_client_take_local_action(
+	short local_player_index,
+	long update_number,
+	struct player_action const *sampled)
+{
+	struct player_action selected;
+	long player_index = local_player_get_player_index(local_player_index);
+	struct player_datum *player = player_index != NONE ? player_try_and_get(player_index) : NULL;
+	long unit_index = player ? player->unit_index : NONE;
+	real_euler_angles2d idle_facing = sampled->desired_facing;
+	boolean enabled = update_client_input_delay_enabled();
+
+	if (enabled && unit_index != NONE)
+		euler_angles2d_from_vector3d(&idle_facing, &unit_get(unit_index)->unit.desired_aiming_vector);
+	if (enabled && update_client_input_delay_idle_valid[local_player_index])
+		idle_facing = update_client_input_delay_idle_facings[local_player_index];
+	player_input_delay_select(&update_client_input_delays[local_player_index], enabled,
+		update_number, player_index, unit_index, sampled, &idle_facing, &selected);
+	update_client_input_delay_idle_valid[local_player_index] = FALSE;
+	return selected;
 }
 
 /* an action fit to take: finite, its choices in range */

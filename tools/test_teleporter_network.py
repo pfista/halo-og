@@ -84,6 +84,14 @@ static struct scenario_netgame_flag flags[4];
 static int32_t now;
 static short connection;
 static unsigned teleports;
+static unsigned input_delay_resets[MAXIMUM_LOCAL_PLAYERS];
+static real_vector3d input_delay_reset_facings[MAXIMUM_LOCAL_PLAYERS];
+static void update_queues_reset_local_input_delay(short local_player_index,real_vector3d const *new_facing) {
+    if(local_player_index>=0 && local_player_index<MAXIMUM_LOCAL_PLAYERS) {
+        input_delay_resets[local_player_index]++;
+        assert(new_facing);input_delay_reset_facings[local_player_index]=*new_facing;
+    }
+}
 static short game_connection(void) { return connection; }
 static int32_t game_time_get(void) { return now; }
 static struct player_datum *player_get(int32_t index) { assert(index==0); return &player; }
@@ -136,6 +144,8 @@ static void reset(void) {
     unit.object.forward.i=1; unit.object.up.k=1; unit.unit.player_index=0;
     unit.object.parent_object_index=NONE;unit.unit.parent_seat_index=NONE;
     now=100; connection=_game_connection_network_client; teleports=0;
+    memset(input_delay_resets,0,sizeof(input_delay_resets));
+    memset(input_delay_reset_facings,0,sizeof(input_delay_reset_facings));
     for(short i=0;i<OWN_POSITION_TICKS;i++)distributed_own_positions[0][i].unit_index=NONE;
 }
 static struct distributed_unit_state state(real x,short predicted) {
@@ -152,6 +162,7 @@ static void record(int32_t time,real x) {
 static void predicted_teleport(void) {
     reset(); record(98,0); game_engine_update_teleporter(0);
     assert(unit.object.position.x==10 && player.teleporter_index==2);
+    assert(input_delay_resets[0]==1 && input_delay_resets[1]==0);
     struct distributed_unit_state old=state(0,98);
     distributed_correct_own_unit(&player,1,&old);
     assert(unit.object.position.x==10); /* An old prediction echo must not undo the local jump. */
@@ -171,6 +182,7 @@ static void authoritative_teleport(void) {
     reset(); record(98,0); /* Host traversed first; the client has not yet predicted it. */
     struct distributed_unit_state destination=state(10,NONE);
     distributed_correct_own_unit(&player,1,&destination);
+    assert(input_delay_resets[0]==1 && input_delay_resets[1]==0);
     game_engine_update_teleporter(0);
     printf("authoritative teleport reconciliation: x=%g, latch=%d\n",unit.object.position.x,player.teleporter_index);
     assert(unit.object.position.x==10 && player.teleporter_index==2 && teleports==0);
@@ -201,6 +213,7 @@ static void host_reset(void) {
     assert(distributed_predictions[0].taken_host_time==NONE);
     assert(!distributed_predictions[0].valid && !distributed_accepted[0].valid);
     assert(distributed_host_speeds[0].unit_index==NONE);
+    assert(input_delay_resets[0]==1 && input_delay_resets[1]==0);
     distributed_state_from_player(0,&packed);
     assert(!TEST_FLAG(packed.flags,_distributed_unit_predicted_bit));
     assert(packed.position.x==10 && packed.unit_index==1);
@@ -253,6 +266,18 @@ static void authoritative_rollback(void) {
     rollback=state(-4,NONE); distributed_correct_own_unit(&player,1,&rollback);
     assert(unit.object.position.x==-4); /* General authoritative corrections remain enabled. */
 }
+static void targeted_input_delay_reset(void) {
+    for(short role=_game_connection_local; role<=_game_connection_network_server; role++) {
+        reset(); connection=role; player.local_player_index=1;
+        unit.object.forward=(real_vector3d){0,1,0};
+        network_distributed_player_teleported(0);
+        assert(input_delay_resets[0]==0 && input_delay_resets[1]==1);
+        assert(input_delay_reset_facings[1].i==0 && input_delay_reset_facings[1].j==1);
+        player.local_player_index=NONE;
+        network_distributed_player_teleported(0);
+        assert(input_delay_resets[0]==0 && input_delay_resets[1]==1);
+    }
+}
 int main(int argc,char **argv) {
     assert(argc==2);
     if(!strcmp(argv[1],"predicted"))predicted_teleport();
@@ -264,6 +289,7 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"history"))history_segments();
     else if(!strcmp(argv[1],"delayed"))delayed_source_echo();
     else if(!strcmp(argv[1],"rollback"))authoritative_rollback();
+    else if(!strcmp(argv[1],"input-delay-reset"))targeted_input_delay_reset();
     else assert(0);
     return 0;
 }
@@ -349,6 +375,9 @@ class TeleporterNetworkTests(unittest.TestCase):
 
     def test_authoritative_rollback_remains_enabled(self):
         self.run_case("rollback")
+
+    def test_teleport_resets_only_the_affected_local_controller_in_every_role(self):
+        self.run_case("input-delay-reset")
 
 
 if __name__ == "__main__":

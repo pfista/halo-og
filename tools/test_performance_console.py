@@ -21,9 +21,10 @@ typedef int boolean;
 #define NUMBEROF(a) (sizeof(a)/sizeof((a)[0]))
 enum { _performance_option_match_timer=1, _performance_option_spawn_markers=2,
        _performance_option_timer_audio=4, _performance_option_silent_movement=8,
-       _performance_option_silent_weapon_ready=16, PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=31 };
+       _performance_option_silent_weapon_ready=16, _performance_option_input_delay=32,
+       PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=63 };
 static unsigned long flags;
-static unsigned mutation_calls, peer_support=31;
+static unsigned mutation_calls, peer_support=63;
 static boolean host=TRUE;
 static int recordings=1;
 int halo_performance_audio_available(void) { return recordings; }
@@ -89,7 +90,7 @@ int main(void) {
     assert(strstr(output,"PB sound voices: normal=0 movement=12 ready=3"));
     const char *invalid[]={"pb bad","pb timer maybe","pb timer on extra","pb status extra",
         "pb practice extra","pb audio onxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","performance_options -1",
-        "performance_options 32","performance_options 99","performance_options 3x",
+        "performance_options 64","performance_options 99","performance_options 3x",
         "performance_options 3 extra"};
     for(unsigned i=0;i<NUMBEROF(invalid);i++) inspect(invalid[i]);
     change("pb practice",7);
@@ -112,14 +113,19 @@ int main(void) {
     run("pb audio on"); assert(flags==0 && strstr(output,"Timer recordings are missing"));
     change("pb markers on",2);
     recordings=1;
-    for(unsigned value=0;value<=31;value++) {
+    for(unsigned value=0;value<=63;value++) {
         char command[64]; snprintf(command,sizeof(command)," performance_options\t%u  ",value);
         change(command,value);
     }
     host=FALSE;
-    run("pb stock"); assert(flags==31 && strstr(output,"change refused"));
+    run("pb stock"); assert(flags==63 && strstr(output,"change refused"));
     inspect("pb status"); assert(strstr(output,"timer audio ON"));
-    host=TRUE; flags=3; peer_support=3;
+    host=TRUE;
+    change("pb stock",32);
+    change("pb practice",39);
+    change("pb movement silent",47);
+    change("pb stock",32);
+    flags=3; peer_support=3;
     run("pb audio on"); assert(flags==3 && strstr(output,"change refused"));
     run("pb practice"); assert(flags==3 && strstr(output,"change refused"));
     change("pb timer off",2);
@@ -133,7 +139,8 @@ int main(void) {
     assert(complete("performance_options ",matches,&native_only,token)==16 && native_only);
     assert(complete("pb movement s",matches,&native_only,token)==1 && !strcmp(matches[0],"silent"));
     assert(complete("pb weapons n",matches,&native_only,token)==1 && !strcmp(matches[0],"normal"));
-    assert(complete("performance_options 3",matches,&native_only,token)==3);
+    assert(complete("performance_options 3",matches,&native_only,token)==11);
+    assert(complete("performance_options 63",matches,&native_only,token)==1 && !strcmp(matches[0],"63"));
     assert(complete("p",matches,&native_only,token)==2 && !native_only);
     assert(complete("print",matches,&native_only,token)==NONE);
     assert(complete("(print ",matches,&native_only,token)==NONE);

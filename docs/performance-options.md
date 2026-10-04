@@ -3,7 +3,8 @@
 PB Options provides explicitly selected multiplayer practice aids: an
 elapsed match timer, spawn markers, timer announcements, and optional silent
 movement or weapon equip sounds. All modifications are **off by default**.
-The host selects the options for the whole match.
+The host also selects **Input Delay: Off / 33ms** before the match. It is
+independent of the practice aids and applies to every player.
 
 ## Game type editor and pause menu
 
@@ -19,10 +20,12 @@ show **PB options active** whenever the saved variant enables any option.
 | Practice | On | On | On | Normal / Normal |
 | Custom | Individually selected | Individually selected | Individually selected | Individually selected |
 
-The preset is a convenience over the option bits. Reopening the page shows
-Stock when all modifications are off, Practice when just the original three
-aids are on, and Custom for any other selection. There is no separate saved
-preset identifier. Selecting either Silent rule therefore shows Custom.
+The preset is a convenience over the practice-aid bits. Reopening the page shows
+Stock when all aids are off, Practice when just the original three aids are on,
+and Custom for any other aid selection. There is no separate saved preset
+identifier. Selecting either Silent rule therefore shows Custom. Input Delay
+does not change the preset label, and selecting Stock or Practice preserves the
+chosen delay.
 
 Changes on this page are staged. **Accept** puts them into the game type being
 edited; finish the existing **Save Changes** flow to persist that variant.
@@ -36,9 +39,32 @@ see the host's current choices with the controls disabled. Session changes do
 not write the saved game type back to disk; use Edit Gametypes to save a
 preset for later.
 
+Input Delay is available only in Edit Gametypes, before starting a match. The
+pause page omits its control; Apply and either preset preserve the match's
+existing delay. Other practice aids remain adjustable during play.
+
 The editor and pause pages are native game widgets registered in the loaded
 cache's runtime UI table. Retail map files are not rewritten. PB Options uses
 these menu entries; there is no separate overlay or Y-button shortcut.
+
+## Input delay
+
+**Input Delay: Off / 33ms** chooses whether player actions have an additional
+fixed delay. Off is the default. The 33ms choice delays actions by one tick of
+the fixed **30 Hz** simulation, approximately **33.3ms**. The host and joining
+players use the same choice; it does not depend on rendering frame rate.
+
+Save the choice in the game type and select it before starting the match. It
+cannot be changed during a match. This option preserves the simulation rate,
+weapon rules, and the separate local rendering and camera settings. Every
+connected player must support the delay option before the host can start an
+enabled match.
+
+The delay covers the complete simulated action: aim, movement, firing, buttons,
+and weapon/grenade/zoom choices. Direct Camera can still show current local aim
+while shots use delayed actions. Buffered actions are cleared for a new unit,
+pause, teleport, or clock resynchronization; a teleport retains the destination
+facing.
 
 ## Match timer
 
@@ -172,10 +198,10 @@ introduced.
 | --- | --- |
 | `pad0`, `pad1`, `pad2` | ASCII `P`, `F`, `O` |
 | `pad4` | Format version `1` |
-| `pad5` | Flags: timer `1`, spawn markers `2`, timer sounds `4`, silent movement `8`, silent weapons `16` |
+| `pad5` | Flags: timer `1`, spawn markers `2`, timer sounds `4`, silent movement `8`, silent weapons `16`, input delay `32` |
 | `pad6` | Flags XOR `0xA5` |
 
-Stock/off writes all six bytes as zero. Old padding, an unknown format version,
+All flags off writes all six bytes as zero. Old padding, an unknown format version,
 unknown flag bits or a damaged check byte decode as all options off. The check
 byte detects malformed extension data; the existing save signature mechanism
 still handles the saved variant. `game_variant.flags` is not repurposed.
@@ -183,8 +209,8 @@ still handles the saved variant. `game_variant.flags` is not repurposed.
 ## Host authority and v11 compatibility
 
 The client's reliable connection announces supported subsets before its normal
-join request: the original timer/marker mask, the timer-audio generation, then
-the complete capability set. Earlier PB hosts retain the newest subset they
+join request: the original timer/marker mask, the timer-audio generation, the
+sound-rule generation (mask 31), then the complete set (mask 63). Earlier PB hosts retain the newest subset they
 understand. An unextended v11 host ignores those unknown data messages.
 The updated host keeps capabilities per connection slot and clears them when
 the slot is removed or reused.
@@ -197,14 +223,26 @@ a stale advertisement or direct join cannot bypass the requirement.
 
 The v11 settings record adds 28 bytes; v10 and PB-v10 (`0x800A`) must update.
 Capability flag `0x02` is now upstream's in-progress flag, so PB uses `0x04`.
-The reliable option messages and saved variants are unchanged. Unsupported active
-PC options and mixed five-plus-player infinite-grenade rules are refused; see the
+The saved variant keeps the same six-byte extension. Delay-aware peers announce
+support for the input-delay flag; older PB peers cannot join an enabled-delay
+match. A shared protocol number does not establish matching behavior for other
+upstream gametype rules; see the
 [protocol compatibility policy](xbox-fidelity.md#protocol-compatibility).
 
 Enabling an option, selecting an enabled saved variant, and starting the match
 check the connected peers. An unsupported existing peer causes the host's
 change to be refused with an explanation. Joining clients cannot change the
 host's option state.
+
+Input Delay is locked at match start. The host refuses a request to change its
+flag during play, including a debug-console request. Clients retain the active
+delay flag while applying other live aid changes. Presets and edits to the other
+aids preserve the current delay flag.
+
+The host confirms its delay capability on the reliable connection before the
+settings record. A client enables the saved delay only after this confirmation.
+If an older host loads a newer saved variant containing an unsupported delay
+flag, the client treats that extension as off, matching the older host.
 
 The normal reliable settings record carries the variant before begin-game,
 both for lobby starts and late joins. Live host changes use a separate reliable
@@ -216,7 +254,8 @@ client session clears the effective options.
 ## Debug controls and device settings
 
 Press **F2** for the existing developer console. `pb` shows settings and help;
-`pb stock` disables all options and `pb practice` enables all three. Use
+`pb stock` disables the practice aids and `pb practice` enables the original
+three aids. Both preserve Input Delay. Use
 `pb timer on`, `pb markers off`, or `pb audio toggle` for individual controls.
 Those accept `on`, `off` or `toggle`. Use `pb movement silent` or
 `pb weapons normal` for sound rules; these accept `normal`, `silent` or `toggle`.
@@ -224,8 +263,9 @@ Tab completion is available. Host authority
 and peer capability checks are identical to the pause menu. These are session
 changes; save a game type in Edit Gametypes for future matches.
 
-The diagnostic `performance_options [0..31]` is available, with flags timer `1`,
-markers `2`, audio `4`, silent movement `8` and silent weapons `16`. Status also
+The diagnostic `performance_options [0..63]` is available, with flags timer `1`,
+markers `2`, audio `4`, silent movement `8`, silent weapons `16` and input delay
+`32`. A request to change the delay during play is refused. Status also
 reports per-map sound provenance, muted dispatch counts, timer cue preferences
 and successful cue dispatch counts; these are diagnostic
 counters and do not by themselves prove the audible output.
@@ -254,3 +294,8 @@ Check host/client option changes, admission with incompatible peers, late joins,
 marker filtering, timer schedules, audio and persistence. Fixtures and same-Mac
 runs do not establish physical cross-platform networking, controller navigation,
 long-session stability or reference-Xbox fidelity.
+
+The native editor, pause, and mouse fixtures cover Off/33ms selection, Accept
+and Cancel, preset preservation, unchanged pause controls, and all 64 flag
+combinations. Their tag and widget fixtures do not measure real gameplay input
+timing or rendered camera response.

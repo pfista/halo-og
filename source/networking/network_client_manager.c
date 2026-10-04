@@ -803,6 +803,9 @@ static struct
 	byte flags;
 } network_game_client_advertised_versions[MAXIMUM_NETWORK_ADVERTISED_GAMES];
 
+/* Runtime support confirmed by the selected host's reliable connection. */
+static unsigned network_game_client_performance_host_capabilities;
+
 struct network_game_client network_game_client_dont_use_directly;
 boolean allow_out_of_sync = FALSE;
 boolean network_game_client_dont_use_directly_in_use = FALSE;
@@ -903,6 +906,7 @@ void network_game_client_dispose(
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		network_game_client_directory_cancel();
 #endif
+		network_game_client_performance_host_capabilities = 0;
 		if (client->connection)
 			network_connection_delete(client->connection);
 
@@ -1268,6 +1272,35 @@ void platform_show_message(char const *title, char const *message);
 /* One active client: retain the selected host's original-rule capability. */
 static boolean network_game_client_original_rules_host;
 
+static boolean network_game_client_receive_performance_capability(
+	struct network_game_client const *client,
+	byte const *packet,
+	unsigned size,
+	boolean reliable)
+{
+	unsigned supported;
+	if (!reliable || !network_performance_decode(packet, size,
+		NETWORK_PERFORMANCE_CAPABILITY, &supported))
+		return FALSE;
+	if (!global_network_game_server_get() && client->state >= _network_game_client_state_joining)
+		network_game_client_performance_host_capabilities = supported;
+	return TRUE;
+}
+
+static unsigned network_game_client_performance_settings_flags(
+	struct network_game_client const *client,
+	unsigned flags)
+{
+	if (!global_network_game_server_get())
+		flags = network_performance_host_settings_flags(flags,
+			network_game_client_performance_host_capabilities);
+	/* Live PB controls may change aids, but never the active match's timing. */
+	if (client->state == _network_game_client_state_ingame)
+		flags = (flags & ~_performance_option_input_delay) |
+			(performance_variant_get_flags(&client->game.variant) & _performance_option_input_delay);
+	return flags;
+}
+
 boolean network_game_client_game_settings_updated(
 	struct network_game_client *client,
 	struct network_game *message_packet)
@@ -1285,6 +1318,8 @@ boolean network_game_client_game_settings_updated(
 		VALID_INDEX(message_packet->difficulty, NUMBER_OF_GAME_DIFFICULTY_LEVELS))
 	{
 		struct network_game previous_game;
+		unsigned performance_flags = network_game_client_performance_settings_flags(client,
+			performance_variant_get_flags(&message_packet->variant));
 		char const *unsupported = game_variant_options_unsupported(&message_packet->variant,
 			&message_packet->variant_options);
 
@@ -1305,6 +1340,7 @@ boolean network_game_client_game_settings_updated(
 			display_error_when_main_menu_loaded(_error_network_failed_to_join_game);
 			return FALSE;
 		}
+
 
 		if (csstrcmp(message_packet->map.name, client->game.map.name))
 		{
@@ -1327,6 +1363,10 @@ boolean network_game_client_game_settings_updated(
 
 		csmemcpy(&previous_game, &client->game, sizeof(client->game));
 		csmemcpy(&client->game, message_packet, sizeof(client->game));
+		/* Full settings currently arrive only in pregame, including late
+		 * joins. Keep active timing fixed if another caller applies them. */
+		if (performance_variant_get_flags(&client->game.variant) != performance_flags)
+			performance_variant_set_flags(&client->game.variant, performance_flags);
 		/* The settings precede begin-game on the same reliable stream, for
 		 * both lobby starts and joins in progress. The host's local client
 		 * must not overwrite its own newer authoritative state. */
@@ -2042,6 +2082,7 @@ boolean network_game_client_initiate_join_game(
 		0x157,
 		client && (client->state == _network_game_client_state_searching) && game && join_parameters && client->connection && !network_connection_connected(client->connection) && (game->platform == network_game_get_local_platform()));
 
+	network_game_client_performance_host_capabilities = 0;
 	{
 		long index = game - client->available_games;
 
@@ -2209,6 +2250,7 @@ void network_game_client_reset(
 		0x4EE,
 		client);
 
+	network_game_client_performance_host_capabilities = 0;
 	network_game_invalidate(&client->game);
 
 	client->machine_index = NONE;
@@ -2534,6 +2576,13 @@ static boolean network_game_client_process_incoming_messages(
 	{
 		unsigned performance_flags;
 
+		if (network_game_client_receive_performance_capability(client,
+			(byte const *)message_packet, message_packet_size, reliable))
+		{
+			message_packet_size = sizeof(message_packet);
+			continue;
+		}
+
 		/* Only the established host's reliable stream may change options.
 		 * UDP and client-originated controls never reach this branch. */
 		if (reliable && network_performance_decode((byte const *)message_packet,
@@ -2542,6 +2591,7 @@ static boolean network_game_client_process_incoming_messages(
 			if (!global_network_game_server_get() &&
 				client->state >= _network_game_client_state_pregame)
 			{
+				performance_flags = network_game_client_performance_settings_flags(client, performance_flags);
 				performance_variant_set_flags(&client->game.variant, performance_flags);
 				performance_variant_set_flags(game_engine_get_variant(), performance_flags);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
@@ -2774,20 +2824,26 @@ static boolean network_game_client_idle_joining(
 				struct message_client_join_game_request join_game_request;
 				message_header *message;
 				word capability[NETWORK_PERFORMANCE_MESSAGE_SIZE / sizeof(word)];
-				unsigned supported = NETWORK_PERFORMANCE_SUPPORTED_FLAGS & ~_performance_option_timer_audio;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-				if (halo_performance_audio_available()) supported |= _performance_option_timer_audio;
+				unsigned supported = network_performance_runtime_supported_flags(TRUE, halo_performance_audio_available());
+#else
+				unsigned supported = network_performance_runtime_supported_flags(FALSE, FALSE);
 #endif
 
 				/* Earlier hosts reject unknown capability bits. Announce each
 				 * supported generation first: timer/markers, then timer audio,
-				 * then event-specific sound rules. Each host retains the newest
-				 * capability it understands before the reliable join request. */
+				 * then event-specific sound rules, then input delay. Each host
+				 * retains the newest capability it understands before the
+				 * reliable join request. */
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY, 3);
 				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
 					return FALSE;
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
 					supported & 7);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported & 31);
 				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
 					return FALSE;
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
