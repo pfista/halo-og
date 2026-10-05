@@ -12,6 +12,13 @@ Metal command interface. The native host omits the GL resolver, GL bridge and
 GL performance wrappers, EGL/GLES linking, ANGLE rpaths and ANGLE packaging.
 SDL, Cocoa, Metal, QuartzCore and Sparkle remain.
 
+Visible native explicit-guest launches now establish the normal macOS activation
+policy after SDL creates its application, then raise the window. Hidden windows
+skip this setup. The SDL application subclass continues to handle graceful Quit.
+See [the stutter investigation](metal-stutter-investigation.md) for measurements,
+remaining attribution limits and the refreshed build/playtest checkpoint. Earlier
+checkpoints below retain their original binaries and observations.
+
 Native playtest configurations now have two additional integer settings. They
 use config files, with no environment overrides:
 

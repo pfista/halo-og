@@ -154,6 +154,14 @@ uint32_t host_sdl_create_window(const char *title, int width, int height, int64_
 #ifndef HALO_IOS
         host_menu_style_window(metal_window);
         SDL_SetWindowHitTest(metal_window, window_hit_test, NULL);
+#if defined(HALO_MACOS_NATIVE_METAL)
+        if (!metal_window_hidden) {
+            /* Explicit guest launches let SDL create the application first.
+               Setting its policy here preserves SDL's graceful quit handler. */
+            host_menu_initialize_application();
+            SDL_RaiseWindow(metal_window);
+        }
+#endif
 #endif
 #if defined(HALO_IOS) && !defined(HALO_IOS_MAC_CHECK)
         const SDL_DisplayMode *display = SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(metal_window));
