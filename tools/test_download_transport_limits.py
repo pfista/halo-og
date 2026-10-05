@@ -34,6 +34,7 @@ COMMON = r'''
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "directory_retry_after.h"
 #ifdef _WIN32
 #include <io.h>
 #define access _access
@@ -391,7 +392,8 @@ class DownloadTransportLimitTests(unittest.TestCase):
             source = root / (name + ".c")
             binary = root / (name + (".exe" if sys.platform == "win32" else ""))
             source.write_text(COMMON + fixture, encoding="utf-8")
-            command = ["clang", "-std=gnu11", "-Wall", "-Wextra", "-Werror", *extra_flags]
+            command = ["clang", "-std=gnu11", "-Wall", "-Wextra", "-Werror",
+                       "-I", str(ROOT / "port/linux/src"), *extra_flags]
             if sys.platform == "win32":
                 command += ["-D_CRT_SECURE_NO_WARNINGS"]
             else:
@@ -434,36 +436,124 @@ static int connection_write(struct connection *c, const char *data, size_t size)
 ''')
         cases = r'''
 int main(int argc,char **argv) {
-    (void)argc;(void)argv;(void)progress; char buffer[32],token[65]; int status;
+    (void)argc;(void)argv;(void)progress; char buffer[32],token[65]; int status, retry_after_seconds=99;
     memset(token,'a',64);token[64]=0;
     response="HTTP/1.1 201 Created\r\nContent-Length: 2\r\n\r\n{}";
-    assert(halo_directory_http("POST","https://example.test/v1/games",NULL,"{}",buffer,sizeof(buffer),&status)==2);
-    assert(status==201 && !strcmp(buffer,"{}") && strstr(sent_headers,"Content-Length: 2\r\n"));
+    assert(halo_directory_http("POST","https://example.test/v1/games",NULL,"{}",buffer,sizeof(buffer),&status,&retry_after_seconds)==2);
+    assert(status==201 && retry_after_seconds==0 && !strcmp(buffer,"{}") && strstr(sent_headers,"Content-Length: 2\r\n"));
     response="HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\n\r\n{}";
-    assert(halo_directory_http("PUT","https://example.test/v1/games/id",token,"{}",buffer,sizeof(buffer),&status)==2);
+    assert(halo_directory_http("PUT","https://example.test/v1/games/id",token,"{}",buffer,sizeof(buffer),&status,&retry_after_seconds)==2);
     assert(status==403 && strstr(sent_headers,"Authorization: Bearer aaaa"));
     assert(!strstr(sent_headers,"/id?"));
     response="HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n";
-    assert(halo_directory_http("DELETE","https://example.test/v1/games/id",token,NULL,buffer,sizeof(buffer),&status)==0 && status==204);
+    assert(halo_directory_http("DELETE","https://example.test/v1/games/id",token,NULL,buffer,sizeof(buffer),&status,&retry_after_seconds)==0 && status==204);
     response="HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n";
-    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,7,&status)==6 && !strcmp(buffer,"abcdef"));
-    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,6,&status)==-1);
+    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,7,&status,&retry_after_seconds)==6 && !strcmp(buffer,"abcdef"));
+    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,6,&status,&retry_after_seconds)==-1 && status==200);
     response="HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n";
-    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,sizeof(buffer),&status)==-1);
+    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,sizeof(buffer),&status,&retry_after_seconds)==-1 && status==200);
     response="HTTP/1.1 302 Found\r\nLocation: https://elsewhere.test/\r\nContent-Length: 0\r\n\r\n";opens=0;
-    assert(halo_directory_http("PUT","https://example.test/v1/games/id",token,"{}",buffer,sizeof(buffer),&status)==0 && status==302 && opens==1);
+    assert(halo_directory_http("PUT","https://example.test/v1/games/id",token,"{}",buffer,sizeof(buffer),&status,&retry_after_seconds)==0 && status==302 && opens==1);
+    response="HTTP/1.1 429 Too Many Requests\r\nrEtRy-AfTeR: \t30 \t\r\nContent-Length: 2\r\n\r\n{}";
+    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,sizeof(buffer),&status,&retry_after_seconds)==2);
+    assert(status==429 && retry_after_seconds==30 && !strcmp(buffer,"{}"));
+    response="HTTP/1.1 503 Service Unavailable\r\nRetry-After: 99999999999999999999999999999999\r\nContent-Length: 40\r\n\r\n";
+    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,sizeof(buffer),&status,&retry_after_seconds)==-1);
+    assert(status==503 && retry_after_seconds==300);
+    response="HTTP/1.1 429 Too Many Requests\r\nRetry-After: 30junk\r\nContent-Length: 2\r\n\r\n{}";
+    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,sizeof(buffer),&status,&retry_after_seconds)==2 && retry_after_seconds==0);
+    response="HTTP/1.1 429 Too Many Requests\r\nRetry-After: 30\r\nContent-Length: 6\r\n\r\n{}";
+    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,sizeof(buffer),&status,&retry_after_seconds)==-1);
+    assert(status==429 && retry_after_seconds==30);
     opens=0;
-    assert(halo_directory_http("GET","https://example.test/\r\nInjected: yes",NULL,NULL,buffer,sizeof(buffer),&status)==-1 && !opens);
-    assert(halo_directory_http("PUT","https://example.test/id","bad\r\nheader","{}",buffer,sizeof(buffer),&status)==-1 && !opens);
+    retry_after_seconds=99;
+    assert(halo_directory_http("GET","https://example.test/\r\nInjected: yes",NULL,NULL,buffer,sizeof(buffer),&status,&retry_after_seconds)==-1 && !opens);
+    assert(status==0 && retry_after_seconds==0);
+    assert(halo_directory_http("PUT","https://example.test/id","bad\r\nheader","{}",buffer,sizeof(buffer),&status,&retry_after_seconds)==-1 && !opens);
     crypto_ready=0;
-    assert(halo_directory_http("GET","https://example.test/id",NULL,NULL,buffer,sizeof(buffer),&status)==-1 && !opens);
+    assert(halo_directory_http("GET","https://example.test/id",NULL,NULL,buffer,sizeof(buffer),&status,&retry_after_seconds)==-1 && !opens);
     crypto_ready=1;certificates_loaded=0;
-    assert(halo_directory_http("GET","https://example.test/id",NULL,NULL,buffer,sizeof(buffer),&status)==-1 && !opens);
+    assert(halo_directory_http("GET","https://example.test/id",NULL,NULL,buffer,sizeof(buffer),&status,&retry_after_seconds)==-1 && !opens);
     assert(progressed==0 && body_reads>0); /* Directory transfers never invoke file progress. */
     puts("PASS directory JSON methods, lease headers, status bodies, bounds, no redirects");
 }
 '''
         self.compile_and_run("directory", "#define HALO_DIRECTORY_BODY_LIMIT (256*1024)\n" + transport + "\n".join(pieces) + cases)
+
+    def test_retry_after_delta_seconds_are_bounded_and_strict(self):
+        cases = r'''
+int main(int argc, char **argv) {
+    (void)argc; (void)argv; (void)progress;
+    assert(halo_directory_retry_after_seconds(NULL)==0);
+    assert(halo_directory_retry_after_seconds("0")==0);
+    assert(halo_directory_retry_after_seconds(" \t30 \t")==30);
+    assert(halo_directory_retry_after_seconds("000030")==30);
+    assert(halo_directory_retry_after_seconds("299")==299);
+    assert(halo_directory_retry_after_seconds("300")==300);
+    assert(halo_directory_retry_after_seconds("301")==300);
+    assert(halo_directory_retry_after_seconds("99999999999999999999999999999999999999999999")==300);
+    const char *invalid[]={"", " ", "-30", "+30", "30x", "30,60", "30 60", "30\r\n", "1.5", "Mon, 05 Oct 2026 12:00:00 GMT"};
+    for (unsigned i=0;i<sizeof(invalid)/sizeof(*invalid);i++) assert(halo_directory_retry_after_seconds(invalid[i])==0);
+    puts("PASS strict bounded numeric Retry-After parser");
+    return 0;
+}
+'''
+        self.compile_and_run("retry-after", cases)
+
+    def test_windows_directory_reports_retry_after_even_when_body_fails(self):
+        source = (ROOT / "port/windows/src/win32_directory_http.c").read_text(encoding="utf-8")
+        query = function(WINDOWS, "static BOOL WinHttpQueryHeaders(")
+        replacement = query.replace("    (void)h; (void)name; (void)index;", r'''
+    (void)h; (void)index;
+    if (query==WINHTTP_QUERY_CUSTOM) {
+        assert(!wcscmp(name,L"Retry-After"));
+        if (!retry_header) return 0;
+        size_t needed=(wcslen(retry_header)+1)*sizeof(wchar_t);
+        if (needed>*size) return 0;
+        memcpy(output,retry_header,needed); *size=(DWORD)(needed-sizeof(wchar_t)); return 1;
+    }
+''')
+        transport = WINDOWS.replace(query, replacement)
+        transport = transport.replace("assert(!wcscmp(verb, L\"GET\") && flags == WINHTTP_FLAG_SECURE)",
+                                      "assert(verb[0] && flags == WINHTTP_FLAG_SECURE)")
+        transport = r'''
+#define MB_ERR_INVALID_CHARS 8
+#define WINHTTP_ADDREQ_FLAG_ADD 0x20000000
+#define WINHTTP_QUERY_CUSTOM 65535
+#define HALO_DIRECTORY_BODY_LIMIT (256*1024)
+static const wchar_t *retry_header;
+''' + transport + r'''
+static BOOL WinHttpAddRequestHeaders(HINTERNET request,const wchar_t *headers,DWORD size,DWORD flags)
+{ (void)request; assert(headers && size==(DWORD)-1 && flags==WINHTTP_ADDREQ_FLAG_ADD); return 1; }
+'''
+        cases = r'''
+static int request(char *output, int capacity, int *status, int *retry) {
+    body_at=0; sent=0; reads=0;
+    return halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,output,capacity,status,retry);
+}
+int main(int argc,char **argv) {
+    (void)argc;(void)argv;(void)progress;
+    char output[32]; int status=99,retry=99;
+    read_chunk=3; status_code=429; body="{}"; retry_header=L" \t30 \t";
+    assert(request(output,sizeof(output),&status,&retry)==2 && status==429 && retry==30 && !strcmp(output,"{}"));
+    body="a body beyond the buffer"; retry_header=L"9999999999999999999999999999999";
+    assert(request(output,8,&status,&retry)==-1 && status==429 && retry==300);
+    body="{}"; retry_header=L"30junk";
+    assert(request(output,sizeof(output),&status,&retry)==2 && retry==0);
+    retry_header=L"\u03b1";
+    assert(request(output,sizeof(output),&status,&retry)==2 && retry==0);
+    retry_header=NULL;
+    assert(request(output,sizeof(output),&status,&retry)==2 && retry==0);
+    retry_header=L"30"; body="truncated"; fail_read=1;
+    assert(request(output,sizeof(output),&status,&retry)==-1 && status==429 && retry==30);
+    fail_read=0; status=99; retry=99;
+    assert(halo_directory_http("GET","https://example.test",NULL,NULL,output,1,&status,&retry)==-1 && status==0 && retry==0);
+    puts("PASS Windows directory Retry-After, body failures, and output reset");
+    return 0;
+}
+'''
+        self.compile_and_run("windows-directory", transport + function(source, "int halo_directory_http(") + cases,
+                             extra_flags=("-Wno-unused-function",))
 
     def test_windows_production_header_limits_and_request_flags(self):
         source = (ROOT / "port/windows/src/win32_update.c").read_text(encoding="utf-8")

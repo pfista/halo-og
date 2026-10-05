@@ -27,7 +27,7 @@ def main():
         ], cwd=ROOT, check=True)
         lib = ctypes.CDLL(str(library))
         lib.halo_directory_http.argtypes = [ctypes.c_char_p] * 4 + [
-            ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+            ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
         lib.halo_directory_parse_games.argtypes = [ctypes.c_char_p, ctypes.c_int,
                                                     ctypes.POINTER(Game), ctypes.c_int]
         lib.halo_directory_encode.argtypes = [ctypes.POINTER(Game), ctypes.c_char_p, ctypes.c_int]
@@ -35,8 +35,9 @@ def main():
         def request(method, path, body=None, lease=None, capacity=256 * 1024):
             buffer = ctypes.create_string_buffer(capacity)
             status = ctypes.c_int()
+            retry_after_seconds = ctypes.c_int()
             count = lib.halo_directory_http(method.encode(), (BASE + path).encode(), lease,
-                                            body, buffer, capacity, ctypes.byref(status))
+                                            body, buffer, capacity, ctypes.byref(status), ctypes.byref(retry_after_seconds))
             assert count >= 0, "Native HTTPS request failed"
             return status.value, buffer.raw[:count]
 
@@ -65,7 +66,7 @@ def main():
             # A tiny buffer must fail instead of overflowing or truncating JSON.
             buffer = ctypes.create_string_buffer(8); code = ctypes.c_int()
             assert lib.halo_directory_http(b"GET", (BASE + "/v1/games").encode(), None,
-                                            None, buffer, 8, ctypes.byref(code)) == -1
+                                            None, buffer, 8, ctypes.byref(code), None) == -1
             print("PASS native response cap")
         finally:
             assert request("DELETE", path, lease=token)[0] in (204, 404)

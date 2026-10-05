@@ -23,7 +23,10 @@ void game_directory_set_invite(const char *invite);
 void game_directory_publish(const char *name, const char *map, int engine,
     int players, int maximum, int version, int open, int in_progress, int teams,
     int score_limit, int oddball_variant, int enabled);
+/* Refresh the visibility lease from each rendered game-list update. */
 void game_directory_browse(int enabled);
+/* Foreground discovery only; public-host lease renewals stay independent. */
+void game_directory_set_foreground(int enabled);
 int game_directory_snapshot(struct halo_directory_game *games, int capacity);
 
 /* Synchronous only on a directory worker. Certificate/hostname verification,
@@ -33,6 +36,6 @@ int game_directory_snapshot(struct halo_directory_game *games, int capacity);
 #define halo_directory_http host_halo_directory_http
 #endif
 int halo_directory_http(const char *method, const char *url, const char *lease,
-    const char *body, char *response, int capacity, int *status);
+    const char *body, char *response, int capacity, int *status, int *retry_after_seconds);
 
 #endif

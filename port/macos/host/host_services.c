@@ -23,12 +23,13 @@ int host_halo_map_download_request(const char *map_name)
 }
 
 int host_halo_directory_http(const char *method, const char *url, const char *lease,
-    const char *body, char *response, int capacity, int *status)
+    const char *body, char *response, int capacity, int *status, int *retry_after_seconds)
 {
 #ifdef HALO_IOS
     if (status) *status = 0;
+    if (retry_after_seconds) *retry_after_seconds = 0;
     return -1;
 #else
-    return halo_directory_http(method, url, lease, body, response, capacity, status);
+    return halo_directory_http(method, url, lease, body, response, capacity, status, retry_after_seconds);
 #endif
 }

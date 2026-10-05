@@ -46,7 +46,10 @@ struct network_advertised_game *network_game_client_get_directory_games(
     long i, j, input_count;
     *count = 0;
     directory_game_count = 0;
-    if (!client || client->state != _network_game_client_state_searching) return directory_games;
+    if (!client || client->state != _network_game_client_state_searching) {
+        game_directory_browse(FALSE);
+        return directory_games;
+    }
     game_directory_browse(TRUE);
     input_count = game_directory_snapshot(snapshot, HALO_DIRECTORY_MAX_GAMES);
     csmemset(directory_games, 0, sizeof(directory_games));

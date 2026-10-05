@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #include "game_directory.h"
+#include "directory_retry_after.h"
 #include <string.h>
 
 @interface HaloDirectoryTransfer : NSObject <NSURLSessionDataDelegate>
@@ -7,6 +8,7 @@
 @property(nonatomic, strong) dispatch_semaphore_t done;
 @property(nonatomic) NSInteger capacity;
 @property(nonatomic) NSInteger status;
+@property(nonatomic) int retryAfterSeconds;
 @property(nonatomic) BOOL failed;
 @end
 @implementation HaloDirectoryTransfer
@@ -18,6 +20,8 @@
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)task
     didReceiveResponse:(NSURLResponse *)response completionHandler:(void (^)(NSURLSessionResponseDisposition))handler {
     self.status = [response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)response).statusCode : 0;
+    NSString *retryAfter = self.status ? [(NSHTTPURLResponse *)response valueForHTTPHeaderField:@"Retry-After"] : nil;
+    self.retryAfterSeconds = halo_directory_retry_after_seconds(retryAfter.UTF8String);
     self.failed = !self.status || response.expectedContentLength >= self.capacity;
     handler(self.failed ? NSURLSessionResponseCancel : NSURLSessionResponseAllow);
 }
@@ -32,10 +36,11 @@
 @end
 
 int halo_directory_http(const char *method, const char *url, const char *lease,
-    const char *body, char *response, int capacity, int *status) {
+    const char *body, char *response, int capacity, int *status, int *retry_after_seconds) {
     @autoreleasepool {
-        *status = 0;
-        if (capacity < 2 || capacity > HALO_DIRECTORY_BODY_LIMIT || (body && strlen(body) > 4096) ||
+        if (status) *status = 0;
+        if (retry_after_seconds) *retry_after_seconds = 0;
+        if (!status || !method || !url || !response || capacity < 2 || capacity > HALO_DIRECTORY_BODY_LIMIT || (body && strlen(body) > 4096) ||
             (lease && *lease && (strlen(lease) != 64 || strspn(lease, "0123456789abcdef") != 64))) return -1;
         NSURL *endpoint = [NSURL URLWithString:@(url)];
         if (![endpoint.scheme isEqualToString:@"https"] || !endpoint.host.length || endpoint.user || endpoint.password) return -1;
@@ -55,9 +60,13 @@ int halo_directory_http(const char *method, const char *url, const char *lease,
         if (lease && *lease) [request setValue:[@"Bearer " stringByAppendingString:@(lease)] forHTTPHeaderField:@"Authorization"];
         [[session dataTaskWithRequest:request] resume];
         int result = -1;
-        if (!dispatch_semaphore_wait(transfer.done, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)) && !transfer.failed) {
-            result = (int)transfer.data.length; memcpy(response, transfer.data.bytes, (unsigned)result);
-            response[result] = 0; *status = (int)transfer.status;
+        if (!dispatch_semaphore_wait(transfer.done, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC))) {
+            *status = (int)transfer.status;
+            if (retry_after_seconds) *retry_after_seconds = transfer.retryAfterSeconds;
+            if (!transfer.failed) {
+                result = (int)transfer.data.length; memcpy(response, transfer.data.bytes, (unsigned)result);
+                response[result] = 0;
+            }
         }
         [session invalidateAndCancel];
         return result;

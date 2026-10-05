@@ -971,6 +971,31 @@ static void difficulty_select_menu_update_extended_description(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static struct network_advertised_game *server_list_directory_games(
+	struct widget_instance *widget,
+	struct network_game_client *client,
+	long *count)
+{
+	struct widget_instance *ancestor;
+	*count = 0;
+	/* Game-data inputs run before the renderer's visibility check. Do not
+	   keep internet discovery active for a hidden list or a hidden parent. */
+	for (ancestor = widget; ancestor; ancestor = ancestor->parent)
+		if (!ancestor->visible)
+		{
+			game_directory_browse(FALSE);
+			return NULL;
+		}
+	if (!client)
+	{
+		game_directory_browse(FALSE);
+		return NULL;
+	}
+	return network_game_client_get_directory_games(client, count);
+}
+#endif
+
 static void server_list_menu_update(
 	struct widget_instance *widget)
 {
@@ -985,6 +1010,10 @@ static void server_list_menu_update(
 #endif
 	struct network_game_client *client = global_network_game_client_get();
 	long displayed_server_count = 0;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	long directory_count;
+	struct network_advertised_game *directory_servers = server_list_directory_games(widget, client, &directory_count);
+#endif
 
 	csmemset(
 		displayed_servers,
@@ -996,10 +1025,6 @@ static void server_list_menu_update(
 			widget->definition_tag_index);
 		struct network_advertised_game *available_games =
 			network_game_client_get_available_games(client);
-#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-		long directory_count;
-		struct network_advertised_game *directory_servers = network_game_client_get_directory_games(client, &directory_count);
-#endif
 		struct widget_instance *item;
 		unsigned long milliseconds_since_creation;
 		long game_index;

@@ -66,19 +66,19 @@ class IOSServiceStubTests(unittest.TestCase):
 #include <string.h>
 int host_halo_map_download_directory(char *, size_t);
 int host_halo_map_download_request(const char *);
-int host_halo_directory_http(const char *, const char *, const char *, const char *, char *, int, int *);
+int host_halo_directory_http(const char *, const char *, const char *, const char *, char *, int, int *, int *);
 int main(void) {
     char output[32] = "unchanged";
-    int status = 201;
+    int status = 201, retry_after_seconds = 30;
     assert(host_halo_map_download_directory(output, sizeof(output)) == 0);
     assert(!strcmp(output, "unchanged"));
     assert(host_halo_map_download_directory(NULL, 0) == 0);
     assert(host_halo_map_download_request("downrush") == 0);
     assert(host_halo_map_download_request(NULL) == 0);
     assert(host_halo_directory_http("GET", "https://fixture.invalid", NULL, NULL,
-                                   output, sizeof(output), &status) == -1);
-    assert(status == 0 && !strcmp(output, "unchanged"));
-    assert(host_halo_directory_http(NULL, NULL, NULL, NULL, NULL, 0, NULL) == -1);
+                                   output, sizeof(output), &status, &retry_after_seconds) == -1);
+    assert(status == 0 && retry_after_seconds == 0 && !strcmp(output, "unchanged"));
+    assert(host_halo_directory_http(NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL) == -1);
     return 0;
 }
 '''

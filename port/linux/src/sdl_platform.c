@@ -15,6 +15,7 @@ and the debug keyboard that the game's console reads.
 #include "port_config.h"
 #include "input_bindings.h"
 #include "p2p.h"
+#include "game_directory.h"
 #include "xiso.h"
 #include "posix.h"
 #include "community_maps_download.h"
@@ -38,6 +39,15 @@ static SDL_Window *platform_window;
 static SDL_GLContext platform_gl_context;
 static SDL_ThreadID platform_event_thread;
 static BOOL platform_sdl_started = FALSE;
+
+/* Discovery is useful only while the game window can be seen and used.
+   Public-host lease renewal is independent of this foreground gate. */
+static void platform_directory_foreground_update(void)
+{
+	Uint64 flags = platform_window ? SDL_GetWindowFlags(platform_window) : 0;
+	game_directory_set_foreground((flags & SDL_WINDOW_INPUT_FOCUS) &&
+		!(flags & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)));
+}
 
 static struct platform_input_state input_state;
 /* keys pressed since the last read, so a press and release between two
@@ -508,6 +518,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 		platform_log("SDL_CreateWindow failed: %s", SDL_GetError());
 		return FALSE;
 	}
+	platform_directory_foreground_update();
 	platform_gl_context = SDL_GL_CreateContext(platform_window);
 #ifdef HALO_ANDROID
 	/* ES 3.2 where the driver has it, otherwise the renderer makes do with
@@ -1033,14 +1044,24 @@ void platform_pump_events(void)
 			memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
 #endif
 			input_state.focused = FALSE;
+			game_directory_set_foreground(FALSE);
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_GAINED:
 			input_state.focused = TRUE;
+			platform_directory_foreground_update();
 			look_at_clipboard = TRUE;
 #if !defined(HALO_ANDROID)
 			if (!input_state.mouse_released && !input_state.ui_pointer)
 				platform_mouse_capture(TRUE);
 #endif
+			break;
+		case SDL_EVENT_WINDOW_MINIMIZED:
+		case SDL_EVENT_WINDOW_HIDDEN:
+			game_directory_set_foreground(FALSE);
+			break;
+		case SDL_EVENT_WINDOW_RESTORED:
+		case SDL_EVENT_WINDOW_SHOWN:
+			platform_directory_foreground_update();
 			break;
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 		case SDL_EVENT_USER:

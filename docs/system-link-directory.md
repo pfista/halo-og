@@ -9,7 +9,8 @@ updated. It uses the original Xbox-style **Multiplayer → System Link** menu.
 2. On the host, open **Multiplayer → System Link**, select a profile, create a
    game, and choose its map/mode. Leave Halo running.
 3. On the other machine, open **Multiplayer → System Link**. The host should
-   appear after a few seconds; listings refresh about every five seconds.
+   appear promptly after entering the list; listings then refresh about every
+   ten seconds while the list is visible and Halo is in the foreground.
 4. Select the game. **Connecting…** means the client is establishing the P2P
    connection. When the real host advertisement arrives, the normal lobby opens.
 5. Start the match after everyone joins. For an Internet test, use separate
@@ -25,6 +26,16 @@ Public listings include the game name, map, mode, player counts, and an invite
 usable by anyone who can see the listing. A host renews its listing every 30
 seconds and when metadata changes. Stopped/crashed games disappear within 90
 seconds; ordinary hosting disposal requests immediate removal.
+
+Entering the list or returning to Halo requests a fresh listing immediately,
+subject to network latency and any server retry delay. Leaving the list,
+joining a game, hiding/minimizing Halo, or switching to another app pauses
+listing requests. A public host still renews its listing during gameplay and
+while Halo is in the background so late-join games remain discoverable.
+New games created while the list is already open appear on the next ten-second
+refresh. Failed requests use increasing retry delays with jitter and respect
+the directory's numeric `Retry-After` header; reopening the list cannot bypass
+that delay.
 
 ## Private hosting and other directories
 
@@ -61,6 +72,14 @@ transport. Responses are bounded, certificates/hostnames are verified, and
 directory requests never follow redirects. Linux serializes TLS with map/update
 transfers because its current PSA backend has no threading support; a slow map
 download can temporarily delay directory refresh/heartbeats.
+Discovery requires a rendered, visible list update within the preceding second.
+Entry/focus generations ensure quick reopening triggers a fresh request and
+prevent an older request from repopulating a new page visit. Healthy public
+hosts renew every 30 seconds; changed metadata is coalesced to at most one
+update per five seconds. Failed lease renewals retry with a shorter backoff
+than failed browsing/registration, unless the server requests a longer delay.
+The service filters expired listings in read queries and leaves physical
+cleanup to its expiry alarm and registration transaction.
 
 Only compatible protocol 11/optional PB-capable listings are displayed. Public
 metadata is untrusted: selecting a row must establish the authenticated P2P peer
@@ -74,13 +93,15 @@ than displayed as zero. A failed listing withdrawal retains the lease for retry
 or renewal, preventing a restart from creating a second live listing.
 
 Tests cover production parsing, response caps, lease headers, authenticated-peer
-and actual-advertisement gating, LAN deduplication, timeout and cancellation.
+and actual-advertisement gating, LAN deduplication, timeout and cancellation,
+visible/foreground-only polling, immediate entry/resume, throttling, stale
+responses, host renewal in the background, and expiry without read-side cleanup.
 The local Mac build, live native HTTP smoke, and real Mac host registration and
 renewal passed. A two-instance invite smoke did not establish a match; physical
 two-Mac and cross-platform gameplay remain required playtests. Compilation and
 directory registration alone do not prove that a given NAT pairing can join.
 
-Run `python3 -m unittest tools.test_game_directory tools.test_game_directory_worker tools.test_download_transport_limits`
+Run `python3 -m unittest tools.test_game_directory tools.test_game_directory_worker tools.test_game_directory_ui tools.test_macos_input tools.test_download_transport_limits tools.test_macos_directory_http tools.test_macos_service_imports`
 for fixtures. On Mac, `python3 tools/macos_directory_smoke.py` tests the live
 native HTTP adapter and removes its synthetic listing. Service details are in
 [the directory service README](../services/game-directory/README.md).
