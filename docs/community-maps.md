@@ -73,6 +73,10 @@ See [publishing](map-publishing.md) for the operator workflow.
 
 ## Reproduce the imports
 
+For new cache formats or custom weapon sets, use the separate
+[conversion guide](community-map-conversion.md). Its authored-first workspace
+and reviewed overlays differ from the stock-first H1PB policy below.
+
 Run from the repository root and choose fresh output directories under `build/`.
 Supply the source package's `maps/` and `tags/` and your own original NTSC caches
 (`assets/maps` by default, or `--stock-maps`). Never run executables supplied by
