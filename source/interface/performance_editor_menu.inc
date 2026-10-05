@@ -70,8 +70,8 @@ static long pb_editor_register(char const *name, struct ui_widget_definition *de
 
 static boolean pb_editor_build(void)
 {
-    static char const *const labels[] = {"PERFORMANCE OPTIONS", "PRESET:", "MATCH TIMER:", "SPAWN MARKERS:", "TIMER SOUNDS:",
-        "MOVEMENT SOUNDS:", "WEAPON SOUNDS:", "INPUT DELAY:", "HARDCORE:", "PERFORMANCE OPTIONS"};
+    static char const *const labels[] = {"PERFORMANCE", "PRESET:", "MATCH TIMER:", "SPAWN MARKERS:", "TIMER SOUNDS:",
+        "MOVEMENT SOUNDS:", "WEAPON SOUNDS:", "INPUT DELAY:", "HARDCORE:", "PERFORMANCE"};
     static char const *const presets[] = {"STOCK", "PRACTICE", "CUSTOM"};
     static char const *const toggles[] = {"OFF", "ON"};
     static char const *const sounds[] = {"NORMAL", "SILENT"};
@@ -97,12 +97,10 @@ static boolean pb_editor_build(void)
     static char const *const row_names[] = {"ui\\native_pb\\preset_row", "ui\\native_pb\\timer_row", "ui\\native_pb\\markers_row", "ui\\native_pb\\audio_row", "ui\\native_pb\\movement_row", "ui\\native_pb\\weapon_row", "ui\\native_pb\\delay_row", "ui\\native_pb\\hardcore_row"};
     static char const *const label_names[] = {"ui\\native_pb\\preset_label", "ui\\native_pb\\timer_label", "ui\\native_pb\\markers_label", "ui\\native_pb\\audio_label", "ui\\native_pb\\movement_label", "ui\\native_pb\\weapon_label", "ui\\native_pb\\delay_label", "ui\\native_pb\\hardcore_label"};
     static char const *const spinner_names[] = {"ui\\native_pb\\preset_spinner", "ui\\native_pb\\timer_spinner", "ui\\native_pb\\markers_spinner", "ui\\native_pb\\audio_spinner", "ui\\native_pb\\movement_spinner", "ui\\native_pb\\weapon_spinner", "ui\\native_pb\\delay_spinner", "ui\\native_pb\\hardcore_spinner"};
-    long labels_tag, presets_tag, toggles_tag, sounds_tag, delays_tag, help_tag, small_font, i, tag;
+    long labels_tag, presets_tag, toggles_tag, sounds_tag, delays_tag, help_tag, i, tag;
     struct ui_widget_definition *preview_text;
     struct string_list *original_strings;
     pb_editor.ready = FALSE;
-    small_font = tag_loaded(FONT_GROUP_TAG, "ui\\small_ui");
-    if (small_font == NONE) return FALSE;
     if (!pb_editor_clone(&pb_editor.root, PB_EDIT_PATH) ||
         !pb_editor_clone(&pb_editor.list, PB_EDIT_PREFIX "playlist_edit\\edit_playlist_select_list") ||
         !pb_editor_clone(&pb_editor.entry, PB_EDIT_PREFIX "playlist_edit\\playlist_edit_indicators_item") ||
@@ -211,8 +209,6 @@ static boolean pb_editor_build(void)
     if (tag == NONE) return FALSE;
     pb_editor.entry.text_label_string_list = pb_editor_reference(UNICODE_STRING_LIST_TAG, labels_tag);
     pb_editor.entry.string_list_index = 0;
-    /* The full name exceeds large_ui's 219-pixel inset text area. */
-    pb_editor.entry.text_font = pb_editor_reference(FONT_GROUP_TAG, small_font);
     pb_editor.entry.bounds.y0 += 33; pb_editor.entry.bounds.y1 += 33;
     memcpy(pb_editor.entry_events, pb_editor.entry.event_handlers.address, sizeof(pb_editor.entry_events));
     for (i = 0; i < 2; i++) pb_editor.entry_events[i].widget_tag = pb_editor_reference(UI_WIDGET_DEFINITION_TAG, tag);

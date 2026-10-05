@@ -7,10 +7,10 @@ reliability and map-conversion changes remain uncommitted; no release is implied
 | Feedback | Result |
 | --- | --- |
 | Controller bumpers reversed | Left bumper switches grenade type; right bumper toggles flashlight. Shared SDL mapping and iOS touch equivalents agree. Keyboard bindings retain their choices. |
-| PB Options label | Game-type editor, pause menu and selection cards use Performance Options. The resident small font fits the longer caption inside the original widgets. |
+| PB Options label | Game-type editor entry and heading use Performance with the original regular font. Pause uses Performance Options with its resident small font; selection cards identify active performance options. |
 | Map-set settings | Game Settings → Multiplayer has OG Maps and Community Maps. Both default On. Filters affect hosting choices; hidden caches remain usable for joining and approved downloads. Empty lists fall back to OG maps. |
 | Disable joining during a match | Game Settings → Multiplayer → Join In Progress, default On. Off closes the shared running-game admission/advertisement gate while preserving pregame joining and existing players. |
-| Hardcore precision spread | Performance Options → Hardcore, default Off. Pistol and unscoped sniper initial spread becomes zero; maximum spread, buildup, recovery and firing RNG calls remain. Campaign, AI, secondary triggers and other weapon roles retain their original behavior. |
+| Hardcore precision spread | Edit Gametypes → Performance → Hardcore, default Off. Pistol and unscoped sniper initial spread becomes zero; maximum spread, buildup, recovery and firing RNG calls remain. Campaign, AI, secondary triggers and other weapon roles retain their original behavior. |
 | Pistol hollow-metal impact | Canonical loaded pistol projectile replaces only its stock hollow-metal default effect reference with the existing thick-metal reference. Custom authored replacements are preserved. |
 | Overshield collision material | Canonical loaded overshield collision changes dirt materials to Engineer Force Field; existing fixes and other materials are preserved. |
 | One-tick delay | Already implemented as Input Delay: Off / 33ms; retained. |
@@ -96,5 +96,5 @@ tagged or released.
 to `AGENTS.md`. Release changelogs already preserve these subjects directly.
 Each intermediate code commit was tested from an exported staged tree before
 commit, with later features absent. The complete committed meeting-feature
-tree also passes the targeted 107-test suite. The installed app's BuildInfo
-continues to identify the pre-commit build described above.
+tree also passes the targeted 107-test suite. The first-pass installed app's
+BuildInfo identified the pre-commit build described above.

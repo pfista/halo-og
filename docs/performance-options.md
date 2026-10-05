@@ -9,8 +9,8 @@ independent of the practice aids and applies to every player.
 
 ## Game type editor and pause menu
 
-In **Multiplayer → Edit Gametypes → select a game type**, **Performance Options** appears
-below **Indicator Options**. The submenu is titled **Performance Options**.
+In **Multiplayer → Edit Gametypes → select a game type**, **Performance** appears
+below **Indicator Options**. The submenu is titled **Performance**.
 Its native game widgets use the existing menu fonts, navigation and help text.
 Choose a preset or change the options individually. Game-type selection cards
 show **Hardcore: On** when Hardcore is enabled, or **Performance options active**

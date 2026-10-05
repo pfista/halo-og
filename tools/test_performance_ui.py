@@ -116,6 +116,8 @@ static void setup(void) {
     stock.defs[LIST_TAG].extended_description_widget=ref(PREVIEW_TAG);
     stock.list_input.function=3; stock.defs[LIST_TAG].game_data_inputs=(struct tag_block){1,&stock.list_input,NULL};
     stock.defs[ENTRY_TAG].type=1; stock.defs[ENTRY_TAG].bounds=(rectangle2d){210,51,242,283};
+    stock.defs[ENTRY_TAG].text_font.group_tag=FONT_GROUP_TAG;
+    stock.defs[ENTRY_TAG].text_font.index=0x45670001;
     stock.defs[SAVE_TAG].type=1; stock.defs[SAVE_TAG].bounds=(rectangle2d){243,51,275,283};
     for(unsigned i=0;i<2;i++) {
         stock.entry_events[i]=(struct ui_widget_event_handler_reference){.flags=8,.event_type=i ? 12:0,.widget_tag=ref(SCREEN_TAG)};
@@ -192,11 +194,11 @@ static void shapes_and_preservation(void) {
     assert(pb_editor.root_children[1].widget_tag.index==pb_editor.list_tag && pb_editor.root_children[7].vertical_offset==285);
     for(unsigned i=0;i<5;i++) assert(!memcmp(&pb_editor.list_children[i],&stock.list[i],sizeof(stock.list[0])));
     assert(ui_widget_definition_get(pb_editor.list_children[5].widget_tag.index)==&pb_editor.entry);
-    assert(!wcscmp(string_at(&pb_editor.entry,0),L"PERFORMANCE OPTIONS"));
-    assert(pb_editor.entry.text_font.index==stock_id(SMALL_FONT_TAG));
+    assert(!wcscmp(string_at(&pb_editor.entry,0),L"PERFORMANCE"));
+    assert(!memcmp(&pb_editor.entry.text_font,&stock.defs[ENTRY_TAG].text_font,sizeof(struct tag_reference)));
     assert(unicode_string_list_definition_get(pb_editor.heading.text_label_string_list.index)->strings.count==10);
     assert(pb_editor.heading.string_list_index==9);
-    assert(!wcscmp(string_at(&pb_editor.heading,pb_editor.heading.string_list_index),L"PERFORMANCE OPTIONS"));
+    assert(!wcscmp(string_at(&pb_editor.heading,pb_editor.heading.string_list_index),L"PERFORMANCE"));
     assert(pb_editor.entry.bounds.y0==243 && pb_editor.entry.bounds.y1==275);
     assert(pb_editor.list_children[6].widget_tag.index==stock_id(SAVE_TAG) && pb_editor.list_children[6].vertical_offset==53);
     assert(pb_editor.entry.bounds.y1<stock.defs[SAVE_TAG].bounds.y0+pb_editor.list_children[6].vertical_offset);
@@ -394,7 +396,8 @@ static void registration_and_reload(void) {
     setup(); stock.strings.strings.count=5;
     assert(performance_editor_remap_tag(stock_id(ROOT_TAG))==stock_id(ROOT_TAG) && !register_calls);
     setup(); stock_tags[SMALL_FONT_TAG].group_tag=NONE;
-    assert(performance_editor_remap_tag(stock_id(ROOT_TAG))==stock_id(ROOT_TAG) && !register_calls);
+    assert(performance_editor_remap_tag(stock_id(ROOT_TAG))!=stock_id(ROOT_TAG));
+    assert(pb_editor.entry.text_font.index==stock.defs[ENTRY_TAG].text_font.index);
 }
 int main(void) {
     shapes_and_preservation(); selection_and_staging(); sound_rules_and_presets(); preview_and_help(); independent_match_start_delay(); independent_hardcore_rule(); registration_and_reload();
@@ -442,7 +445,7 @@ def fixture_source():
 
 class NativePerformanceEditorTests(unittest.TestCase):
     def test_shipped_font_widths(self):
-        """Check full labels and Hardcore help against the resident cache fonts."""
+        """Check the regular-size editor label and Hardcore help against cache fonts."""
         from tools.verify_performance_sound_samples import Cache
         paths = [ROOT / f"assets/maps/{name}.map" for name in ("ui", "bloodgulch")]
         paths = [path for path in paths if path.exists()]
@@ -456,7 +459,7 @@ class NativePerformanceEditorTests(unittest.TestCase):
         for path in paths:
             cache = Cache(path)
             for font_path, strings, limit in (
-                (r"ui\small_ui", arrays["labels"][:1], 202),
+                (r"ui\large_ui", arrays["labels"][:1], 219),
                 (r"ui\large_ui", arrays["help"][-2:], 482),
             ):
                 font = cache.by_path[font_path]
