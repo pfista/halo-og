@@ -206,7 +206,8 @@ def overlay_roots(overlays):
             if ("operation" in record and record["operation"] != "hud-overlay") or (
                     "conversion" in record and record["conversion"] not in {
                         "16_bit_pcm_to_xbox_adpcm", "remove_proven_duplicate_chicago_extra_layer",
-                        "map_local_weapon_alias", "select_existing_lower_bitmap_mip"}):
+                        "map_local_weapon_alias", "select_existing_lower_bitmap_mip",
+                        "append_reviewed_netgame_flags"}):
                 raise ValueError("Unknown overlay conversion discriminator")
             if "operation" in record and "conversion" in record:
                 raise ValueError("Ambiguous overlay conversion discriminator")
@@ -318,6 +319,38 @@ def overlay_roots(overlays):
                     raise ValueError("Mip overlay source snapshots changed after recorded conversion")
                 if tree(root) != outputs:
                     raise ValueError("Mip overlay tags changed after recorded conversion")
+            elif record.get("conversion") == "append_reviewed_netgame_flags":
+                from map_conversion.append_netgame_flags import validate_profile, valid_hash, action_tsv
+                if (record.get("schema_version") != 1 or record.get("status") != "converted"
+                        or record.get("returncode") != 0 or any(record.get(field) is not True for field in (
+                            "source_unchanged", "snapshots_unchanged", "converter_source_snapshot_unchanged",
+                            "profile_snapshot_unchanged"))):
+                    raise ValueError("Incomplete or failed marker overlays must not be compiled or used for provenance")
+                profile_file, source_file, action_file = (overlay / "reviewed-profile.json",
+                                                        overlay / "converter-source.cpp", overlay / "netgame-flags.tsv")
+                if (any(path.is_symlink() or not path.is_file() for path in (profile_file, source_file, action_file))
+                        or not valid_hash(record.get("profile_sha256"))
+                        or not valid_hash(record.get("converter_source_sha256"))
+                        or digest(profile_file) != record["profile_sha256"]
+                        or digest(source_file) != record["converter_source_sha256"]):
+                    raise ValueError("Marker profile or converter source snapshot changed after conversion")
+                profile = json.loads(profile_file.read_text())
+                validate_profile(profile)
+                if (any(record.get(field) != profile[field] for field in (
+                        "origin", "source", "target", "selection", "converter_source_sha256"))
+                        or action_file.read_text() != action_tsv(profile)):
+                    raise ValueError("Marker actions differ from the reviewed profile")
+                inputs = {label: {profile[label]["tag"]: profile[label]["sha256"]} for label in ("source", "target")}
+                outputs = record.get("output_sha256")
+                if (record.get("input_sha256") != inputs or not isinstance(outputs, dict)
+                        or set(outputs) != {profile["target"]["tag"]} or not all(valid_hash(v) for v in outputs.values())):
+                    raise ValueError("Marker overlay input or output identities differ from the reviewed profile")
+                snapshots = overlay / "source-snapshots"
+                expected = {label + "/" + name: value for label, values in inputs.items() for name, value in values.items()}
+                if snapshots.is_symlink() or not snapshots.is_dir() or tree(snapshots) != expected:
+                    raise ValueError("Marker source snapshots changed after recorded conversion")
+                if tree(root) != outputs:
+                    raise ValueError("Marker overlay tags changed after recorded conversion")
         roots.append(root)
     return roots
 

@@ -336,3 +336,101 @@ weapon's equip, zoom, firing and reload in the actual game. Check both cache
 warning messages and fallback-texture appearance. Removing the highest mip
 can reduce close-up sharpness even when all retained art is exact; runtime
 appearance acceptance remains separate from the static preservation proof.
+
+## Prepare a multiplayer profile and restore reviewed markers
+
+Single-player diagnostic grants are not multiplayer starting rules. Review the
+scenario and HSC separately before promoting an imported map. For the Chillout
+Digsite POC, the exact reviewed changes were:
+
+1. Copy the scenario into a fresh private overlay with the unique tag/cache name
+   `chillout_digsite`. Keep the original `chillout_dig` test cache separate.
+2. Pin the copied input scenario hash and verify there are exactly four starting
+   profiles, with `digsite_poc_smg` at index 3. Remove only that profile. An
+   `invader-edit -n -E 'player_starting_profile[3]'` operation is appropriate only
+   after those expectations pass; indices are not portable across maps.
+3. Verify the copied scenario's `scripts`, `globals`, `references` and
+   `source_files` tables are already empty in this reviewed working input.
+   Create an explicitly reviewed private HSC file rather than reusing MCC
+   bytecode. Remove the one-player SMG grant and its typed probe global. Retain
+   the existing pro-mode sword exclusion and two native-compatible scripts.
+4. Preserve authored geometry, spawns, equipment placements, objective flags,
+   three original grenade profiles and the weighted short/long starting weapon
+   collections. Native spawning consumes these collections; a diagnostic grant
+   must not replace their behavior.
+5. Record omitted optional MCC behavior: host flycam/teleport, timer/navpoint
+   aids, flashlight taunts, blue-team armor overrides and parameterized grenade
+   workaround scripts. The native Xbox script target has no formal script
+   parameters or MCC-only `game_is_authoritative`, `local_players`,
+   `players_on_multiplayer_team` and `game_time_authoritative` calls. Do not
+   silently drop authored gameplay or invent replacement engine APIs.
+6. Pin the private HSC hash, helper/compiler hashes and ordered asset overlays.
+   Compile fresh source with `-g xbox-ntsc -S data` and the reviewed compiler.
+   Verify the unique cache identity, actual script/reference operands, absence
+   of diagnostic grants, native cache bounds and embedded resources. Keep
+   multiplayer, damage, objective scoring and audible acceptance separate.
+
+These steps are an explicit map-specific script policy. This helper directory
+does not automatically strip scripts or choose a map's spawn rules.
+
+`append_netgame_flags.cpp` and `append_netgame_flags.py` extract the repeatable
+marker-copy operation. A reviewed profile pins both source and target scenario
+hashes, the existing target flag count, both counts for the selected type, and
+an ordered list of usage IDs. The native helper copies actual parsed source
+structs, preserving position/facing float fields without rebuilding them from
+decimal text. It rejects missing/duplicate selected markers, target ID
+collisions, stale counts and repeat conversion. Reparse and reverse-append
+comparisons prove every original target field remains unchanged.
+
+Version 1 supports individually identified CTF flags, ball spawn markers, Race
+checkpoints and teleporter entry/exit markers. Each selected type/ID must name
+exactly one source marker. Hill polygons and vehicle markers require separate
+review and are deliberately unsupported. The wrapper enforces the stock limit
+of 200 total flags, Race IDs below 32 and CTF IDs 0/1. A legal marker import
+does not certify a complete route, paired teleporter or objective setup.
+
+Chillout Digsite had no authored Race checkpoint markers. The reviewed
+compatibility candidate appends the twelve original Xbox Chillout checkpoints,
+preserving their source fields and IDs 0–11. This is a deliberate stock-Xbox
+checkpoint restoration for the imported map. Record the exact stock cache/tag
+hashes and geometry audit in the private profile's provenance. Preserve all
+original Digsite flags/spawns/BSP fields; no Race vehicles or engine rules are
+added. Static geometric agreement still requires native route traversal and
+lap/scoring checks on multiplayer peers before acceptance.
+
+Build the GPL-3.0-only helper with the pinned Invader recipe above, substituting
+`append_netgame_flags.cpp` and the output name
+`build/map-conversion/append-netgame-flags`. Record the build command, source
+hash and resulting helper hash. Copy
+[netgame-flags-profile.example.json](netgame-flags-profile.example.json) into
+a private workspace and fill every placeholder after reviewing that map. The
+example contains no source coordinates or game assets and fails until reviewed
+hashes are supplied. It does not express a default route.
+
+```sh
+python3 tools/map_conversion/append_netgame_flags.py \
+  --source-tags /absolute/path/to/reviewed/stock-tags \
+  --target-tags /absolute/path/to/reviewed/multiplayer-tags \
+  --profile /absolute/path/to/private/marker-profile.json \
+  --converter "$PWD/build/map-conversion/append-netgame-flags" \
+  --converter-sha256 REVIEWED_HELPER_SHA256 \
+  --output /absolute/path/to/new-marker-overlay
+```
+
+The wrapper verifies source, target, converter source and binary hashes before
+creating an output. The overlay retains independent source/target snapshots,
+reviewed profile, converter source, explicit action file and `conversion.json`
+provenance. Compiler orchestration accepts only successful managed overlays
+whose profile, action file, source snapshots and exact output hash still match.
+Failed overlays remain isolated. Symlinks, hard links and existing output
+directories are rejected. Use the accepted `tags/` root first with the reviewed
+HSC data and compiler; re-audit compiled marker bytes and native bounds.
+
+Run the data-free boundary checks with:
+
+```sh
+PYTHONPATH=tools python3 -m unittest \
+  tools/test_community_map_conversion.py \
+  tools/map_conversion/test_append_netgame_flags.py
+```
+

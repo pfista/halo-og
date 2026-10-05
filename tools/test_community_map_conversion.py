@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 import community_map_conversion as conversion
+from map_conversion import append_netgame_flags as markers
 
 
 class ConversionBoundaryTests(unittest.TestCase):
@@ -37,6 +38,54 @@ class ConversionBoundaryTests(unittest.TestCase):
         (self.folder / "source-tags/shared.bitmap").write_bytes(b"modified original")
         with self.assertRaisesRegex(ValueError, "source tags changed"):
             conversion.load_workspace(self.folder)
+
+    def test_marker_overlay_requires_exact_profile_snapshots_actions_and_output(self):
+        overlay = self.folder / "markers"
+        tags = overlay / "tags"; tags.mkdir(parents=True)
+        (tags / "target.scenario").write_bytes(b"synthetic marker output")
+        for label in ("source", "target"):
+            snapshot = overlay / "source-snapshots" / label / (label + ".scenario")
+            snapshot.parent.mkdir(parents=True); snapshot.write_bytes(b"synthetic " + label.encode())
+        source_cpp = overlay / "converter-source.cpp"; source_cpp.write_text("// synthetic helper source")
+        profile = {
+            "schema_version": 1, "target_engine": "xbox", "write_policy": "fresh_overlay",
+            "conversion": markers.CONVERSION, "origin": "reviewed synthetic stock course",
+            "converter_source_sha256": conversion.digest(source_cpp),
+            "source": {"tag": "source.scenario", "sha256": conversion.digest(overlay / "source-snapshots/source/source.scenario"), "expected_selected_type_count": 1},
+            "target": {"tag": "target.scenario", "sha256": conversion.digest(overlay / "source-snapshots/target/target.scenario"), "expected_flag_count": 0, "expected_selected_type_count": 0},
+            "selection": {"type": "race_track", "usage_ids": [0]},
+        }
+        profile_file = overlay / "reviewed-profile.json"; conversion.save(profile_file, profile)
+        actions = overlay / "netgame-flags.tsv"; actions.write_text(markers.action_tsv(profile))
+        record = {"schema_version": 1, "conversion": markers.CONVERSION, "status": "converted", "returncode": 0,
+                  "source_unchanged": True, "snapshots_unchanged": True,
+                  "converter_source_snapshot_unchanged": True, "profile_snapshot_unchanged": True,
+                  "profile_sha256": conversion.digest(profile_file),
+                  "input_sha256": {label: {profile[label]["tag"]: profile[label]["sha256"]} for label in ("source", "target")},
+                  "output_sha256": conversion.tree(tags),
+                  **{field: profile[field] for field in ("origin", "source", "target", "selection", "converter_source_sha256")}}
+        manifest = overlay / "conversion.json"; conversion.save(manifest, record)
+        self.assertEqual(conversion.overlay_roots([overlay]), [tags])
+        for field, value in (("status", "pending"), ("returncode", 1), ("source_unchanged", False),
+                             ("snapshots_unchanged", False), ("profile_snapshot_unchanged", False)):
+            modified = {**record, field: value}; conversion.save(manifest, modified)
+            with self.assertRaisesRegex(ValueError, "Incomplete or failed marker"):
+                conversion.overlay_roots([overlay])
+        conversion.save(manifest, {**record, "selection": {"type": "race_track", "usage_ids": [1]}})
+        with self.assertRaisesRegex(ValueError, "actions differ"):
+            conversion.overlay_roots([overlay])
+        conversion.save(manifest, record)
+        for path, message in ((profile_file, "snapshot changed"), (source_cpp, "snapshot changed"),
+                              (actions, "actions differ"),
+                              (overlay / "source-snapshots/source/source.scenario", "source snapshots changed"),
+                              (tags / "target.scenario", "tags changed")):
+            original = path.read_bytes(); path.write_bytes(b"changed after conversion")
+            with self.assertRaisesRegex(ValueError, message):
+                conversion.overlay_roots([overlay])
+            path.write_bytes(original)
+        (tags / "unexpected.scenario").write_bytes(b"unexpected output")
+        with self.assertRaisesRegex(ValueError, "tags changed"):
+            conversion.overlay_roots([overlay])
 
     def test_changed_stock_baseline_rejected(self):
         (self.folder / "stock-tags/stock.bitmap").write_bytes(b"community replacement")
