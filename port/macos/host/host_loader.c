@@ -69,8 +69,10 @@ int host_load_image(const void *data, size_t size) {
         if (name >= end || !memchr(name, 0, (size_t)(end - name)))
             return load_failure(__LINE__);
         void *fn = host_resolve_import(name);
+#if !defined(HALO_MACOS_NATIVE_METAL)
         if (!fn && !strncmp(name, "hostgl_", 7))
             fn = host_gl_resolve(name + 7);
+#endif
         if (!fn) {
             host_logf(HOST_LOG_ERROR, "missing import: %s", name);
             return load_failure(__LINE__);

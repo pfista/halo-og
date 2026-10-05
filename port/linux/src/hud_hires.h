@@ -42,7 +42,9 @@ long hud_hires_override_find(unsigned long address, unsigned long width, unsigne
 	unsigned long level0_size);
 /* its GL texture (decoded and uploaded, mipmapped, on first use; 0 if it
 could not be), and the number of its mip levels */
+#if !defined(HALO_MACOS_NATIVE_METAL)
 unsigned int hud_hires_override_texture(long asset, unsigned long *levels);
+#endif
 /* whether its green is its coverage (d3d8_gl.c, nv2a_psh.c: coverage_alpha) */
 int hud_hires_override_coverage(long asset);
 
