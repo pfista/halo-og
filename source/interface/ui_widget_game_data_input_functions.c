@@ -2095,7 +2095,7 @@ static void set_textbox_to_build_number(
 	struct widget_instance *widget)
 {
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-	/* The native home footer renders this label at the screen's right edge. */
+	/* Native builds show the historical engine identifier in About. */
 	widget->visible = FALSE;
 #else
 	/* Name, type and function scope from the 2003 PC demo PDB and the HCEX PDB (static local
@@ -2106,7 +2106,7 @@ static void set_textbox_to_build_number(
 	if (!build_number_string[0])
 	{
 		ascii_to_wide(
-			UI_WIDGET_ENGINE_BUILD_NUMBER,
+			"01.01.14.2342",
 			build_number_string,
 			sizeof(build_number_string));
 	}

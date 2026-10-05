@@ -102,6 +102,7 @@ int device_settings_apply(unsigned long mask,const double values[NUMBER_OF_DEVIC
 static long native_pause_frame_tag(short height);
 static long native_pause_legend_tag(void);
 #include "interface/performance_pause_menu.inc"
+#include "include/halo_og_version.h"
 #include "interface/game_settings_menu.inc"
 '''
 
@@ -409,7 +410,7 @@ static struct widget_instance *setting_control(struct widget_instance *root,shor
 }
 static void settings_structure(void) {
     settings_setup(0); assert(game_settings_remap_tag(entry_id)!=entry_id);
-    assert(device_settings.settings_menu.child_widgets.count==2);
+    assert(device_settings.settings_menu.child_widgets.count==3);
     assert(device_settings.column[0][_ds_game].child_widgets.count==2);
     assert(device_settings.column[0][_ds_audio].child_widgets.count==6);
     assert(device_settings.column[0][_ds_video].child_widgets.count==5);
@@ -436,7 +437,7 @@ static void settings_structure(void) {
     assert(!memcmp(originals,originals_before,sizeof(originals)));
     assert(!memcmp(&chooser,&chooser_before,sizeof(chooser)));
     assert(!memcmp(&advanced,&advanced_before,sizeof(advanced)));
-    assert(pb_editor_build()); assert(register_calls==121); /* Both menus fit the real 128-tag registry. */
+    assert(pb_editor_build()); assert(register_calls==127); /* Settings, About and PB fit the real 128-tag registry. */
     long old=device_settings.entry_tag; scenario_tags_unload();
     cache_file_globals.tags_loaded=TRUE; global_tag_instances=settings_map;
     assert(!tag_index_is_group(old,'DeLa'));
@@ -448,7 +449,7 @@ static void settings_native_chooser(void) {
     assert(root->type==chooser.defs[CHOOSER_ROOT].type && root->child_widgets.count==4);
     assert(!memcmp(&root->bounds,&chooser.defs[CHOOSER_ROOT].bounds,sizeof(root->bounds)));
     assert(root->background_bitmap.index==chooser.defs[CHOOSER_ROOT].background_bitmap.index);
-    assert(menu->type==_ui_widget_type_column_list && menu->child_widgets.count==2);
+    assert(menu->type==_ui_widget_type_column_list && menu->child_widgets.count==3);
     assert(menu->flags==chooser.defs[CHOOSER_LIST].flags);
     assert(!memcmp(&menu->bounds,&chooser.defs[CHOOSER_LIST].bounds,sizeof(menu->bounds)));
     assert(menu->game_data_inputs.count==1);
@@ -460,10 +461,10 @@ static void settings_native_chooser(void) {
     assert(!memcmp(&children[2],&chooser.root[2],sizeof(children[2]))); /* Native button legend. */
     assert(children[3].widget_tag.index==chooser.root[3].widget_tag.index);
     assert(children[3].horizontal_offset==chooser.root[3].horizontal_offset);
-    assert(children[3].vertical_offset==chooser.root[3].vertical_offset-33); /* Separator now follows two rows. */
+    assert(children[3].vertical_offset==chooser.root[3].vertical_offset); /* Separator follows all three rows. */
     assert(!wcscmp(string_at(&device_settings.settings_title,device_settings.settings_title.string_list_index),L"SETTINGS"));
     assert(device_settings.settings_title.justification==_text_justification_left);
-    for(unsigned i=0;i<2;i++) {
+    for(unsigned i=0;i<3;i++) {
         struct ui_widget_definition *choice=ui_widget_definition_get(rows[i].widget_tag.index),*original=&chooser.defs[CHOOSER_COOP+i];
         struct ui_widget_child_reference expected_child=chooser.list[i];
         expected_child.widget_tag=rows[i].widget_tag;
@@ -473,12 +474,12 @@ static void settings_native_chooser(void) {
         assert(choice->background_bitmap.index==original->background_bitmap.index);
         assert(!memcmp(&choice->text_color,&original->text_color,sizeof(choice->text_color)));
         assert(choice->horizontal_offset==13 && choice->vertical_offset==5 && choice->justification==_text_justification_left);
-        assert(!wcscmp(string_at(choice,choice->string_list_index),i ? L"GAME SETTINGS":L"PROFILE SETTINGS"));
+        assert(!wcscmp(string_at(choice,choice->string_list_index),i==2 ? L"ABOUT":i ? L"GAME SETTINGS":L"PROFILE SETTINGS"));
         assert(choice->event_handlers.count==2);
         struct ui_widget_event_handler_reference *events=choice->event_handlers.address;
         for(unsigned j=0;j<2;j++) {
             assert(events[j].event_type==(j ? 12:0) && events[j].flags==FLAG(_event_handler_open_widget_bit));
-            assert(events[j].widget_tag.index==(i ? device_settings.screen_tags[_ds_main][_ds_game]:profile_id));
+            assert(events[j].widget_tag.index==(i==2 ? device_settings.about_tag:i ? device_settings.screen_tags[_ds_main][_ds_game]:profile_id));
         }
     }
     struct ui_widget_definition *preview=ui_widget_definition_get(menu->extended_description_widget.index);
@@ -499,12 +500,13 @@ static void settings_native_chooser(void) {
     assert(description->text_font.index==chooser.defs[CHOOSER_DESCRIPTION].text_font.index);
     assert(!memcmp(&description->text_color,&chooser.defs[CHOOSER_DESCRIPTION].text_color,sizeof(description->text_color)));
     assert(!memcmp(&description->bounds,&chooser.defs[CHOOSER_DESCRIPTION].bounds,sizeof(description->bounds)));
-    assert(unicode_string_list_definition_get(description->text_label_string_list.index)->strings.count==2);
+    assert(unicode_string_list_definition_get(description->text_label_string_list.index)->strings.count==3);
     assert(wcsstr(string_at(description,0),L"profile") && wcsstr(string_at(description,0),L"controls"));
     assert(wcsstr(string_at(description,1),L"audio") && wcsstr(string_at(description,1),L"video"));
+    assert(wcsstr(string_at(description,2),L"historical"));
     struct widget_instance *screen=instantiate(device_settings.settings_tag,NULL),*list=screen->child->next;
     struct widget_instance *entry=list->child,*extended=list->parameters.list.extended_description;
-    for(unsigned i=0;i<2;i++,entry=entry->next) {
+    for(unsigned i=0;i<3;i++,entry=entry->next) {
         list->focused_child=entry; settings_menu_update_extended_description(list);
         assert(extended->child->animation.current_frame_index==(i ? 1:3));
         assert(extended->child->next->parameters.text_box.string_list_index==(short)i);
@@ -523,6 +525,59 @@ static void settings_native_chooser(void) {
     dispose(list);
     assert(!memcmp(&chooser,&chooser_before,sizeof(chooser)));
     assert(!memcmp(originals,originals_before,sizeof(originals)));
+}
+static unsigned about_back_calls;
+static void widget_instance_go_back_to_previous(struct widget_instance *widget) {
+    while(widget->parent) widget=widget->parent;
+    assert(widget->definition_tag_index==device_settings.about_tag);
+    about_back_calls++;
+}
+static boolean settings_about_send(struct widget_instance *widget,short event_type) {
+    while(widget) {
+        struct ui_widget_definition *definition=ui_widget_definition_get(widget->definition_tag_index);
+        struct ui_widget_event_handler_reference *handlers=definition->event_handlers.address;
+        for(long i=0;i<definition->event_handlers.count;i++) {
+            struct ui_widget_event_handler_reference *handler=&handlers[i];
+            if(handler->event_type!=event_type) continue;
+            if(TEST_FLAG(handler->flags,_event_handler_run_function_bit)) assert(game_settings_event(widget,handler->function));
+            enum { _ui_audio_feedback_none, _ui_audio_feedback_back };
+            long audio_feedback=_ui_audio_feedback_none; boolean widget_deleted=FALSE;
+            /* PRODUCTION ABOUT BACK DISPATCH */
+            return widget_deleted && audio_feedback==_ui_audio_feedback_back;
+        }
+        widget=widget->focused_child;
+    }
+    return FALSE;
+}
+#define SETTINGS_WIDE_(value) L##value
+#define SETTINGS_WIDE(value) SETTINGS_WIDE_(value)
+static void settings_about(void) {
+    settings_setup(0); assert(device_settings_build());
+    struct device_settings_draft before[4]; memcpy(before,device_settings_drafts,sizeof(before));
+    double values[NUMBER_OF_DEVICE_SETTINGS]; memcpy(values,settings_values,sizeof(values));
+    struct widget_instance *root=instantiate(device_settings.about_tag,NULL);
+    struct widget_instance *menu=root->child->next->next;
+    assert(root->focused_child==menu && menu->focused_child==menu->child);
+    assert(!widget_instance_can_handle_events(root->child));
+    assert(!widget_instance_can_handle_events(root->child->next));
+    assert(root->definition_tag_index==device_settings.about_tag && root->type==_ui_widget_type_container);
+    assert(device_settings.about_screen.event_handlers.count==2 && !device_settings.about_screen.game_data_inputs.count);
+    assert(device_settings.about_body.text_font.index==tag_loaded(FONT_GROUP_TAG,"ui\\small_ui"));
+    assert(device_settings.about_title.text_font.index==device_settings.settings_title.text_font.index);
+    wchar_t *body=string_at(&device_settings.about_body,_ds_about_info);
+    assert(wcsstr(body,L"Halo OG v") && wcsstr(body,SETTINGS_WIDE(HALO_OG_VERSION)));
+    assert(wcsstr(body,L"Based on Xbox build ") && wcsstr(body,SETTINGS_WIDE(HALO_OG_ENGINE_BUILD_NUMBER)));
+    assert(wcsstr(body,L"Original Xbox NTSC gameplay target") && wcsstr(body,L"30 Hz simulation"));
+    assert(device_settings.about_back.bounds.y0+device_settings.about_back.vertical_offset>=0);
+    assert(device_settings.about_back.bounds.y1+device_settings.about_back.vertical_offset<=device_settings.about_menu.bounds.y1-device_settings.about_menu.bounds.y0);
+    assert(device_settings.about_back.bounds.x1+device_settings.about_back.horizontal_offset<=device_settings.about_menu.bounds.x1-device_settings.about_menu.bounds.x0);
+    short events[]={_gamepad_analog_button_a,_gamepad_binary_button_start,_widget_event_b_button,_widget_event_back_button};
+    about_back_calls=0;
+    for(unsigned i=0;i<NUMBEROF(events);i++) assert(settings_about_send(root,events[i]));
+    assert(about_back_calls==4 && !writes && !errors);
+    assert(!memcmp(before,device_settings_drafts,sizeof(before)) && !memcmp(values,settings_values,sizeof(values)));
+    assert(!settings_game_paused && !settings_sound_paused && !widget_globals.pause_game_time_count);
+    dispose(root);
 }
 static void settings_native_options(void) {
     static const wchar_t *labels[NUMBER_OF_DEVICE_SETTINGS]={
@@ -1004,7 +1059,7 @@ static void settings_cross_map_rebuild(void) {
     }
 }
 int main(void) {
-    settings_structure(); settings_native_chooser(); settings_native_options(); settings_game_chooser(); settings_staging();
+    settings_structure(); settings_native_chooser(); settings_about(); settings_native_options(); settings_game_chooser(); settings_staging();
     settings_timer_staging(); settings_timer_video();
     settings_pause_and_campaign(); settings_registration_failure(); settings_cross_map_rebuild();
     puts("native game settings tests passed"); return 0;
@@ -1022,10 +1077,15 @@ def game_settings_fixture_source():
     pause_lifecycle = """static void settings_widget_pause_initialize(struct widget_instance *widget, struct ui_widget_definition *definition) {
     widget->pause_game_time = TEST_FLAG(definition->flags, _widget_pause_game_time_bit);
 """ + initialize_pause + "\n}\nstatic void settings_widget_pause_delete(struct widget_instance *widget) {\n" + delete_pause + "\n}\n"
+    focus = c_block(ui, "if (!TEST_FLAG(definition->flags, _widget_dont_focus_a_specific_child_bit))")
+    focus_lifecycle = c_block(ui, "static __inline boolean widget_instance_can_handle_events(\n\tstruct widget_instance *widget)\n{")
+    focus_lifecycle += "\nstatic void settings_widget_focus_initialize(struct widget_instance *widget, struct ui_widget_definition *definition) {\n" + focus + "\n}\n"
     source = source.replace("static struct widget_instance *instantiate(",
         "static void settings_widget_pause_initialize(struct widget_instance *,struct ui_widget_definition *);\n"
         "static void settings_widget_pause_delete(struct widget_instance *);\n"
+        "static void settings_widget_focus_initialize(struct widget_instance *,struct ui_widget_definition *);\n"
         "static struct widget_instance *instantiate(", 1)
+    source = source.replace("w->focused_child=w->child;", "settings_widget_focus_initialize(w,d);", 1)
     source = source.replace("    return w;\n}", "    settings_widget_pause_initialize(w,d);\n    return w;\n}", 1)
     source = source.replace("static void dispose(struct widget_instance *w) {",
                             "static void dispose(struct widget_instance *w) {\n    settings_widget_pause_delete(w);", 1)
@@ -1037,14 +1097,15 @@ def game_settings_fixture_source():
     preview = c_block(data, "static void settings_menu_update_extended_description(\n\tstruct widget_instance *list_widget)\n{")
     preview = preview.replace("description_definition->child_count", "description_definition->child_widgets.count")
     source += UI_STUBS.replace("/* NATIVE ENUMS */", "\n".join(enums)).replace("/* NATIVE PREVIEW CALLBACK */", preview).replace(
-        "/* PRODUCTION WIDGET PAUSE LIFECYCLE */", pause_lifecycle)
+        "/* PRODUCTION WIDGET PAUSE LIFECYCLE */", pause_lifecycle + focus_lifecycle)
     renderer = ui[ui.index("static void widget_instance_render_recursive(\n", ui.index("#define UI_MOUSE_MAXIMUM_TARGETS")):]
     dispatch = c_block(renderer, "for (input_index = 0;")
     source += """static void settings_render_inputs(struct widget_instance *widget) {
     struct ui_widget_definition *definition=ui_widget_definition_get(widget->definition_tag_index);
     long input_index;
 """ + dispatch + "\n}\n"
-    return source + UI_HARNESS
+    back_dispatch = c_block(ui, "if (TEST_FLAG(handler->flags, _event_handler_go_back_to_previous_widget_bit))")
+    return source + UI_HARNESS.replace("/* PRODUCTION ABOUT BACK DISPATCH */", back_dispatch)
 
 
 class NativeGameSettingsTests(unittest.TestCase):
@@ -1087,7 +1148,7 @@ class NativeGameSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="halo-native-settings-") as folder:
             directory = Path(folder)
             (directory / "fixture.c").write_text(source)
-            for platform in ("HALO_MACOS", "HALO_LINUX", "HALO_WINDOWS"):
+            for platform in ("HALO_MACOS", "HALO_LINUX", "HALO_WINDOWS", "HALO_ANDROID"):
                 with self.subTest(platform=platform):
                     binary = directory / (platform + (".exe" if sys.platform == "win32" else ""))
                     subprocess.run(["clang", "-std=c99", "-Wall", "-Wextra", "-Werror", "-Wno-multichar", "-Wno-format",

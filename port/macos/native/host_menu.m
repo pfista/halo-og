@@ -4,6 +4,7 @@
 #import "HaloMapDownloads.h"
 #import "HaloTimerAudio.h"
 #import "HaloReleaseUpdates.h"
+#include "../../linux/include/halo_og_version.h"
 #include <SDL3/SDL.h>
 #include "host_menu.h"
 #include <stdlib.h>
@@ -265,7 +266,17 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
 - (void)about:(id)sender {
     (void)sender;
     host_sdl_release_mouse();
-    [NSApp orderFrontStandardAboutPanelWithOptions:@{NSAboutPanelOptionApplicationName:@"Halo OG"}];
+    NSMutableParagraphStyle *paragraph = [[NSMutableParagraphStyle alloc] init];
+    paragraph.alignment = NSTextAlignmentCenter;
+    NSAttributedString *details = [[NSAttributedString alloc] initWithString:
+        @"Based on Xbox build " HALO_OG_ENGINE_BUILD_NUMBER
+        @"\nOriginal Xbox NTSC gameplay target\n30 Hz simulation"
+        attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11],
+                     NSForegroundColorAttributeName:NSColor.secondaryLabelColor,
+                     NSParagraphStyleAttributeName:paragraph}];
+    [NSApp orderFrontStandardAboutPanelWithOptions:@{
+        NSAboutPanelOptionApplicationName:@"Halo OG",
+        NSAboutPanelOptionCredits:details}];
 }
 - (void)quit:(id)sender {
     (void)sender;
@@ -276,7 +287,7 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     else [NSApp terminate:self];
 }
 - (void)buildSettings {
-    self.settingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 520, 645)
+    self.settingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 520, 685)
         styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     self.settingsWindow.title = @"Halo OG Settings";
     self.settingsWindow.releasedWhenClosed = NO;
@@ -342,6 +353,11 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     self.timerAudioLabel.font = [NSFont systemFontOfSize:11];
     self.timerDownloadButton = button(content, @"Check Recordings / Retry", @selector(downloadTimerAudio:), NSMakeRect(20, 108, 205, 32));
     button(content, @"Cancel Download", @selector(cancelTimerAudio:), NSMakeRect(232, 108, 170, 32));
+    for (NSView *view in content.subviews) {
+        NSRect frame = view.frame; frame.origin.y += 40; view.frame = frame;
+    }
+    done.frame = NSMakeRect(401, 14, 95, 32);
+    button(content, @"About Halo OG…", @selector(about:), NSMakeRect(20, 14, 185, 32));
 }
 - (void)refreshSettings {
     self.dataLabel.stringValue = self.preferences.dataPath ?: self.launchDataPath ?: @"No maps selected";

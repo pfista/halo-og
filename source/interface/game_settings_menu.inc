@@ -10,11 +10,12 @@ enum { _device_settings_initialize = 31990, _device_settings_accept,
 enum { _device_settings_chooser_preview = 31980, _device_settings_option_help };
 enum { _ds_game, _ds_audio, _ds_video, _ds_timer, _ds_page_count };
 enum { _ds_main, _ds_pause_1p, _ds_pause_2p, _ds_pause_4p, _ds_solo, _ds_coop, _ds_layout_count };
-enum { _ds_settings_label, _ds_profile_label, _ds_game_label, _ds_audio_label,
+enum { _ds_settings_label, _ds_profile_label, _ds_game_label, _ds_about_label, _ds_audio_label,
     _ds_video_label, _ds_accept_label, _ds_back_help, _ds_audio_help,
     _ds_video_help, _ds_failure_help, _ds_partial_failure_help,
     _ds_timer_label, _ds_timer_help, _ds_timer_link_label, _ds_timer_link_help,
-    _ds_select_key_label, _ds_accept_key_label, _ds_failure_brief, _ds_partial_failure_brief, _ds_row_label_start,
+    _ds_select_key_label, _ds_accept_key_label, _ds_failure_brief, _ds_partial_failure_brief,
+    _ds_about_back_label, _ds_about_info, _ds_row_label_start,
     _ds_help_start = _ds_row_label_start + NUMBER_OF_DEVICE_SETTINGS,
     _ds_value_start = _ds_help_start + NUMBER_OF_DEVICE_SETTINGS };
 static short const device_settings_page_counts[_ds_page_count] = {2, 6, 5, 5};
@@ -33,24 +34,26 @@ static struct
 {
     struct ui_widget_definition entry, settings_screen, settings_menu, settings_title;
     struct ui_widget_definition settings_preview, settings_picture, settings_description;
-    struct ui_widget_definition settings_choice[2], screen[_ds_layout_count][_ds_page_count];
+    struct ui_widget_definition settings_choice[3], screen[_ds_layout_count][_ds_page_count];
+    struct ui_widget_definition about_screen, about_title, about_body, about_menu, about_back;
     struct ui_widget_definition column[_ds_layout_count][_ds_page_count], choice[_ds_layout_count][2];
     struct ui_widget_definition timer_link[_ds_layout_count];
     struct ui_widget_definition heading[_ds_page_count], footer[_ds_page_count], row[NUMBER_OF_DEVICE_SETTINGS], accept;
-    struct ui_widget_child_reference settings_children[4], settings_menu_children[2], settings_preview_children[2];
+    struct ui_widget_child_reference settings_children[4], settings_menu_children[3], settings_preview_children[2];
+    struct ui_widget_child_reference about_children[3], about_menu_child;
     struct ui_widget_game_data_input_reference settings_menu_input;
     struct ui_widget_child_reference screen_children[_ds_layout_count][_ds_page_count][5];
     struct ui_widget_child_reference column_children[_ds_layout_count][_ds_page_count][7];
-    struct ui_widget_event_handler_reference entry_events[2], settings_events[2][2];
+    struct ui_widget_event_handler_reference entry_events[2], settings_events[3][2], about_back_events[2];
     struct ui_widget_event_handler_reference choice_events[_ds_layout_count][2][2];
     struct ui_widget_event_handler_reference timer_events[_ds_layout_count][2];
     struct ui_widget_event_handler_reference root_events[3], accept_events[2], row_events[5];
     struct string_list strings;
     struct string_list descriptions;
-    struct string_list_entry description_entries[2];
+    struct string_list_entry description_entries[3];
     struct string_list_entry string_entries[DEVICE_SETTINGS_STRING_COUNT];
     wchar_t text[DEVICE_SETTINGS_STRING_COUNT][128];
-    long entry_tag, settings_tag, screen_tags[_ds_layout_count][_ds_page_count];
+    long entry_tag, settings_tag, about_tag, screen_tags[_ds_layout_count][_ds_page_count];
     long timer_tags[_ds_layout_count];
     char timer_names[_ds_layout_count][64];
     long row_tags[NUMBER_OF_DEVICE_SETTINGS], heading_tags[_ds_page_count], footer_tags[_ds_page_count], accept_tag;
@@ -142,6 +145,69 @@ static void device_settings_pause_text_definition(struct ui_widget_definition *d
     definition->vertical_offset = style->vertical_offset;
 }
 
+static boolean device_settings_build_about(long strings, struct ui_widget_definition const *base,
+    struct ui_widget_definition const *style)
+{
+    long tag;
+    device_settings_text_definition(&device_settings.about_title, style, strings, _ds_about_label, FALSE);
+    device_settings.about_title.bounds = (rectangle2d){30, 64, 62, 595};
+    device_settings.about_title.justification = _text_justification_left;
+    device_settings.about_title.text_color = (real_argb_color){1, 1, 1, 1};
+    tag = device_settings_register("ui\\native_settings\\about_title", &device_settings.about_title);
+    if (tag == NONE) return FALSE;
+    csmemset(device_settings.about_children, 0, sizeof(device_settings.about_children));
+    device_settings.about_children[0].widget_tag = device_settings_reference(UI_WIDGET_DEFINITION_TAG, tag);
+
+    device_settings_text_definition(&device_settings.about_body, style, strings, _ds_about_info, FALSE);
+    device_settings.about_body.bounds = (rectangle2d){116, 64, 350, 595};
+    device_settings.about_body.text_font.index = tag_loaded(FONT_GROUP_TAG, "ui\\small_ui");
+    device_settings.about_body.justification = _text_justification_left;
+    device_settings.about_body.text_color = (real_argb_color){1, 0.8f, 0.8f, 0.8f};
+    tag = device_settings_register("ui\\native_settings\\about_body", &device_settings.about_body);
+    if (tag == NONE) return FALSE;
+    device_settings.about_children[1].widget_tag = device_settings_reference(UI_WIDGET_DEFINITION_TAG, tag);
+
+    device_settings.about_back = *style;
+    device_settings.about_back.bounds.y1 -= device_settings.about_back.bounds.y0;
+    device_settings.about_back.bounds.y0 = 0;
+    device_settings.about_back.bounds.x1 -= device_settings.about_back.bounds.x0;
+    device_settings.about_back.bounds.x0 = 0;
+    device_settings.about_back.text_label_string_list = device_settings_reference(UNICODE_STRING_LIST_TAG, strings);
+    device_settings.about_back.string_list_index = _ds_about_back_label;
+    performance_pause_block(&device_settings.about_back.game_data_inputs, 0, NULL);
+    for (tag = 0; tag < 2; tag++)
+        performance_pause_event_definition(&device_settings.about_back_events[tag],
+            tag ? _gamepad_binary_button_start : _gamepad_analog_button_a,
+            0, FLAG(_event_handler_go_back_to_previous_widget_bit), NONE);
+    performance_pause_block(&device_settings.about_back.event_handlers, 2, device_settings.about_back_events);
+    tag = device_settings_register("ui\\native_settings\\about_back", &device_settings.about_back);
+    if (tag == NONE) return FALSE;
+    csmemset(&device_settings.about_menu_child, 0, sizeof(device_settings.about_menu_child));
+    device_settings.about_menu_child.widget_tag = device_settings_reference(UI_WIDGET_DEFINITION_TAG, tag);
+    performance_pause_clear_definition(&device_settings.about_menu);
+    device_settings.about_menu.type = _ui_widget_type_column_list;
+    device_settings.about_menu.controller_index = _widget_controller_any;
+    device_settings.about_menu.bounds = (rectangle2d){380, 64, 423, 348};
+    device_settings.about_menu.flags = FLAG(_widget_pass_unhandled_events_to_children_bit) |
+        FLAG(_widget_dpad_updown_tabs_thru_list_items_bit);
+    performance_pause_block(&device_settings.about_menu.child_widgets, 1, &device_settings.about_menu_child);
+    tag = device_settings_register("ui\\native_settings\\about_menu", &device_settings.about_menu);
+    if (tag == NONE) return FALSE;
+    device_settings.about_children[2].widget_tag = device_settings_reference(UI_WIDGET_DEFINITION_TAG, tag);
+    performance_pause_clear_definition(&device_settings.about_screen);
+    device_settings.about_screen.type = _ui_widget_type_container;
+    device_settings.about_screen.controller_index = _widget_controller_any;
+    device_settings.about_screen.bounds = base->bounds;
+    device_settings.about_screen.background_bitmap = base->background_bitmap;
+    device_settings.about_screen.flags = FLAG(_widget_pass_unhandled_events_to_children_bit);
+    /* About has no settings initialize/apply callbacks. Standard history and
+       Back handling return to the Settings chooser without touching a draft. */
+    performance_pause_block(&device_settings.about_screen.event_handlers, 2, &device_settings.root_events[1]);
+    performance_pause_block(&device_settings.about_screen.child_widgets, 3, device_settings.about_children);
+    device_settings.about_tag = device_settings_register("ui\\native_settings\\about", &device_settings.about_screen);
+    return device_settings.about_tag != NONE;
+}
+
 static boolean device_settings_build_chooser(long strings, long profile_tag)
 {
     static char const *const templates[] = {
@@ -150,10 +216,11 @@ static boolean device_settings_build_chooser(long strings, long profile_tag)
         DEVICE_CHOOSER_PREFIX "multiplayer_type_list_ext_desc",
         "ui\\shell\\main_menu\\settings_select\\player_setup\\player_profile_edit\\profile_edit_extended_desc_pic",
         DEVICE_CHOOSER_PREFIX "multiplayer_options_txt"};
-    static char const *const choices[] = {"ui\\native_settings\\profile", "ui\\native_settings\\game"};
-    static wchar_t descriptions[2][96] = {
+    static char const *const choices[] = {"ui\\native_settings\\profile", "ui\\native_settings\\game", "ui\\native_settings\\about_choice"};
+    static wchar_t descriptions[3][96] = {
         L"Choose a player profile to\r\nchange its name, controls\r\nand multiplayer color.",
-        L"Adjust audio and video\r\nsettings for this Mac."};
+        L"Adjust audio and video\r\nsettings for this device.",
+        L"Version and historical\r\nengine origin for Halo OG."};
     struct ui_widget_definition *base[NUMBEROF(templates)];
     long i, event, tag;
     for (i = 0; i < (long)NUMBEROF(templates); i++)
@@ -172,17 +239,20 @@ static boolean device_settings_build_chooser(long strings, long profile_tag)
     csmemcpy(device_settings.settings_children, base[0]->child_widgets.address, sizeof(device_settings.settings_children));
     csmemcpy(device_settings.settings_menu_children, base[1]->child_widgets.address, sizeof(device_settings.settings_menu_children));
     csmemcpy(device_settings.settings_preview_children, base[2]->child_widgets.address, sizeof(device_settings.settings_preview_children));
+    if (!device_settings_build_about(strings, base[0],
+        ui_widget_definition_get(device_settings.settings_menu_children[0].widget_tag.index))) return FALSE;
     /* Retain the stock list artwork and layout without its multiplayer setup
      * callbacks, which would change the number of local players. */
     performance_pause_block(&device_settings.settings_screen.event_handlers, 2, &device_settings.root_events[1]);
-    for (i = 0; i < 2; i++)
+    for (i = 0; i < 3; i++)
     {
         device_settings.settings_choice[i] = *ui_widget_definition_get(device_settings.settings_menu_children[i].widget_tag.index);
         device_settings.settings_choice[i].text_label_string_list = device_settings_reference(UNICODE_STRING_LIST_TAG, strings);
         device_settings.settings_choice[i].string_list_index = (short)(_ds_profile_label + i);
         for (event = 0; event < 2; event++)
             performance_pause_event_definition(&device_settings.settings_events[i][event], event ? _gamepad_binary_button_start : _gamepad_analog_button_a,
-                0, FLAG(_event_handler_open_widget_bit), i ? device_settings.screen_tags[_ds_main][_ds_game] : profile_tag);
+                0, FLAG(_event_handler_open_widget_bit), i == 2 ? device_settings.about_tag :
+                    i ? device_settings.screen_tags[_ds_main][_ds_game] : profile_tag);
         performance_pause_block(&device_settings.settings_choice[i].event_handlers, 2, device_settings.settings_events[i]);
         tag = device_settings_register(choices[i], &device_settings.settings_choice[i]);
         if (tag == NONE) return FALSE;
@@ -190,7 +260,7 @@ static boolean device_settings_build_chooser(long strings, long profile_tag)
         device_settings.description_entries[i].string.address = descriptions[i];
         device_settings.description_entries[i].string.size = (ustrlen(descriptions[i]) + 1) * sizeof(wchar_t);
     }
-    performance_pause_block(&device_settings.descriptions.strings, 2, device_settings.description_entries);
+    performance_pause_block(&device_settings.descriptions.strings, 3, device_settings.description_entries);
     tag = cache_files_register_runtime_ui_tag(UNICODE_STRING_LIST_TAG, "ui\\native_settings\\descriptions", &device_settings.descriptions);
     if (tag == NONE) return FALSE;
     device_settings.settings_description.text_label_string_list = device_settings_reference(UNICODE_STRING_LIST_TAG, tag);
@@ -207,7 +277,7 @@ static boolean device_settings_build_chooser(long strings, long profile_tag)
     csmemset(&device_settings.settings_menu_input, 0, sizeof(device_settings.settings_menu_input));
     device_settings.settings_menu_input.function = 1; /* Native settings picture/text focus handler. */
     performance_pause_block(&device_settings.settings_menu.game_data_inputs, 1, &device_settings.settings_menu_input);
-    performance_pause_block(&device_settings.settings_menu.child_widgets, 2, device_settings.settings_menu_children);
+    performance_pause_block(&device_settings.settings_menu.child_widgets, 3, device_settings.settings_menu_children);
     tag = device_settings_register("ui\\native_settings\\menu", &device_settings.settings_menu);
     if (tag == NONE) return FALSE;
     device_settings.settings_children[1].widget_tag.index = tag;
@@ -218,8 +288,7 @@ static boolean device_settings_build_chooser(long strings, long profile_tag)
     tag = device_settings_register("ui\\native_settings\\title", &device_settings.settings_title);
     if (tag == NONE) return FALSE;
     device_settings.settings_children[0].widget_tag.index = tag;
-    /* The stock separator follows three multiplayer rows; put it beneath two. */
-    device_settings.settings_children[3].vertical_offset -= 33;
+    /* The stock separator already follows the three Settings rows. */
     performance_pause_block(&device_settings.settings_screen.child_widgets, 4, device_settings.settings_children);
     device_settings.settings_tag = device_settings_register("ui\\native_settings\\settings", &device_settings.settings_screen);
     return device_settings.settings_tag != NONE;
@@ -257,6 +326,8 @@ static boolean device_settings_build_native_pages(long strings, long const *head
     device_settings.heading[_ds_game].string_list_index = _ds_game_label;
     csmemcpy(device_settings.screen_children[_ds_main][_ds_game], device_settings.settings_children,
         sizeof(device_settings.settings_children));
+    /* Audio and Video retain their existing two-row chooser. */
+    device_settings.screen_children[_ds_main][_ds_game][3].vertical_offset -= 33;
     device_settings.screen_children[_ds_main][_ds_game][0].widget_tag.index = heading_tags[_ds_game];
     device_settings.screen_children[_ds_main][_ds_game][1].widget_tag.index = column_tags[_ds_game];
     performance_pause_block(&device_settings.screen[_ds_main][_ds_game].child_widgets, 4,
@@ -398,14 +469,14 @@ static boolean device_settings_build_native_pages(long strings, long const *head
 static boolean device_settings_build(void)
 {
     static char const *const captions[] = {
-        "SETTINGS", "PROFILE SETTINGS", "GAME SETTINGS", "AUDIO", "VIDEO", "ACCEPT",
+        "SETTINGS", "PROFILE SETTINGS", "GAME SETTINGS", "ABOUT", "AUDIO", "VIDEO", "ACCEPT",
         "A: Select    B: Back", "Effects includes announcer.\r\nLeft/Right: Adjust    B: Cancel",
         "Left/Right: Adjust\r\nAccept saves. B: Cancel",
         "Could not apply settings.\r\nYour changes remain here.",
         "Could not restore all settings.\r\nReview values and try again.",
         "TIMER AUDIO", "Host Timer Sounds must be on.\r\nAccept keeps changes. B: Cancel",
         "TIMER AUDIO...", "Choose timer volume and cues.\r\nHost Timer Sounds must be on.",
-        "=SELECT", "=ACCEPT", "COULD NOT SAVE", "REVIEW SETTINGS"};
+        "=SELECT", "=ACCEPT", "COULD NOT SAVE", "REVIEW SETTINGS", "BACK", ""};
     static char const *const row_labels[] = {
         "MASTER VOLUME:", "MUSIC VOLUME:", "EFFECTS VOLUME:", "DIALOGUE VOLUME:", "TIMER VOLUME:",
         "MENU MUSIC:", "FULLSCREEN:", "VSYNC:", "SMOOTH MOTION:",
@@ -470,6 +541,9 @@ static boolean device_settings_build(void)
     text_definition = main_menu ? device_settings_text_definition : device_settings_pause_text_definition;
     csmemset(device_settings_drafts, 0, sizeof(device_settings_drafts));
     for (i = 0; i < DEVICE_SETTINGS_STRING_COUNT; i++) device_settings_text((short)i, i < (long)NUMBEROF(captions) ? captions[i] : "");
+    device_settings_text(_ds_about_info, "Halo OG v" HALO_OG_VERSION
+        "\r\n\r\nBased on Xbox build " HALO_OG_ENGINE_BUILD_NUMBER
+        "\r\n\r\nOriginal Xbox NTSC gameplay target\r\n30 Hz simulation");
     for (i = 0; i < NUMBER_OF_DEVICE_SETTINGS; i++)
     {
         device_settings_text((short)(_ds_row_label_start + i), row_labels[i]);

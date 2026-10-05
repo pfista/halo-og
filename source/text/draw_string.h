@@ -73,7 +73,6 @@ void draw_string_set_highlight(
 void draw_string_render_label(
 	long font_index,
 	rectangle2d const *bounds,
-	short justification,
 	real_argb_color const *color,
 	char const *string);
 #endif
