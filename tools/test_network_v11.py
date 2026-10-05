@@ -59,7 +59,6 @@ struct network_game_server_client_machine { unsigned supported; boolean joined,l
 struct network_game_server { struct network_game game; struct network_game_server_client_machine machines[MAXIMUM_NETWORK_MACHINE_COUNT]; };
 static struct network_game_client client;
 static struct network_game_server *active_server;
-static boolean network_game_client_original_rules_host;
 static unsigned network_game_client_performance_host_capabilities;
 static struct network_game network_game_client_settings_staging;
 static int32_t network_game_client_settings_staging_size;
@@ -186,7 +185,7 @@ static struct network_game defaults(void) {
     return game;
 }
 static void reset(void) {
-    memset(&client,0,sizeof(client)); network_game_client_original_rules_host=0;
+    memset(&client,0,sizeof(client));
     network_game_client_performance_host_capabilities=0;
     precaches=dialogs=applied=applied_flags=errors=0; active_server=NULL;
     sent_capabilities=sent_settings_pieces=0; fail_capability_send=FALSE;

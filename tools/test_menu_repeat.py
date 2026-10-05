@@ -238,6 +238,11 @@ static void check_keyboard_repeats(void) {
     selects=0;
     keyboard_button(_gamepad_analog_button_a,1,50000);assert(selects==1);
     keyboard_button(_gamepad_analog_button_a,2,51000);assert(selects==1);
+    cancels=0;
+    keyboard_button(_gamepad_analog_button_b,1,52000);assert(cancels==1);
+    keyboard_button(_gamepad_analog_button_b,2,53000);assert(cancels==1);
+    keyboard_button(_gamepad_binary_button_back,1,54000);assert(cancels==2);
+    keyboard_button(_gamepad_binary_button_back,2,55000);assert(cancels==2);
 }
 static void check_gameplay_hold_counts(void) {
     byte ticks=0;long down_time=0;int reads=config_reads;

@@ -474,10 +474,12 @@ static struct input_blob run(int enabled,int mouse,short zoom,real initial_time)
     short gamepad_index=0;real mouse_yaw,mouse_pitch;
     real_euler_angles2d look_delta;
     acceleration_enabled=enabled;mouse_moved=mouse;
+    assertion_calls=config_reads=0;
     /* PIPELINE */
     { /* FACING */ }
     /* MOUSE */
     if(!enabled)assert(control->look_acceleration_time==0.f);
+    assert(config_reads==1 && assertion_calls==2+(enabled!=0));
     return out;
 }
 int main(void) {

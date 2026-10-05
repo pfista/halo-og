@@ -494,6 +494,7 @@ int main(int argc, char **argv) {
     assert(halo_directory_retry_after_seconds("99999999999999999999999999999999999999999999")==300);
     const char *invalid[]={"", " ", "-30", "+30", "30x", "30,60", "30 60", "30\r\n", "1.5", "Mon, 05 Oct 2026 12:00:00 GMT"};
     for (unsigned i=0;i<sizeof(invalid)/sizeof(*invalid);i++) assert(halo_directory_retry_after_seconds(invalid[i])==0);
+    assert(progressed==0); /* Header parsing never invokes download progress. */
     puts("PASS strict bounded numeric Retry-After parser");
     return 0;
 }
@@ -548,6 +549,7 @@ int main(int argc,char **argv) {
     assert(request(output,sizeof(output),&status,&retry)==-1 && status==429 && retry==30);
     fail_read=0; status=99; retry=99;
     assert(halo_directory_http("GET","https://example.test",NULL,NULL,output,1,&status,&retry)==-1 && status==0 && retry==0);
+    assert(reads>0 && !writes && !creates && !deletes && progressed==0); /* Directory transfers use memory, never file I/O or progress. */
     puts("PASS Windows directory Retry-After, body failures, and output reset");
     return 0;
 }

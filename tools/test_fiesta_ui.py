@@ -42,7 +42,11 @@ static struct tag_reference item_ref(unsigned index) {
  return pb_editor_reference(index>=ITEM_WIDGET_COUNT ? 'ustr':'DeLa',item_id(index));
 }
 static void setup_items(void) {
- if(cache_file_globals.tags_loaded) scenario_tags_unload();
+ if(cache_file_globals.tags_loaded) {
+   unsigned previous_unloads=unload_calls;
+   scenario_tags_unload();
+   assert(unload_calls==previous_unloads+5);
+ }
  memset(&authored,0,sizeof(authored)); memset(item_tags,0,sizeof(item_tags));
  register_calls=fail_registration=0;
  for(unsigned i=0;i<ITEM_WIDGET_COUNT;i++) {
@@ -112,6 +116,7 @@ static void free_item(struct widget_instance *w) {
  free(w);
 }
 static void clone_and_help(void) {
+ mutation_calls=help_calls=0;
  setup_items(); long mapped=fiesta_item_options_remap_tag(item_id(ITEM_SCREEN));
  assert(mapped!=item_id(ITEM_SCREEN) && register_calls==7);
  assert(fiesta_item_options_remap_tag(item_id(ITEM_SCREEN))==mapped && register_calls==7);
@@ -148,6 +153,8 @@ static void clone_and_help(void) {
  }
  setup_items(); authored.lists[0].strings.count=1;
  assert(fiesta_item_options_remap_tag(item_id(ITEM_SCREEN))==item_id(ITEM_SCREEN) && !register_calls);
+ /* Cloning tags and selecting help text must not apply playlist edits/events. */
+ assert(mutation_calls==0 && help_calls==0);
 }
 int main(void) {clone_and_help();puts("Fiesta item clone tests passed");return 0;}
 '''
