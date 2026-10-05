@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "target_engine": "xbox",
+  "write_policy": "fresh_overlay",
+  "conversion": "replace_reviewed_unicode_entries",
+  "encoding": "utf-16-le",
+  "origin": "Replace with independently reviewed map-local text compatibility evidence",
+  "converter_source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "tags": {
+    "example/messages.unicode_string_list": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "expected_string_count": 3
+    }
+  },
+  "actions": [
+    {
+      "tag": "example/messages.unicode_string_list",
+      "index": 1,
+      "before": "EXAMPLE BEFORE",
+      "after": "EXAMPLE AFTER",
+      "reason": "Example only; measure the map's own index, exact text, native consumption and intended replacement"
+    }
+  ]
+}

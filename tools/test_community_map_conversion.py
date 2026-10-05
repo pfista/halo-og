@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import community_map_conversion as conversion
 from map_conversion import append_netgame_flags as markers
+from map_conversion import convert_unicode_strings as unicode_entries
 
 
 class ConversionBoundaryTests(unittest.TestCase):
@@ -91,6 +92,53 @@ class ConversionBoundaryTests(unittest.TestCase):
         (self.folder / "stock-tags/stock.bitmap").write_bytes(b"community replacement")
         with self.assertRaisesRegex(ValueError, "Stock baseline changed"):
             conversion.load_workspace(self.folder)
+
+    def test_unicode_overlay_requires_exact_entries_profile_snapshots_and_outputs(self):
+        overlay = self.folder / "unicode-overlay"
+        tags = overlay / "tags"; tags.mkdir(parents=True)
+        name = "test.unicode_string_list"
+        (tags / name).write_bytes(b"synthetic converted text")
+        snapshots = overlay / "source-snapshots"; snapshots.mkdir()
+        (snapshots / name).write_bytes(b"synthetic original text")
+        helper_source = overlay / "converter-source.cpp"; helper_source.write_text("// synthetic helper")
+        profile = {
+            "schema_version": 1, "target_engine": "xbox", "write_policy": "fresh_overlay",
+            "conversion": unicode_entries.CONVERSION, "encoding": "utf-16-le", "origin": "synthetic review",
+            "converter_source_sha256": conversion.digest(helper_source),
+            "tags": {name: {"sha256": conversion.digest(snapshots / name), "expected_string_count": 3}},
+            "actions": [{"tag": name, "index": 1, "before": "old", "after": "new", "reason": "reviewed fixture"}],
+        }
+        profile_file = overlay / "reviewed-profile.json"; conversion.save(profile_file, profile)
+        actions = overlay / "unicode-strings.tsv"; actions.write_text(unicode_entries.action_tsv(profile))
+        record = {
+            "schema_version": 1, "conversion": unicode_entries.CONVERSION, "status": "converted", "returncode": 0,
+            "source_unchanged": True, "snapshots_unchanged": True, "converter_source_snapshot_unchanged": True,
+            "profile_snapshot_unchanged": True, "untouched_entries_verified": True, "output_reparse_verified": True,
+            "profile_sha256": conversion.digest(profile_file), "input_sha256": conversion.tree(snapshots),
+            "output_sha256": conversion.tree(tags),
+            **{field: profile[field] for field in ("origin", "encoding", "tags", "actions", "converter_source_sha256")},
+        }
+        manifest = overlay / "conversion.json"; conversion.save(manifest, record)
+        self.assertEqual(conversion.overlay_roots([overlay]), [tags])
+        for field, value in (("status", "pending"), ("returncode", 1), ("untouched_entries_verified", False),
+                             ("output_reparse_verified", False), ("source_unchanged", False)):
+            conversion.save(manifest, {**record, field: value})
+            with self.assertRaisesRegex(ValueError, "Incomplete or failed Unicode"):
+                conversion.overlay_roots([overlay])
+        conversion.save(manifest, {**record, "actions": [{**profile["actions"][0], "index": 2}]})
+        with self.assertRaisesRegex(ValueError, "actions differ"):
+            conversion.overlay_roots([overlay])
+        conversion.save(manifest, record)
+        for path, message in ((profile_file, "snapshot changed"), (helper_source, "snapshot changed"),
+                              (actions, "actions differ"), (snapshots / name, "source snapshots changed"),
+                              (tags / name, "tags changed")):
+            original = path.read_bytes(); path.write_bytes(b"changed after conversion")
+            with self.assertRaisesRegex(ValueError, message):
+                conversion.overlay_roots([overlay])
+            path.write_bytes(original)
+        (tags / "extra.unicode_string_list").write_bytes(b"unexpected output")
+        with self.assertRaisesRegex(ValueError, "tags changed"):
+            conversion.overlay_roots([overlay])
 
     def test_provenance_distinguishes_authored_stock_and_overlay(self):
         (self.folder / "tags/stock.bitmap").write_bytes(b"stock only")

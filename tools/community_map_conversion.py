@@ -207,7 +207,7 @@ def overlay_roots(overlays):
                     "conversion" in record and record["conversion"] not in {
                         "16_bit_pcm_to_xbox_adpcm", "remove_proven_duplicate_chicago_extra_layer",
                         "map_local_weapon_alias", "select_existing_lower_bitmap_mip",
-                        "append_reviewed_netgame_flags"}):
+                        "append_reviewed_netgame_flags", "replace_reviewed_unicode_entries"}):
                 raise ValueError("Unknown overlay conversion discriminator")
             if "operation" in record and "conversion" in record:
                 raise ValueError("Ambiguous overlay conversion discriminator")
@@ -319,6 +319,38 @@ def overlay_roots(overlays):
                     raise ValueError("Mip overlay source snapshots changed after recorded conversion")
                 if tree(root) != outputs:
                     raise ValueError("Mip overlay tags changed after recorded conversion")
+            elif record.get("conversion") == "replace_reviewed_unicode_entries":
+                from map_conversion.convert_unicode_strings import validate_profile, valid_hash, action_tsv
+                if (record.get("schema_version") != 1 or record.get("status") != "converted"
+                        or record.get("returncode") != 0 or any(record.get(field) is not True for field in (
+                            "source_unchanged", "snapshots_unchanged", "converter_source_snapshot_unchanged",
+                            "profile_snapshot_unchanged", "untouched_entries_verified", "output_reparse_verified"))):
+                    raise ValueError("Incomplete or failed Unicode overlays must not be compiled or used for provenance")
+                profile_file, source_file, action_file = (overlay / "reviewed-profile.json",
+                                                        overlay / "converter-source.cpp", overlay / "unicode-strings.tsv")
+                if (any(path.is_symlink() or not path.is_file() or path.stat().st_nlink != 1
+                        for path in (profile_file, source_file, action_file))
+                        or not valid_hash(record.get("profile_sha256"))
+                        or not valid_hash(record.get("converter_source_sha256"))
+                        or digest(profile_file) != record["profile_sha256"]
+                        or digest(source_file) != record["converter_source_sha256"]):
+                    raise ValueError("Unicode profile or converter source snapshot changed after conversion")
+                profile = json.loads(profile_file.read_text())
+                validate_profile(profile)
+                if (any(record.get(field) != profile[field] for field in (
+                        "origin", "encoding", "tags", "actions", "converter_source_sha256"))
+                        or action_file.read_text() != action_tsv(profile)):
+                    raise ValueError("Unicode actions differ from the reviewed profile")
+                inputs = {name: rule["sha256"] for name, rule in profile["tags"].items()}
+                outputs = record.get("output_sha256")
+                if (record.get("input_sha256") != inputs or not isinstance(outputs, dict)
+                        or set(outputs) != set(inputs) or not all(valid_hash(v) for v in outputs.values())):
+                    raise ValueError("Unicode overlay input or output identities differ from the reviewed profile")
+                snapshots = overlay / "source-snapshots"
+                if snapshots.is_symlink() or not snapshots.is_dir() or tree(snapshots) != inputs:
+                    raise ValueError("Unicode source snapshots changed after recorded conversion")
+                if tree(root) != outputs:
+                    raise ValueError("Unicode overlay tags changed after recorded conversion")
             elif record.get("conversion") == "append_reviewed_netgame_flags":
                 from map_conversion.append_netgame_flags import validate_profile, valid_hash, action_tsv
                 if (record.get("schema_version") != 1 or record.get("status") != "converted"

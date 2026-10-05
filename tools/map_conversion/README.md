@@ -434,3 +434,55 @@ PYTHONPATH=tools python3 -m unittest \
   tools/map_conversion/test_append_netgame_flags.py
 ```
 
+## Reviewed Unicode entry compatibility
+
+`convert_unicode_strings.cpp` and `convert_unicode_strings.py` replace specific
+reviewed Unicode string-list entries in a fresh map overlay. A PC-authored tag
+can contain formatter placeholders or keyboard prompts that the native Xbox
+call site consumes differently. Trace that call site and the intended native
+wording before selecting replacements. Indices and text from one map are not a
+rule for another map, and this helper does not change engine formatters.
+
+Build the GPL-3.0-only parser helper with the reviewed Invader recipe above,
+replacing the source with `tools/map_conversion/convert_unicode_strings.cpp`
+and naming the binary `build/map-conversion/convert-unicode-strings`. Record
+both the helper source SHA256 and separately built binary SHA256. The source,
+wrapper and [example profile](unicode-strings-profile.example.json) contain no
+game text, tag files or assets. Placeholder hashes deliberately fail checks.
+
+The profile requires `conversion: "replace_reviewed_unicode_entries"`,
+`encoding: "utf-16-le"`, the fresh-overlay policy, source/helper-source hashes,
+each tag's exact `expected_string_count`, and entry actions with `tag`, `index`,
+`before`, `after` and `reason`. JSON text is encoded explicitly as null-terminated
+UTF-16LE hexadecimal in `unicode-strings.tsv`; tabs, quotes and supplementary
+characters cannot become rule-file delimiters. The helper rejects changed
+entry counts or before values, duplicate/out-of-range indices, malformed
+surrogates, interior nulls, stale hashes, linked inputs and existing output.
+
+```sh
+python3 tools/map_conversion/convert_unicode_strings.py \
+  --source-tags /absolute/path/to/reviewed/source-tags \
+  --profile /absolute/path/to/reviewed-unicode-profile.json \
+  --converter "$PWD/build/map-conversion/convert-unicode-strings" \
+  --converter-sha256 REVIEWED_HELPER_SHA256 \
+  --output /absolute/path/to/new-unicode-overlay
+```
+
+The output records independent source, profile and converter-source snapshots,
+exact input/output hashes, actions, commands and pending runtime acceptance.
+After replacing selected entries, the native helper reparses the tag, verifies
+the stored after values, restores only those entries in memory and compares the
+complete result to the original. Every unselected entry and other field must
+remain identical. Compilation and provenance reject failed, changed or
+incomplete Unicode overlays. Custom pickup tables and art are preserved by
+selecting only the independently reviewed text tag; do not substitute an
+entire stock text table to repair a single prompt.
+
+Run Python boundary tests with
+`python3 -m unittest discover -s tools/map_conversion -p 'test_convert_unicode_strings.py'`.
+Native entry/count/UTF-16/preservation tests use synthetic tags: build
+`tools/map_conversion/test_convert_unicode_strings.cpp` with the same reviewed
+link command and run its binary with one fresh ignored output directory. These
+checks validate the conversion contract. A rebuilt cache still needs compiled
+text inspection and separate native prompt, score, match-end and multiplayer
+captures; they do not establish gameplay or cross-platform acceptance.
