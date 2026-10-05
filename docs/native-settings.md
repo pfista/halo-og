@@ -49,6 +49,13 @@ place. Mouse sensitivity and keyboard movement are separate. Controller use
 after mouse aiming follows the chosen dead zones and the active profile's
 look-stick layout.
 
+**Look Acceleration** offers **Xbox** and **Off**, saving locally as
+`input.look_acceleration` (default `true`). Xbox retains the original
+map-authored turning boost when the horizontal look stick stays near full
+deflection. Off removes that timed boost and clears its accumulated time.
+Profile sensitivity, the underlying stick-response curve, vertical turning,
+zoom scaling and direct mouse aiming retain their existing behavior.
+
 ## Multiplayer
 
 | Menu control | Config key | Default | Meaning |

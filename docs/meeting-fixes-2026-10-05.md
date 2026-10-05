@@ -7,6 +7,8 @@ reliability and map-conversion changes remain uncommitted; no release is implied
 | Feedback | Result |
 | --- | --- |
 | Controller bumpers reversed | Left bumper switches grenade type; right bumper toggles flashlight. Shared SDL mapping and iOS touch equivalents agree. Keyboard bindings retain their choices. |
+| Controller dead zones | Game Settings → Controller has independent Left Stick Deadzone and Right Stick Deadzone presets. Xbox defaults preserve the original 9000 filter; keyboard movement stays separate. |
+| Controller look acceleration | Game Settings → Controller → Look Acceleration offers Xbox / Off. Xbox retains the original held-stick horizontal turning boost; Off removes that timed boost. |
 | PB Options label | Game-type editor entry and heading use Performance with the original regular font. Pause uses Performance Options with its resident small font; selection cards identify active performance options. |
 | Map-set settings | Game Settings → Multiplayer has OG Maps and Community Maps. Both default On. Filters affect hosting choices; hidden caches remain usable for joining and approved downloads. Empty lists fall back to OG maps. |
 | Disable joining during a match | Game Settings → Multiplayer → Join In Progress, default On. Off closes the shared running-game admission/advertisement gate while preserving pregame joining and existing players. |
@@ -48,8 +50,8 @@ sampled camo collision materials are dirt.
 - Dig Site integration needs source tags, the collaborator's scenario cleanup,
   reviewed conversion profiles and Xbox-v5 rebuilds. The supplied MCC cache is
   not directly loadable; this pass does not share or publish a converted build.
-- Controller acceleration/dead-zone controls, frag placement and the looping
-  overshield sound need separate implementation or a reproducible input/map case.
+- Frag placement and the looping overshield sound need a reproducible input/map
+  case before choosing an implementation.
 
 ## Validation
 
@@ -62,11 +64,11 @@ rollback, host-only map filters, menu layouts, original font widths and runtime
 tag registry lifetime. These checks do not establish physical-controller,
 cross-platform multiplayer or reference-Xbox parity.
 
-The final targeted suite passes 107 tests, and `git diff --check` passes.
-The native Mac guest and app build successfully with the documented LLVM 22
-toolchain. `/Applications/Halo OG.app` is installed through the existing
-backup procedure and passes strict signature verification; its guest hash
-matches the built guest:
+The first-pass targeted suite passed 107 tests, and `git diff --check` passed.
+The native Mac guest and app built with the documented LLVM 22
+toolchain. For that handoff, `/Applications/Halo OG.app` was installed through
+the existing backup procedure and passed strict signature verification; its
+guest hash matched the built guest:
 `0e1bf28e886bc13aec58a6e927318b9d8cb9253074f7afcbdf55f7dd00fc3bda`.
 BuildInfo identifies source `18f30a0617d9741eecee056328ed8c2d1268d276`
 with local changes. Pending pre-existing reliability/conversion work is retained.
@@ -80,6 +82,18 @@ startup, map loading and rendering; the new gameplay, controller and live
 multiplayer behavior still need physical playtesting. Nothing was pushed,
 tagged or released.
 
+The Controller follow-up adds the fourth Game Settings category, ordered
+Audio, Video, Controller, Multiplayer. Its preferences save locally through
+Accept/Cancel and remain outside player profiles and host-selected game rules.
+Production fixtures check every signed stick value at all presets, unchanged
+keyboard diagonal response, all four profile look layouts, settings persistence
+and failed saves. Acceleration fixtures compare the original timed yaw ramp
+bit for bit, check Off/Xbox transitions, and preserve pitch, sensitivity, zoom,
+stun scaling and direct mouse input. Widget fixtures cover main, pause, split-screen and campaign
+layouts; actual Xbox font metrics cover every valid custom dead-zone value.
+Controller feel and native interactive navigation still need physical
+playtesting. See [native settings](native-settings.md#controller).
+
 ## Commit boundaries
 
 | Commit | Change |
@@ -91,6 +105,8 @@ tagged or released.
 | `f2d618f5` | `feat(gameplay): add optional Hardcore precision spread` |
 | `8d871809` | `fix(effects): correct pistol hollow-metal impact effect` |
 | `9a944f8a` | `fix(effects): use force-field material for dirt-tagged overshields` |
+| `3208fbeb` | `fix(ui): shorten game-type editor label to Performance at regular size` |
+| `833ab78d` | `feat(input): add Controller settings for stick dead zones` |
 
 `33444412` adds the focused-commit and Conventional Commit subject convention
 to `AGENTS.md`. Release changelogs already preserve these subjects directly.

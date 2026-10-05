@@ -32,7 +32,7 @@ static const char *names[] = {"audio.volume", "audio.music_volume", "audio.effec
     "audio.timer_countdown", "audio.timer_beeps", "audio.timer_minutes", "audio.timer_items",
     "display.timer_position", "display.timer_scale", "display.fullscreen",
     "maps.show_og", "maps.show_community", "network.join_in_progress",
-    "input.left_stick_deadzone", "input.right_stick_deadzone"};
+    "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration"};
 #define TEST_SETTING_COUNT (sizeof(names)/sizeof(names[0]))
 static double saved[TEST_SETTING_COUNT];
 static int fullscreen, native_fullscreen, write_ok, switch_ok, apply_ok, writes, audio_applies, video_applies, switches, starts, stops;
@@ -99,6 +99,16 @@ static void check_controller_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) 
     assert(!writes && !audio_applies && !video_applies && !switches);
     saved[18]=-1; saved[19]=16001;
     assert(device_settings_get(_device_setting_left_stick_deadzone)==9000 && device_settings_get(_device_setting_right_stick_deadzone)==9000);
+    reset(values);
+    assert(values[_device_setting_look_acceleration]==1);
+    values[_device_setting_look_acceleration]=0.5;
+    assert(!device_settings_apply(1UL<<_device_setting_look_acceleration,values) && !writes);
+    values[_device_setting_look_acceleration]=0;
+    assert(device_settings_apply(1UL<<_device_setting_look_acceleration,values));
+    assert(writes==1 && saved[20]==0 && !audio_applies && !video_applies && !switches);
+    values[_device_setting_look_acceleration]=1; values[_device_setting_left_stick_deadzone]=3277; write_ok=0;
+    assert(!device_settings_apply((1UL<<_device_setting_look_acceleration)|(1UL<<_device_setting_left_stick_deadzone),values));
+    assert(saved[20]==0 && saved[18]==9000 && !audio_applies && !video_applies && !switches);
 }
 int main(void) {
     double values[NUMBER_OF_DEVICE_SETTINGS];

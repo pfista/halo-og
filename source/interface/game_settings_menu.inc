@@ -25,7 +25,7 @@ static short const device_settings_choices[] = {_ds_audio, _ds_video, _ds_contro
 #define DEVICE_SETTINGS_CHOICE_COUNT NUMBEROF(device_settings_choices)
 static short const device_settings_deadzone_presets[] = {0, 3277, 6553, 9000, 9830, 13107, 16000};
 static char const *const device_settings_deadzone_labels[] = {"0%", "10%", "20%", "Xbox", "30%", "40%", "49%"};
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 5, 5, 2, 3};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 5, 5, 3, 3};
 static short const device_settings_page_rows[_ds_page_count][6] = {
     {NONE, NONE, NONE, NONE},
     {_device_setting_master_volume, _device_setting_music_volume, _device_setting_effects_volume,
@@ -34,7 +34,7 @@ static short const device_settings_page_rows[_ds_page_count][6] = {
      _device_setting_timer_position, _device_setting_timer_scale},
     {_device_setting_timer_volume, _device_setting_timer_countdown, _device_setting_timer_beeps,
      _device_setting_timer_minutes, _device_setting_timer_items},
-    {_device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone},
+    {_device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone, _device_setting_look_acceleration},
     {_device_setting_show_og_maps, _device_setting_show_community_maps, _device_setting_join_in_progress}};
 static short const device_settings_page_titles[_ds_page_count] = {_ds_game_label, _ds_audio_label, _ds_video_label, _ds_timer_label, _ds_controller_label, _ds_multiplayer_label};
 static short const device_settings_page_help[_ds_page_count] = {_ds_back_help, _ds_audio_help, _ds_video_help, _ds_timer_help, _ds_controller_help, _ds_multiplayer_help};
@@ -346,7 +346,7 @@ static boolean device_settings_build_native_pages(long strings, long const *head
     static wchar_t descriptions[DEVICE_SETTINGS_CHOICE_COUNT][96] = {
         L"Adjust music, sound effects,\r\ndialogue and overall volume.",
         L"Choose fullscreen, VSync\r\nand smooth motion settings.",
-        L"Choose left and right\r\nstick deadzones for\r\nthis device.",
+        L"Choose stick deadzones\r\nand look acceleration\r\nfor this device.",
         L"Choose map sets and allow\r\nnew players to join matches\r\nafter they start."};
     struct ui_widget_definition *base[NUMBEROF(templates)];
     struct ui_widget_child_reference *chooser_rows;
@@ -532,7 +532,7 @@ static boolean device_settings_build(void)
         "MASTER VOLUME:", "MUSIC VOLUME:", "EFFECTS VOLUME:", "DIALOGUE VOLUME:", "TIMER VOLUME:",
         "MENU MUSIC:", "FULLSCREEN:", "VSYNC:", "SMOOTH MOTION:",
         "COUNTDOWN:", "BEEPS:", "MINUTE ANNOUNCEMENTS:", "ITEM CUES:", "TIMER POSITION:", "TIMER SIZE:",
-        "OG MAPS:", "COMMUNITY MAPS:", "JOIN IN PROGRESS:", "LEFT STICK DEADZONE:", "RIGHT STICK DEADZONE:"};
+        "OG MAPS:", "COMMUNITY MAPS:", "JOIN IN PROGRESS:", "LEFT STICK DEADZONE:", "RIGHT STICK DEADZONE:", "LOOK ACCELERATION:"};
     static char const *const help[] = {
         "Adjust the volume of all game audio.",
         "Adjust the volume of music.",
@@ -553,7 +553,8 @@ static boolean device_settings_build(void)
         "Show installed community maps.\r\nAn empty list shows OG maps.\r\nJoining hidden maps stays available.",
         "Allow new players into running matches\r\nthat you host. Pregame lobbies stay\r\nopen when this option is off.",
         "Ignore small left-stick movements.\r\nXbox keeps the original deadzone.\r\nLower values may allow stick drift.",
-        "Ignore small right-stick movements.\r\nXbox keeps the original deadzone.\r\nLower values may allow stick drift."};
+        "Ignore small right-stick movements.\r\nXbox keeps the original deadzone.\r\nLower values may allow stick drift.",
+        "Xbox builds horizontal turn speed.\r\nOff removes that held-stick speedup.\r\nBase turn speed stays the same."};
     static char const *const heading_names[] = {"ui\\native_settings\\game_title", "ui\\native_settings\\audio_title", "ui\\native_settings\\video_title", "ui\\native_settings\\timer_title", "ui\\native_settings\\controller_title", "ui\\native_settings\\multiplayer_title"};
     static char const *const footer_names[] = {"ui\\native_settings\\game_help", "ui\\native_settings\\audio_help", "ui\\native_settings\\video_help", "ui\\native_settings\\timer_help", "ui\\native_settings\\controller_help", "ui\\native_settings\\multiplayer_help"};
     struct ui_widget_definition *bases[_ds_layout_count] = {0};
@@ -908,7 +909,7 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
         "Master", "Music", "Effects", "Dialogue", "Volume",
         "Menu Music", "Fullscreen", "VSync", "Smooth Motion",
         "Countdown", "Beeps", "Minutes", "Item Cues", "Position", "Timer Size",
-        "OG Maps", "Community Maps", "Join In Progress", "Left Deadzone", "Right Deadzone"};
+        "OG Maps", "Community Maps", "Join In Progress", "Left Deadzone", "Right Deadzone", "Look Acceleration"};
     short row, local = (short)(draft - device_settings_drafts);
     for (row = 0; row < NUMBER_OF_DEVICE_SETTINGS; row++)
     {
@@ -940,6 +941,8 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
             else snprintf(value, sizeof(value), device_settings.native_pages ? "%.3g%%" : "%.2g%%",
                 draft->values[row] * 100.0 / 32767.0);
         }
+        else if (row == _device_setting_look_acceleration)
+            snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Xbox" : "Off");
         else snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "ON" : "OFF");
         if (device_settings.native_pages) snprintf(text, sizeof(text), "%s", value);
         else snprintf(text, sizeof(text), "%s: < %s >", names[row], value);

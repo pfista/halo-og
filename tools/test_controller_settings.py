@@ -1,4 +1,4 @@
-"""Exercise the production Xbox stick transform and native mouse/controller handoff."""
+"""Exercise Xbox stick response, native input handoff and optional yaw acceleration."""
 import os
 from pathlib import Path
 import re
@@ -63,6 +63,8 @@ def compile_and_run(source, *, flags=(), inputs=(), sdl=False):
         if sdl:
             command += ["-I", str(SDL / "include"), "-pthread"]
         command += [str(path), *map(str, inputs), "-o", str(executable)]
+        if sys.platform != "win32":
+            command += ["-lm"]
         compiled = subprocess.run(command, text=True, capture_output=True, timeout=30)
         if compiled.returncode:
             raise AssertionError(compiled.stderr)
@@ -317,6 +319,184 @@ int main(void) {
             "/* PRODUCTION */", self.fix + self.update + self.look + functions)
         compile_and_run(harness, flags=("-DHALO_MACOS=1", "-DHALO_PORT_MAXIMUM_NETWORK_PLAYERS=16",
                                       "-DCONTROLLER_BACKEND_FIXTURE=1"), sdl=True)
+
+
+ACCELERATION_PREFIX = r'''
+#include <assert.h>
+#include <math.h>
+#include <string.h>
+typedef float real;
+typedef int boolean;
+typedef struct { real yaw,pitch; } real_euler_angles2d;
+#define TRUE 1
+#define FALSE 0
+#define NONE (-1)
+#define TICKS_PER_SECOND 30
+#define MIN(a,b) ((a)<(b)?(a):(b))
+#define MAX(a,b) ((a)>(b)?(a):(b))
+#define PIN(v,a,b) MIN(MAX(v,a),b)
+static int acceleration_enabled=1,assertion_calls,config_reads;
+#define match_assert(file,line,condition) do { assertion_calls++;assert(condition); } while(0)
+struct player_control { real look_acceleration_time;short zoom_level; };
+struct game_globals_player_control {
+    real look_acceleration_time,look_acceleration_scale,look_pegging_threshold;
+    struct { short count;real *address; } look_function;
+};
+int config_boolean(const char *name) {
+    assert(!strcmp(name,"input.look_acceleration"));config_reads++;return acceleration_enabled;
+}
+'''
+
+# Snapshot of the original yaw-only Xbox block, before the preference wrapper.
+ORIGINAL_ACCELERATION = r'''
+static void original_acceleration(struct player_control *control,
+    struct game_globals_player_control const *constants,real clamped_yaw,
+    real time_delta_sec,real_euler_angles2d *look_delta) {
+    match_assert("c:\\halo\\SOURCE\\game\\player_control.c",0x1E3,
+        constants->look_acceleration_time>0.0f);
+    if(fabs(clamped_yaw)>=constants->look_pegging_threshold) {
+        real acceleration=PIN(control->look_acceleration_time/constants->look_acceleration_time,0.f,1.f);
+        look_delta->yaw*=(constants->look_acceleration_scale-1.f)*acceleration+1.f;
+        control->look_acceleration_time+=time_delta_sec;
+    } else control->look_acceleration_time=0.f;
+}
+'''
+
+
+class ControllerAccelerationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("clang"):
+            raise unittest.SkipTest("clang required")
+        cls.source = (ROOT / "source/game/player_control.c").read_text()
+        cls.helper = block(cls.source, "static void player_control_apply_look_acceleration(")
+
+    def test_xbox_bit_exact_ramp_and_live_off_on_reset(self):
+        harness = r'''
+int main(void) {
+    static const real thresholds[]={-.1f,0.f,.5f,.95f,1.f,1.1f};
+    static const real scales[]={0.f,.35f,1.f,2.f,4.f};
+    static const real durations[]={.05f,.25f,.8f,1.f};
+    static const real steps[]={.016666667f,.033333335f,.1f};
+    unsigned h,s,d,t;int frame,sign;
+    struct game_globals_player_control constants={0};
+    struct player_control actual,reference;
+    real_euler_angles2d a,b;
+    for(h=0;h<sizeof(thresholds)/sizeof(thresholds[0]);h++)
+    for(s=0;s<sizeof(scales)/sizeof(scales[0]);s++)
+    for(d=0;d<sizeof(durations)/sizeof(durations[0]);d++)
+    for(t=0;t<sizeof(steps)/sizeof(steps[0]);t++)
+    for(sign=-1;sign<=1;sign+=2) {
+        constants.look_pegging_threshold=thresholds[h];constants.look_acceleration_scale=scales[s];
+        constants.look_acceleration_time=durations[d];actual.look_acceleration_time=reference.look_acceleration_time=-.1f;
+        for(frame=0;frame<200;frame++) {
+            real yaw=(frame%13==0 ? thresholds[h]-.00001f : frame%13==1 ? thresholds[h] :
+                      frame%13==2 ? thresholds[h]+.00001f : 1.f)*sign;
+            a.yaw=b.yaw=sign*.1234567f;a.pitch=b.pitch=-.7654321f;
+            player_control_apply_look_acceleration(&actual,&constants,yaw,steps[t],&a);
+            original_acceleration(&reference,&constants,yaw,steps[t],&b);
+            assert(!memcmp(&a,&b,sizeof(a)));
+            assert(!memcmp(&actual.look_acceleration_time,&reference.look_acceleration_time,sizeof(real)));
+        }
+    }
+    constants.look_pegging_threshold=.95f;constants.look_acceleration_scale=3.f;constants.look_acceleration_time=.25f;
+    actual.look_acceleration_time=10.f;acceleration_enabled=0;a.yaw=5.f;a.pitch=7.f;
+    assertion_calls=0;player_control_apply_look_acceleration(&actual,&constants,1.f,.1f,&a);
+    assert(actual.look_acceleration_time==0.f && a.yaw==5.f && a.pitch==7.f && !assertion_calls);
+    acceleration_enabled=1;player_control_apply_look_acceleration(&actual,&constants,1.f,.1f,&a);
+    assert(actual.look_acceleration_time==.1f && a.yaw==5.f && a.pitch==7.f && assertion_calls==1);
+    player_control_apply_look_acceleration(&actual,&constants,1.f,.1f,&a);
+    assert(a.yaw>5.f && a.pitch==7.f);
+    player_control_apply_look_acceleration(&actual,&constants,.94f,.1f,&a);
+    assert(actual.look_acceleration_time==0.f);
+    /* Off also clears accrued time without touching a zero/negative yaw or pitch. */
+    acceleration_enabled=0;constants.look_acceleration_time=0.f;actual.look_acceleration_time=2.f;
+    a.yaw=-0.f;a.pitch=-2.f;b=a;
+    player_control_apply_look_acceleration(&actual,&constants,-1.f,.1f,&a);
+    assert(!memcmp(&a,&b,sizeof(a)) && actual.look_acceleration_time==0.f);
+    assert(config_reads>0);
+    return 0;
+}
+'''
+        compile_and_run(ACCELERATION_PREFIX + self.helper + ORIGINAL_ACCELERATION + harness,
+                        flags=("-DHALO_PORT_MAXIMUM_NETWORK_PLAYERS=16", "-O2"))
+
+    def test_retail_ramp_does_not_read_native_preference(self):
+        harness = r'''
+int main(void) {
+    struct game_globals_player_control constants={.25f,3.f,.95f,{0,0}};
+    struct player_control control={1.f,0};real_euler_angles2d look={2.f,3.f};
+    acceleration_enabled=0;
+    player_control_apply_look_acceleration(&control,&constants,1.f,.1f,&look);
+    assert(look.yaw==6.f && look.pitch==3.f && control.look_acceleration_time==1.1f);
+    assert(assertion_calls==1 && config_reads==0);return 0;
+}
+'''
+        compile_and_run(ACCELERATION_PREFIX + self.helper + harness)
+
+    def test_production_curve_zoom_stun_and_mouse_pipeline(self):
+        input_blob = block(self.source, "static void get_local_player_input_blob(\n\tshort local_player_index,\n"
+                          "\treal time_delta_sec,\n\tstruct input_blob *input)\n{")
+        start = input_blob.index("look_delta.yaw = evaluate_piecewise_linear_function(")
+        end = input_blob.index("real_euler_angles2d target_angular_position;", start)
+        # Stop before the surrounding aim-assist block opens.
+        pipeline = input_blob[start:end].rsplit("{", 1)[0]
+        start = input_blob.index("real facing_scale = time_delta_sec * TICKS_PER_SECOND;")
+        facing = input_blob[start:input_blob.index("}", start)]
+        mouse = block(input_blob, "if (halo_linux_mouse_look(gamepad_index, &mouse_yaw, &mouse_pitch))")
+        curve = block(self.source, "real evaluate_piecewise_linear_function(")
+        harness = r'''
+struct player_datum { long unit_index; };
+struct unit_datum { struct { real body_stun; } unit; };
+struct game_globals_player_information { real stun_turning_penalty; };
+struct input_blob { real_euler_angles2d facing_delta; };
+static struct unit_datum owned_unit={{.2f}};
+static struct game_globals_player_information information={.4f};
+static real magnification=2.f;
+static int mouse_moved;
+#define TAG_BLOCK_GET_ELEMENT(block,index,type) ((type *)&information)
+static struct unit_datum *unit_get(long index) { assert(index==0);return &owned_unit; }
+static real unit_get_zoom_magnification(long index,short zoom) { assert(index==0 && zoom==0);return magnification; }
+static int halo_linux_mouse_look(short index,real *yaw,real *pitch) {
+    assert(index==0);*yaw=.2f;*pitch=.3f;return mouse_moved;
+}
+/* CURVE */
+/* HELPER */
+static struct input_blob run(int enabled,int mouse,short zoom,real initial_time) {
+    real values[]={0.f,.1f,1.f};
+    struct game_globals_player_control c={.25f,2.f,.95f,{3,values}},*constants=&c;
+    struct player_control ctl={initial_time,zoom},*control=&ctl;
+    struct player_datum p={0},*player=&p;
+    struct input_blob out={0},*input=&out;
+    real clamped_yaw=1.f,clamped_pitch=.5f,time_delta_sec=.033333335f;
+    real yaw_spin_scale=2.f,pitch_spin_scale=1.f,look_yaw_rate=.1f,look_pitch_rate=.2f;
+    short gamepad_index=0;real mouse_yaw,mouse_pitch;
+    real_euler_angles2d look_delta;
+    acceleration_enabled=enabled;mouse_moved=mouse;
+    /* PIPELINE */
+    { /* FACING */ }
+    /* MOUSE */
+    if(!enabled)assert(control->look_acceleration_time==0.f);
+    return out;
+}
+int main(void) {
+    struct input_blob off=run(0,0,0,1.f),xbox=run(1,0,0,1.f);
+    struct input_blob off_mouse=run(0,1,0,1.f),xbox_mouse=run(1,1,0,1.f);
+    struct input_blob unzoomed=run(0,0,NONE,1.f);
+    assert(xbox.facing_delta.yaw==off.facing_delta.yaw*2.f);
+    assert(!memcmp(&xbox.facing_delta.pitch,&off.facing_delta.pitch,sizeof(real)));
+    assert(fabs(off_mouse.facing_delta.yaw-off.facing_delta.yaw-.1f)<.000001f);
+    assert(fabs(xbox_mouse.facing_delta.yaw-xbox.facing_delta.yaw-.1f)<.000001f);
+    assert(fabs(off_mouse.facing_delta.pitch-off.facing_delta.pitch-.15f)<.000001f);
+    assert(!memcmp(&off_mouse.facing_delta.pitch,&xbox_mouse.facing_delta.pitch,sizeof(real)));
+    assert(unzoomed.facing_delta.yaw==off.facing_delta.yaw*2.f);
+    assert(unzoomed.facing_delta.pitch==off.facing_delta.pitch*2.f);
+    return 0;
+}
+'''
+        harness = harness.replace("/* CURVE */", curve).replace("/* HELPER */", self.helper)
+        harness = harness.replace("/* PIPELINE */", pipeline).replace("/* FACING */", facing).replace("/* MOUSE */", mouse)
+        compile_and_run(ACCELERATION_PREFIX + harness, flags=("-DHALO_PORT_MAXIMUM_NETWORK_PLAYERS=16",))
 
 
 if __name__ == "__main__":

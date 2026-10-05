@@ -24,6 +24,7 @@ enum
     _device_setting_join_in_progress,
     _device_setting_left_stick_deadzone,
     _device_setting_right_stick_deadzone,
+    _device_setting_look_acceleration,
     NUMBER_OF_DEVICE_SETTINGS
 };
 

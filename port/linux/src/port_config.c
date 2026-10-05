@@ -140,6 +140,10 @@ static const struct config_setting config_settings[] =
 		"Right-stick axial dead zone, 0 to 16000 in the signed stick range.\n"
 		"9000 preserves the original Xbox filter. These are local preferences,\n"
 		"independent of player profiles and host-selected game rules." },
+	{ "input.look_acceleration", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Keep the original map-authored held-stick horizontal turning boost.\n"
+		"Controller settings call this Xbox; Off removes only this timed boost.\n"
+		"Sensitivity, pitch response and direct mouse aiming stay separate." },
 
 	/* Bindings are config-only: they do not need application environment variables. */
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
