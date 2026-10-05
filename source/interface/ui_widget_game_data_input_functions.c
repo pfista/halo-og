@@ -2094,6 +2094,10 @@ static void netgame_prejoin_players(
 static void set_textbox_to_build_number(
 	struct widget_instance *widget)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* The native home footer renders this label at the screen's right edge. */
+	widget->visible = FALSE;
+#else
 	/* Name, type and function scope from the 2003 PC demo PDB and the HCEX PDB (static local
 	   wchar_t build_number_string[0x40]). Neither PDB records the block: placing it at the top of
 	   the function is unattested. January corroborates: .bss +0x28, referenced only here. */
@@ -2102,7 +2106,7 @@ static void set_textbox_to_build_number(
 	if (!build_number_string[0])
 	{
 		ascii_to_wide(
-			"01.01.14.2342",
+			UI_WIDGET_ENGINE_BUILD_NUMBER,
 			build_number_string,
 			sizeof(build_number_string));
 	}
@@ -2131,6 +2135,7 @@ static void set_textbox_to_build_number(
 			NUMBEROF(build_number_string) - 1);
 		widget->parameters.text_box.text[NUMBEROF(build_number_string) - 1] = 0;
 	}
+#endif
 	return;
 }
 

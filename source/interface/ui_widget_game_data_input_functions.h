@@ -14,6 +14,8 @@ header included in hcex build.
 
 /* ---------- constants */
 
+#define UI_WIDGET_ENGINE_BUILD_NUMBER "01.01.14.2342"
+
 /* ---------- macros */
 
 /* ---------- structures */

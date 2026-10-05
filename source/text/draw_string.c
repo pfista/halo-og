@@ -487,12 +487,13 @@ void draw_string_set_draw_mode(
 void draw_string_render_label(
 	long font_index,
 	rectangle2d const *bounds,
+	short justification,
 	real_argb_color const *color,
 	char const *string)
 {
 	struct font_drawing_globals saved = font_drawing_globals;
 
-	draw_string_set_draw_mode(font_index, NONE, _text_justification_left, 0, color);
+	draw_string_set_draw_mode(font_index, NONE, justification, 0, color);
 	draw_string_set_indents(0, 0);
 	draw_string_set_tab_stops(NULL, 0);
 	draw_string_set_highlight(NONE, NONE);

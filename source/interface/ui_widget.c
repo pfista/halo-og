@@ -6149,7 +6149,12 @@ static void render_home_menu_version(void)
 	color.alpha *= widget_instance_get_cumulative_alpha_modifier(widget_globals.active_widgets[0]);
 	/* Menus occupy centered 640 columns; this footer belongs to the screen edge. */
 	halo_screen_ui_offset(FALSE);
-	draw_string_render_label(font_index, &bounds, &color, "OG v" HALO_OG_VERSION);
+	draw_string_render_label(font_index, &bounds, _text_justification_left,
+		&color, "OG v" HALO_OG_VERSION);
+	bounds.x0 = (short)(halo_screen_width() - 240);
+	bounds.x1 = (short)(halo_screen_width() - 16);
+	draw_string_render_label(font_index, &bounds, _text_justification_right,
+		&color, UI_WIDGET_ENGINE_BUILD_NUMBER);
 	halo_screen_ui_offset(TRUE);
 }
 #endif
