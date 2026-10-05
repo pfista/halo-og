@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "target_engine": "xbox",
+  "write_policy": "fresh_overlay",
+  "conversion": "16_bit_pcm_to_xbox_adpcm",
+  "origin": "Describe the imported authored sound and its documented provenance",
+  "tags": {
+    "community/example/sounds/ready.sound": "REPLACE_WITH_REVIEWED_SOURCE_SHA256"
+  }
+}
