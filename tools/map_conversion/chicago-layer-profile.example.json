@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "target_engine": "xbox",
+  "write_policy": "fresh_overlay",
+  "conversion": "remove_proven_duplicate_chicago_extra_layer",
+  "origin": "Imported community shader; record reviewed provenance here",
+  "runtime_bug_source": "Record the verified renderer behavior and evidence here",
+  "tags": {
+    "example/counter.shader_transparent_chicago": "REPLACE_WITH_REVIEWED_SOURCE_SHA256",
+    "example/duplicate.shader_transparent_chicago": "REPLACE_WITH_REVIEWED_SOURCE_SHA256",
+    "example/counter.bitmap": "REPLACE_WITH_REVIEWED_SOURCE_SHA256",
+    "example/duplicate.bitmap": "REPLACE_WITH_REVIEWED_SOURCE_SHA256"
+  },
+  "actions": [
+    {
+      "parent": "example/counter.shader_transparent_chicago",
+      "duplicate_layer": "example/duplicate.shader_transparent_chicago"
+    }
+  ]
+}
