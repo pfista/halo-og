@@ -475,14 +475,15 @@ class UrlSchemeRegistrationTests(unittest.TestCase):
                                      ["/opt/Halo OG/halo", f"{scheme}://join/{SECRET}"])
 
     def test_linux_escapes_executable_characters_without_changing_uri_argument(self):
-        executable = '/opt/Halo OG $cash `tick` "quote" \\backslash 100%/halo'
+        executable = '/opt/Halo OG \u674e $cash `tick` "quote" \\backslash 100%/halo'
         self.assertEqual(self.linux(executable=executable), (1, 1))
         invite = f"halo-og://join/{SECRET}"
-        self.assertEqual(desktop_launch(self.desktop_file().read_text(), invite), [executable, invite])
+        self.assertEqual(desktop_launch(self.desktop_file().read_text(), invite),
+                         ["/usr/bin/env", executable, invite])
 
     @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("gio"), "native Linux gio required")
     def test_native_linux_desktop_launcher_preserves_executable_path_and_invite(self):
-        probe = self.directory / 'Halo OG $cash `tick` "quote" \\backslash 100%' / "halo"
+        probe = self.directory / 'Halo OG \u674e $cash `tick` "quote" \\backslash 100%' / "halo"
         probe.parent.mkdir()
         capture = self.directory / "launched.txt"
         source = self.directory / "probe.c"
@@ -492,8 +493,9 @@ class UrlSchemeRegistrationTests(unittest.TestCase):
         subprocess.run(["clang", str(source), "-o", str(probe)], check=True)
         self.assertEqual(self.linux(executable=str(probe)), (1, 1))
         invite = f"halo-og://join/{SECRET}"
-        subprocess.run(["gio", "launch", str(self.desktop_file()), invite], check=True,
-                       capture_output=True, text=True, timeout=10)
+        result = subprocess.run(["gio", "launch", str(self.desktop_file()), invite],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.wait_for_capture(capture, [str(probe), invite])
 
     def test_linux_retries_missing_or_failed_xdg_mime_with_unchanged_entry(self):

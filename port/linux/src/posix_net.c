@@ -777,14 +777,16 @@ int posix_register_url_scheme(const char *scheme, const char *description)
 	formatted = snprintf(path, sizeof(path), "%s/%s", directory, name);
 	if (formatted < 0 || (size_t)formatted >= sizeof(path))
 		return 0;
+	/* GLib checks the executable before expanding %% field codes. Keep
+	a literal percent path as env's argument so that check can succeed. */
 	formatted = snprintf(entry, sizeof(entry),
 		"[Desktop Entry]\n"
 		"Type=Application\n"
 		"Name=%s\n"
-		"Exec=\"%s\" %%u\n"
+		"Exec=%s\"%s\" %%u\n"
 		"NoDisplay=true\n"
 		"MimeType=x-scheme-handler/%s;\n",
-		description, escaped, scheme);
+		description, strchr(executable, '%') ? "/usr/bin/env " : "", escaped, scheme);
 	if (formatted < 0 || (size_t)formatted >= sizeof(entry))
 		return 0;
 	/* Preserve an unchanged file, but retry xdg-mime: an earlier run may
