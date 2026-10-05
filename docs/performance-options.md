@@ -14,7 +14,8 @@ below **Indicator Options**. The submenu is titled **Performance**.
 Its native game widgets use the existing menu fonts, navigation and help text.
 Choose a preset or change the options individually. Game-type selection cards
 show **Hardcore: On** when Hardcore is enabled, or **Performance options active**
-when another saved option is enabled.
+when another saved aid is enabled. [Fiesta](fiesta.md) is selected separately
+under **Item Options → Starting Equipment**; cards identify that choice too.
 
 | Preset | Match Timer | Spawn Markers | Timer Sounds | Movement / Weapon Sounds |
 | --- | --- | --- | --- | --- |
@@ -26,7 +27,8 @@ The preset is a convenience over the practice-aid bits. Reopening the page shows
 Stock when all aids are off, Practice when just the original three aids are on,
 and Custom for any other aid selection. There is no separate saved preset
 identifier. Selecting either Silent rule therefore shows Custom. Input Delay
-and Hardcore do not change the preset label. Selecting Stock or Practice
+and Hardcore do not change the preset label. Fiesta is also independent of
+the preset label. Selecting Stock or Practice
 preserves these independently selected match rules.
 
 Changes on this page are staged. **Accept** puts them into the game type being
@@ -43,7 +45,8 @@ preset for later.
 
 Input Delay and Hardcore are available only in Edit Gametypes, before starting
 a match. The pause page omits their controls; Apply and either preset preserve
-the match's existing rules. Other practice aids remain adjustable during play.
+the match's existing rules, including Fiesta starting equipment. Other
+practice aids remain adjustable during play.
 
 The editor and pause pages are native game widgets registered in the loaded
 cache's runtime UI table. Retail map files are not rewritten. Performance Options uses

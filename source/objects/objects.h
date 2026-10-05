@@ -100,6 +100,9 @@ enum
 {
 	_new_object_mirrored_bit = 0,
 	_new_object_never_automatically_delete_bit,
+	/* Native starting loadouts may choose an exact weapon independently of
+	 * the world's weapon set. This is a placement flag, never object state. */
+	_new_object_skip_variant_remap_bit,
 	NUMBER_OF_NEW_OBJECT_DATA_FLAGS,
 };
 

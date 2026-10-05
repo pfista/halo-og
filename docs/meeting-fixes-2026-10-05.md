@@ -13,6 +13,7 @@ reliability and map-conversion changes remain uncommitted; no release is implied
 | Map-set settings | Game Settings → Multiplayer has OG Maps and Community Maps. Both default On. Filters affect hosting choices; hidden caches remain usable for joining and approved downloads. Empty lists fall back to OG maps. |
 | Disable joining during a match | Game Settings → Multiplayer → Join In Progress, default On. Off closes the shared running-game admission/advertisement gate while preserving pregame joining and existing players. |
 | Hardcore precision spread | Edit Gametypes → Performance → Hardcore, default Off. Pistol and unscoped sniper initial spread becomes zero; maximum spread, buildup, recovery and firing RNG calls remain. Campaign, AI, secondary triggers and other weapon roles retain their original behavior. |
+| Fiesta | Edit Gametypes → Item Options → Starting Equipment → Fiesta adds two distinct random original Xbox weapons on each spawn. Custom and Generic remain available. The saved host-selected rule is checked for every joining player's capability. |
 | Pistol hollow-metal impact | Canonical loaded pistol projectile replaces only its stock hollow-metal default effect reference with the existing thick-metal reference. Custom authored replacements are preserved. |
 | Overshield collision material | Canonical loaded overshield collision changes dirt materials to Engineer Force Field; existing fixes and other materials are preserved. |
 | One-tick delay | Already implemented as Input Delay: Off / 33ms; retained. |
@@ -27,6 +28,11 @@ generation, and host acknowledgements omit unknown bits for older clients.
 See [Performance Options](performance-options.md) and
 [native settings](native-settings.md) for the controls.
 
+Fiesta uses bit 128 in the same signed variant. Its original eight-weapon pool
+is independent of the map's world Weapon Set, and the normal grenade rules
+remain. Performance presets, pause changes and saved variant copies preserve
+the selected starting equipment. See [Fiesta starting equipment](fiesta.md).
+
 The two tag changes are explicitly requested content refinements of retail
 quirks, not claims of original-Xbox corrections. They operate on loaded native
 tags without rewriting cache files. Verified installed NTSC Chill Out and
@@ -39,10 +45,9 @@ sampled camo collision materials are dirt.
 
 - Separate original-community, alternate and refined map categories need
   reviewed catalog metadata. The present catalog does not encode these roles.
-- Fiesta/Random need a persisted loadout/pool contract, deterministic spawn
-  selection and network/inventory verification. The reviewed original weapon
-  pool can use globals slots 0, 3, 4, 5, 6, 7, 8 and 9; expanded pools require
-  explicit weapon roles, excluding objective and vehicle weapons.
+- Expanded Fiesta pools and a separate Random policy need reviewed weapon
+  roles, excluding objective and vehicle weapons. The first Fiesta choice
+  uses only the original eight Xbox weapon identities.
 - Full imported weapon names belong in reviewed HUD/string tags. The new native
   options use full labels; there is no generic acronym rewrite of authored assets.
 - Battle rifles and other precision weapons need reviewed role metadata before
@@ -94,6 +99,16 @@ layouts; actual Xbox font metrics cover every valid custom dead-zone value.
 Controller feel and native interactive navigation still need physical
 playtesting. See [native settings](native-settings.md#controller).
 
+The Fiesta follow-up adds the third Starting Equipment choice without changing
+the original Custom/Generic choices. Production fixtures cover all 56 ordered
+original-weapon pairs, deterministic host selection, unchanged non-Fiesta RNG,
+normal weapon ammo, grenade rules, failed creation/attachment rollback, world
+Weapon Set independence and resource prediction. UI fixtures preserve the
+authored fonts, navigation and help; save/network fixtures cover every flags
+byte, older capability generations, normal and late-join full records, and
+fixed match rules. Performance editor, pause and console changes preserve
+Fiesta. Live multiplayer gameplay still needs playtesting.
+
 ## Commit boundaries
 
 | Commit | Change |
@@ -107,6 +122,7 @@ playtesting. See [native settings](native-settings.md#controller).
 | `9a944f8a` | `fix(effects): use force-field material for dirt-tagged overshields` |
 | `3208fbeb` | `fix(ui): shorten game-type editor label to Performance at regular size` |
 | `833ab78d` | `feat(input): add Controller settings for stick dead zones` |
+| `20c459f4` | `feat(input): add Xbox/off controller look acceleration` |
 
 `33444412` adds the focused-commit and Conventional Commit subject convention
 to `AGENTS.md`. Release changelogs already preserve these subjects directly.

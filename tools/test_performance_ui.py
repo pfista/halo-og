@@ -35,8 +35,8 @@ static boolean editing=TRUE;
 static unsigned mutation_calls,help_calls;
 enum { _performance_option_match_timer=1, _performance_option_spawn_markers=2, _performance_option_timer_audio=4,
        _performance_option_silent_movement=8, _performance_option_silent_weapon_ready=16,
-       _performance_option_input_delay=32, _performance_option_hardcore=64,
-       PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=127, PERFORMANCE_MATCH_RULE_FLAGS=96 };
+       _performance_option_input_delay=32, _performance_option_hardcore=64, _performance_option_fiesta=128,
+       PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=255, PERFORMANCE_MATCH_RULE_FLAGS=224 };
 static struct game_variant *player_ui_get_edit_playlist_profile(void) { return editing ? &edited : NULL; }
 static unsigned performance_variant_get_flags(const struct game_variant *v) { return v->flags; }
 static void performance_variant_set_flags(struct game_variant *v,unsigned f) { mutation_calls++; v->flags=f; }
@@ -374,6 +374,28 @@ static void independent_hardcore_rule(void) {
         dispose(menu);
     }
 }
+static void independent_fiesta_equipment(void) {
+    setup(); assert(pb_editor_build());
+    for(unsigned extras=0;extras<=96;extras+=32) {
+        edited.flags=128|extras; mutation_calls=0;
+        struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL);
+        assert(performance_editor_event(menu,_pb_editor_initialize));
+        struct widget_instance *preset=pb_editor_spinner(menu,0);
+        assert(preset->parameters.list.selected_index==0);
+        /* Rendering and accepting a Fiesta-only variant retains Item Options. */
+        performance_editor_input(menu,32001);
+        assert(pb_editor.last_flags==(128|extras));
+        assert(performance_editor_event(menu,_pb_editor_accept) && edited.flags==(128|extras));
+        preset->parameters.list.selected_index=1; performance_editor_input(menu,32001);
+        assert(pb_editor.last_flags==(128|extras|7));
+        assert(performance_editor_event(menu,_pb_editor_accept) && edited.flags==(128|extras|7));
+        preset->parameters.list.selected_index=0; performance_editor_input(menu,32001);
+        assert(pb_editor.last_flags==(128|extras));
+        pb_editor_spinner(menu,1)->parameters.list.selected_index=1;
+        assert(performance_editor_event(menu,_pb_editor_accept) && edited.flags==(128|extras|1));
+        dispose(menu);
+    }
+}
 static void registration_and_reload(void) {
     setup(); assert(pb_editor_build()); unsigned total=register_calls; assert(total>20 && total<64);
     long previous_root=pb_editor.root_tag;
@@ -400,7 +422,7 @@ static void registration_and_reload(void) {
     assert(pb_editor.entry.text_font.index==stock.defs[ENTRY_TAG].text_font.index);
 }
 int main(void) {
-    shapes_and_preservation(); selection_and_staging(); sound_rules_and_presets(); preview_and_help(); independent_match_start_delay(); independent_hardcore_rule(); registration_and_reload();
+    shapes_and_preservation(); selection_and_staging(); sound_rules_and_presets(); preview_and_help(); independent_match_start_delay(); independent_hardcore_rule(); independent_fiesta_equipment(); registration_and_reload();
     puts("native PB editor tests passed"); return 0;
 }
 '''

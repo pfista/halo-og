@@ -36,7 +36,7 @@ enum { _game_variant_draw_object_in_motion_sensor_bit=0, _game_variant_infinite_
 #define error(...) ((void)0)
 #define ustrncpy wcsncpy
 enum { _performance_option_timer_audio=4, _performance_option_input_delay=32, _performance_option_hardcore=64,
-       PERFORMANCE_MATCH_RULE_FLAGS=96, PERFORMANCE_OPTIONS_MASK=127,
+       _performance_option_fiesta=128, PERFORMANCE_MATCH_RULE_FLAGS=224, PERFORMANCE_OPTIONS_MASK=255,
        _network_game_server_state_pregame=1, _network_game_server_state_ingame=2,
        _network_game_server_state_postgame=3, _message_server_begin_game=2,
        _network_game_client_state_joining=1, _network_game_client_state_pregame=2, _network_game_client_state_ingame=3,
@@ -63,7 +63,7 @@ static byte network_game_server_performance_capabilities[MAXIMUM_NETWORK_MACHINE
 static int network_game_server_start_players[16];
 static boolean network_game_server_started_with_five_players;
 static int recordings=1,apply_calls,override_calls,pregame_sends,setting_sends,start_sends,opened;
-static unsigned runtime_flags,capabilities[5],capability_count;
+static unsigned runtime_flags,capabilities[6],capability_count;
 static unsigned network_game_client_performance_host_capabilities;
 static char shown[512];
 int halo_performance_audio_available(void) {return recordings;}
@@ -102,7 +102,7 @@ static int network_game_server_send_message_to_all_machines(struct network_game_
     (void)s;(void)m;start_sends++;return TRUE;
 }
 static int network_game_client_write(void *connection,void *packet,unsigned size,void *address,int reliable) {
-    (void)connection;assert(!address && reliable==1 && capability_count<5);
+    (void)connection;assert(!address && reliable==1 && capability_count<6);
     assert(network_performance_decode(packet,size,NETWORK_PERFORMANCE_CAPABILITY,&capabilities[capability_count++]));
     return TRUE;
 }
@@ -164,7 +164,7 @@ int main(void) {
     assert(!performance_options_set_host_flags(0));unchanged(32,10);
     server.state=_network_game_server_state_pregame;
     assert(performance_options_set_host_flags(0));unchanged(0,11);
-    assert(!performance_options_set_host_flags(128));unchanged(0,11);
+    assert(!performance_options_set_host_flags(256));unchanged(0,11);
     /* An input-delay-capable older peer still cannot run Hardcore. */
     assert(!performance_options_set_host_flags(64));unchanged(0,11);
     assert(strstr(shown,"Hardcore unavailable"));
@@ -203,13 +203,14 @@ int main(void) {
      * never advertise audio support to an enabled host. */
     struct network_game_client client={0};
     recordings=0;capability_count=0;assert(announce(&client));
-    assert(capability_count==5 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==59 && capabilities[4]==123);
+    assert(capability_count==6 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==59 && capabilities[4]==123 && capabilities[5]==251);
     recordings=1;capability_count=0;assert(announce(&client));
-    assert(capability_count==5 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31 && capabilities[3]==63 && capabilities[4]==127);
+    assert(capability_count==6 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31 && capabilities[3]==63 && capabilities[4]==127 && capabilities[5]==255);
     capability_count=0;assert(announce_without_queue(&client));
-    assert(capability_count==5 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==27 && capabilities[4]==27);
+    assert(capability_count==6 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==27 && capabilities[4]==27 && capabilities[5]==27);
     assert(!network_game_server_performance_peers_support_without_queue(&server,32));
     assert(strstr(shown,"This build does not support"));
+    assert(!network_game_server_performance_peers_support_without_queue(&server,128));
     assert(network_game_server_performance_peers_support_without_queue(&server,0));
     /* Only a reliable acknowledgement from the selected host establishes
      * timing support; old hosts can forward unknown saved extension bytes. */
@@ -246,6 +247,18 @@ int main(void) {
     assert(network_game_client_performance_settings_flags(&client,7)==103);
     client.game.variant.flags=0;
     assert(network_game_client_performance_settings_flags(&client,103)==7);
+    /* A prior Hardcore host retains raw Fiesta save bytes but runs its
+     * entire unknown extension Off. Only a newer host acknowledgement opts
+     * the client into the random equipment rule. */
+    client.state=_network_game_client_state_pregame;
+    assert(network_game_client_performance_settings_flags(&client,128)==0);
+    assert(network_game_client_performance_settings_flags(&client,135)==0);
+    network_game_client_performance_host_capabilities=255;
+    assert(network_game_client_performance_settings_flags(&client,135)==135);
+    client.state=_network_game_client_state_ingame;client.game.variant.flags=128;
+    assert(network_game_client_performance_settings_flags(&client,7)==135);
+    client.game.variant.flags=0;
+    assert(network_game_client_performance_settings_flags(&client,135)==7);
     active=&server;
     /* Start repeats admission checks; an older peer cannot join a delayed
      * match even if it connected while the delay was disabled. */
@@ -285,6 +298,35 @@ int main(void) {
     server.game.variant.universal_variant.flags=0;
     assert(network_game_server_original_grenade_peers_support(&server,&server.game.variant,4));
     assert(network_game_server_original_grenade_peers_support(&server,&server.game.variant,5));
+    /* Fiesta is fixed at begin-game and needs explicit support from every
+     * connected peer. Saved selection and a stale capability at start use
+     * the same gate, including a playlist-selected variant. */
+    server.state=_network_game_server_state_pregame;server.sent_start_game_message=FALSE;
+    server.game.variant.flags=runtime_flags=0;
+    int fiesta_calls=apply_calls;
+    network_game_server_performance_capabilities[1]=127;
+    assert(!performance_options_set_host_flags(128));unchanged(0,fiesta_calls);
+    assert(strstr(shown,"Fiesta unavailable") && strstr(shown,"Starting Equipment"));
+    chosen.flags=128;network_game_server_change_game_variant(&server,&chosen);unchanged(0,fiesta_calls);
+    playlist_variant.flags=128;
+    assert(!network_game_server_setup_game_from_playlist(&server));
+    network_game_server_performance_capabilities[1]=255;
+    assert(performance_options_set_host_flags(128));unchanged(128,++fiesta_calls);
+    network_game_server_performance_capabilities[1]=127;
+    assert(!network_game_server_start_network_game(&server) && !server.sent_start_game_message);
+    assert(strstr(shown,"Fiesta unavailable"));
+    network_game_server_performance_capabilities[1]=255;
+    assert(network_game_server_start_network_game(&server) && server.sent_start_game_message);
+    assert(!performance_options_set_host_flags(0));unchanged(128,fiesta_calls);
+    assert(strstr(shown,"Fiesta locked"));
+    chosen.flags=0;network_game_server_change_game_variant(&server,&chosen);unchanged(128,fiesta_calls);
+    assert(performance_options_set_host_flags(135));unchanged(135,++fiesta_calls);
+    server.state=_network_game_server_state_ingame;
+    assert(!performance_options_set_host_flags(7));unchanged(135,fiesta_calls);
+    assert(strstr(shown,"Fiesta locked"));
+    assert(performance_options_set_host_flags(128));unchanged(128,++fiesta_calls);
+    server.state=_network_game_server_state_pregame;server.sent_start_game_message=FALSE;
+    assert(performance_options_set_host_flags(0));unchanged(0,++fiesta_calls);
     puts("performance host authority, assets, saved variants and capabilities: PASS");
     return 0;
 }

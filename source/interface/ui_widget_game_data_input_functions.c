@@ -3310,13 +3310,15 @@ static void variant_profile_update_cache_for_nwide_list(
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 /* The card has 256 UTF-16 characters and room for one more small-ui line.
-Prioritize the gameplay-changing Hardcore rule when it is enabled. */
+Prioritize starting equipment and Hardcore over optional practice aids. */
 static void playlist_profile_append_performance_status(
 	wchar_t *description,
 	struct playlist_profile const *profile)
 {
 	static wchar_t const status[] = L"\r\nPerformance options active";
 	static wchar_t const hardcore_status[] = L"\r\nHardcore: On";
+	static wchar_t const fiesta_status[] = L"\r\nStarting Equipment: Fiesta";
+	static wchar_t const fiesta_hardcore_status[] = L"\r\nFiesta / Hardcore: On";
 	unsigned flags;
 	unsigned long length;
 	wchar_t const *suffix;
@@ -3328,7 +3330,10 @@ static void playlist_profile_append_performance_status(
 	if (!flags)
 		return;
 	length = ustrnlen(description, 0x100);
-	suffix = (flags & _performance_option_hardcore) ? hardcore_status : status;
+	if (flags & _performance_option_fiesta)
+		suffix = (flags & _performance_option_hardcore) ? fiesta_hardcore_status : fiesta_status;
+	else
+		suffix = (flags & _performance_option_hardcore) ? hardcore_status : status;
 	if (!description[0]) suffix += 2;
 	suffix_length = ustrlen(suffix);
 	if (length + suffix_length < 0x100)

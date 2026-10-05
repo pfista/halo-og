@@ -265,7 +265,8 @@ static short pb_editor_preset(unsigned flags)
 static void pb_editor_sync(struct widget_instance *menu)
 {
     struct widget_instance *spinners[_pb_editor_row_count];
-    unsigned flags = 0;
+    /* Fiesta is edited in Item Options and has no Performance spinner. */
+    unsigned flags = pb_editor.last_flags & _performance_option_fiesta;
     short row;
     for (row = 0; row < _pb_editor_row_count; row++)
     {

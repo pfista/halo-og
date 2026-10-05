@@ -929,6 +929,7 @@ symbols in this file:
 #include "text/unicode.h"
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "halo_custom_maps.h"
+#include "game/starting_equipment.h"
 #endif
 
 /* ---------- constants */
@@ -3567,6 +3568,12 @@ static boolean playlist_profile_change_item_options(
 		while (option_spinner && option_spinner->type != 2)
 			option_spinner = option_spinner->next;
 		match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 2656, option_spinner, "expected 'starting equipment' option spinner list");
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (!starting_equipment_set((struct game_variant *)profile,
+			option_spinner->data3C.selected_index))
+			error(2, "unknown option selected in 'starting equipment' option spinner list");
+		return TRUE;
+#else
 		switch (option_spinner->data3C.selected_index)
 		{
 		case 0:
@@ -3579,6 +3586,7 @@ static boolean playlist_profile_change_item_options(
 			error(2, "unknown option selected in 'starting equipment' option spinner list");
 			return TRUE;
 		}
+#endif
 	}
 
 	error(2, "failed to retrieve editable game variant");
@@ -4564,12 +4572,22 @@ static boolean playlist_profile_initialize_item_options(
 		while (option_spinner && option_spinner->type != 2)
 			option_spinner = option_spinner->next;
 		match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 3423, option_spinner, "expected 'starting equpiment' option spinner list");
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		option_spinner->data3C.selected_index = starting_equipment_get(
+			(struct game_variant const *)profile);
+		/* A cache without the native clone retains the two retail choices. */
+		if (option_spinner->data3C.selected_index >= option_spinner->generated_count &&
+			option_spinner->generated_count > 0)
+			option_spinner->data3C.selected_index = _starting_equipment_generic;
+		return TRUE;
+#else
 		switch ((profile->flags >> 5) & 1)
 		{
 		case 0: option_spinner->data3C.selected_index = 0; return TRUE;
 		case 1: option_spinner->data3C.selected_index = 1; return TRUE;
 		default: option_spinner->data3C.selected_index = 0; return TRUE;
 		}
+#endif
 	}
 	error(2, "failed to retrieve editable game variant");
 	return FALSE;

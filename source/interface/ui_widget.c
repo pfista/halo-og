@@ -1433,6 +1433,7 @@ static boolean ui_check_for_pause_game(
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "../../port/linux/game/device_settings.h"
 #include "performance_editor_menu.inc"
+#include "fiesta_item_options_menu.inc"
 #include "native_pause_frame.inc"
 #include "performance_pause_menu.inc"
 #include "game_settings_menu.inc"
@@ -3772,6 +3773,7 @@ struct widget_instance *ui_widget_load_by_name_or_tag(
 	{
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		tag_index = performance_editor_remap_tag(tag_index);
+		tag_index = fiesta_item_options_remap_tag(tag_index);
 		tag_index = performance_pause_remap_tag(tag_index);
 		tag_index = game_settings_remap_tag(tag_index);
 #endif

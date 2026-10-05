@@ -896,7 +896,7 @@ static boolean network_game_server_performance_peers_support(
 	if (flags & PERFORMANCE_MATCH_RULE_FLAGS)
 	{
 		platform_show_message("Halo: match rules unavailable",
-			"This build does not support Input Delay or Hardcore. Turn these options off, or use a compatible build.");
+			"This build does not support Input Delay, Hardcore, or Fiesta. Turn these options off, or use a compatible build.");
 		return FALSE;
 	}
 #endif
@@ -926,6 +926,14 @@ static boolean network_game_server_performance_peers_support(
 			!network_game_server_client_machine_is_local(server, machine) &&
 			!network_game_server_performance_supported(machine, flags))
 		{
+			if ((flags & _performance_option_fiesta) &&
+				!network_game_server_performance_supported(machine, _performance_option_fiesta))
+			{
+				platform_show_message("Halo: Fiesta unavailable",
+					"A connected player does not support Fiesta. Select Generic or Custom under Starting Equipment, "
+					"or have that player update before starting.");
+				return FALSE;
+			}
 			if ((flags & _performance_option_hardcore) &&
 				!network_game_server_performance_supported(machine, _performance_option_hardcore))
 			{
@@ -955,6 +963,13 @@ static boolean network_game_server_input_delay_change_allowed(
 	struct network_game_server *server,
 	unsigned flags)
 {
+	if (((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_fiesta) &&
+		(server->state != _network_game_server_state_pregame || server->sent_start_game_message))
+	{
+		platform_show_message("Halo: Fiesta locked",
+			"Starting Equipment is fixed for the match. Choose Fiesta in the game type before starting the next match.");
+		return FALSE;
+	}
 	if (((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_input_delay) &&
 		(server->state != _network_game_server_state_pregame || server->sent_start_game_message))
 	{

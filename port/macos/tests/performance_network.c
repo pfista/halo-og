@@ -14,27 +14,33 @@ int main(void)
 
     assert(network_performance_runtime_supported_flags(0,0)==27);
     assert(network_performance_runtime_supported_flags(0,1)==31);
-    assert(network_performance_runtime_supported_flags(1,0)==59);
-    assert(network_performance_runtime_supported_flags(1,1)==63);
-    for (flags=0;flags<=63;flags++) {
-        assert(network_performance_host_settings_flags(flags,0)==((flags & 32) ? 0 : flags));
-        assert(network_performance_host_settings_flags(flags,31)==((flags & 32) ? 0 : flags));
-        assert(network_performance_host_settings_flags(flags,63)==flags);
+    assert(network_performance_runtime_supported_flags(1,0)==251);
+    assert(network_performance_runtime_supported_flags(1,1)==255);
+    assert(network_performance_capability_for_peer(255,0,0)==63);
+    assert(network_performance_capability_for_peer(255,1,0)==127);
+    assert(network_performance_capability_for_peer(255,1,1)==255);
+    assert(network_performance_capability_for_peer(251,1,1)==251);
+    for (flags=0;flags<=255;flags++) {
+        assert(network_performance_host_settings_flags(flags,0)==((flags & 224) ? 0 : flags));
+        assert(network_performance_host_settings_flags(flags,31)==((flags & 224) ? 0 : flags));
+        assert(network_performance_host_settings_flags(flags,63)==((flags & 192) ? 0 : flags));
+        assert(network_performance_host_settings_flags(flags,127)==((flags & 128) ? 0 : flags));
+        assert(network_performance_host_settings_flags(flags,255)==flags);
     }
 
     /* Stock v10 retains admission in either direction with every option off;
      * every enabled combination requires precisely its supported bits. */
-    for (flags = 0; flags <= 63; ++flags) {
+    for (flags = 0; flags <= 255; ++flags) {
         unsigned version = network_performance_advertised_version(flags, 10);
         assert((version == 10) == (flags == 0));
         assert(network_performance_version_compatible(version,
             3 | NETWORK_PERFORMANCE_ADVERTISED_FLAG, 10));
         assert(network_performance_version_compatible(10, 1, 10));
         if (flags) assert(!network_performance_version_compatible(version, 1, 10));
-        for (supported = 0; supported <= 63; ++supported)
+        for (supported = 0; supported <= 255; ++supported)
             assert(network_performance_can_join(flags, supported) == ((flags & supported) == flags));
     }
-    assert(!network_performance_can_join(64, 255));
+    assert(!network_performance_can_join(256, 255));
     /* The prior timer/marker client can still join those modes, but cannot
      * join or remain in a session where the host enables timer audio. */
     assert(network_performance_can_join(3, 3));
@@ -48,6 +54,10 @@ int main(void)
     assert(!network_performance_can_join(63, 31));
     assert(network_performance_can_join(32, 63));
     assert(network_performance_can_join(63, 63));
+    assert(!network_performance_can_join(128, 127));
+    assert(!network_performance_can_join(255, 127));
+    assert(network_performance_can_join(128, 255));
+    assert(network_performance_can_join(255, 255));
     assert(!network_performance_version_compatible(9, 3, 10));
     assert(!network_performance_version_compatible(11, 3, 10));
 
@@ -55,12 +65,21 @@ int main(void)
      * subset before current capabilities. The earlier v1 decoder has the
      * same packet format but rejects any payload flag outside mask 3. */
     {
-        const unsigned capabilities[] = {3, 7, 31, NETWORK_PERFORMANCE_SUPPORTED_FLAGS};
-        unsigned prior_host_support = 0, audio_host_support = 0, sound_host_support = 0, current_host_support = 0;
+        const unsigned capabilities[] = {3, 7, 31, 63, 127, NETWORK_PERFORMANCE_SUPPORTED_FLAGS};
+        unsigned prior_host_support = 0, audio_host_support = 0, sound_host_support = 0;
+        unsigned delay_host_support = 0, hardcore_host_support = 0, current_host_support = 0;
         for (index = 0; index < sizeof(capabilities) / sizeof(capabilities[0]); ++index) {
             network_performance_encode(message, NETWORK_PERFORMANCE_CAPABILITY, capabilities[index]);
             assert(network_performance_decode(message, sizeof(message), NETWORK_PERFORMANCE_CAPABILITY,
                 &current_host_support));
+            if (!(message[13] & ~127u)) {
+                assert(network_performance_decode(message, sizeof(message), NETWORK_PERFORMANCE_CAPABILITY,
+                    &hardcore_host_support));
+            }
+            if (!(message[13] & ~63u)) {
+                assert(network_performance_decode(message, sizeof(message), NETWORK_PERFORMANCE_CAPABILITY,
+                    &delay_host_support));
+            }
             if (!(message[13] & ~31u)) {
                 assert(network_performance_decode(message, sizeof(message), NETWORK_PERFORMANCE_CAPABILITY,
                     &sound_host_support));
@@ -75,11 +94,12 @@ int main(void)
             }
         }
         assert(prior_host_support == 3 && audio_host_support == 7 &&
-            sound_host_support == 31 && current_host_support == 63);
+            sound_host_support == 31 && delay_host_support == 63 &&
+            hardcore_host_support == 127 && current_host_support == 255);
     }
 
     for (kind = NETWORK_PERFORMANCE_CAPABILITY; kind <= NETWORK_PERFORMANCE_SETTINGS; ++kind) {
-        for (flags = 0; flags <= 63; ++flags) {
+        for (flags = 0; flags <= 255; ++flags) {
             unsigned decoded = 99;
             network_performance_encode(message, kind, flags);
             assert(network_performance_decode(message, sizeof(message), kind, &decoded));
@@ -100,10 +120,8 @@ int main(void)
                 assert(!network_performance_decode(damaged, sizeof(damaged), kind, &decoded));
                 assert(decoded == 99);
             }
-            for (index = 64; index <= 255; ++index) {
-                message[13] = (unsigned char)index;
-                assert(!network_performance_decode(message, sizeof(message), kind, &decoded));
-            }
+            /* Fiesta uses the final flags-byte bit; every byte value is now
+             * valid, while all framing/version/reserved checks remain. */
         }
     }
     assert(!network_performance_decode(NULL, sizeof(message), 1, &flags));

@@ -702,7 +702,8 @@ static boolean network_game_server_send_performance_capability(
 	unsigned supported;
 
 	if (!network_game_server_performance_supported(machine, _performance_option_input_delay) &&
-		!network_game_server_performance_supported(machine, _performance_option_hardcore))
+		!network_game_server_performance_supported(machine, _performance_option_hardcore) &&
+		!network_game_server_performance_supported(machine, _performance_option_fiesta))
 		return TRUE;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	supported = network_performance_runtime_supported_flags(TRUE, halo_performance_audio_available());
@@ -710,7 +711,8 @@ static boolean network_game_server_send_performance_capability(
 	supported = network_performance_runtime_supported_flags(FALSE, FALSE);
 #endif
 	supported = network_performance_capability_for_peer(supported,
-		network_game_server_performance_supported(machine, _performance_option_hardcore));
+		network_game_server_performance_supported(machine, _performance_option_hardcore),
+		network_game_server_performance_supported(machine, _performance_option_fiesta));
 
 	/* A saved variant may contain flags this host cannot interpret. Confirm
 	 * runtime support before the full record, on the same reliable stream;
@@ -1822,7 +1824,7 @@ static boolean network_game_server_handle_message_client_join_game_request(
 				struct message_server_machine_rejected rejection = { _rejection_code_version_too_old };
 				void *reply = create_network_game_message(_message_server_machine_rejected, &rejection, sizeof(rejection));
 
-				network_event("refusing client: this match enables practice options; an updated client with practice support is required");
+				network_event("refusing client: this match enables unsupported game type options; an updated client is required");
 				if (reply)
 					network_game_server_send_message_to_client_machine(server, server_client_machine, reply);
 				return FALSE;

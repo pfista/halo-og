@@ -2814,7 +2814,7 @@ static boolean network_game_client_idle_joining(
 
 				/* Earlier hosts reject unknown capability bits. Announce each
 				 * supported generation first: timer/markers, then timer audio,
-				 * then event-specific sound rules, input delay, and Hardcore. Each host
+				 * then event-specific sound rules, input delay, Hardcore, and Fiesta. Each host
 				 * retains the newest capability it understands before the
 				 * reliable join request. */
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY, 3);
@@ -2830,6 +2830,10 @@ static boolean network_game_client_idle_joining(
 					return FALSE;
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
 					supported & 63);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported & 127);
 				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
 					return FALSE;
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
