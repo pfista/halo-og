@@ -77,16 +77,16 @@ PB capability flag `0x04` is separate from the in-progress flag `0x02`.
 Options-off games advertise stock v11; enabled PB games advertise `0x800B` and
 require supporting peers. Input Delay: 33ms also requires peers that confirm
 the delay capability; older PB builds cannot join an enabled-delay match.
-v10/PB-v10 builds must update. For mixed cybersecurity tests, leave PB Options
+v10/PB-v10 builds must update. For mixed cybersecurity tests, leave Performance Options
 Stock and Input Delay Off. Games with five or more players should leave
 Infinite Grenades off because the native Xbox rule still differs even though
 the best-effort gate admits that setting.
-See [networking](../port/linux/NETCODE.md), [PB Options](performance-options.md)
+See [networking](../port/linux/NETCODE.md), [Performance Options](performance-options.md)
 and [playtesting](playtesting.md) for implementation and player guidance.
 
 ## Optional competitive features
 
-PB Options permits host-selected match timers, timer announcements, spawn
+Performance Options permits host-selected match timers, timer announcements, spawn
 markers, silent movement/weapon-ready sounds and fixed 33ms input delay.
 All modifications default off; sounds default Normal. Timer audio/display
 preferences are local. These limited

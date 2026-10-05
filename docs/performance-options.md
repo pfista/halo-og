@@ -1,6 +1,6 @@
-# PB Options
+# Performance Options
 
-PB Options provides explicitly selected multiplayer practice aids: an
+Performance Options provides explicitly selected multiplayer practice aids: an
 elapsed match timer, spawn markers, timer announcements, and optional silent
 movement or weapon equip sounds. All modifications are **off by default**.
 The host also selects **Input Delay: Off / 33ms** before the match. It is
@@ -8,11 +8,11 @@ independent of the practice aids and applies to every player.
 
 ## Game type editor and pause menu
 
-In **Multiplayer → Edit Gametypes → select a game type**, **PB Options** appears
+In **Multiplayer → Edit Gametypes → select a game type**, **Performance Options** appears
 below **Indicator Options**. The submenu is titled **Performance Options**.
 Its native game widgets use the existing menu fonts, navigation and help text.
 Choose a preset or change the options individually. Game-type selection cards
-show **PB options active** whenever the saved variant enables any option.
+show **Performance options active** whenever the saved variant enables any option.
 
 | Preset | Match Timer | Spawn Markers | Timer Sounds | Movement / Weapon Sounds |
 | --- | --- | --- | --- | --- |
@@ -32,7 +32,7 @@ edited; finish the existing **Save Changes** flow to persist that variant.
 The existing variant copy, rename and save-as paths retain the options. Editing
 a saved variant does not immediately change a running match.
 
-During multiplayer play, open the native pause menu and select **PB Options**.
+During multiplayer play, open the native pause menu and select **Performance Options**.
 The host can stage a preset or individual changes and choose **Apply** to update
 the session. Leaving without Apply discards that panel's draft. Joining players
 see the host's current choices with the controls disabled. Session changes do
@@ -44,7 +44,7 @@ pause page omits its control; Apply and either preset preserve the match's
 existing delay. Other practice aids remain adjustable during play.
 
 The editor and pause pages are native game widgets registered in the loaded
-cache's runtime UI table. Retail map files are not rewritten. PB Options uses
+cache's runtime UI table. Retail map files are not rewritten. Performance Options uses
 these menu entries; there is no separate overlay or Y-button shortcut.
 
 ## Input delay
@@ -188,7 +188,7 @@ objects owned by this feature, checked by full datum identifier, definition
 and name. It does not adopt or delete unrelated scenery, and it never restores
 the source maps' `randoms` training objects.
 
-These results apply to the converted v5 maps. PB Options does not add support
+These results apply to the converted v5 maps. Performance Options does not add support
 for the original PC v7 caches, import the Performance Build engine, or enable
 additional Performance Build game mechanics.
 

@@ -79,7 +79,7 @@ what they do. [More controls and key names](../port/macos/README.md#launch).
 ## Host or join a game
 
 Everyone should use the **same release** and map. Start with stock Blood Gulch,
-Slayer, and **PB Options → Stock**; competitive options are optional and default off.
+Slayer, and **Performance Options → Stock**; competitive options are optional and default off.
 
 1. The host opens **Multiplayer → System Link**, selects a profile, and uses
    **Create Game** (Y on a controller, or Tab on the keyboard). Choose map and mode.

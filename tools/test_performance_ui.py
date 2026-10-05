@@ -5,6 +5,8 @@ Checks cloning, profile staging, selectors, registration failure and map lifetim
 Rendering and actual platform event delivery remain app smoke-test concerns.
 """
 from pathlib import Path
+import ast
+import re
 import subprocess
 import tempfile
 import unittest
@@ -21,7 +23,7 @@ typedef unsigned short word;
 typedef float real;
 typedef struct { short y0,x0,y1,x1; } rectangle2d;
 typedef struct { float alpha,red,green,blue; } real_argb_color;
-enum { UI_WIDGET_DEFINITION_TAG='DeLa', UNICODE_STRING_LIST_TAG='ustr',
+enum { UI_WIDGET_DEFINITION_TAG='DeLa', UNICODE_STRING_LIST_TAG='ustr', FONT_GROUP_TAG='font',
        _ui_widget_type_container=0, _ui_widget_type_text_box=1,
        _ui_widget_type_spinner_list=2, _ui_widget_type_column_list=3 };
 /* STRUCTURES */
@@ -53,7 +55,7 @@ static long cache_files_register_runtime_ui_tag(long group,const char *name,void
 HARNESS = r'''
 #define EDIT_PREFIX "ui\\shell\\main_menu\\settings_select\\multiplayer_setup\\"
 enum { ROOT_TAG,LIST_TAG,ENTRY_TAG,SCREEN_TAG,MENU_TAG,HELP_TAG,ROW_TAG,LABEL_TAG,SPINNER_TAG,
-       PREVIEW_TAG,PREVIEW_TEXT_TAG,PREVIEW_PIC_TAG,SAVE_TAG,OTHER_TAG,STOCK_WIDGET_COUNT,STRINGS_TAG=STOCK_WIDGET_COUNT };
+       PREVIEW_TAG,PREVIEW_TEXT_TAG,PREVIEW_PIC_TAG,SAVE_TAG,OTHER_TAG,SMALL_FONT_TAG,STOCK_WIDGET_COUNT,STRINGS_TAG=STOCK_WIDGET_COUNT };
 static const char *stock_names[]={
     EDIT_PREFIX "playlist_edit\\gametype_edit_screen",
     EDIT_PREFIX "playlist_edit\\edit_playlist_select_list",
@@ -65,7 +67,7 @@ static const char *stock_names[]={
     EDIT_PREFIX "indicator_options_edit\\indicator_options_players_on_radar_label",
     EDIT_PREFIX "indicator_options_edit\\indicator_options_players_on_radar_spinner",
     "ui\\fixture\\preview", "ui\\fixture\\preview_text", "ui\\fixture\\preview_pic",
-    EDIT_PREFIX "playlist_edit\\save_settings_item", "ui\\fixture\\other", "ui\\fixture\\strings"
+    EDIT_PREFIX "playlist_edit\\save_settings_item", "ui\\fixture\\other", "ui\\small_ui", "ui\\fixture\\strings"
 };
 static struct {
     struct ui_widget_definition defs[STOCK_WIDGET_COUNT];
@@ -100,6 +102,7 @@ static void setup(void) {
         snprintf(d->name,sizeof(d->name),"original_%u",i);
         stock_tags[i]=(struct cache_file_tag_instance){'DeLa',{NONE,NONE},stock_id(i),(char *)stock_names[i],d,{0,0}};
     }
+    stock_tags[SMALL_FONT_TAG].group_tag=FONT_GROUP_TAG;
     for(unsigned i=0;i<8;i++) stock.root[i].widget_tag=ref(OTHER_TAG);
     stock.root[1].widget_tag=ref(LIST_TAG); stock.root[7].vertical_offset=252;
     stock.defs[ROOT_TAG].child_widgets=(struct tag_block){8,stock.root,NULL};
@@ -188,7 +191,8 @@ static void shapes_and_preservation(void) {
     assert(pb_editor.root_children[1].widget_tag.index==pb_editor.list_tag && pb_editor.root_children[7].vertical_offset==285);
     for(unsigned i=0;i<5;i++) assert(!memcmp(&pb_editor.list_children[i],&stock.list[i],sizeof(stock.list[0])));
     assert(ui_widget_definition_get(pb_editor.list_children[5].widget_tag.index)==&pb_editor.entry);
-    assert(!wcscmp(string_at(&pb_editor.entry,0),L"PB OPTIONS"));
+    assert(!wcscmp(string_at(&pb_editor.entry,0),L"PERFORMANCE OPTIONS"));
+    assert(pb_editor.entry.text_font.index==stock_id(SMALL_FONT_TAG));
     assert(unicode_string_list_definition_get(pb_editor.heading.text_label_string_list.index)->strings.count==9);
     assert(pb_editor.heading.string_list_index==8);
     assert(!wcscmp(string_at(&pb_editor.heading,pb_editor.heading.string_list_index),L"PERFORMANCE OPTIONS"));
@@ -360,6 +364,8 @@ static void registration_and_reload(void) {
     assert(performance_editor_remap_tag(stock_id(ROOT_TAG))==stock_id(ROOT_TAG) && !register_calls);
     setup(); stock.strings.strings.count=5;
     assert(performance_editor_remap_tag(stock_id(ROOT_TAG))==stock_id(ROOT_TAG) && !register_calls);
+    setup(); stock_tags[SMALL_FONT_TAG].group_tag=NONE;
+    assert(performance_editor_remap_tag(stock_id(ROOT_TAG))==stock_id(ROOT_TAG) && !register_calls);
 }
 int main(void) {
     shapes_and_preservation(); selection_and_staging(); sound_rules_and_presets(); preview_and_help(); independent_match_start_delay(); registration_and_reload();
@@ -406,6 +412,33 @@ def fixture_source():
 
 
 class NativePerformanceEditorTests(unittest.TestCase):
+
+    def test_shipped_font_widths(self):
+        """Check the full name against the resident font used by narrow buttons."""
+        from tools.verify_performance_sound_samples import Cache
+        paths = [ROOT / f"assets/maps/{name}.map" for name in ("ui", "bloodgulch")]
+        paths = [path for path in paths if path.exists()]
+        if not paths:
+            self.skipTest("owned Xbox cache assets required for font metrics")
+        source = (ROOT / "source/interface/performance_editor_menu.inc").read_text()
+        array = source.split("static char const *const labels[] = {", 1)[1].split("};", 1)[0]
+        label = ast.literal_eval(re.findall(r'"(?:\\.|[^"\\])*"', array)[0])
+        for path in paths:
+            cache = Cache(path)
+            font = cache.by_path[r"ui\small_ui"]
+            count, address, _ = cache.unpack("<3I", font["address"] + 0x7C)
+            glyphs = {}
+            for index in range(count):
+                code, advance, width, _, origin_x = cache.unpack("<H4h", address + index * 0x14)
+                glyphs[chr(code)] = (advance, width, origin_x)
+            with self.subTest(map=path.stem, label=label):
+                cursor = ink_right = 0
+                for character in label:
+                    advance, width, origin_x = glyphs[character]
+                    ink_right = max(ink_right, cursor + origin_x + width)
+                    cursor += advance
+                self.assertLessEqual(max(cursor, ink_right), 202)
+
     def test_native_editor(self):
         with tempfile.TemporaryDirectory(prefix="halo-native-pb-editor-") as temporary:
             folder = Path(temporary)

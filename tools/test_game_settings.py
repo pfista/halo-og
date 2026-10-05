@@ -56,7 +56,7 @@ UI_STUBS = r'''
 #define csmemcpy memcpy
 #define FLAG(n) (1L << (n))
 #define MAXIMUM_NUMBER_OF_LOCAL_PLAYERS 4
-enum { FONT_GROUP_TAG='font', _ui_audio_feedback_flag_failure=7, _ui_widget_type_bitmap=0 };
+enum { _ui_audio_feedback_flag_failure=7, _ui_widget_type_bitmap=0 };
 /* NATIVE PREVIEW CALLBACK */
 enum { _gamepad_analog_button_a=0, _gamepad_analog_button_b=1,
  _gamepad_binary_button_dpad_up=8, _gamepad_binary_button_dpad_down,

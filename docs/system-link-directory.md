@@ -5,7 +5,7 @@ on macOS, Windows, and Linux. Existing published builds do not gain it until
 updated. It uses the original Xbox-style **Multiplayer → System Link** menu.
 
 1. Use the same new build on both machines. Start with Blood Gulch, Slayer,
-   and **PB Options → Stock**.
+   and **Performance Options → Stock**.
 2. On the host, open **Multiplayer → System Link**, select a profile, create a
    game, and choose its map/mode. Leave Halo running.
 3. On the other machine, open **Multiplayer → System Link**. The host should

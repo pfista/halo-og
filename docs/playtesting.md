@@ -93,7 +93,7 @@ app data. See [Android installation/data](../port/android/README.md#game-data).
 
 1. Confirm everyone uses the **same Halo OG release tag/commit**, protocol 11,
    and matching map data. Old protocol-10 builds cannot join. For this first
-   test, use a stock map and leave **PB Options → Stock** selected.
+   test, use a stock map and leave **Performance Options → Stock** selected.
 2. The host opens **Multiplayer → System Link** and creates a game. Select a
    stock map such as Blood Gulch and a game type such as Slayer.
 3. On the same LAN, clients open **Multiplayer → System Link** and select the
@@ -115,13 +115,13 @@ which pairing/network worked or failed; a successful CI build is not proof of
 that pairing. [Invite/network details](../port/linux/README.md#internet-play)
 and [Mac networking](../port/macos/README.md#launch) cover troubleshooting.
 
-PB Options are optional. The host chooses them in the game type editor or
+Performance Options are optional. The host chooses them in the game type editor or
 multiplayer pause menu; all peers need compatible options support. Timer Sounds
 additionally require the separate [timer recording pack](timer-audio.md).
 Mac, Windows, Linux and Android download it automatically in the background.
 Restart Halo OG after its first installation; Mac shows progress in
 **Halo OG → Settings**.
-[PB Options](performance-options.md) explains these settings.
+[Performance Options](performance-options.md) explains these settings.
 
 ### Spawn, sniper and teleporter regression test
 
@@ -228,7 +228,7 @@ Open an [issue in Halo OG](https://github.com/pfista/halo-og/issues/new) with:
 
 - The release tag and commit from `provenance.json` or `BuildInfo.txt`.
 - Both devices' OS/CPU/GPU, controller or keyboard/mouse, and which is host.
-- LAN or Internet, the map/build, game type, and whether PB Options were enabled.
+- LAN or Internet, the map/build, game type, and whether Performance Options were enabled.
 - What you did, what happened, and whether restarting or a stock map changes it.
 - Relevant log lines or a screenshot. Mac logs are `halo.log` in Application
   Support; Windows/Linux logs are `debug.txt` in the active data root; Android

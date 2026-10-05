@@ -195,7 +195,7 @@ int main(void) {
  }
  assert(!performance_pause_is_spinner(NULL));
  assert(performance_pause_definitions[_pp_title].bounds.y1==22);
- assert(performance_pause_definitions[_pp_title].text_font.index==9);
+ assert(performance_pause_definitions[_pp_title].text_font.index==7);
  assert(performance_pause_definitions[_pp_title].vertical_offset==0);
  // Seven complete buttons finish at the cap-preserved footer divider (240-29).
  assert(22+performance_pause_definitions[_pp_column].bounds.y1==211);
@@ -207,6 +207,9 @@ int main(void) {
  assert(!line_break);
  }
  assert(performance_pause_definitions[_pp_entry_1p].string_list_index==0);
+ assert(performance_pause_definitions[_pp_entry_1p].text_font.index==7);
+ assert(performance_pause_definitions[_pp_settings_1p].text_font.index==9);
+ assert(ustrlen(performance_pause_text[0])==19 && ustrlen(performance_pause_text[12])==19);
  assert(performance_pause_root_events[1].flags==FLAG(_event_handler_go_back_to_previous_widget_bit));
  assert(performance_pause_apply_events[0].flags==(FLAG(_event_handler_run_function_bit)|FLAG(_event_handler_go_back_to_previous_widget_bit)));
  for(unsigned flags=0;flags<=PERFORMANCE_OPTIONS_MASK;flags++) {

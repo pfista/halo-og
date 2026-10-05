@@ -8,7 +8,7 @@ for protocol details and limits.
 Upstream v11 interoperability covers original-rule sessions with the same maps.
 This build refuses unsupported PC gametype options before loading; use the
 original options, and leave Infinite Grenades off in mixed-build games with five
-or more players. PB Options require compatible fork builds when enabled. See the
+or more players. Performance Options require compatible fork builds when enabled. See the
 [v11 review and exact compatibility boundary](xbox-fidelity.md#protocol-compatibility).
 
 ## Play on Mac using an invite

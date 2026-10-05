@@ -25,7 +25,7 @@ preserving its corners and footer divider. Split-screen pages fit within their
 local viewport; focused help appears beneath the frame in full-screen layouts.
 
 Audio and Video preferences belong to the local installation. They are not
-part of a player profile, map or network gametype. PB Options remain saved
+part of a player profile, map or network gametype. Performance Options remain saved
 gametype options with host authority. Timer cue groups, volume, position and
 size are local preferences; the host still controls whether the timer and
 timer audio are enabled.

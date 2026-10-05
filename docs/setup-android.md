@@ -54,7 +54,7 @@ explains how. For the easiest first session, use a controller.
 ## Host or join a game
 
 Use the **same release and map** as your friends. Start with stock Blood Gulch,
-Slayer, and **PB Options → Stock**.
+Slayer, and **Performance Options → Stock**.
 
 1. The host opens **Multiplayer → System Link**, selects a profile, and chooses
    **Create Game** (Y). Pick the map and mode.

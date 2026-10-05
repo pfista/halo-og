@@ -3315,7 +3315,7 @@ static void playlist_profile_append_performance_status(
 	wchar_t *description,
 	struct playlist_profile const *profile)
 {
-	static wchar_t const status[] = L"\r\nPB options active";
+	static wchar_t const status[] = L"\r\nPerformance options active";
 	unsigned long length;
 	wchar_t const *suffix;
 	unsigned long suffix_length;
