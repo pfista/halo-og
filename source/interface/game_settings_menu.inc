@@ -22,7 +22,7 @@ enum { _ds_settings_label, _ds_profile_label, _ds_game_label, _ds_about_label, _
     _ds_value_start = _ds_help_start + NUMBER_OF_DEVICE_SETTINGS };
 static short const device_settings_choices[] = {_ds_audio, _ds_video, _ds_multiplayer};
 #define DEVICE_SETTINGS_CHOICE_COUNT NUMBEROF(device_settings_choices)
-static short const device_settings_page_counts[_ds_page_count] = {3, 6, 5, 5, 2};
+static short const device_settings_page_counts[_ds_page_count] = {3, 6, 5, 5, 3};
 static short const device_settings_page_rows[_ds_page_count][6] = {
     {NONE, NONE, NONE},
     {_device_setting_master_volume, _device_setting_music_volume, _device_setting_effects_volume,
@@ -31,7 +31,7 @@ static short const device_settings_page_rows[_ds_page_count][6] = {
      _device_setting_timer_position, _device_setting_timer_scale},
     {_device_setting_timer_volume, _device_setting_timer_countdown, _device_setting_timer_beeps,
      _device_setting_timer_minutes, _device_setting_timer_items},
-    {_device_setting_show_og_maps, _device_setting_show_community_maps}};
+    {_device_setting_show_og_maps, _device_setting_show_community_maps, _device_setting_join_in_progress}};
 static short const device_settings_page_titles[_ds_page_count] = {_ds_game_label, _ds_audio_label, _ds_video_label, _ds_timer_label, _ds_multiplayer_label};
 static short const device_settings_page_help[_ds_page_count] = {_ds_back_help, _ds_audio_help, _ds_video_help, _ds_timer_help, _ds_multiplayer_help};
 #define DEVICE_SETTINGS_STRING_COUNT (_ds_value_start + MAXIMUM_NUMBER_OF_LOCAL_PLAYERS * NUMBER_OF_DEVICE_SETTINGS)
@@ -341,7 +341,7 @@ static boolean device_settings_build_native_pages(long strings, long const *head
     static wchar_t descriptions[DEVICE_SETTINGS_CHOICE_COUNT][96] = {
         L"Adjust music, sound effects,\r\ndialogue and overall volume.",
         L"Choose fullscreen, VSync\r\nand smooth motion settings.",
-        L"Choose which map sets\r\nappear when selecting\r\na map to host."};
+        L"Choose map sets and allow\r\nnew players to join matches\r\nafter they start."};
     struct ui_widget_definition *base[NUMBEROF(templates)];
     long i, tag, page, row;
     for (i = 0; i < (long)NUMBEROF(templates); i++)
@@ -513,7 +513,7 @@ static boolean device_settings_build(void)
         "MASTER VOLUME:", "MUSIC VOLUME:", "EFFECTS VOLUME:", "DIALOGUE VOLUME:", "TIMER VOLUME:",
         "MENU MUSIC:", "FULLSCREEN:", "VSYNC:", "SMOOTH MOTION:",
         "COUNTDOWN:", "BEEPS:", "MINUTE ANNOUNCEMENTS:", "ITEM CUES:", "TIMER POSITION:", "TIMER SIZE:",
-        "OG MAPS:", "COMMUNITY MAPS:"};
+        "OG MAPS:", "COMMUNITY MAPS:", "JOIN IN PROGRESS:"};
     static char const *const help[] = {
         "Adjust the volume of all game audio.",
         "Adjust the volume of music.",
@@ -531,7 +531,8 @@ static boolean device_settings_build(void)
         "Choose where the match timer appears.\r\nThe host must enable the timer.",
         "Adjust timer size from 50% to 100%.\r\nThe host must enable the timer.",
         "Show original Xbox maps when hosting.\r\nKeep at least one map set enabled.\r\nJoining hidden maps stays available.",
-        "Show installed community maps.\r\nAn empty list shows OG maps.\r\nJoining hidden maps stays available."};
+        "Show installed community maps.\r\nAn empty list shows OG maps.\r\nJoining hidden maps stays available.",
+        "Allow new players into running matches\r\nthat you host. Pregame lobbies stay\r\nopen when this option is off."};
     static char const *const heading_names[] = {"ui\\native_settings\\game_title", "ui\\native_settings\\audio_title", "ui\\native_settings\\video_title", "ui\\native_settings\\timer_title", "ui\\native_settings\\multiplayer_title"};
     static char const *const footer_names[] = {"ui\\native_settings\\game_help", "ui\\native_settings\\audio_help", "ui\\native_settings\\video_help", "ui\\native_settings\\timer_help", "ui\\native_settings\\multiplayer_help"};
     struct ui_widget_definition *bases[_ds_layout_count] = {0};
@@ -684,7 +685,7 @@ static boolean device_settings_build(void)
             short rows = count + (page != _ds_game);
             short pitch = main_menu ? 24 : 27;
             short width = main_menu ? 284 : 202;
-            short height = main_menu ? 28 + rows * pitch + 40 : page == _ds_game || page == _ds_multiplayer ? 159 : 27 + rows * pitch + 24;
+            short height = main_menu ? 28 + rows * pitch + 40 : page == _ds_game ? 159 : 27 + rows * pitch + 24;
             short x = (bases[layout]->bounds.x1 - bases[layout]->bounds.x0 - width) / 2;
             short y = (bases[layout]->bounds.y1 - bases[layout]->bounds.y0 - height) / 2;
             short column_y = main_menu ? 28 : 22;
@@ -881,7 +882,7 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
         "Master", "Music", "Effects", "Dialogue", "Volume",
         "Menu Music", "Fullscreen", "VSync", "Smooth Motion",
         "Countdown", "Beeps", "Minutes", "Item Cues", "Position", "Timer Size",
-        "OG Maps", "Community Maps"};
+        "OG Maps", "Community Maps", "Join In Progress"};
     short row, local = (short)(draft - device_settings_drafts);
     for (row = 0; row < NUMBER_OF_DEVICE_SETTINGS; row++)
     {

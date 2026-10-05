@@ -22,7 +22,7 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
     "display.vsync", "display.interpolation",
     "audio.timer_countdown", "audio.timer_beeps", "audio.timer_minutes", "audio.timer_items",
     "display.timer_position", "display.timer_scale",
-    "maps.show_og", "maps.show_community"
+    "maps.show_og", "maps.show_community", "network.join_in_progress"
 };
 
 static int device_setting_is_finite(double value)

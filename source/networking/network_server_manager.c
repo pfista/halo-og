@@ -457,6 +457,7 @@ symbols in this file:
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "../../port/linux/game/performance_options.h"
 #include "performance_audio.h"
+#include "port_config.h"
 #endif
 #include "game/player_queues_new.h"
 #include "game/players.h"
@@ -1239,6 +1240,13 @@ static boolean network_game_server_machine_may_add_player_ingame(
 {
 	short *count;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Recheck at queue consumption as well as connection admission. Closing
+	 * the match also prevents extra seats on an already connected machine. */
+	if (server->state == _network_game_server_state_ingame &&
+		!config_boolean("network.join_in_progress"))
+		return FALSE;
+#endif
 	if (!VALID_INDEX(machine_index, MAXIMUM_NETWORK_MACHINE_COUNT) ||
 		network_game_server_client_machine_is_local(server, &server->client_machines[machine_index]))
 	{
@@ -1987,6 +1995,14 @@ boolean network_game_server_game_is_open(
 	{
 		game_is_open = FALSE;
 	}
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Local host preference: lobby joins remain available. All advertisement,
+	 * invite and admission paths consume this same in-progress gate. */
+	if (server->state == _network_game_server_state_ingame &&
+		!config_boolean("network.join_in_progress"))
+		game_is_open = FALSE;
+#endif
 
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x217,
 		(TRUE == game_is_open) || (FALSE == game_is_open));
