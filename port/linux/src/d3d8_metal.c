@@ -169,6 +169,7 @@ struct native_device {
     float *immediate_vertices;
     unsigned long immediate_count, immediate_capacity, frame, draws;
     uint64_t resource_serial;
+    uint64_t antialias_passes;
     struct halo_metal_ref query_scratch, query_slots[VISIBILITY_TEST_SLOTS];
     UINT query_results[VISIBILITY_TEST_SLOTS];
     BOOL query_pending[VISIBILITY_TEST_SLOTS];
@@ -474,10 +475,11 @@ static void native_initialize(void) {
     void *storage = aligned_alloc(16, HALO_METAL_MAX_PACKET);
     if (!storage) native_fail("allocate packet",HALO_METAL_MEMORY);
     require_status("setup transport",halo_metal_guest_setup(&transport,storage,HALO_METAL_MAX_PACKET));
+    int fxaa=!strcmp(config_string("display.anti_aliasing"),"fxaa");
     require_status("initialize native window",halo_metal_guest_initialize(&transport,
-        platform_video_native_window(),0,HALO_METAL_CAP_TARGETS | HALO_METAL_CAP_UPLOAD |
+        platform_video_native_window(),fxaa ? HALO_METAL_ENABLE_FXAA:0,HALO_METAL_CAP_TARGETS | HALO_METAL_CAP_UPLOAD |
         HALO_METAL_CAP_CLEAR | HALO_METAL_CAP_DRAW | HALO_METAL_CAP_READBACK |
-        HALO_METAL_CAP_VISIBILITY));
+        HALO_METAL_CAP_VISIBILITY | (fxaa ? HALO_METAL_CAP_FXAA:0)));
     /* platform_video_initialize has already synchronized the Retina window.
        Never resolve native pixels before that point or from display points. */
     native_storage_initialize();
@@ -1068,6 +1070,34 @@ static struct native_resource *rendered_alias(DWORD data) {
 static uint64_t rendered_serial_next(void) {
     if (device.resource_serial==UINT64_MAX) native_fail("render content serial overflow",HALO_METAL_MEMORY);
     return ++device.resource_serial;
+}
+/* Presentation enhancement only: retain original draw state, visibility
+   results, depth and stencil. The host filters an immutable copy of this
+   player's world viewport; subsequent original HUD draws remain unfiltered. */
+void halo_metal_antialias_before_hud(long left,long top,long right,long bottom) {
+    if (strcmp(config_string("display.anti_aliasing"),"fxaa") || !device.ready) return;
+    if (!(transport.reply.capabilities&HALO_METAL_CAP_FXAA))
+        native_fail("pre-HUD anti-aliasing capability",HALO_METAL_UNSUPPORTED);
+    if (device.visibility_test_active || !device.render_target)
+        native_fail("pre-HUD anti-aliasing target state",HALO_METAL_INVALID);
+    struct native_resource *target=target_get(device.render_target);
+    if (target->format!=HALO_METAL_BGRA8 || left<0 || top<0 || right<left || bottom<top ||
+        (uint64_t)right>target->description.width || (uint64_t)bottom>target->description.height)
+        native_fail("pre-HUD anti-aliasing viewport",HALO_METAL_INVALID);
+    if (left==right || top==bottom) return;
+    struct halo_metal_render_dimensions dimensions=resource_dimensions(target);
+    struct halo_metal_render_edges edges={left,top,right,bottom};
+    struct halo_metal_render_rectangle rectangle;
+    require_status("scale pre-HUD anti-aliasing viewport",
+        halo_metal_render_scale_rectangle(&dimensions,&edges,&rectangle));
+    if (!rectangle.width || !rectangle.height) return;
+    if (device.antialias_passes==UINT64_MAX || device.resource_serial==UINT64_MAX)
+        native_fail("pre-HUD anti-aliasing counter overflow",HALO_METAL_MEMORY);
+    struct halo_metal_fxaa command={0};command.command.opcode=HALO_METAL_FXAA;
+    command.source=target->ref;command.x=rectangle.x;command.y=rectangle.y;
+    command.width=rectangle.width;command.height=rectangle.height;
+    packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();
+    target->last_rendered=rendered_serial_next();device.antialias_passes++;
 }
 static void backbuffer_color_copy(struct native_resource *source,
     struct native_resource *destination,uint32_t width,uint32_t height) {
@@ -1748,6 +1778,9 @@ static void native_frame_statistics(void) {
             initialized && previous_initialized && tick>=previous_tick ? (tick-previous_tick)/seconds:0.0,
             back->storage_width,back->storage_height,back->description.width,back->description.height,
             config_integer("display.frame_limit"),halo_interpolation_enabled(),previous_tick,tick);
+        platform_log("Native anti-aliasing: requested %s, applied %llu, stage pre-HUD",
+            !strcmp(config_string("display.anti_aliasing"),"fxaa") ? "fxaa":"off",
+            (unsigned long long)device.antialias_passes);
     }
     previous_ns=ns;previous_frame=device.frame;previous_tick=tick;previous_initialized=initialized;
 }

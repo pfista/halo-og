@@ -31,7 +31,7 @@ except ImportError:
     import metal_playtest_profiles as profiles
 
 require, sha, descriptor, new_json = profiles.require, profiles.sha, profiles.descriptor, profiles.new_json
-DISPLAY_KEYS = ('frame_limit', 'render_height', 'vsync', 'interpolation', 'high_res_hud', 'direct_camera', 'screen_width', 'fullscreen')
+DISPLAY_KEYS = ('frame_limit', 'render_height', 'vsync', 'interpolation', 'high_res_hud', 'direct_camera', 'screen_width', 'fullscreen', 'anti_aliasing')
 TELEMETRY = re.compile(
     r'Native display: ([0-9]+(?:\.[0-9]+)?) FPS, ([0-9]+(?:\.[0-9]+)?) simulation Hz, '
     r'(\d+)x(\d+) storage, (\d+)x(\d+) logical, cap (-?\d+), interpolation ([01]), ticks (-?\d+)-(-?\d+)')
@@ -386,6 +386,7 @@ def collect(output, plan, execution):
     errors = list(state['telemetry_errors']) + state['host_metrics_errors']
     saved_defaults = {}
     native_resolution = None
+    anti_aliasing = None
     timing_only = plan.get('timing_only', False)
     unmeasured_native = plan['values'].get('native_fullscreen',False) and not plan['values'].get('native_size')
     measured_values = plan['values']
@@ -397,6 +398,7 @@ def collect(output, plan, execution):
                 expected_physical_width=native_resolution['storage_width'],
                 expected_physical_height=native_resolution['storage_height'])
         validate_telemetry(state['telemetry'], measured_values)
+        anti_aliasing = profiles.checked_anti_aliasing(log, plan['values'])
     except (ValueError, OSError, KeyError) as error:
         errors.append(str(error))
     captures = sorted((output / 'captures').glob('frame*.bmp'),
@@ -441,6 +443,7 @@ def collect(output, plan, execution):
         launch_log=descriptor(output / 'launch.log'), launch_plan=descriptor(output / 'launch-plan.json'),
         profile=plan['profile'], producer=plan['producer'], frozen_producer=plan['frozen_producer'],
         metrics=state['telemetry'], host_metrics=state['host_metrics'], native_resolution=native_resolution,
+        anti_aliasing=anti_aliasing, capture_stage='post-world-AA/post-HUD',
         frame_timing=state['frame_timing'], frame_timing_summary=summarize_frame_timing(state['frame_timing']),
         observed_native_size=([native_resolution['drawable_width'],native_resolution['drawable_height']]
                               if native_resolution else None), native_size_expectation_bound=not unmeasured_native,

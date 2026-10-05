@@ -94,6 +94,10 @@ static const struct config_setting config_settings[] =
 		"Native Metal render height: 0 for the native drawable, or 480, 720,\n"
 		"1080, 1440 or 2160 pixels. Native mode uses actual Retina pixels.\n"
 		"Width follows the startup aspect. Restart after changing this setting." },
+	{ "display.anti_aliasing", _config_string, "\"off\"", NULL, _environment_value, _platform_all,
+		"Native Metal world smoothing: off preserves the original picture; fxaa\n"
+		"smooths world edges before drawing the original HUD. Original assets\n"
+		"and the game's 30 ticks a second stay unchanged." },
 #endif
 	{ "display.timer_position", _config_integer, "0", NULL, _environment_value, _platform_all,
 		"PB timer position: 0 is top center, 1 bottom center, 2 bottom right." },

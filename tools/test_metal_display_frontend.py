@@ -40,15 +40,20 @@ static void platform_video_drawable_size(int *w,int *h) {
 }
 static void *native_packet_storage;
 static unsigned native_window_initializations;
+static uint32_t native_initialize_flags,native_initialize_capabilities;
+static uint32_t available_capabilities=UINT32_MAX;
 static unsigned int platform_video_native_window(void) { assert(video_calls==1);return 7; }
 static int halo_metal_guest_setup(void *t,void *storage,uint32_t bytes) {
     assert(t==&transport && storage && bytes==HALO_METAL_MAX_PACKET);
     native_packet_storage=storage;return 0;
 }
 static int halo_metal_guest_initialize(void *t,uint32_t window,uint32_t flags,uint32_t capabilities) {
-    assert(t==&transport && window==7 && !flags && video_calls==1);
+    assert(t==&transport && window==7 && video_calls==1);
     assert((capabilities&HALO_METAL_CAP_TARGETS) && (capabilities&HALO_METAL_CAP_DRAW));
-    native_window_initializations++;transport.reply.capabilities=HALO_METAL_CAP_COPY_SUBRESOURCE;return 0;
+    assert(flags==(!strcmp(anti_aliasing,"fxaa") ? HALO_METAL_ENABLE_FXAA:0));
+    native_initialize_flags=flags;native_initialize_capabilities=capabilities;
+    native_window_initializations++;transport.reply.capabilities=available_capabilities;
+    return capabilities&~available_capabilities ? HALO_METAL_UNSUPPORTED:0;
 }
 static void memory_watch_initialize(void) {}
 static struct halo_metal_create_ex creation;
@@ -189,12 +194,42 @@ static void test_native_invalid_and_requested_aspect(void) {
     s.Data=600;s.Size=(480u<<16)|640u;
     struct native_resource *r=target_get(&s);assert(r->storage_width==3117 && r->storage_height==2338);
 }
+static void test_antialias_startup(void) {
+    const uint32_t base_capabilities=HALO_METAL_CAP_TARGETS | HALO_METAL_CAP_UPLOAD |
+        HALO_METAL_CAP_CLEAR | HALO_METAL_CAP_DRAW | HALO_METAL_CAP_READBACK | HALO_METAL_CAP_VISIBILITY;
+    video_calls=1;require_video_before_drawable=1;screen_width=738;preset=0;
+    pw=3600;ph=2338;
+    const char *settings[]={"off","fxaa"};
+    for(unsigned i=0;i<2;i++) {
+        anti_aliasing=settings[i];device.ready=FALSE;
+        native_storage_width=native_storage_height=0;
+        available_capabilities=base_capabilities | HALO_METAL_CAP_FXAA;
+        native_initialize();assert(device.ready && drawable_queries==i+1);
+        assert(native_initialize_flags==(i ? HALO_METAL_ENABLE_FXAA:0));
+        assert(native_initialize_capabilities==(base_capabilities | (i ? HALO_METAL_CAP_FXAA:0)));
+        assert(native_storage_width==3600 && native_storage_height==2338);
+        free(native_packet_storage);native_packet_storage=NULL;
+    }
+    /* The option must fail before drawable/storage setup when the host cannot
+       provide its requested capability. Off remains compatible with that host. */
+    available_capabilities=base_capabilities;anti_aliasing="fxaa";device.ready=FALSE;
+    native_storage_width=native_storage_height=0;failure_expected=1;
+    if(!setjmp(failure_jump)) { native_initialize();assert(0); }
+    failure_expected=0;
+    assert(failure_status==HALO_METAL_UNSUPPORTED && !device.ready && drawable_queries==2);
+    assert(!native_storage_width && !native_storage_height);
+    free(native_packet_storage);native_packet_storage=NULL;
+    anti_aliasing="off";native_initialize();
+    assert(device.ready && drawable_queries==3 && !native_initialize_flags);
+    assert(native_initialize_capabilities==base_capabilities && native_window_initializations==4);
+}
 int main(int argc,char **argv) {
     assert(argc==2);
     if(!strcmp(argv[1],"targets"))test_targets();
     else if(!strcmp(argv[1],"raster"))test_raster_clear_pointer();
     else if(!strcmp(argv[1],"native"))test_native_startup();
     else if(!strcmp(argv[1],"native_invalid"))test_native_invalid_and_requested_aspect();
+    else if(!strcmp(argv[1],"antialias_startup"))test_antialias_startup();
     else test_wait();
     while(resources) { struct native_resource *next=resources->next;free(resources);resources=next; }
     free(native_packet_storage);
@@ -220,6 +255,12 @@ class DisplayFrontendTests(unittest.TestCase):
                                 '!strcmp(key,"display.render_height") ? requested_render_height:'
                                 '!strcmp(key,"display.screen_width") ? requested_screen_width:0;')
         prefix = prefix.replace(function(prefix, 'native_initialize'), '')
+        prefix = prefix.replace(function(prefix, 'config_string'),
+                                'static const char *anti_aliasing="off";\n'
+                                'static const char *config_string(const char *key) {\n'
+                                ' if(!strcmp(key,"display.anti_aliasing")) return anti_aliasing;\n'
+                                ' assert(!strcmp(key,"debug.screenshot_directory")); return screenshot_directory;\n'
+                                '}')
         prefix = prefix.replace('D3DMATRIX transforms[D3DTS_MAX]; BOOL ready,created;',
                                 'D3DMATRIX transforms[D3DTS_MAX]; float attributes[16][4]; BOOL ready,created;')
         # Existing history harness has stubs; this harness executes their real functions.
@@ -263,6 +304,9 @@ class DisplayFrontendTests(unittest.TestCase):
 
     def test_native_invalid_drawables_fail_and_explicit_xbox_aspect_fits(self):
         self.run_case('native_invalid')
+
+    def test_antialias_initialization_requests_only_opt_in_capability(self):
+        self.run_case('antialias_startup')
 
 
 if __name__ == '__main__':

@@ -45,12 +45,15 @@ def reference():
     return {'source_bindings': [{'path': f'base-input-{index}'} for index in range(29)]}
 
 
-def graph(fixed=False, display=False):
+def graph(fixed=False, display=False, aa=False):
     names = BASE_NAMES + ((FIXED,) if fixed else ()) + (DISPLAY_NAMES if display else ())
     edges = [f'build build/macos-metal/guest/obj/port/linux/src/{name}.o: cc port/linux/src/{name}.c'
              for name in names]
+    if aa:
+        edges.append('build build/macos-metal/guest/obj/source/render/render.o: cc source/render/render.c')
     edges.append('build build/macos-metal/halo_guest.elf: link ' + ' '.join(
-        f'build/macos-metal/guest/obj/port/linux/src/{name}.o' for name in names))
+        f'build/macos-metal/guest/obj/port/linux/src/{name}.o' for name in names)
+        + (' build/macos-metal/guest/obj/source/render/render.o' if aa else ''))
     return '\n'.join(edges)
 
 
@@ -64,6 +67,18 @@ def symbols(names=FIXED_SYMBOLS):
 
 
 class BindingTests(unittest.TestCase):
+    def test_aa_requires_display_and_adds_world_source_object_and_test_evidence(self):
+        with self.assertRaisesRegex(ValueError, 'requires.*display-options'):
+            proof.binding_paths(None, fixed_function=True, anti_aliasing=True)
+        primary, evidence = proof.binding_paths(reference(), fixed_function=True, display_options=True)
+        aa_primary, aa_evidence = proof.binding_paths(reference(), fixed_function=True, display_options=True, anti_aliasing=True)
+        self.assertEqual(aa_primary, primary + list(proof.AA_SOURCES))
+        self.assertEqual(aa_evidence, evidence + list(proof.AA_EVIDENCE))
+        _, combined = proof.binding_paths(reference(), fixed_function=True, display_options=True,
+                                           native_fullscreen=True, anti_aliasing=True)
+        self.assertEqual(len(combined), len(set(combined)))
+        self.assertTrue(set(proof.NATIVE_FULLSCREEN_TESTS + proof.AA_EVIDENCE) <= set(combined))
+
     def test_native_fullscreen_requires_display_and_preserves_legacy_inputs(self):
         with self.assertRaisesRegex(ValueError, 'requires.*display-options'):
             proof.binding_paths(None, fixed_function=True, native_fullscreen=True)
@@ -294,6 +309,19 @@ class DisplayConfigurationTests(unittest.TestCase):
             'display.render_height': {'type':'integer','default':480,'environment':None,'native_metal_only':True},
         })
 
+    def test_aa_requires_native_string_off_no_environment_and_original_integer_defaults(self):
+        result = proof.display_configuration_checks(self.text, True)
+        self.assertEqual(result['display.anti_aliasing'],
+            {'type':'string','default':'off','environment':None,'native_metal_only':True})
+        self.assertEqual({k:v for k,v in result.items() if k != 'display.anti_aliasing'}, proof.display_configuration_checks(self.text))
+        original = r'"display.anti_aliasing", _config_string, "\"off\"", NULL, _environment_value, _platform_all'
+        self.assertIn(original, self.text)
+        for replacement in (original.replace('_config_string', '_config_integer'),
+                            original.replace('off', 'fxaa'), original.replace('NULL', '"HALO_NEW_AA"'),
+                            original.replace('_platform_all', '_platform_android')):
+            with self.subTest(replacement=replacement), self.assertRaisesRegex(ValueError, 'type/default/environment'):
+                proof.display_configuration_checks(self.text.replace(original, replacement), True)
+
     def test_type_default_env_and_platform_changes_are_rejected(self):
         for name, default in (('display.frame_limit','0'),('display.render_height','480')):
             original = f'"{name}", _config_integer, "{default}", NULL, _environment_value, _platform_all'
@@ -334,18 +362,20 @@ class DisplayResultTests(unittest.TestCase):
         unchanged = ('port/macos/include/halo_metal_abi.h','port/macos/host/host_metal.mm',
                      'port/linux/src/metal_guest_transport.c','port/linux/src/metal_guest_transport.h')
         all_symbols = symbols(('halo_metal_flush_pending','halo_metal_packet_room','XLaunchNewImageA',
-                               *FIXED_SYMBOLS, *[symbol for row in DISPLAY_SYMBOLS.values() for symbol in row]))
+                               *FIXED_SYMBOLS, *[symbol for row in DISPLAY_SYMBOLS.values() for symbol in row], proof.AA_SYMBOL))
         with tempfile.TemporaryDirectory(prefix='halo-display-proof-unit-') as directory:
             root = Path(directory).resolve()
             fixture_reference = {'source_bindings': [{'path': path} for path in
                 (*unchanged, *(f'fixture/base-{n}' for n in range(25)))]}
-            primary, evidence = proof.binding_paths(fixture_reference, fixed_function=True, display_options=True)
+            primary, evidence = proof.binding_paths(fixture_reference, fixed_function=True, display_options=True, anti_aliasing=True)
             for path in primary + evidence + ['build/macos-metal/host/host_import_table.c','port/macos/metal_imports.list']:
                 target = root / path
                 target.parent.mkdir(parents=True,exist_ok=True)
                 target.write_text('unit fixture\n')
             (root/'port/linux/src/port_config.c').write_text(config_text)
-            (root/'build.ninja').write_text(graph(True,True))
+            (root/'build.ninja').write_text(graph(True,True,True))
+            (root/'port/macos/include/halo_metal_abi.h').write_text(
+                'enum { HALO_METAL_CAP_FXAA = 32768u, HALO_METAL_FXAA = 22, HALO_METAL_ENABLE_FXAA = 2u };\n')
             for item in fixture_reference['source_bindings']:
                 item['sha256'] = hashlib.sha256((root/item['path']).read_bytes()).hexdigest()
             reference_path = root/'build/reference.json'
@@ -357,7 +387,11 @@ class DisplayResultTests(unittest.TestCase):
                 'path':'build/observer.log','sha256':hashlib.sha256(log.read_bytes()).hexdigest()}}))
 
             def command(output,name,arguments):
-                if name.endswith('-compile-command'):
+                if name == 'aa-world-compile-command':
+                    text = compile_line('render').replace('port/linux/src/render.c', 'source/render/render.c')
+                elif name == 'aa-world-symbols':
+                    text = ' U _' + proof.AA_SYMBOL + '\n'
+                elif name.endswith('-compile-command'):
                     text = compile_line(name.removesuffix('-compile-command'))
                 elif name == 'guest-defined' or name.endswith('-symbols'):
                     text = all_symbols
@@ -369,13 +403,13 @@ class DisplayResultTests(unittest.TestCase):
 
             with (patch.object(proof,'ROOT',root), patch.object(proof,'__file__',str(root/'tools/metal_live_build_proof.py')),
                   patch.object(proof,'record_command',side_effect=command), patch('builtins.print')):
-                for enabled in (False,True):
-                    output = root / ('proof-display' if enabled else 'proof-existing')
-                    proof.prepare(output,execution,reference_path,fixed_function=True,display_options=enabled)
+                for enabled, aa in ((False,False),(True,False),(True,True)):
+                    output = root / ('proof-aa' if aa else 'proof-display' if enabled else 'proof-existing')
+                    proof.prepare(output,execution,reference_path,fixed_function=True,display_options=enabled,anti_aliasing=aa)
                     result = json.loads((output/'result.json').read_text())
                     if enabled:
                         self.assertIs(result['display_options'],True)
-                        self.assertEqual(result['display_configuration'],proof.display_configuration_checks(config_text))
+                        self.assertEqual(result['display_configuration'],proof.display_configuration_checks(config_text,aa))
                         self.assertTrue(set(DISPLAY_NAMES).issubset(result['native_compiled_objects']))
                         for path in DISPLAY_SOURCES + DISPLAY_OBJECTS + DISPLAY_TESTS:
                             self.assertTrue((output/'snapshot'/path).is_file())
@@ -385,9 +419,58 @@ class DisplayResultTests(unittest.TestCase):
                         self.assertFalse(set(DISPLAY_NAMES) & set(result['native_compiled_objects']))
                     self.assertFalse(result['gameplay_gate'])
                     self.assertFalse(result['performance_improvement_gate'])
+                    if aa:
+                        self.assertIs(result['anti_aliasing'], True)
+                        self.assertEqual(result['anti_aliasing_world_hook']['symbol'], proof.AA_SYMBOL)
+                        self.assertIs(result['anti_aliasing_world_hook']['compiled_call'], True)
+                        self.assertIn(proof.AA_SYMBOL, result['native_compiled_objects']['d3d8_metal']['additional_linked_symbols'])
+                        self.assertEqual(result['anti_aliasing_contract']['enable_flag'], 2)
+                        for path in proof.AA_SOURCES + proof.AA_EVIDENCE:
+                            self.assertTrue((output/'snapshot'/path).is_file())
+                    else:
+                        self.assertNotIn('anti_aliasing', result)
+
+
+class AntiAliasingProofTests(unittest.TestCase):
+    def test_abi_values_and_actual_compiled_world_call_are_required(self):
+        abi = 'HALO_METAL_CAP_FXAA = 32768u; HALO_METAL_FXAA = 22; HALO_METAL_ENABLE_FXAA = 2u;'
+        self.assertEqual(proof.anti_aliasing_abi_checks(abi)['stage'], 'pre-HUD')
+        for fragment in ('32768u', '22', '2u'):
+            with self.subTest(fragment=fragment), self.assertRaisesRegex(ValueError, 'explicit native AA contract'):
+                proof.anti_aliasing_abi_checks(abi.replace(fragment, '999'))
+        call = ' U _' + proof.AA_SYMBOL
+        command = compile_line('render').replace('port/linux/src/render.c', 'source/render/render.c')
+        proof.anti_aliasing_world_checks(call, command)
+        for invalid in ('', ' T _' + proof.AA_SYMBOL, call + '\n U _host_gl_draw'):
+            with self.assertRaises(ValueError): proof.anti_aliasing_world_checks(invalid, command)
+        for invalid in (command.replace('-DHALO_MACOS_NATIVE_METAL=1', ''),
+                        command.replace('source/render/render.c', 'source/render/render.c.old')):
+            with self.assertRaises(ValueError): proof.anti_aliasing_world_checks(call, invalid)
+
+    def test_actual_world_source_link_edges_and_no_gl_contract_remain_required(self):
+        text = graph(True, True, True)
+        proof.graph_checks(text, True, True, True)
+        for invalid in (text.replace('cc source/render/render.c', 'cc source/render/render.c.old'),
+                        text.replace(' build/macos-metal/guest/obj/source/render/render.o', '', 1),
+                        text + '\nbuild build/macos-metal/gl: cc d3d8_gl.c'):
+            with self.assertRaises(ValueError): proof.graph_checks(invalid, True, True, True)
 
 
 class CommandLineTests(unittest.TestCase):
+    def test_aa_flag_is_explicit_requires_display_and_is_forwarded(self):
+        with (patch.object(sys,'argv',['metal_live_build_proof.py','--output','/tmp/proof',
+                '--execution','/tmp/execution.json','--fixed-function','--display-options','--anti-aliasing']),
+              patch.object(proof,'prepare') as prepare):
+            proof.main()
+            self.assertTrue(prepare.call_args.kwargs['anti_aliasing'])
+            self.assertTrue(prepare.call_args.kwargs['display_options'])
+        with (patch.object(sys,'argv',['metal_live_build_proof.py','--output','/tmp/proof',
+                '--execution','/tmp/execution.json','--fixed-function','--anti-aliasing']),
+              patch.object(proof,'prepare') as prepare, patch('sys.stderr')):
+            with self.assertRaises(SystemExit) as failure: proof.main()
+            self.assertEqual(failure.exception.code,2)
+            prepare.assert_not_called()
+
     def test_flag_is_explicit_and_default_is_false(self):
         for arguments, enabled in (([], False), (['--fixed-function'], True)):
             with self.subTest(enabled=enabled), patch.object(sys, 'argv', [

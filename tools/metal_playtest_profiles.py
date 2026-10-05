@@ -38,6 +38,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MAPS = ('bloodgulch', 'damnation', 'hangemhigh')
 CAPS = (30, 60, 120, 0)
 HEIGHTS = (480, 720, 1080, 1440, 2160)
+ANTI_ALIASING = ('off', 'fxaa')
 NATIVE_MAX_DIMENSION = 8192
 NATIVE_RESOLUTION_SYMBOL = 'halo_metal_render_native_target_dimensions'
 HOST = 'build/macos-metal/halo'
@@ -53,6 +54,11 @@ REQUIRED_BUILD_PATHS = {
     *(f'port/linux/src/{name}.{ext}' for name in HELPERS for ext in ('c', 'h')),
     *(f'build/macos-metal/guest/obj/port/linux/src/{name}.o' for name in HELPERS),
 }
+AA_BUILD_PATHS = {'source/render/render.c', 'port/macos/include/halo_metal_abi.h',
+                  'port/macos/host/host_metal.mm',
+                  'build/macos-metal/guest/obj/port/linux/src/d3d8_metal.o',
+                  'build/macos-metal/guest/obj/source/render/render.o'}
+AA_SYMBOL = 'halo_metal_antialias_before_hud'
 
 
 def require(condition, message):
@@ -102,24 +108,25 @@ def parse_native_size(value):
     return tuple(value)
 
 
-def profile_values(map_name, cap, height, vsync, native_fullscreen=False, native_size=None):
+def profile_values(map_name, cap, height, vsync, native_fullscreen=False, native_size=None, anti_aliasing='off'):
     require(map_name in MAPS, 'Unsupported playtest map')
     require(type(cap) is int and cap in CAPS, 'Render cap must be 30, 60, 120 or 0')
     require(type(vsync) is bool, 'Vsync must be a boolean independent of render cap')
     require(type(native_fullscreen) is bool, 'Native fullscreen selection must be a boolean')
+    require(type(anti_aliasing) is str and anti_aliasing in ANTI_ALIASING, 'Anti-aliasing must be off or fxaa')
     if native_fullscreen:
         require(height is None or (type(height) is int and height == 0), 'Native fullscreen must use render height0')
         size = parse_native_size(native_size) if native_size is not None else None
-        return dict(map=map_name, frame_limit=cap, render_height=0, vsync=vsync,
+        return dict(map=map_name, frame_limit=cap, render_height=0, vsync=vsync, anti_aliasing=anti_aliasing,
                     interpolation=cap != 30, high_res_hud=False, direct_camera=False, reference_30=False,
                     native_fullscreen=True, native_size=list(size) if size else None,
                     logical_width=((480 * size[0] // size[1]) & ~1) if size else None, logical_height=480,
                     expected_physical_width=size[0] if size else None, expected_physical_height=size[1] if size else None)
     require(native_size is None, 'Native size expectation requires native fullscreen')
     require(type(height) is int and height in HEIGHTS, 'Unsupported actual render height')
-    return dict(map=map_name, frame_limit=cap, render_height=height, vsync=vsync,
+    return dict(map=map_name, frame_limit=cap, render_height=height, vsync=vsync, anti_aliasing=anti_aliasing,
                 interpolation=cap != 30, high_res_hud=False, direct_camera=False,
-                reference_30=cap == 30 and height == 480,
+                reference_30=cap == 30 and height == 480 and anti_aliasing == 'off',
                 logical_width=640, logical_height=480, expected_physical_width=height * 4 // 3)
 
 
@@ -154,6 +161,26 @@ def checked_native_startup(log, values, require_expected=True):
                 drawable_width=dw, drawable_height=dh, aspect='native', fullscreen=True)
 
 
+def checked_anti_aliasing(log, values):
+    """Bind requested smoothing to passes actually reported by the native hook."""
+    records = []
+    for line in log.splitlines():
+        if 'Native anti-aliasing:' not in line:
+            continue
+        match = re.search(r'Native anti-aliasing: requested (off|fxaa), applied ([0-9]+), stage pre-HUD$', line)
+        require(match is not None, 'Malformed native anti-aliasing execution record')
+        mode, count = match.groups()
+        require(mode == values['anti_aliasing'], 'Native applied anti-aliasing mode differs from profile')
+        records.append(int(count))
+    require(records, 'Native anti-aliasing execution telemetry is missing')
+    require(all(previous <= current for previous, current in zip(records, records[1:])),
+            'Native anti-aliasing pass counter decreased')
+    require(records[-1] <= (1 << 64) - 1, 'Native anti-aliasing pass counter exceeds uint64')
+    require(records[-1] == 0 if values['anti_aliasing'] == 'off' else records[-1] > 0,
+            'Native anti-aliasing execution count does not prove the requested mode')
+    return dict(requested=values['anti_aliasing'], applied=records[-1], stage='pre-HUD', records=len(records))
+
+
 def set_key(text, section, key, value):
     pattern = re.compile(r'(?ms)(^\[' + re.escape(section) + r'\]\s*\n)(.*?)(?=^\[|\Z)')
     matches = list(pattern.finditer(text))
@@ -182,7 +209,7 @@ def controlled_config(template, values):
         'display': {'fullscreen': values.get('native_fullscreen', False),
                     'screen_width': 0 if values.get('native_fullscreen', False) else 640, 'window_scale': 2,
                     **{k: values[k] for k in ('frame_limit', 'render_height', 'vsync',
-                                             'interpolation', 'high_res_hud', 'direct_camera')}},
+                                             'interpolation', 'high_res_hud', 'direct_camera', 'anti_aliasing')}},
         'audio': {'enabled': True},
         'network': {'online': False, 'allow_upnp': False, 'join_from_clipboard': False},
         'update': {'auto': False},
@@ -204,7 +231,7 @@ def controlled_config(template, values):
 
 def validate_display(config, values):
     display = config.get('display', {})
-    for key in ('frame_limit', 'render_height', 'vsync', 'interpolation', 'high_res_hud', 'direct_camera'):
+    for key in ('frame_limit', 'render_height', 'vsync', 'interpolation', 'high_res_hud', 'direct_camera', 'anti_aliasing'):
         require(type(display.get(key)) is type(values[key]) and display[key] == values[key],
                 'Profile display mismatch: ' + key)
     require(type(display.get('screen_width')) is int and display['screen_width'] ==
@@ -265,10 +292,10 @@ def cache_header(path, expected, scenario_type):
 
 
 def prepare(output, map_name, cap, height, vsync, assets, template, root=ROOT,
-            native_fullscreen=False, native_size=None):
+            native_fullscreen=False, native_size=None, anti_aliasing='off'):
     output, assets, template, root = map(lambda p: Path(p).resolve(), (output, assets, template, root))
     require(not output.exists(), 'Output already exists; saves and config are preserved. Choose a new profile path.')
-    values = profile_values(map_name, cap, height, vsync, native_fullscreen, native_size)
+    values = profile_values(map_name, cap, height, vsync, native_fullscreen, native_size, anti_aliasing)
     configuration = controlled_config(template.read_text(), values)
     require((assets / 'maps').is_dir() and (assets / 'sounds').is_dir(), 'Original maps and sounds directories required')
     asset_records = []
@@ -296,7 +323,7 @@ def prepare(output, map_name, cap, height, vsync, assets, template, root=ROOT,
         template=before['template'], producer=before['tool'], frozen_producer=descriptor(frozen),
         config=descriptor(output / 'saves/config.toml'), init=descriptor(output / 'data/init.txt'),
         initial_config=descriptor(output / 'initial-config.toml'),
-        configuration_policy='immutable-display-mutable-human-v1',
+        configuration_policy='immutable-display-mutable-human-aa-v2',
         launch_environment=dict(HALO_DATA_ROOT=str(output / 'data'), HALO_SAVE_ROOT=str(output / 'saves'),
                                 HALO_WINDOWED=windowed_environment(values)),
         prepared=True, experiment_ready=False, simulation_hz=30,
@@ -314,6 +341,7 @@ def checked_build(path, root, require_native_resolution=False):
     require(build.get('passed') is True and type(build.get('actual_build_tool_exit')) is int
             and build['actual_build_tool_exit'] == 0, 'Successful observed native build required')
     require(build.get('display_options') is True, 'Pre-option build is ineligible; require NEW --display-options proof')
+    require(build.get('anti_aliasing') is True, 'Pre-AA build is ineligible; require NEW --anti-aliasing proof')
     if require_native_resolution:
         require(build.get('native_resolution') is True, 'Pre-native-resolution build; require NEW --native-fullscreen build proof')
     require(build.get('no_angle_gl_linkage_or_imports') is True, 'Native no-GL/ANGLE build proof required')
@@ -331,6 +359,7 @@ def checked_build(path, root, require_native_resolution=False):
                 'Current/frozen build source drift: ' + str(relative))
         by_path[str(relative)] = item['sha256']
     require(REQUIRED_BUILD_PATHS <= by_path.keys(), 'Display helper source/object bindings are incomplete')
+    require(AA_BUILD_PATHS <= by_path.keys(), 'AA world hook/backend/compiled object bindings are incomplete')
     graph = build.get('native_guest_graph', {})
     require(graph.get('no_gl_native_edges') is True, 'Missing no-GL native graph guard')
     for helper in HELPERS:
@@ -354,6 +383,28 @@ def checked_build(path, root, require_native_resolution=False):
     for key, default in (('frame_limit', 0), ('render_height', 480)):
         pattern = r'\{\s*"display\.' + key + r'"\s*,\s*_config_integer\s*,\s*"' + str(default) + r'"\s*,\s*NULL\s*,'
         require(re.search(pattern, text) is not None, 'New display option is absent, mistyped or uses a new environment variable')
+    require(re.search(r'\{\s*"display\.anti_aliasing"\s*,\s*_config_string\s*,\s*"\\"off\\""\s*,\s*NULL\s*,', text),
+            'Native AA option must be a string defaulting off without an environment variable')
+    abi = (snapshot / 'port/macos/include/halo_metal_abi.h').read_text()
+    for symbol, value in (('HALO_METAL_CAP_FXAA', 32768), ('HALO_METAL_FXAA', 22), ('HALO_METAL_ENABLE_FXAA', 2)):
+        require(re.search(r'\b' + symbol + r'\s*=\s*' + str(value) + r'u?\b', abi), 'Native AA ABI contract is missing: ' + symbol)
+    require(build.get('anti_aliasing_contract') == {'capability': 32768, 'opcode': 22, 'enable_flag': 2,
+            'stage': 'pre-HUD', 'modes': ['off', 'fxaa']}, 'Native AA proof capability/stage contract changed')
+    compiled_aa = build.get('native_compiled_objects', {}).get('d3d8_metal', {})
+    aa_object = 'build/macos-metal/guest/obj/port/linux/src/d3d8_metal.o'
+    require(compiled_aa.get('object') == {'path': aa_object, 'sha256': by_path[aa_object]}
+            and compiled_aa.get('linked_in_guest') is True and compiled_aa.get('native_ilp32_flags') is True
+            and AA_SYMBOL in {compiled_aa.get('symbol'), *compiled_aa.get('additional_linked_symbols', [])},
+            'Native AA hook is not bound to the actual compiled guest')
+    world_hook = build.get('anti_aliasing_world_hook', {})
+    render_object = 'build/macos-metal/guest/obj/source/render/render.o'
+    world_edge = graph.get('source_edges', {}).get('render', '').split()
+    require(render_object + ':' in world_edge and 'source/render/render.c' in world_edge
+            and render_object in graph.get('guest_link_edge', '').split(), 'Native AA compiled world source/link edge is missing')
+    require(world_hook.get('object') == {'path': render_object, 'sha256': by_path[render_object]}
+            and world_hook.get('symbol') == AA_SYMBOL and world_hook.get('compiled_call') is True
+            and world_hook.get('linked_in_guest') is True and world_hook.get('native_ilp32_flags') is True,
+            'Native AA pre-HUD compiled call is missing')
     host, guest = snapshot / HOST, snapshot / GUEST
     require(stat.S_IMODE(host.stat().st_mode) == 0o755, 'Frozen host must retain executable mode0755')
     with host.open('rb') as h: header = h.read(8)
@@ -367,7 +418,7 @@ def checked_build(path, root, require_native_resolution=False):
                                - {'HALO_DATA_ROOT', 'HALO_SAVE_ROOT', 'HALO_WINDOWED'})
     result = dict(proof=descriptor(path), snapshot=str(snapshot), bindings=bindings,
                 configuration_environment_names=environment_names,
-                host=descriptor(host), guest=descriptor(guest), display_options=True)
+                host=descriptor(host), guest=descriptor(guest), display_options=True, anti_aliasing=True)
     if require_native_resolution:
         result['native_resolution_api_verified'] = True
     return result
@@ -393,6 +444,9 @@ def checked_runtime(path, values, build):
     validate_display(config, values)
     launch_log = runtime.get('launch_log')
     log_path = checked_descriptor(launch_log)
+    aa = checked_anti_aliasing(log_path.read_text(errors='replace'), values)
+    require(runtime.get('anti_aliasing') == aa and runtime.get('capture_stage') == 'post-world-AA/post-HUD',
+            'Runtime AA execution/capture stage is not bound to the actual log')
     if values.get('native_fullscreen', False):
         require(build.get('native_resolution_api_verified') is True, 'Native resolution helper guard is missing')
         log_text = log_path.read_text(errors='replace')
@@ -480,9 +534,9 @@ def verify_profile(folder, require_ready=False):
     require(manifest['profile_directory'] == str(folder), 'Profile was moved; create a new profile')
     values = manifest['profile']
     require(values == profile_values(values['map'], values['frame_limit'], values['render_height'], values['vsync'],
-                                    values.get('native_fullscreen', False), values.get('native_size')),
+                                    values.get('native_fullscreen', False), values.get('native_size'), values.get('anti_aliasing')),
             'Profile values were altered')
-    require(manifest.get('configuration_policy') == 'immutable-display-mutable-human-v1',
+    require(manifest.get('configuration_policy') == 'immutable-display-mutable-human-aa-v2',
             'Profile uses an older configuration policy; preserve it and prepare a fresh profile')
     for key in ('initial_config', 'init', 'producer', 'frozen_producer', 'template'):
         checked_descriptor(manifest[key])
@@ -580,14 +634,14 @@ def chooser(output, profiles):
         folder = Path(folder).resolve()
         manifest = verify_profile(folder, True)
         v = manifest['profile']
-        identity = tuple(v[k] for k in ('map', 'frame_limit', 'render_height', 'vsync')) + (v.get('native_fullscreen', False),)
+        identity = tuple(v[k] for k in ('map', 'frame_limit', 'render_height', 'vsync', 'anti_aliasing')) + (v.get('native_fullscreen', False),)
         require(identity not in identities, 'Duplicate chooser presentation profile')
         identities.add(identity)
         cap = str(v['frame_limit']) + ' FPS cap' if v['frame_limit'] else ('Display paced' if v['vsync'] else 'Uncapped')
         label = {'bloodgulch': 'Blood Gulch', 'damnation': 'Damnation', 'hangemhigh': 'Hang Em High'}[v['map']]
         width, height = physical_size(v)
         presentation = 'native fullscreen' if v.get('native_fullscreen', False) else 'pixels'
-        labels.append(f'{label} | {cap} | {width}x{height} {presentation} | vsync {"on" if v["vsync"] else "off"}')
+        labels.append(f'{label} | {cap} | {width}x{height} {presentation} | AA {v["anti_aliasing"].upper()} | vsync {"on" if v["vsync"] else "off"}')
         records.append(dict(directory=str(folder), profile=descriptor(folder / 'profile.json'),
                             ready=descriptor(folder / 'ready.json'), launcher=descriptor(folder / 'Launch Native Metal.command')))
     quote = shlex.quote
@@ -620,6 +674,7 @@ def main():
     resolution.add_argument('--native-fullscreen', action='store_true', help='Render at actual fullscreen Retina drawable pixels')
     draft.add_argument('--native-size', type=parse_native_size, help='Measured expected drawable WxH; an expectation, not a resolution override')
     draft.add_argument('--vsync', choices=('on', 'off'), required=True)
+    draft.add_argument('--anti-aliasing', choices=ANTI_ALIASING, default='off')
     draft.add_argument('--assets', type=Path, required=True)
     draft.add_argument('--template', type=Path, required=True)
     draft.add_argument('--output', type=Path, required=True)
@@ -637,7 +692,8 @@ def main():
     if args.command == 'prepare':
         result = prepare(args.output, args.map, args.render_cap, args.render_height,
                          args.vsync == 'on', args.assets, args.template,
-                         native_fullscreen=args.native_fullscreen, native_size=args.native_size)
+                         native_fullscreen=args.native_fullscreen, native_size=args.native_size,
+                         anti_aliasing=args.anti_aliasing)
     elif args.command == 'promote':
         result = promote(args.profile, args.build_proof, args.runtime_proof)
     elif args.command == 'verify':

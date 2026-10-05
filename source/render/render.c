@@ -119,6 +119,10 @@ enum
 
 /* ---------- prototypes */
 
+#if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL
+extern void halo_metal_antialias_before_hud(long left, long top, long right, long bottom);
+#endif
+
 static void render_nonplayer_frame(
 	const struct render_window *window,
 	long window_type);
@@ -408,6 +412,17 @@ static void render_window(
 		rasterizer_transparent_geometry_stop();
 		structure_render_fog_screen();
 		rasterizer_lens_flares_draw();
+#if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL
+		/* Optional native edge filtering happens after the world and before
+		   the original HUD. Reflections and other offscreen targets retain
+		   their original contents and sampling. */
+		if (rasterizer_target == _render_target_primary)
+			halo_metal_antialias_before_hud(
+				rasterizer_camera->viewport_bounds.x0,
+				rasterizer_camera->viewport_bounds.y0,
+				rasterizer_camera->viewport_bounds.x1,
+				rasterizer_camera->viewport_bounds.y1);
+#endif
 		interface_draw_screen();
 		rasterizer_screen_flash();
 		halo_screen_ui_offset(TRUE);

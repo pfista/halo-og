@@ -30,7 +30,8 @@ def log_line(values, fps=60.0, hz=30.0, first=30, last=60):
     return (f'Native display: {fps:.3f} FPS, {hz:.3f} simulation Hz, '
             f'{width}x{height} storage, '
             f'{values["logical_width"]}x480 logical, cap {values["frame_limit"]}, interpolation {int(values["interpolation"])}, '
-            f'ticks {first}-{last}\n')
+            f'ticks {first}-{last}\n'
+            f'Native anti-aliasing: requested {values["anti_aliasing"]}, applied {max(0,last) if values["anti_aliasing"] == "fxaa" else 0}, stage pre-HUD\n')
 
 
 HOST_LINE = ('Native Metal host metrics: 60 frames, 900 submits, 5000 draws, 1000000 bytes; '
@@ -83,6 +84,55 @@ class DisplayRuntimeTests(unittest.TestCase):
         self.fixture.draft(cap=60,height=0,native_fullscreen=True,native_size=(3600,2338))
         self.proof=self.fixture.build(native_resolution=True)
         self.values=runtime.profiles.verify_profile(self.profile)['profile']
+
+    def fxaa_fixture(self):
+        self.fixture.folder = self.fixture.base/'fxaa human profile'
+        self.profile = self.fixture.folder
+        self.fixture.draft(cap=60,height=1080,anti_aliasing='fxaa')
+        self.values = runtime.profiles.verify_profile(self.profile)['profile']
+
+    def test_fxaa_runtime_keeps_identity_requires_actual_passes_and_binds_post_hud_capture(self):
+        self.fxaa_fixture()
+        result = self.run_fixture()
+        self.assertTrue(result['bounded_runtime_gate'])
+        self.assertEqual(result['display']['anti_aliasing'],'fxaa')
+        self.assertEqual(result['anti_aliasing'],dict(requested='fxaa',applied=90,stage='pre-HUD',records=3))
+        self.assertEqual(result['capture_stage'],'post-world-AA/post-HUD')
+        self.assertFalse(result['original_xbox_fidelity_gate'])
+        saved = tomllib.loads(Path(result['test_config']['file']).read_text())
+        self.assertEqual(saved['display']['anti_aliasing'],'fxaa')
+        self.assertFalse(saved['display']['high_res_hud'])
+        ready = runtime.profiles.promote(self.profile,self.proof,self.output/'runtime.json')
+        self.assertTrue(ready['experiment_ready'])
+
+    def test_missing_wrong_or_zero_applied_aa_execution_cannot_pass(self):
+        self.fxaa_fixture()
+        def runner(*args):
+            observation = self.fake_runner(*args)
+            path = Path(args[3])
+            path.write_text(path.read_text().replace('applied 60','applied 0').replace('applied 90','applied 0'))
+            return observation
+        result = self.run_fixture(runner)
+        self.assertFalse(result['bounded_runtime_gate'])
+        self.assertTrue(any('execution count' in error for error in result['validation_failures']))
+        original = log_line(self.values)
+        for log in ('\n'.join(line for line in original.splitlines() if 'Native anti-aliasing:' not in line),
+                    original.replace('requested fxaa','requested off'),original.replace('stage pre-HUD','stage post-HUD')):
+            with self.subTest(log=log), self.assertRaises(ValueError):
+                runtime.profiles.checked_anti_aliasing(log,self.values)
+
+    def test_saved_aa_change_cannot_relabel_the_runtime_input(self):
+        self.fxaa_fixture()
+        def runner(*args):
+            observation = self.fake_runner(*args)
+            path = Path(args[1])/'saves/config.toml'
+            path.write_text(runtime.profiles.set_key(path.read_text(),'display','anti_aliasing','"off"'))
+            return observation
+        result = self.run_fixture(runner)
+        self.assertFalse(result['bounded_runtime_gate'])
+        self.assertEqual(result['display']['anti_aliasing'],'off')
+        self.assertEqual(tomllib.loads(Path(result['input_config']['file']).read_text())['display']['anti_aliasing'],'fxaa')
+        self.assertTrue(any('anti_aliasing' in error for error in result['validation_failures']))
 
     def test_config_preserves_every_display_key_across_caps_heights_and_vsync(self):
         template = self.fixture.template.read_text()

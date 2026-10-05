@@ -33,6 +33,12 @@ NATIVE_FULLSCREEN_SYMBOL = 'halo_metal_render_native_target_dimensions'
 NATIVE_FULLSCREEN_TESTS = ('tools/test_metal_display_frontend.py',
                            'tools/test_metal_backbuffer_history.py',
                            'tools/test_metal_host_input_cache.py')
+AA_SYMBOL = 'halo_metal_antialias_before_hud'
+AA_SOURCES = ('source/render/render.c',)
+AA_EVIDENCE = ('build/macos-metal/guest/obj/source/render/render.o',
+               'tools/metal_playtest_profiles.py', 'tools/metal_display_runtime.py',
+               'tools/test_metal_playtest_profiles.py', 'tools/test_metal_display_runtime.py',
+               'tools/test_metal_world_aa_hook.py', 'tools/test_metal_display_frontend.py')
 
 
 def digest(data):
@@ -79,17 +85,19 @@ def record_command(output, name, command):
     }
 
 
-def require_display_dependencies(fixed_function, display_options, native_fullscreen=False):
+def require_display_dependencies(fixed_function, display_options, native_fullscreen=False, anti_aliasing=False):
     if display_options and not fixed_function:
         raise ValueError('Display options require the fixed-function build contract')
     if native_fullscreen and not display_options:
         raise ValueError('Native fullscreen requires the display-options build contract')
+    if anti_aliasing and not display_options:
+        raise ValueError('Anti-aliasing requires the display-options build contract')
 
 
 def binding_paths(reference, texture_contract='original', fixed_function=False, display_options=False,
-                  native_fullscreen=False):
+                  native_fullscreen=False, anti_aliasing=False):
     """Select the existing proof inputs plus explicitly requested helpers."""
-    require_display_dependencies(fixed_function, display_options, native_fullscreen)
+    require_display_dependencies(fixed_function, display_options, native_fullscreen, anti_aliasing)
     paths = [item['path'] for item in reference['source_bindings']]
     for path in ('port/linux/src/metal_packet_room.c', 'port/linux/src/metal_packet_room.h',
                  'port/linux/src/xbox_xapi.c'):
@@ -105,6 +113,8 @@ def binding_paths(reference, texture_contract='original', fixed_function=False, 
         paths += ['port/linux/src/metal_fixed_function.c', 'port/linux/src/metal_fixed_function.h']
     if display_options:
         paths += list(DISPLAY_SOURCES)
+    if anti_aliasing:
+        paths += [path for path in AA_SOURCES if path not in paths]
     additional_paths = [
         'build.ninja', 'port/linux/src/xgpu_msl.h', 'tools/metal_live_build_proof.py',
         'tools/test_macos_renderer_build.py',
@@ -128,11 +138,13 @@ def binding_paths(reference, texture_contract='original', fixed_function=False, 
         additional_paths += list(DISPLAY_TESTS)
     if native_fullscreen:
         additional_paths += list(NATIVE_FULLSCREEN_TESTS)
+    if anti_aliasing:
+        additional_paths += [path for path in AA_EVIDENCE if path not in additional_paths]
     return paths, additional_paths
 
 
-def graph_checks(text, fixed_function=False, display_options=False):
-    require_display_dependencies(fixed_function, display_options)
+def graph_checks(text, fixed_function=False, display_options=False, anti_aliasing=False):
+    require_display_dependencies(fixed_function, display_options, anti_aliasing=anti_aliasing)
     logical = text.replace('$\n', '')
     native = [line for line in logical.splitlines()
               if line.startswith('build ') and 'build/macos-metal/' in line.split(':', 1)[0]]
@@ -166,6 +178,14 @@ def graph_checks(text, fixed_function=False, display_options=False):
         for name in DISPLAY_IMPLEMENTATIONS:
             if f'build/macos-metal/guest/obj/port/linux/src/{name}.o' not in links[0].split():
                 raise ValueError('Native guest link omits exact display-options object: ' + name)
+    if anti_aliasing:
+        target = 'build/macos-metal/guest/obj/source/render/render.o'
+        matches = [line for line in native if line.startswith('build ' + target + ':')]
+        if len(matches) != 1 or 'source/render/render.c' not in matches[0].split():
+            raise ValueError('Missing exact native AA world source edge')
+        if target not in links[0].split():
+            raise ValueError('Native guest link omits exact AA world object')
+        edges['render'] = matches[0]
     return {'native_build_edges': len(native), 'source_edges': edges,
             'guest_link_edge': links[0], 'no_gl_native_edges': True}
 
@@ -186,21 +206,24 @@ def implementation_checks(name, symbols, object_symbols, guest_symbols, compile_
         raise ValueError('Native source object retains GL boundary: ' + name)
 
 
-def display_configuration_checks(text):
-    """Verify native-only integer defaults without adding application env vars."""
+def display_configuration_checks(text, anti_aliasing=False):
+    """Verify native-only defaults without adding application env vars."""
     # Keep string/character literals while ignoring commented-out entries and
     # directives. Retain comment newlines for preprocessor line boundaries.
     text = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*.*?\*/',
                   lambda token: token[0] if token[0].startswith(('"', "'")) else
                   re.sub(r'[^\n]', ' ', token[0]), text, flags=re.S)
-    required = {'display.frame_limit': '0', 'display.render_height': '480'}
+    required = {'display.frame_limit': ('integer', '"0"', 0),
+                'display.render_height': ('integer', '"480"', 480)}
+    if anti_aliasing:
+        required['display.anti_aliasing'] = ('string', r'"\"off\""', 'off')
     result = {}
-    for name, default in required.items():
+    for name, (kind, literal, default) in required.items():
         entries = list(re.finditer(r'\{\s*"' + re.escape(name) + r'"\s*,', text))
         if len(entries) != 1:
             raise ValueError('Expected one native display config entry: ' + name)
         fields = [field.strip() for field in text[entries[0].end():].split(',', 5)[:5]]
-        if fields[:5] != ['_config_integer', '"' + default + '"', 'NULL',
+        if fields[:5] != ['_config_' + kind, literal, 'NULL',
                           '_environment_value', '_platform_all']:
             raise ValueError('Native display config type/default/environment changed: ' + name)
         guards = []
@@ -216,14 +239,33 @@ def display_configuration_checks(text):
                 guards.pop()
         if not any(guards):
             raise ValueError('Display config entry is not native Metal guarded: ' + name)
-        result[name] = {'type': 'integer', 'default': int(default), 'environment': None,
+        result[name] = {'type': kind, 'default': default, 'environment': None,
                         'native_metal_only': True}
     return result
 
 
+def anti_aliasing_abi_checks(text):
+    for name, value in (('HALO_METAL_CAP_FXAA', 32768), ('HALO_METAL_FXAA', 22), ('HALO_METAL_ENABLE_FXAA', 2)):
+        if not re.search(r'\b' + name + r'\s*=\s*' + str(value) + r'u?\b', text):
+            raise ValueError('Missing explicit native AA contract: ' + name)
+    return {'capability': 32768, 'opcode': 22, 'enable_flag': 2, 'stage': 'pre-HUD', 'modes': ['off', 'fxaa']}
+
+
+def anti_aliasing_world_checks(object_symbols, compile_text):
+    source = 'source/render/render.c'
+    lines = [line for line in compile_text.splitlines() if source in line.split()]
+    if len(lines) != 1 or not all(flag in lines[0] for flag in (
+            '--target=arm64_32-apple-watchos', '-DHALO_MACOS_NATIVE_METAL=1', '-ffp-contract=off')):
+        raise ValueError('Missing exact ILP32 native AA world compile source/flags')
+    if not re.search(r'\bU\s+_?' + AA_SYMBOL + r'\s*$', object_symbols, re.M):
+        raise ValueError('Native world object omits the compiled pre-HUD AA call')
+    if FORBIDDEN_SYMBOL.search(object_symbols):
+        raise ValueError('AA world object retains a GL boundary')
+
+
 def prepare(output, execution_path, reference_path, texture_contract='original', fixed_function=False,
-            display_options=False, native_fullscreen=False):
-    require_display_dependencies(fixed_function, display_options, native_fullscreen)
+            display_options=False, native_fullscreen=False, anti_aliasing=False):
+    require_display_dependencies(fixed_function, display_options, native_fullscreen, anti_aliasing)
     if output.exists():
         raise ValueError('Output already exists; historical proofs must be preserved')
     execution_bytes = execution_path.read_bytes()
@@ -242,12 +284,13 @@ def prepare(output, execution_path, reference_path, texture_contract='original',
     extended = texture_contract in ('copy-volume', 'copy-volume-depth', 'copy-volume-depth-border')
     typed_depth = texture_contract in ('copy-volume-depth', 'copy-volume-depth-border')
     paths, additional_paths = binding_paths(reference, texture_contract, fixed_function, display_options,
-                                            native_fullscreen)
+                                            native_fullscreen, anti_aliasing)
     bindings = [describe(ROOT / path) for path in paths]
     evidence_bindings = [describe(ROOT / path) for path in additional_paths]
     display_configuration = None
     if display_options:
-        display_configuration = display_configuration_checks((ROOT / 'port/linux/src/port_config.c').read_text())
+        display_configuration = display_configuration_checks((ROOT / 'port/linux/src/port_config.c').read_text(), anti_aliasing)
+    aa_contract = anti_aliasing_abi_checks((ROOT / 'port/macos/include/halo_metal_abi.h').read_text()) if anti_aliasing else None
     if typed_depth:
         header = (ROOT / 'source/rasterizer/rasterizer.h').read_text()
         if not re.search(r'offsetof\(struct rasterizer_globals_definition,\s*floating_point_zbuffer\)\s*==\s*0x3C', header):
@@ -256,7 +299,7 @@ def prepare(output, execution_path, reference_path, texture_contract='original',
                  'port/linux/src/metal_guest_transport.c', 'port/linux/src/metal_guest_transport.h')
     old = {item['path']: item['sha256'] for item in reference['source_bindings']}
     unchanged_checks = {path: describe(ROOT / path)['sha256'] == old[path] for path in unchanged}
-    if not extended and not all(unchanged_checks.values()):
+    if not extended and not anti_aliasing and not all(unchanged_checks.values()):
         raise ValueError('ABI/backend/transport differs from the reference build')
     if extended:
         abi = (ROOT / 'port/macos/include/halo_metal_abi.h').read_text()
@@ -279,7 +322,7 @@ def prepare(output, execution_path, reference_path, texture_contract='original',
         if digest(data) != item['sha256']:
             raise ValueError('Input changed during freeze: ' + item['path'])
         copy_snapshot(ROOT / item['path'], output / 'snapshot' / item['path'], item['sha256'])
-    graph = graph_checks((ROOT / 'build.ninja').read_text(), fixed_function, display_options)
+    graph = graph_checks((ROOT / 'build.ninja').read_text(), fixed_function, display_options, anti_aliasing)
     linkage, linkage_command = record_command(output, 'linkage', ['otool', '-L', 'build/macos-metal/halo'])
     host_symbols, host_command = record_command(output, 'host-undefined', ['nm', '-u', 'build/macos-metal/halo'])
     guest_symbols, guest_command = record_command(output, 'guest-defined',
@@ -317,13 +360,24 @@ def prepare(output, execution_path, reference_path, texture_contract='original',
             symbols = DISPLAY_IMPLEMENTATIONS[name]
         if native_fullscreen and name == 'metal_render_scale':
             symbols += (NATIVE_FULLSCREEN_SYMBOL,)
+        if anti_aliasing and name == 'd3d8_metal':
+            symbols += (AA_SYMBOL,)
         implementation_checks(name, symbols, object_symbols, guest_symbols, compile_text,
                               exact_source=display_options and name in DISPLAY_IMPLEMENTATIONS)
         compiled[name] = {'object': describe(ROOT / path), 'symbol': symbol,
                           'linked_in_guest': True, 'native_ilp32_flags': True}
-        if name == 'metal_fixed_function' or (display_options and name in DISPLAY_IMPLEMENTATIONS):
+        if name == 'metal_fixed_function' or (display_options and name in DISPLAY_IMPLEMENTATIONS) or (anti_aliasing and name == 'd3d8_metal'):
             compiled[name]['additional_linked_symbols'] = list(symbols[1:])
         commands.extend((obj_command, compile_command))
+    aa_world = None
+    if anti_aliasing:
+        path = 'build/macos-metal/guest/obj/source/render/render.o'
+        symbols, symbol_command = record_command(output, 'aa-world-symbols', [str(LLVM_NM), '--extern-only', path])
+        compile_text, compile_command = record_command(output, 'aa-world-compile-command', ['ninja', '-t', 'commands', path])
+        anti_aliasing_world_checks(symbols, compile_text)
+        aa_world = {'object': describe(ROOT / path), 'symbol': AA_SYMBOL, 'compiled_call': True,
+                    'linked_in_guest': True, 'native_ilp32_flags': True}
+        commands.extend((symbol_command, compile_command))
     original_global = None
     if typed_depth:
         original_object = 'build/macos-metal/guest/obj/source/rasterizer/rasterizer.o'
@@ -368,6 +422,10 @@ def prepare(output, execution_path, reference_path, texture_contract='original',
         result['display_configuration'] = display_configuration
     if native_fullscreen:
         result['native_resolution'] = True
+    if anti_aliasing:
+        result['anti_aliasing'] = True
+        result['anti_aliasing_contract'] = aa_contract
+        result['anti_aliasing_world_hook'] = aa_world
     write_new(output / 'result.json', (json.dumps(result, indent=2) + '\n').encode())
     print(json.dumps({'result': describe(output / 'result.json'), 'bindings': len(bindings),
                       'no_angle_gl_linkage_or_imports': True}, indent=2))
@@ -387,16 +445,22 @@ def main():
         help='Bind native integer display settings, render pacing and physical backing helpers; requires --fixed-function')
     parser.add_argument('--native-fullscreen', action='store_true',
         help='Additionally bind the linked native drawable resolution helper; requires --display-options')
+    parser.add_argument('--anti-aliasing', action='store_true',
+        help='Bind optional native pre-HUD world FXAA configuration, ABI and compiled hook; requires --display-options')
     args = parser.parse_args()
     if args.display_options and not args.fixed_function:
         parser.error('--display-options requires --fixed-function')
     if args.native_fullscreen and not args.display_options:
         parser.error('--native-fullscreen requires --display-options')
+    if args.anti_aliasing and not args.display_options:
+        parser.error('--anti-aliasing requires --display-options')
     options = {'fixed_function': args.fixed_function}
     if args.display_options:
         options['display_options'] = True
     if args.native_fullscreen:
         options['native_fullscreen'] = True
+    if args.anti_aliasing:
+        options['anti_aliasing'] = True
     prepare(args.output.resolve(), args.execution.resolve(), args.reference.resolve(), args.texture_contract,
             **options)
 

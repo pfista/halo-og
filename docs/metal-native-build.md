@@ -19,6 +19,10 @@ See [the stutter investigation](metal-stutter-investigation.md) for measurements
 remaining attribution limits and the refreshed build/playtest checkpoint. Earlier
 checkpoints below retain their original binaries and observations.
 
+Optional world edge smoothing is described in
+[the anti-aliasing guide](metal-anti-aliasing.md). It uses the original assets,
+runs before the original HUD and defaults to Off.
+
 Native playtest configurations now have two additional integer settings. They
 use config files, with no environment overrides:
 
@@ -32,6 +36,7 @@ interpolation = true
 vsync = false
 high_res_hud = false
 direct_camera = false
+anti_aliasing = "off" # Optional "fxaa" filters the world before the original HUD
 ```
 
 The focused fullscreen playtests use `render_height=0`, `screen_width=0` and

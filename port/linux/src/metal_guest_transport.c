@@ -6,7 +6,7 @@ _Static_assert(sizeof(void *) == 4, "Native transport runs in the ILP32 guest");
     HALO_METAL_CAP_COPY | HALO_METAL_CAP_READBACK | HALO_METAL_CAP_PRESENT_EXACT | \
     HALO_METAL_CAP_DRAW | HALO_METAL_CAP_VISIBILITY | HALO_METAL_CAP_PRESENT_SCALED | \
     HALO_METAL_CAP_CLEAR_CHANNELS | HALO_METAL_CAP_BLACK_BORDER | HALO_METAL_CAP_ALPHA_BORDER | \
-    HALO_METAL_CAP_COPY_SUBRESOURCE | HALO_METAL_CAP_VOLUME | HALO_METAL_CAP_VOLUME_BORDER)
+    HALO_METAL_CAP_COPY_SUBRESOURCE | HALO_METAL_CAP_VOLUME | HALO_METAL_CAP_VOLUME_BORDER | HALO_METAL_CAP_FXAA)
 
 static void zero_bytes(void *pointer, uint32_t size) {
     unsigned char *p = pointer;
@@ -39,6 +39,7 @@ static uint32_t command_capability(uint32_t opcode) {
         case HALO_METAL_CLEAR: return HALO_METAL_CAP_CLEAR;
         case HALO_METAL_COPY: return HALO_METAL_CAP_COPY;
         case HALO_METAL_COPY_SUBRESOURCE: return HALO_METAL_CAP_COPY_SUBRESOURCE;
+        case HALO_METAL_FXAA: return HALO_METAL_CAP_FXAA;
         case HALO_METAL_PRESENT: return HALO_METAL_CAP_PRESENT_EXACT;
         case HALO_METAL_PRESENT_SCALED: case HALO_METAL_DISPLAY_SETTINGS: return HALO_METAL_CAP_PRESENT_SCALED;
         case HALO_METAL_CLEAR_CHANNELS: return HALO_METAL_CAP_CLEAR_CHANNELS;
@@ -111,7 +112,7 @@ int halo_metal_guest_initialize(struct halo_metal_guest_transport *t, uint32_t w
                                uint32_t flags, uint32_t required) {
     if (!storage_valid(t)) return fail(t, HALO_METAL_INVALID, "invalid native packet storage");
     if (t->initialized) return fail(t, HALO_METAL_INVALID, "native transport already owns a host context");
-    if ((flags & ~HALO_METAL_OFFSCREEN) || ((flags & HALO_METAL_OFFSCREEN) ? window != 0 : window == 0))
+    if ((flags & ~(HALO_METAL_OFFSCREEN | HALO_METAL_ENABLE_FXAA)) || ((flags & HALO_METAL_OFFSCREEN) ? window != 0 : window == 0))
         return fail(t, HALO_METAL_INVALID, "native window handle and offscreen flag disagree");
     if (required & ~ALL_CAPABILITIES) return fail(t, HALO_METAL_UNSUPPORTED, "unknown required native capability");
     t->required_capabilities = required; t->poisoned = 0; zero_bytes(&t->reply, sizeof(t->reply));

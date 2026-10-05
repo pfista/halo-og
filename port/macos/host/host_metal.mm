@@ -83,10 +83,12 @@ struct Visibility {
     uint64_t end_sequence = 0;
     std::vector<id<MTLBuffer>> words;
 };
+struct PreparedFxaa { id<MTLTexture> scratch; id<MTLRenderPipelineState> pipeline; };
 struct Prepared {
     std::map<size_t, Texture> textures;
     std::map<size_t, Program> programs;
     std::map<size_t, HaloMetalDraw> draws;
+    std::map<size_t, PreparedFxaa> fxaa;
     // Every draw points into this immutable host-owned packet copy. Synchronous
     // completion occurs before Prepared and its strong buffer reference die.
     id<MTLBuffer> input_buffer = nil;
@@ -97,6 +99,9 @@ struct Context {
     id<MTLLibrary> clear_library;
     id<MTLRenderPipelineState> present_pipeline;
     id<MTLSamplerState> present_sampler;
+    id<MTLLibrary> fxaa_library;
+    id<MTLTexture> fxaa_scratch;
+    std::map<uint32_t, id<MTLRenderPipelineState>> fxaa_pipelines;
     CAMetalLayer *layer;
     std::map<uint32_t, Texture> textures;
     std::map<uint32_t, uint32_t> generations;
@@ -111,6 +116,7 @@ struct Context {
     Metrics metrics;
     uint64_t submitted = 0, completed = 0;
     bool poisoned = false;
+    bool fxaa_enabled = false;
 };
 Context context;
 std::mutex lock;
@@ -159,7 +165,8 @@ bool write_guest(uint32_t offset, const void *source, uint32_t size) {
 int reply(uint32_t offset, uint32_t size, int status, uint32_t failed = UINT32_MAX,
           uint32_t version = 0, uint32_t bytes = 0) {
     halo_metal_reply result = {HALO_METAL_ABI_VERSION, status, failed,
-        capabilities | (context.layer ? HALO_METAL_CAP_PRESENT_EXACT | HALO_METAL_CAP_PRESENT_SCALED : 0),
+        capabilities | (context.layer ? HALO_METAL_CAP_PRESENT_EXACT | HALO_METAL_CAP_PRESENT_SCALED : 0) |
+            (context.fxaa_enabled ? HALO_METAL_CAP_FXAA : 0),
         context.submitted, context.completed,
         (uint32_t)(context.textures.size() + context.programs.size() + context.queries.size()), version, bytes, 0};
     return size == sizeof(result) && write_guest(offset, &result, sizeof(result)) ? status : HALO_METAL_MEMORY;
@@ -543,6 +550,80 @@ HaloMetalDraw prepare_draw(const std::vector<uint8_t> &packet, size_t position, 
     if (query) query->words.push_back(draw.visibilityBuffer);
     return draw;
 }
+/* Fixed, bounded directional FXAA: diagonal luma estimates the edge direction,
+ * then two/four bilinear taps smooth only edges that exceed local contrast.
+ * This optional post effect uses existing display-encoded RGB without adding
+ * gamma conversion, temporal history, texture filtering or original shaders. */
+NSString *fxaa_source = @R"MSL(
+#include <metal_stdlib>
+using namespace metal;
+struct FxaaVaryings { float4 position [[position]]; };
+struct FxaaBounds { uint2 origin; uint2 extent; };
+vertex FxaaVaryings fxaa_vertex(uint id [[vertex_id]]) {
+    float2 p = id == 0 ? float2(-1,-1) : id == 1 ? float2(-1,3) : float2(3,-1);
+    FxaaVaryings v; v.position = float4(p,0,1); return v;
+}
+float3 fxaa_read(texture2d<float> source, int2 p, int2 low, int2 high) {
+    return source.read(uint2(clamp(p,low,high))).rgb;
+}
+float3 fxaa_sample(texture2d<float> source, float2 p, float2 low, float2 high) {
+    constexpr sampler linear_sampler(min_filter::linear,mag_filter::linear,address::clamp_to_edge);
+    float2 size = float2(source.get_width(),source.get_height());
+    return source.sample(linear_sampler,clamp(p,low,high)/size,level(0)).rgb;
+}
+fragment float4 fxaa_fragment(FxaaVaryings v [[stage_in]], texture2d<float> source [[texture(0)]],
+                              constant FxaaBounds &bounds [[buffer(0)]]) {
+    int2 p = int2(v.position.xy), low = int2(bounds.origin), high = low + int2(bounds.extent) - 1;
+    const float3 luma = float3(0.299f,0.587f,0.114f);
+    float3 center = source.read(uint2(p)).rgb;
+    float nw = dot(fxaa_read(source,p+int2(-1,-1),low,high),luma);
+    float ne = dot(fxaa_read(source,p+int2( 1,-1),low,high),luma);
+    float sw = dot(fxaa_read(source,p+int2(-1, 1),low,high),luma);
+    float se = dot(fxaa_read(source,p+int2( 1, 1),low,high),luma);
+    float mid = dot(center,luma), minimum = min(mid,min(min(nw,ne),min(sw,se)));
+    float maximum = max(mid,max(max(nw,ne),max(sw,se)));
+    if (maximum-minimum < max(1.0f/32.0f,maximum/8.0f)) return float4(center,1);
+    float2 direction = float2(-((nw+ne)-(sw+se)),(nw+sw)-(ne+se));
+    float reduction = max((nw+ne+sw+se)*(1.0f/32.0f),1.0f/128.0f);
+    direction = clamp(direction/(min(abs(direction.x),abs(direction.y))+reduction),float2(-8),float2(8));
+    float2 pixel = float2(p)+0.5f, first = float2(low)+0.5f, last = float2(high)+0.5f;
+    float3 a = 0.5f*(fxaa_sample(source,pixel-direction/6.0f,first,last)+
+                     fxaa_sample(source,pixel+direction/6.0f,first,last));
+    float3 b = 0.5f*a+0.25f*(fxaa_sample(source,pixel-direction/2.0f,first,last)+
+                            fxaa_sample(source,pixel+direction/2.0f,first,last));
+    float candidate = dot(b,luma);
+    return float4(candidate < minimum || candidate > maximum ? a : b,1);
+}
+)MSL";
+id<MTLRenderPipelineState> make_fxaa_pipeline(id<MTLDevice> device, id<MTLLibrary> library, uint32_t color_format) {
+    auto descriptor = [MTLRenderPipelineDescriptor new];
+    descriptor.vertexFunction = [library newFunctionWithName:@"fxaa_vertex"];
+    descriptor.fragmentFunction = [library newFunctionWithName:@"fxaa_fragment"];
+    descriptor.colorAttachments[0].pixelFormat = format(color_format);
+    // Leave original alpha bytes in place instead of round-tripping them.
+    descriptor.colorAttachments[0].writeMask = MTLColorWriteMaskRed | MTLColorWriteMaskGreen | MTLColorWriteMaskBlue;
+    NSError *error = nil;
+    auto pipeline = [device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+    if (!pipeline) host_logf(HOST_LOG_ERROR,"Native FXAA pipeline: %s",error.localizedDescription.UTF8String);
+    check(pipeline != nil,HALO_METAL_GPU_ERROR);
+    return pipeline;
+}
+PreparedFxaa prepare_fxaa(const Texture &source) {
+    auto existing = context.fxaa_pipelines.find(source.format);
+    check(existing != context.fxaa_pipelines.end(),HALO_METAL_GPU_ERROR);
+    auto scratch = context.fxaa_scratch;
+    if (!scratch || scratch.width != source.width || scratch.height != source.height ||
+        scratch.pixelFormat != source.object.pixelFormat) {
+        auto descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:source.object.pixelFormat
+            width:source.width height:source.height mipmapped:NO];
+        descriptor.storageMode = MTLStorageModePrivate; descriptor.usage = MTLTextureUsageShaderRead;
+        scratch = [context.device newTextureWithDescriptor:descriptor]; check(scratch != nil,HALO_METAL_MEMORY);
+        context.fxaa_scratch = scratch;
+    }
+    // Prepared retains older shapes until this synchronous submission completes.
+    // The context itself caches only one shape and the two accepted formats.
+    return {scratch,existing->second};
+}
 void validate(const std::vector<uint8_t> &packet, Prepared &prepared) {
     auto header = record<halo_metal_packet>(packet, 0);
     check(header.magic == HALO_METAL_MAGIC && header.abi_version == HALO_METAL_ABI_VERSION &&
@@ -647,6 +728,17 @@ void validate(const std::vector<uint8_t> &packet, Prepared &prepared) {
                     check(command.byte_size == sizeof(c));
                     auto &source = resource(textures,c.source); auto &destination = resource(textures,c.destination);
                     validate_copy_subresource(c,source,destination); break;
+                }
+                case HALO_METAL_FXAA: {
+                    auto c = record<halo_metal_fxaa>(packet,position);
+                    check(command.byte_size == sizeof(c) && context.fxaa_enabled && !active_query.id,
+                        HALO_METAL_UNSUPPORTED);
+                    auto &t = resource(textures,c.source);
+                    check(target(t) && (t.usage & HALO_METAL_SHADER_READ) &&
+                        (t.format == HALO_METAL_RGBA8 || t.format == HALO_METAL_BGRA8),HALO_METAL_UNSUPPORTED);
+                    rectangle(t,c.x,c.y,c.width,c.height);
+                    initialized(t,HALO_METAL_COLOR,false);
+                    prepared.fxaa.emplace(position,prepare_fxaa(t)); break;
                 }
                 case HALO_METAL_PRESENT: {
                     auto c = record<halo_metal_present>(packet, position);
@@ -929,6 +1021,30 @@ void present_scaled(id<MTLCommandBuffer> buffer, const Texture &t,uint32_t flags
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];[encoder endEncoding];
     [buffer presentDrawable:drawable];
 }
+void fxaa(id<MTLCommandBuffer> buffer, Texture &source, const halo_metal_fxaa &c,
+          const PreparedFxaa &prepared) {
+    auto blit = [buffer blitCommandEncoder]; check(blit != nil,HALO_METAL_GPU_ERROR);
+    // Only the clamped viewport is read by the filter. Snapshot it before the
+    // RGB-only render pass, avoiding read/write feedback on the guest target.
+    [blit copyFromTexture:source.object sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(c.x,c.y,0)
+        sourceSize:MTLSizeMake(c.width,c.height,1) toTexture:prepared.scratch destinationSlice:0 destinationLevel:0
+        destinationOrigin:MTLOriginMake(c.x,c.y,0)];
+    [blit endEncoding];
+    auto pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture = source.object;
+    pass.colorAttachments[0].loadAction = MTLLoadActionLoad;
+    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+    auto encoder = [buffer renderCommandEncoderWithDescriptor:pass]; check(encoder != nil,HALO_METAL_GPU_ERROR);
+    [encoder setRenderPipelineState:prepared.pipeline];
+    [encoder setViewport:MTLViewport{0,0,(double)source.width,(double)source.height,0,1}];
+    [encoder setScissorRect:MTLScissorRect{c.x,c.y,c.width,c.height}];
+    [encoder setFragmentTexture:prepared.scratch atIndex:0];
+    const uint32_t bounds[] = {c.x,c.y,c.width,c.height};
+    [encoder setFragmentBytes:bounds length:sizeof(bounds) atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [encoder endEncoding];
+    initialized(source,HALO_METAL_COLOR,false);
+}
 void execute(const std::vector<uint8_t> &packet, const Prepared &prepared) {
     auto header = record<halo_metal_packet>(packet,0);
     auto buffer = [context.queue commandBuffer]; check(buffer != nil,HALO_METAL_GPU_ERROR);
@@ -992,6 +1108,10 @@ void execute(const std::vector<uint8_t> &packet, const Prepared &prepared) {
                 initialized(d,HALO_METAL_COLOR,
                     full_subresource(d,c.destination_mip,c.destination_x,c.destination_y,c.width,c.height),
                     c.destination_mip,c.destination_slice); break;
+            }
+            case HALO_METAL_FXAA: {
+                auto c = record<halo_metal_fxaa>(packet,position);
+                fxaa(buffer,resource(context.textures,c.source),c,prepared.fxaa.at(position)); break;
             }
             case HALO_METAL_PRESENT: {
                 auto c = record<halo_metal_present>(packet,position); auto &t = resource(context.textures,c.source);
@@ -1063,7 +1183,7 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
     @autoreleasepool { std::lock_guard<std::mutex> guard(lock);
         try {
             validate_reply(output,size);
-            check(!context.device && !(flags & ~HALO_METAL_OFFSCREEN) &&
+            check(!context.device && !(flags & ~(HALO_METAL_OFFSCREEN | HALO_METAL_ENABLE_FXAA)) &&
                 ((flags & HALO_METAL_OFFSCREEN) ? !window : window != 0));
             auto device = MTLCreateSystemDefaultDevice(); check(device != nil,HALO_METAL_GPU_ERROR);
             CAMetalLayer *layer = nil;
@@ -1078,9 +1198,20 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
             if (!library) host_logf(HOST_LOG_ERROR,"Native clear shader: %s",error.localizedDescription.UTF8String);
             check(library != nil,HALO_METAL_GPU_ERROR);
             auto draw_encoder = [[HaloMetalDrawEncoder alloc] initWithDevice:device]; check(draw_encoder != nil,HALO_METAL_MEMORY);
+            id<MTLLibrary> fxaa_library = nil;
+            std::map<uint32_t,id<MTLRenderPipelineState>> fxaa_pipelines;
+            if (flags & HALO_METAL_ENABLE_FXAA) {
+                fxaa_library = [device newLibraryWithSource:fxaa_source options:options error:&error];
+                if (!fxaa_library) host_logf(HOST_LOG_ERROR,"Native FXAA shader: %s",error.localizedDescription.UTF8String);
+                check(fxaa_library != nil,HALO_METAL_GPU_ERROR);
+                for (uint32_t color_format : {HALO_METAL_RGBA8,HALO_METAL_BGRA8})
+                    fxaa_pipelines.emplace(color_format,make_fxaa_pipeline(device,fxaa_library,color_format));
+            }
             if (window) { layer = (__bridge CAMetalLayer *)host_sdl_native_metal_layer(window); check(layer != nil,HALO_METAL_INVALID); }
             context.device = device; context.queue = queue; context.clear_library = library; context.layer = layer;
             context.draw_encoder = draw_encoder;
+            context.fxaa_library = fxaa_library; context.fxaa_enabled = (flags & HALO_METAL_ENABLE_FXAA) != 0;
+            context.fxaa_pipelines = std::move(fxaa_pipelines);
             // Reuse the existing gpu_stats environment override. Config-only
             // diagnostics can request this same established override in their
             // isolated launch environment; no ABI or application setting is added.

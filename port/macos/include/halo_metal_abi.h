@@ -26,7 +26,8 @@ enum halo_metal_capability {
     HALO_METAL_CAP_PRESENT_SCALED = 256u, HALO_METAL_CAP_CLEAR_CHANNELS = 512u,
     HALO_METAL_CAP_BLACK_BORDER = 1024u, HALO_METAL_CAP_ALPHA_BORDER = 2048u,
     HALO_METAL_CAP_COPY_SUBRESOURCE = 4096u,
-    HALO_METAL_CAP_VOLUME = 8192u, HALO_METAL_CAP_VOLUME_BORDER = 16384u
+    HALO_METAL_CAP_VOLUME = 8192u, HALO_METAL_CAP_VOLUME_BORDER = 16384u,
+    HALO_METAL_CAP_FXAA = 32768u
 };
 enum halo_metal_opcode {
     HALO_METAL_CREATE_TEXTURE = 1, HALO_METAL_DELETE_TEXTURE = 2,
@@ -38,7 +39,8 @@ enum halo_metal_opcode {
     HALO_METAL_BEGIN_VISIBILITY = 14, HALO_METAL_END_VISIBILITY = 15,
     HALO_METAL_PRESENT_SCALED = 16, HALO_METAL_CLEAR_CHANNELS = 17,
     HALO_METAL_DISPLAY_SETTINGS = 18, HALO_METAL_DRAW_ALPHA_BORDER = 19,
-    HALO_METAL_COPY_SUBRESOURCE = 20, HALO_METAL_DRAW_VOLUME_BORDER = 21
+    HALO_METAL_COPY_SUBRESOURCE = 20, HALO_METAL_DRAW_VOLUME_BORDER = 21,
+    HALO_METAL_FXAA = 22
 };
 enum halo_metal_format {
     HALO_METAL_RGBA8 = 1, HALO_METAL_BGRA8 = 2, HALO_METAL_DEPTH32_STENCIL8 = 3,
@@ -59,7 +61,9 @@ enum halo_metal_plane {
 enum halo_metal_visibility_mode {
     HALO_METAL_VISIBILITY_BOOLEAN = 1, HALO_METAL_VISIBILITY_COUNTING = 2
 };
-enum { HALO_METAL_OFFSCREEN = 1u };
+/* Optional capabilities are advertised only to callers that opt in. This
+ * keeps the original ABI-v1 guest's strict capability mask compatible. */
+enum { HALO_METAL_OFFSCREEN = 1u, HALO_METAL_ENABLE_FXAA = 2u };
 
 struct halo_metal_ref { uint32_t id, generation; };
 struct halo_metal_packet {
@@ -152,6 +156,17 @@ struct halo_metal_present_scaled {
 struct halo_metal_display_settings {
     struct halo_metal_command command;
     uint32_t display_flags, reserved;
+};
+/* Optional pre-HUD, in-place RGB edge smoothing. Source must be an initialized
+ * shader-readable RGBA8/BGRA8 render target. Coordinates are storage pixels.
+ * The host snapshots immutable input before writing this rectangle; samples
+ * clamp to its pixel centers. Alpha, pixels outside it, depth/stencil and
+ * visibility results remain unchanged. No active visibility query is allowed.
+ * Each successful command advances the source's content version once. */
+struct halo_metal_fxaa {
+    struct halo_metal_command command;
+    struct halo_metal_ref source;
+    uint32_t x, y, width, height;
 };
 struct halo_metal_clear_channels {
     struct halo_metal_clear clear;
@@ -252,6 +267,7 @@ HALO_METAL_ASSERT(sizeof(struct halo_metal_clear) == 72, "clear ABI");
 HALO_METAL_ASSERT(sizeof(struct halo_metal_clear_channels) == 80, "channel clear ABI");
 HALO_METAL_ASSERT(sizeof(struct halo_metal_present_scaled) == 24, "scaled present ABI");
 HALO_METAL_ASSERT(sizeof(struct halo_metal_display_settings) == 16, "display settings ABI");
+HALO_METAL_ASSERT(sizeof(struct halo_metal_fxaa) == 32, "FXAA ABI");
 HALO_METAL_ASSERT(sizeof(struct halo_metal_upload) == 48, "upload ABI");
 HALO_METAL_ASSERT(sizeof(struct halo_metal_create_ex) == 48, "extended texture ABI");
 HALO_METAL_ASSERT(sizeof(struct halo_metal_upload_ex) == 72, "extended upload ABI");
