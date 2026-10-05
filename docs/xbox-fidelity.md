@@ -221,8 +221,18 @@ no unrelated multiplayer process was stopped. These functionality checks do not
 establish full gameplay coverage, retail fidelity or sustained 60/120 FPS.
 The prior AA GPU/replay proof remains a separate historical checkpoint.
 
-Status: installed locally, experimental branch and draft PR #4 pending review;
-not merged or released.
+Integration decision: user-approved for main through [PR #4](https://github.com/pfista/halo-og/pull/4).
+ANGLE remains the default; Native Metal remains selectable and experimental.
+Release publication is pending separate authorization.
+
+The merge preparation retains main's Controller and Multiplayer settings,
+Original/Faster menu repeat, current invite handling and shared Apple service
+imports alongside Mac renderer controls. Integration merge `b9ef6717` passes
+166 focused renderer/settings checks (three platform-specific skips) and the
+216-test desktop CI fixture suite (one platform-specific skip). Fixture fix
+`24d3131f` removes the duplicate cursor enum that failed the previous Linux and
+Windows jobs after their builds succeeded. These checks cover merge compatibility;
+they do not resolve the newly reported tearing or establish new performance results.
 
 Use [xbox-ntsc.toml](../port/macos/profiles/xbox-ntsc.toml) with the existing
 `HALO_SCREEN_WIDTH=640` override for an isolated 4:3 comparison. This 30 FPS
