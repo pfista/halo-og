@@ -11,7 +11,9 @@ and the debug keyboard that the game's console reads.
 
 #include "platform.h"
 #include "sdl_platform.h"
+#if !defined(HALO_MACOS_NATIVE_METAL)
 #include "gl.h"
+#endif
 #include "port_config.h"
 #include "input_bindings.h"
 #include "p2p.h"
@@ -36,7 +38,9 @@ extern unsigned char console_is_active(void);
 #endif
 
 static SDL_Window *platform_window;
+#if !defined(HALO_MACOS_NATIVE_METAL)
 static SDL_GLContext platform_gl_context;
+#endif
 static SDL_ThreadID platform_event_thread;
 static BOOL platform_sdl_started = FALSE;
 
@@ -71,6 +75,16 @@ void updater_start(void);
 void updater_poll(SDL_Window *window);
 #endif
 
+/* Normal SDL exits must not discard a complete queued native command. */
+static void platform_exit_success(void)
+{
+#if defined(HALO_MACOS_NATIVE_METAL)
+    extern void halo_metal_flush_pending(void);
+    halo_metal_flush_pending();
+#endif
+    exit(EXIT_SUCCESS);
+}
+
 BOOL platform_sdl_initialize(void)
 {
 	if (platform_sdl_started)
@@ -84,7 +98,7 @@ BOOL platform_sdl_initialize(void)
 	/* a copy of the game started to open an invite link hands it to the
 	one already running, and goes */
 	if (p2p_hand_off_invite())
-		exit(EXIT_SUCCESS);
+		platform_exit_success();
 	SDL_SetHint(SDL_HINT_APP_NAME, "Halo OG");
 #ifdef HALO_ANDROID
 	/* landscape only; the back key arrives as a key event (xinput_sdl.c)
@@ -195,7 +209,7 @@ static BOOL data_extract(const char *image, const char *destination, char *error
 			if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
 			{
 				platform_log("extraction cancelled");
-				exit(EXIT_SUCCESS);
+				platform_exit_success();
 			}
 		}
 		pthread_mutex_lock(&extraction.lock);
@@ -352,7 +366,7 @@ BOOL platform_offer_game_data(const char *destination)
 				"You can also set paths.data in config.toml to a folder containing complete original game data.", maps);
 			platform_log("incomplete existing game data: %s", maps);
 			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Halo OG", message, NULL);
-			exit(EXIT_SUCCESS);
+			platform_exit_success();
 		}
 	}
 	if (data_find_adjacent_image(destination, image, sizeof(image), explanation, sizeof(explanation)) == 1)
@@ -378,7 +392,7 @@ BOOL platform_offer_game_data(const char *destination)
 		if (!SDL_ShowMessageBox(&question, &answer) || answer != 1)
 		{
 			platform_log("no game data: quitting");
-			exit(EXIT_SUCCESS);
+			platform_exit_success();
 		}
 		/* no image picked: ask again */
 		if (!data_choose_image(image, sizeof(image)))
@@ -425,7 +439,12 @@ int halo_video_fullscreen_set(int enabled)
 int halo_video_apply_settings(void)
 {
 	extern void render_interpolation_reset(void);
+#if defined(HALO_MACOS_NATIVE_METAL)
+	extern int halo_metal_apply_video_settings(void);
+	if (!platform_window || !halo_metal_apply_video_settings())
+#else
 	if (!platform_gl_context || !SDL_GL_SetSwapInterval(config_boolean("display.vsync") ? 1 : 0))
+#endif
 		return 0;
 	/* Previous snapshots can be minutes old when interpolation is re-enabled. */
 	render_interpolation_reset();
@@ -465,7 +484,9 @@ BOOL platform_screen_mode(long *width, long *height)
 BOOL platform_video_initialize(unsigned long width, unsigned long height)
 {
 	int scale = (int)config_integer("display.window_scale");
+#if !defined(HALO_MACOS_NATIVE_METAL)
 	int version;
+#endif
 
 	if (platform_window)
 		return TRUE;
@@ -474,6 +495,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	if (scale < 1)
 		scale = 1;
 
+#if !defined(HALO_MACOS_NATIVE_METAL)
 #ifdef HALO_ANDROID
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -495,10 +517,16 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	explicit mesa_glthread setting alone and other drivers ignore it. */
 	setenv("mesa_glthread", "true", 0);
 #endif
+#endif
 
 #ifdef HALO_ANDROID
 	platform_window = SDL_CreateWindow("Halo OG", (int)(width * scale), (int)(height * scale),
-		SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN
+		SDL_WINDOW_FULLSCREEN |
+#if defined(HALO_MACOS_NATIVE_METAL)
+		SDL_WINDOW_METAL
+#else
+		SDL_WINDOW_OPENGL
+#endif
 #ifdef HALO_MACOS
 		| (config_boolean("debug.hidden_window") ? SDL_WINDOW_HIDDEN : 0)
 #endif
@@ -519,6 +547,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 		return FALSE;
 	}
 	platform_directory_foreground_update();
+#if !defined(HALO_MACOS_NATIVE_METAL)
 	platform_gl_context = SDL_GL_CreateContext(platform_window);
 #ifdef HALO_ANDROID
 	/* ES 3.2 where the driver has it, otherwise the renderer makes do with
@@ -539,8 +568,11 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 		return FALSE;
 	version = SDL_GL_SetSwapInterval(config_boolean("display.vsync") ? 1 : 0);
 	(void)version;
+#endif
 	platform_event_thread = SDL_GetCurrentThreadID();
+#if !defined(HALO_MACOS_NATIVE_METAL)
 	platform_log("OpenGL %s on %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));
+#endif
 #if !defined(HALO_ANDROID) || defined(HALO_MACOS)
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 	input_state.mouse_released = TRUE;
@@ -557,9 +589,19 @@ void platform_video_drawable_size(int *width, int *height)
 	SDL_GetWindowSizeInPixels(platform_window, width, height);
 }
 
+#if defined(HALO_MACOS_NATIVE_METAL)
+unsigned int platform_video_native_window(void)
+{
+	return (unsigned int)platform_window;
+}
+#endif
+
 void platform_video_swap(void)
 {
+#if !defined(HALO_MACOS_NATIVE_METAL)
 	SDL_GL_SwapWindow(platform_window);
+#endif
+	/* Native Metal presents from the Direct3D device after command submission. */
 }
 
 void platform_mouse_capture(BOOL capture)
@@ -888,7 +930,7 @@ void platform_pump_events(void)
 	if (exit_ticks && SDL_GetTicks() >= exit_ticks)
 	{
 		platform_log("exiting after debug.exit_after");
-		exit(EXIT_SUCCESS);
+		platform_exit_success();
 	}
 	platform_show_pending_message();
 #ifndef HALO_ANDROID
@@ -902,7 +944,7 @@ void platform_pump_events(void)
 		case SDL_EVENT_QUIT:
 			pthread_mutex_unlock(&input_lock);
 			platform_log("window closed");
-			exit(EXIT_SUCCESS);
+			platform_exit_success();
 		case SDL_EVENT_KEY_DOWN:
 		case SDL_EVENT_KEY_UP:
 #if defined(HALO_MACOS) && !defined(HALO_IOS)

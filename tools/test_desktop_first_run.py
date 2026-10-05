@@ -140,6 +140,7 @@ class DesktopFirstRunTests(unittest.TestCase):
         sdl = (ROOT / "port/linux/src/sdl_platform.c").read_text()
         files = (ROOT / "port/linux/src/xbox_files.c").read_text()
         discovery = "\n".join(function(sdl, name) for name in (
+            "static void platform_exit_success(",
             "static int data_find_adjacent_image(", "BOOL platform_offer_game_data("))
         selection = "\n".join(function(files, name) for name in (
             "static BOOL directory_exists(", "static BOOL has_maps(",

@@ -171,6 +171,69 @@ New configurations set `display.high_res_hud`, `display.interpolation` and
 stays at 30 Hz; high-refresh rendering can be appropriate, with interpolation
 and input response assessed separately.
 
+### Native Metal presentation experiment
+
+Local commit `1dc7043f58b6a1d9a2be3fb02ae9bb7e66db88de` adds optional pre-HUD world
+anti-aliasing. Decision: adopt for testing on `codex/metal-renderer-poc`, with
+`display.anti_aliasing="off"` as the native default. The opt-in `"fxaa"` mode
+intentionally changes world edge pixels and subsequent frame-history colors.
+It preserves the authored textures, geometry, shaders and HUD assets, and the
+original 30 Hz simulation. This permits a native-resolution smoothing comparison
+without replacing original artwork.
+
+Validation: 185 targeted CPU tests, 103 isolated GPU readbacks and 15 atomic
+rejections pass. Off preserves all 378 ordered original replay checkpoints.
+Eight bounded fullscreen profiles pass API validation and full-size captures;
+timing observations range from 52.06 to 63.86 render FPS at 3600x2338, with
+approximately 30 simulation Hz. The observations do not establish retail pixel
+parity, a reliable isolated AA cost or sustained 120 FPS. See
+[the experiment and evidence](metal-anti-aliasing.md).
+
+Historical status at the AA checkpoint: experimental branch and draft PR #4,
+pending review; the installed ANGLE app then retained its existing build. The
+normal Mac app integration below supersedes that installation status. The
+upstream reviewed-through and integrated baseline above remain separate.
+
+### Native Metal in the normal Mac app
+
+Integration commit `b4f6ee72b85edaa11afb17647ce40b56398610be` bundles both Mac renderer pairs, with
+ANGLE as the default and Native Metal as an experimental option. The original
+**Settings → Game Settings → Video** menu and macOS **Settings…** share
+`display.renderer` in the saves folder's `config.toml`. Native Metal reveals
+resolution, FPS limit and anti-aliasing controls; VSync and Smooth Motion remain
+available for both renderers. Renderer, resolution and anti-aliasing choices
+apply on the next launch. Original assets, HUD and 30 Hz simulation remain
+intact. See [renderer settings and ANGLE recovery](metal-native-build.md).
+
+Validation: 124 focused CPU tests pass (the final run is recorded in
+`build/macos/dual-renderer-tests-attempt1/execution.json`). Local dual build
+`build/macos/dual-renderer-build-attempt1` and installation
+`build/macos/dual-renderer-install-attempt1` both exited 0; strict codesign
+verification passed. Native startup at 3600x2338, the four-row ANGLE and seven-row
+Native Metal Video layouts, Cancel/Accept staging and saved choices, and macOS
+pending-renderer status were visually checked. A focused isolated-copy check
+confirmed macOS changes appear on reopening Video and restart switches in both
+directions; the final native launch used a 3600x2338 drawable and exited 0.
+`build/macos/dual-renderer-runtime-attempt1/result.json` binds those observations
+and logs (SHA-256 `64d08cd250a28f3dab0b45a26839c4b366b77a66206096d2f0d0ffa4bace23cb`).
+The test copy has its own app identity, isolated saves and no game URL handlers;
+no unrelated multiplayer process was stopped. These functionality checks do not
+establish full gameplay coverage, retail fidelity or sustained 60/120 FPS.
+The prior AA GPU/replay proof remains a separate historical checkpoint.
+
+Integration decision: user-approved for main through [PR #4](https://github.com/pfista/halo-og/pull/4).
+ANGLE remains the default; Native Metal remains selectable and experimental.
+Release publication is pending separate authorization.
+
+The merge preparation retains main's Controller and Multiplayer settings,
+Original/Faster menu repeat, current invite handling and shared Apple service
+imports alongside Mac renderer controls. Integration merge `b9ef6717` passes
+166 focused renderer/settings checks (three platform-specific skips) and the
+216-test desktop CI fixture suite (one platform-specific skip). Fixture fix
+`24d3131f` removes the duplicate cursor enum that failed the previous Linux and
+Windows jobs after their builds succeeded. These checks cover merge compatibility;
+they do not resolve the newly reported tearing or establish new performance results.
+
 Use [xbox-ntsc.toml](../port/macos/profiles/xbox-ntsc.toml) with the existing
 `HALO_SCREEN_WIDTH=640` override for an isolated 4:3 comparison. This 30 FPS
 reference is separate from normal-play performance choices. Native maps can use

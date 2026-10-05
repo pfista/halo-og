@@ -18,7 +18,9 @@ read: 8-bit RGBA, not interlaced, its data inflated with the game's zlib.
 #include "hud_hires.h"
 #include "platform.h"
 #include "port_config.h"
+#if !defined(HALO_MACOS_NATIVE_METAL)
 #include "xgpu.h"
+#endif
 
 #include "memory/zlib/zlib.h"
 
@@ -195,6 +197,7 @@ failed:
 	return NULL;
 }
 
+#if !defined(HALO_MACOS_NATIVE_METAL)
 unsigned int hud_hires_override_texture(long asset, unsigned long *levels)
 {
 	const struct hud_hires_embedded *embedded;
@@ -235,3 +238,4 @@ unsigned int hud_hires_override_texture(long asset, unsigned long *levels)
 	*levels = textures[asset].levels;
 	return texture;
 }
+#endif

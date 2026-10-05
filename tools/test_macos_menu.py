@@ -138,6 +138,7 @@ def native_menu_loop():
     sources = ("port/macos/tests/menu_ui.m", "port/macos/tests/menu_support.c",
                "port/macos/native/host_menu.m", "port/macos/native/HaloPreferences.m", "port/macos/native/HaloMapDownloads.m", "port/macos/native/HaloTimerAudio.m", "port/macos/native/HaloMapPackages.m", "port/macos/native/HaloReleaseUpdates.m",
                "port/macos/host/host_sdl.c", "port/macos/host/host_invite.c",
+               "port/macos/host/host_renderer.c", "port/third_party/tomlc17/tomlc17.c",
                "port/macos/host/posix_files.c", "port/linux/src/xiso.c", "port/linux/src/release_discovery.c")
     objects = []
     for source in sources:

@@ -35,6 +35,25 @@ Conventions carried over from the Xbox:
 #include <string.h>
 #include <time.h>
 
+/* Development-only shader corpus capture. The stable renderer has no capture
+code or file I/O unless this is explicitly enabled in its guest compile flags.
+The existing debug.gpu_trace_frame setting selects the frame to capture. */
+#ifndef HALO_MACOS_METAL_SHADER_CAPTURE
+#define HALO_MACOS_METAL_SHADER_CAPTURE 0
+#endif
+#ifndef HALO_MACOS_METAL_FRAME_CAPTURE
+#define HALO_MACOS_METAL_FRAME_CAPTURE 0
+#endif
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+static void metal_frame_bind(void);
+static void metal_frame_copy(GLuint source, GLuint destination, GLint level, GLsizei width, GLsizei height, BOOL mipmap);
+static void metal_frame_visibility(const char *kind, unsigned long slot, unsigned long result);
+#endif
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_SHADER_CAPTURE
+#include <errno.h>
+#include <sys/stat.h>
+#endif
+
 void d3d8_surface_initialize(D3DSurface *surface, D3DFORMAT format, unsigned long width, unsigned long height);
 void d3d8_surface_resize(D3DSurface *surface, D3DFORMAT format, unsigned long width, unsigned long height);
 
@@ -1299,6 +1318,9 @@ void WINAPI D3DDevice_SetRenderTarget(D3DSurface *render_target, D3DSurface *dep
 		device.viewport.MaxZ = 1.0f;
 	}
 	viewport_update_constants();
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+	metal_frame_bind();
+#endif
 }
 
 void WINAPI D3DDevice_SetViewport(CONST D3DVIEWPORT8 *viewport)
@@ -1391,6 +1413,9 @@ void WINAPI D3DDevice_BeginVisibilityTest(void)
 	}
 #endif
 	glBeginQuery(VISIBILITY_QUERY, device.queries[VISIBILITY_TEST_SLOTS]);
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+	metal_frame_visibility("visibility_begin", VISIBILITY_TEST_SLOTS, 0);
+#endif
 }
 
 HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
@@ -1423,6 +1448,9 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	device.queries[VISIBILITY_TEST_SLOTS] = device.queries[index];
 	device.queries[index] = scratch;
 	device.query_pending[index] = TRUE;
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+	metal_frame_visibility("visibility_end", index, 0);
+#endif
 #ifndef HALO_ANDROID
 	if (device.visibility_results)
 	{
@@ -1460,6 +1488,9 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 #else
 			*result = 0;
 #endif
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+		metal_frame_visibility("visibility_cpu_result", index, result ? *result : 0);
+#endif
 		return S_OK;
 	}
 #ifdef HALO_ANDROID
@@ -1477,6 +1508,9 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 	visibility_collect(index);
 	if (result)
 		*result = device.query_results[index];
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+	metal_frame_visibility("visibility_cpu_result", index, result ? *result : 0);
+#endif
 	return S_OK;
 #endif
 #ifndef HALO_ANDROID
@@ -2129,6 +2163,9 @@ static void copy_level_by_blit(GLuint source, GLuint destination, GLint level, G
 	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, destination, level);
 	glDisable(GL_SCISSOR_TEST);
 	glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+	metal_frame_copy(source, destination, level, width, height, FALSE);
+#endif
 	/* (the framebuffers bound before, not 0) */
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)read_binding);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)draw_binding);
@@ -2188,8 +2225,13 @@ static GLuint mip_composite_get(const struct xgpu_texture_description *descripti
 		}
 		else
 #endif
-		glCopyImageSubData(target->texture, GL_TEXTURE_2D, 0, 0, 0, 0,
-			composite->texture, GL_TEXTURE_2D, (GLint)level, 0, 0, 0, (GLsizei)width, (GLsizei)height, 1);
+		{
+			glCopyImageSubData(target->texture, GL_TEXTURE_2D, 0, 0, 0, 0,
+				composite->texture, GL_TEXTURE_2D, (GLint)level, 0, 0, 0, (GLsizei)width, (GLsizei)height, 1);
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+			metal_frame_copy(target->texture, composite->texture, (GLint)level, (GLsizei)width, (GLsizei)height, FALSE);
+#endif
+		}
 		rendered_levels++;
 	}
 	glBindTexture(GL_TEXTURE_2D, composite->texture);
@@ -2198,6 +2240,9 @@ static GLuint mip_composite_get(const struct xgpu_texture_description *descripti
 	{
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, rendered_levels ? (GLint)rendered_levels - 1 : 0);
 		glGenerateMipmap(GL_TEXTURE_2D);
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+		metal_frame_copy(composite->texture, composite->texture, (GLint)rendered_levels, (GLsizei)description->width, (GLsizei)description->height, TRUE);
+#endif
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
 	}
 	xgpu_gl_state_invalidate();
@@ -2542,6 +2587,249 @@ static void uniform_float(GLint location, float *shadow, float value)
 	glUniform1f(location, value);
 }
 
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_SHADER_CAPTURE
+/* JSON numbers describe Xbox uint32 words explicitly, never guest pointers or
+native struct bytes. A native LP64 harness can parse this without the game ABI.
+This is a shader corpus, not a draw/frame replay: no geometry, texels, uniforms
+or render-target pixels are exported. */
+typedef char metal_capture_dword_size_assert[sizeof(DWORD) == 4 ? 1 : -1];
+
+struct metal_capture_vertex
+{
+	struct metal_capture_vertex *next;
+	unsigned long id, instruction_count, packed_mask;
+	DWORD instructions[];
+};
+
+struct metal_capture_pixel
+{
+	struct metal_capture_pixel *next;
+	unsigned long id;
+	struct nv2a_pixel_shader_key key;
+};
+
+static struct
+{
+	BOOL started, failed, finished, directory_created;
+	char directory[512];
+	FILE *uses;
+	unsigned long frame, vertex_count, pixel_count, use_count;
+	struct metal_capture_vertex *vertices;
+	struct metal_capture_pixel *pixels;
+} metal_capture;
+
+static BOOL metal_capture_start(void)
+{
+	char parent[512];
+	unsigned long suffix;
+	int length;
+
+	if (metal_capture.started)
+		return !metal_capture.failed && !metal_capture.finished;
+	metal_capture.started = TRUE;
+	metal_capture.frame = device.frame;
+	length = snprintf(parent, sizeof(parent), "%s/metal-shaders", platform_save_root());
+	if (length < 0 || (unsigned long)length >= sizeof(parent) ||
+		(mkdir(parent, 0700) != 0 && errno != EEXIST))
+		goto failed;
+	/* Preserve a corpus already captured by an earlier development run. */
+	for (suffix = 0; suffix < 10000; suffix++)
+	{
+		length = suffix ? snprintf(metal_capture.directory, sizeof(metal_capture.directory),
+			"%s/frame%lu-%lu", parent, device.frame, suffix) :
+			snprintf(metal_capture.directory, sizeof(metal_capture.directory), "%s/frame%lu", parent, device.frame);
+		if (length < 0 || (unsigned long)length >= sizeof(metal_capture.directory))
+			goto failed;
+		if (mkdir(metal_capture.directory, 0700) == 0)
+		{
+			metal_capture.directory_created = TRUE;
+			break;
+		}
+		if (errno != EEXIST)
+			goto failed;
+	}
+	if (suffix == 10000)
+		goto failed;
+	length = snprintf(parent, sizeof(parent), "%s/uses.jsonl", metal_capture.directory);
+	if (length < 0 || (unsigned long)length >= sizeof(parent) || !(metal_capture.uses = fopen(parent, "w")))
+		goto failed;
+	return TRUE;
+
+failed:
+	metal_capture.failed = TRUE;
+	platform_log("Metal shader capture: could not create the development corpus");
+	return FALSE;
+}
+
+static FILE *metal_capture_record(const char *kind, unsigned long id)
+{
+	char path[512];
+	int length = snprintf(path, sizeof(path), "%s/%s-%04lu.json", metal_capture.directory, kind, id);
+	FILE *file;
+
+	if (length < 0 || (unsigned long)length >= sizeof(path) || !(file = fopen(path, "w")))
+		return NULL;
+	fprintf(file, "{\"schema_version\":1,\"kind\":\"%s\",\"id\":%lu,\"frame\":%lu,", kind, id, device.frame);
+	return file;
+}
+
+static void metal_capture_words(FILE *file, const char *name, const DWORD *words, unsigned long count)
+{
+	unsigned long index;
+
+	fprintf(file, "\"%s\":[", name);
+	for (index = 0; index < count; index++)
+		fprintf(file, "%s%lu", index ? "," : "", (unsigned long)words[index]);
+	fputc(']', file);
+}
+
+static void metal_capture_bytes(FILE *file, const char *name, const unsigned char *bytes, unsigned long count)
+{
+	unsigned long index;
+
+	fprintf(file, ",\"%s\":[", name);
+	for (index = 0; index < count; index++)
+		fprintf(file, "%s%u", index ? "," : "", (unsigned int)bytes[index]);
+	fputc(']', file);
+}
+
+static void metal_capture_draw(struct vertex_shader_object *program, BOOL immediate,
+	const struct nv2a_pixel_shader_key *key)
+{
+	struct metal_capture_vertex *vertex;
+	struct metal_capture_pixel *pixel;
+	unsigned long packed_mask = immediate ? 0 : device.vertex_shader->packed_mask;
+	unsigned long instruction_bytes = program->instruction_count * 4 * sizeof(DWORD);
+	FILE *file;
+
+	if (!trace_frame() || !metal_capture_start())
+		return;
+	for (vertex = metal_capture.vertices; vertex; vertex = vertex->next)
+		if (vertex->instruction_count == program->instruction_count && vertex->packed_mask == packed_mask &&
+			!memcmp(vertex->instructions, program->instructions, instruction_bytes))
+			break;
+	if (!vertex)
+	{
+		vertex = malloc(sizeof(*vertex) + instruction_bytes);
+		if (!vertex)
+			goto failed;
+		vertex->id = metal_capture.vertex_count++;
+		vertex->instruction_count = program->instruction_count;
+		vertex->packed_mask = packed_mask;
+		memcpy(vertex->instructions, program->instructions, instruction_bytes);
+		vertex->next = metal_capture.vertices;
+		metal_capture.vertices = vertex;
+		if (!(file = metal_capture_record("vertex", vertex->id)))
+			goto failed;
+		fprintf(file, "\"instruction_count\":%lu,\"packed_mask\":%lu,", vertex->instruction_count, packed_mask);
+		metal_capture_words(file, "instructions", vertex->instructions, vertex->instruction_count * 4);
+		fputs("}\n", file);
+		if (ferror(file)) { fclose(file); goto failed; }
+		if (fclose(file) != 0)
+			goto failed;
+	}
+	for (pixel = metal_capture.pixels; pixel; pixel = pixel->next)
+		if (!memcmp(&pixel->key, key, sizeof(*key)))
+			break;
+	if (!pixel)
+	{
+		pixel = malloc(sizeof(*pixel));
+		if (!pixel)
+			goto failed;
+		pixel->id = metal_capture.pixel_count++;
+		pixel->key = *key;
+		pixel->next = metal_capture.pixels;
+		metal_capture.pixels = pixel;
+		if (!(file = metal_capture_record("pixel", pixel->id)))
+			goto failed;
+		metal_capture_words(file, "combiner_state", key->combiner_state, D3DRS_PS_MAX);
+		fprintf(file, ",\"texture_modes\":%lu", (unsigned long)key->texture_modes);
+		metal_capture_bytes(file, "sampler_type", key->sampler_type, 4);
+		metal_capture_bytes(file, "alpha_kill", key->alpha_kill, 4);
+		metal_capture_bytes(file, "color_sign", key->color_sign, 4);
+		metal_capture_bytes(file, "border_axes", key->border_axes, 4);
+		metal_capture_bytes(file, "border_filter", key->border_filter, 4);
+		fprintf(file, ",\"alpha_test_function\":%lu,\"fog_enable\":%u,\"fog_table_mode\":%u,"
+			"\"count_samples\":%u,\"coverage_alpha\":%u}\n", key->alpha_test_function,
+			(unsigned int)key->fog_enable, (unsigned int)key->fog_table_mode,
+			(unsigned int)key->count_samples, (unsigned int)key->coverage_alpha);
+		if (ferror(file)) { fclose(file); goto failed; }
+		if (fclose(file) != 0)
+			goto failed;
+	}
+	fprintf(metal_capture.uses, "{\"schema_version\":1,\"frame\":%lu,\"use\":%lu,\"vertex_id\":%lu,"
+		"\"pixel_id\":%lu,\"program_id\":%lu,\"declaration_id\":%lu,\"immediate\":%u}\n",
+		device.frame, metal_capture.use_count++, vertex->id, pixel->id, program->id,
+		device.vertex_shader->id, immediate ? 1u : 0u);
+	if (!ferror(metal_capture.uses))
+		return;
+
+failed:
+	metal_capture.failed = TRUE;
+	platform_log("Metal shader capture: could not complete a shader record");
+}
+
+static BOOL metal_capture_status(BOOL complete)
+{
+	char path[512], temporary[512];
+	int length;
+	FILE *file;
+	BOOL failed;
+
+	length = snprintf(path, sizeof(path), "%s/status.json", metal_capture.directory);
+	if (length < 0 || (unsigned long)length >= sizeof(path))
+		return FALSE;
+	length = snprintf(temporary, sizeof(temporary), "%s/status.json.tmp", metal_capture.directory);
+	if (length < 0 || (unsigned long)length >= sizeof(temporary) || !(file = fopen(temporary, "w")))
+		return FALSE;
+	fprintf(file, "{\"schema_version\":1,\"kind\":\"capture\",\"complete\":%s,\"frame\":%lu,"
+		"\"vertex_count\":%lu,\"pixel_count\":%lu,\"use_count\":%lu}\n", complete ? "true" : "false",
+		metal_capture.frame, metal_capture.vertex_count, metal_capture.pixel_count, metal_capture.use_count);
+	failed = ferror(file) != 0;
+	if (fclose(file) != 0)
+		failed = TRUE;
+	/* The importer accepts only a final marker whose writes and close succeeded. */
+	if (failed || rename(temporary, path) != 0)
+	{
+		remove(temporary);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+static void metal_capture_finish(void)
+{
+	struct metal_capture_vertex *vertex;
+	struct metal_capture_pixel *pixel;
+
+	if (!metal_capture.started || metal_capture.finished)
+		return;
+	metal_capture.finished = TRUE;
+	if (metal_capture.uses && fclose(metal_capture.uses) != 0)
+		metal_capture.failed = TRUE;
+	metal_capture.uses = NULL;
+	if (metal_capture.directory_created && !metal_capture_status(!metal_capture.failed))
+	{
+		metal_capture.failed = TRUE;
+		/* If the first status write failed transiently, still mark the corpus incomplete. */
+		metal_capture_status(FALSE);
+	}
+	while ((vertex = metal_capture.vertices) != NULL)
+	{
+		metal_capture.vertices = vertex->next;
+		free(vertex);
+	}
+	while ((pixel = metal_capture.pixels) != NULL)
+	{
+		metal_capture.pixels = pixel->next;
+		free(pixel);
+	}
+	platform_log("Metal shader capture: %s %lu vertex variants, %lu pixel keys, %lu uses in %s",
+		metal_capture.failed ? "incomplete" : "captured", metal_capture.vertex_count,
+		metal_capture.pixel_count, metal_capture.use_count, metal_capture.directory);
+}
+#endif
+
 static struct program_entry *prepare_draw(BOOL immediate)
 {
 	struct vertex_shader_object *program = current_program();
@@ -2601,6 +2889,9 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	key.fog_table_mode = (unsigned char)D3D__RenderState[D3DRS_FOGTABLEMODE];
 #ifdef HALO_ANDROID
 	key.count_samples = device.visibility_test_active && xgpu_capabilities.atomic_counters;
+#endif
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_SHADER_CAPTURE
+	metal_capture_draw(program, immediate, &key);
 #endif
 
 	entry = program_get(vertex_shader_get(program, immediate), fragment_shader_get(&key));
@@ -2861,6 +3152,8 @@ static void trace_draw(const char *kind, D3DPRIMITIVETYPE type, unsigned long co
 	}
 }
 
+
+#include "metal_frame_capture.h"
 
 /* ---------- the contiguous window in GL buffers
 
@@ -3538,6 +3831,9 @@ void WINAPI D3DDevice_DrawVertices(D3DPRIMITIVETYPE primitive_type, UINT start_v
 		return;
 	trace_draw("draw", primitive_type, vertex_count, NULL);
 	setup_streams(start_vertex, vertex_count);
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+	metal_frame_draw_begin(primitive_type, start_vertex, vertex_count, NULL, 0, FALSE);
+#endif
 	if (primitive_type == D3DPT_QUADLIST)
 	{
 		unsigned long count;
@@ -3551,6 +3847,9 @@ void WINAPI D3DDevice_DrawVertices(D3DPRIMITIVETYPE primitive_type, UINT start_v
 	{
 		glDrawArrays(primitive_mode(primitive_type), 0, (GLsizei)vertex_count);
 	}
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+	metal_frame_draw_end();
+#endif
 	gl_check_errors("draw");
 }
 
@@ -3574,12 +3873,18 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 	trace_draw("indexed", primitive_type, vertex_count, NULL);
 	/* (the streams from the base vertex on: index i is vertex base + i) */
 	setup_streams(device.base_vertex_index + minimum, maximum - minimum + 1);
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+	metal_frame_draw_begin(primitive_type, device.base_vertex_index + minimum, maximum - minimum + 1, index_data, vertex_count, FALSE);
+#endif
 	if (mirrored)
 	{
 		/* the attributes start at vertex minimum */
 		state_element_array_buffer(index_buffer);
 		glDrawElementsBaseVertex(primitive_mode(primitive_type), (GLsizei)vertex_count, GL_UNSIGNED_SHORT,
 			(const void *)index_offset, -(GLint)minimum);
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+		metal_frame_draw_end();
+#endif
 		return;
 	}
 	stats.streamed_bytes += vertex_count * sizeof(WORD);
@@ -3601,6 +3906,9 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 			(const void *)index_upload(rebased, count * sizeof(WORD)));
 		free(rebased);
 		free(indices);
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+		metal_frame_draw_end();
+#endif
 		return;
 	}
 #endif
@@ -3608,6 +3916,9 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 	glDrawElementsBaseVertex(primitive_mode(primitive_type), (GLsizei)count, GL_UNSIGNED_SHORT,
 		(const void *)index_upload(source, count * sizeof(WORD)), -(GLint)minimum);
 	free(indices);
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+	metal_frame_draw_end();
+#endif
 }
 
 /* ---------- immediate mode */
@@ -3649,6 +3960,9 @@ void WINAPI D3DDevice_End(void)
 		state_attribute_pointer(index, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE, (GLsizei)stride,
 			offset + index * 4 * sizeof(float));
 	}
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+	metal_frame_draw_begin(type, 0, count, NULL, 0, TRUE);
+#endif
 	if (type == D3DPT_QUADLIST)
 	{
 		unsigned long index_count;
@@ -3662,6 +3976,9 @@ void WINAPI D3DDevice_End(void)
 	{
 		glDrawArrays(primitive_mode(type), 0, (GLsizei)count);
 	}
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+	metal_frame_draw_end();
+#endif
 	gl_check_errors("immediate draw");
 }
 
@@ -3724,6 +4041,9 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 
 	if (!device.gl_ready || !bind_targets(&has_depth))
 		return;
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+	metal_frame_clear_begin(count, rectangles, flags, color, z, stencil);
+#endif
 	if (trace_frame())
 		platform_log("clear flags %lx color %08lx z %g count %lu target %08lx depth %08lx", (unsigned long)flags,
 			(unsigned long)color, z, (unsigned long)count,
@@ -3753,7 +4073,12 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 		mask |= GL_STENCIL_BUFFER_BIT;
 	}
 	if (!mask)
+	{
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+		metal_frame_clear_end();
+#endif
 		return;
+	}
 	if (!count || !rectangles)
 	{
 		/* the NV2A clips a viewport-less clear to the viewport, which is what
@@ -3767,6 +4092,9 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 		glClear(mask);
 		glDisable(GL_SCISSOR_TEST);
 		xgpu_gl_state_invalidate();
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+		metal_frame_clear_end();
+#endif
 		return;
 	}
 	glEnable(GL_SCISSOR_TEST);
@@ -3790,6 +4118,9 @@ void WINAPI D3DDevice_Clear(DWORD count, CONST D3DRECT *rectangles, DWORD flags,
 	}
 	glDisable(GL_SCISSOR_TEST);
 	xgpu_gl_state_invalidate();
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+	metal_frame_clear_end();
+#endif
 }
 
 /* ---------- presentation */
@@ -3864,6 +4195,9 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		if (trace_frame())
 			platform_log("present back buffer %08lx texture %u", (unsigned long)device.back_buffer.Data,
 				back_buffer->target.texture);
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_FRAME_CAPTURE
+		metal_frame_finish();
+#endif
 		if (screenshot_every > 0 && device.frame % (unsigned long)screenshot_every == 0)
 			write_screenshot(back_buffer);
 
@@ -3907,6 +4241,9 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		device.index_offset = INDEX_BUFFER_SIZE;
 #endif
 	}
+#if defined(HALO_MACOS) && HALO_MACOS_METAL_SHADER_CAPTURE
+	metal_capture_finish();
+#endif
 	device.frame++;
 	stats.presents++;
 	if (debug_settings.statistics && device.frame % 60 == 0)

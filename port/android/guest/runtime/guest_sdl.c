@@ -19,7 +19,9 @@ type that carries no pointer, which covers all the platform layer reads.
 #include "guest_host.h"
 
 /* guest/runtime/guest_gl.c (generated) */
+#if !defined(HALO_MACOS_NATIVE_METAL)
 SDL_FunctionPointer guest_gl_get_proc_address(const char *name);
+#endif
 
 bool SDL_Init(SDL_InitFlags flags)
 {
@@ -134,6 +136,7 @@ bool SDL_SetWindowRelativeMouseMode(SDL_Window *window, bool enabled)
 	return host_sdl_set_relative_mouse((unsigned int)window, enabled) != 0;
 }
 
+#if !defined(HALO_MACOS_NATIVE_METAL)
 bool SDL_GL_SetAttribute(SDL_GLAttr attribute, int value)
 {
 	return host_sdl_gl_set_attribute((int)attribute, value) != 0;
@@ -163,6 +166,7 @@ SDL_FunctionPointer SDL_GL_GetProcAddress(const char *name)
 {
 	return guest_gl_get_proc_address(name);
 }
+#endif
 
 /* ---------- events */
 

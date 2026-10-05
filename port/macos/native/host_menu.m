@@ -8,6 +8,7 @@
 #include "../../linux/include/halo_contributors.h"
 #include <SDL3/SDL.h>
 #include "host_menu.h"
+#include "../host/host_renderer.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,6 +20,8 @@
 @property(nonatomic, strong) NSTextField *dataLabel;
 @property(nonatomic, strong) NSTextField *sourceLabel;
 @property(nonatomic, strong) NSButton *fullscreenButton;
+@property(nonatomic, strong) NSPopUpButton *rendererButton;
+@property(nonatomic, strong) NSTextField *rendererStatusLabel;
 @property(nonatomic, strong) NSButton *automaticUpdatesButton;
 @property(nonatomic, strong) NSTextField *updateStatusLabel;
 @property(nonatomic, strong) NSButton *downloadUpdateButton;
@@ -303,7 +306,7 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     else [NSApp terminate:self];
 }
 - (void)buildSettings {
-    self.settingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 520, 685)
+    self.settingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 520, 745)
         styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     self.settingsWindow.title = @"Halo OG Settings";
     self.settingsWindow.releasedWhenClosed = NO;
@@ -374,8 +377,40 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     }
     done.frame = NSMakeRect(401, 14, 95, 32);
     button(content, @"About Halo OG…", @selector(about:), NSMakeRect(20, 14, 185, 32));
+    /* Keep the existing sections in place and extend Display above Game Data. */
+    for (NSView *view in content.subviews) {
+        if (view.frame.origin.y >= 610) {
+            NSRect frame = view.frame; frame.origin.y += 60; view.frame = frame;
+        }
+    }
+    label(content, @"Renderer", NSMakeRect(24, 635, 96, 22), NO);
+    self.rendererButton = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(120, 629, 376, 30) pullsDown:NO];
+    [self.rendererButton addItemsWithTitles:@[@"ANGLE (Default)", @"Native Metal (Experimental)"]];
+    self.rendererButton.target = self;
+    self.rendererButton.action = @selector(changeRenderer:);
+    [content addSubview:self.rendererButton];
+    self.rendererStatusLabel = label(content, @"", NSMakeRect(24, 595, 472, 34), YES);
+    self.rendererStatusLabel.font = [NSFont systemFontOfSize:11];
+    self.rendererStatusLabel.lineBreakMode = NSLineBreakByWordWrapping;
+    self.rendererStatusLabel.maximumNumberOfLines = 2;
 }
 - (void)refreshSettings {
+    char renderer_error[256];
+    int selected_renderer = host_renderer_read(self.preferences.supportDirectory.fileSystemRepresentation,
+        renderer_error, sizeof(renderer_error));
+    BOOL renderer_choices = host_renderer_can_choose();
+    int active_renderer = host_renderer_active();
+    [self.rendererButton selectItemAtIndex:renderer_choices ? selected_renderer : active_renderer];
+    self.rendererButton.enabled = renderer_choices;
+    NSString *active = active_renderer == HOST_RENDERER_METAL ? @"Native Metal" : @"ANGLE";
+    if (!renderer_choices)
+        self.rendererStatusLabel.stringValue = [NSString stringWithFormat:@"Current: %@. Renderer switching is unavailable in this build.", active];
+    else if (*renderer_error)
+        self.rendererStatusLabel.stringValue = @(renderer_error);
+    else if (selected_renderer != active_renderer)
+        self.rendererStatusLabel.stringValue = [NSString stringWithFormat:@"Current: %@. Your selected renderer starts when Halo OG next opens.", active];
+    else
+        self.rendererStatusLabel.stringValue = [NSString stringWithFormat:@"Current: %@. Renderer changes take effect when Halo OG next opens.", active];
     self.dataLabel.stringValue = self.preferences.dataPath ?: self.launchDataPath ?: @"No maps selected";
     self.dataLabel.toolTip = self.dataLabel.stringValue;
     self.sourceLabel.stringValue = self.preferences.isoPath ? [@"Disc image: " stringByAppendingString:self.preferences.isoPath] : @"Using an extracted maps folder";
@@ -393,6 +428,15 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     self.timerDownloadsButton.state = self.preferences.timerAudioDownloadsEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     self.timerDownloadButton.enabled = self.preferences.timerAudioDownloadsEnabled && self.timerAudio != nil && !self.timerAudio.downloading && !self.timerAudio.installed;
     [self refreshFullscreen];
+}
+- (void)changeRenderer:(NSPopUpButton *)sender {
+    char error[256];
+    if (!host_renderer_can_choose() || !host_renderer_write(self.preferences.supportDirectory.fileSystemRepresentation,
+        (int)sender.indexOfSelectedItem, error, sizeof(error))) {
+        showError([NSError errorWithDomain:@"HaloRenderer" code:1 userInfo:@{NSLocalizedDescriptionKey:
+            host_renderer_can_choose() ? @(error) : @"Renderer switching is unavailable in this build."}]);
+    }
+    [self refreshSettings];
 }
 - (void)showSettings:(id)sender {
     (void)sender;

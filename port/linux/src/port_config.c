@@ -85,6 +85,23 @@ static const struct config_setting config_settings[] =
 	{ "display.interpolation", _config_boolean, "false", "HALO_INTERPOLATION", _environment_value, _platform_all,
 		"Draw a frame for every display refresh, blending between the game's 30\n"
 		"ticks a second; false keeps the original 30 frames a second." },
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	{ "display.renderer", _config_string, "\"angle\"", NULL, _environment_value, _platform_all,
+		"Mac rendering: angle preserves the original renderer; metal enables\n"
+		"the optional direct Metal renderer. Restart after changing this setting." },
+	{ "display.frame_limit", _config_integer, "0", NULL, _environment_value, _platform_all,
+		"Native Metal render cap: 0 is uncapped, or choose 30, 60 or 120.\n"
+		"Higher rates require interpolation; VSync can limit the achieved rate.\n"
+		"Simulation remains 30 ticks a second." },
+	{ "display.render_height", _config_integer, "480", NULL, _environment_value, _platform_all,
+		"Native Metal render height: 0 for the native drawable, or 480, 720,\n"
+		"1080, 1440 or 2160 pixels. Native mode uses actual Retina pixels.\n"
+		"Width follows the startup aspect. Restart after changing this setting." },
+	{ "display.anti_aliasing", _config_string, "\"off\"", NULL, _environment_value, _platform_all,
+		"Native Metal world smoothing: off preserves the original picture; fxaa\n"
+		"smooths world edges before drawing the original HUD. Original assets\n"
+		"and the game's 30 ticks a second stay unchanged. Restart to apply." },
+#endif
 	{ "display.timer_position", _config_integer, "0", NULL, _environment_value, _platform_all,
 		"PB timer position: 0 is top center, 1 bottom center, 2 bottom right." },
 	{ "display.timer_scale", _config_real, "1.0", NULL, _environment_value, _platform_all,
@@ -880,8 +897,8 @@ static struct config_value config_value(const char *name, enum config_type type)
 	else
 		platform_log("settings: no %s setting %s", type == _config_string ? "string" : "such", name);
 	pthread_mutex_unlock(&config_lock);
-	/* Scalar reads are copied while locked, so saves cannot race the mixer
-	or other native callers. Strings are immutable after the initial load. */
+	/* Scalar reads are copied while locked. Saved strings retain all prior
+	storage so callers may continue using a pointer obtained before a save. */
 	return result;
 }
 
@@ -993,40 +1010,110 @@ static int config_number_matches(toml_datum_t datum, enum config_type type, doub
 
 /* Source locations come from TOML, including dotted/quoted keys and inline
  tables. Only the value token is replaced; all surrounding text is retained. */
-static char *config_edit_number(const char *text, size_t size, const struct config_setting *setting, double value)
+static size_t config_value_token_length(const char *token, const char *end, enum config_type type)
+{
+	const char *cursor = token;
+	char quote;
+	int multiline;
+
+	if (type != _config_string)
+		return strcspn(token, " \t\r\n,#}]");
+	if (token == end || (*token != '"' && *token != '\''))
+		return 0;
+	quote = *token;
+	multiline = end - token >= 3 && token[1] == quote && token[2] == quote;
+	cursor += multiline ? 3 : 1;
+	while (cursor < end)
+	{
+		if (quote == '"' && *cursor == '\\')
+		{
+			if (end - cursor < 2) return 0;
+			cursor += 2;
+		}
+		else if (*cursor == quote)
+		{
+			const char *after = cursor + 1;
+			if (!multiline) return (size_t)(after - token);
+			while (after < end && *after == quote) after++;
+			if (after - cursor >= 3) return (size_t)(after - token);
+			cursor = after;
+		}
+		else cursor++;
+	}
+	return 0;
+}
+
+static char *config_string_token(const char *value)
+{
+	size_t length = strlen(value), used = 0;
+	char *token;
+	const unsigned char *cursor = (const unsigned char *)value;
+
+	if (length > (SIZE_MAX - 3) / 6) return NULL;
+	token = malloc(length * 6 + 3);
+	if (!token) return NULL;
+	token[used++] = '"';
+	for (; *cursor; cursor++)
+	{
+		if (*cursor == '"' || *cursor == '\\')
+		{
+			token[used++] = '\\';token[used++] = (char)*cursor;
+		}
+		else if (*cursor < 0x20 || *cursor == 0x7f)
+		{
+			snprintf(token + used, 7, "\\u%04x", *cursor);
+			used += 6;
+		}
+		else token[used++] = (char)*cursor;
+	}
+	token[used++] = '"';token[used] = 0;
+	return token;
+}
+
+static char *config_edit_value(const char *text, size_t size, const struct config_setting *setting, const char *token)
 {
 	const char *name = setting->name, *dot = strchr(name, '.');
-	char section[64], addition[256], number[64];
+	char section[64];
+	size_t capacity = strlen(token) + strlen(name) + 80;
+	char *addition = NULL;
 	char *updated = NULL;
 	toml_result_t parsed = toml_parse(text, (int)size);
 	toml_datum_t datum;
 
 	if (!parsed.ok || !dot || (size_t)(dot - name) >= sizeof(section))
 		goto done;
-	if (setting->type == _config_boolean)
-		snprintf(number, sizeof(number), "%s", value ? "true" : "false");
-	else if (setting->type == _config_integer)
-		snprintf(number, sizeof(number), "%ld", (long)value);
-	else
-	{
-		snprintf(number, sizeof(number), "%.17g", value);
-		if (!strpbrk(number, ".eE"))
-			strcat(number, ".0");
-	}
+	addition = malloc(capacity);
+	if (!addition) goto done;
 	datum = toml_seek(parsed.toptab, name);
 	if ((setting->type == _config_boolean && datum.type == TOML_BOOLEAN) ||
 		(setting->type == _config_integer && datum.type == TOML_INT64) ||
-		(setting->type == _config_real && (datum.type == TOML_FP64 || datum.type == TOML_INT64)))
+		(setting->type == _config_real && (datum.type == TOML_FP64 || datum.type == TOML_INT64)) ||
+		(setting->type == _config_string && datum.type == TOML_STRING))
 	{
 		const char *line = config_source_line(text, datum.lineno);
 
-		if (line && datum.colno > 0 && (size_t)(datum.colno - 1) < strcspn(line, "\r\n"))
+		if (line && datum.colno > 0 && (size_t)(datum.colno - 1) <= strcspn(line, "\r\n"))
 		{
-			const char *token = line + datum.colno - 1;
-			size_t length = strcspn(token, " \t\r\n,#}]");
+			const char *previous = line + datum.colno - 1;
+			size_t length;
+
+			/* tomlc17 locates string contents, after the opening delimiter and
+			   the optional first multiline newline, rather than the full token. */
+			if (setting->type == _config_string)
+			{
+				if (previous > text && previous[-1] == '\n')
+				{
+					previous--;
+					if (previous > text && previous[-1] == '\r') previous--;
+				}
+				if (previous - text >= 3 && (previous[-1] == '"' || previous[-1] == '\'') &&
+					previous[-2] == previous[-1] && previous[-3] == previous[-1]) previous -= 3;
+				else if (previous > text && (previous[-1] == '"' || previous[-1] == '\'')) previous--;
+			}
+			length = config_value_token_length(previous, text + size, setting->type);
 
 			if (length)
-				updated = config_replace_text(text, size, (size_t)(token - text), length, number);
+				updated = config_replace_text(text, size, (size_t)(previous - text), length, token);
 		}
 	}
 	else if (datum.type == TOML_UNKNOWN)
@@ -1041,8 +1128,8 @@ static char *config_edit_number(const char *text, size_t size, const struct conf
 			while (*line == ' ' || *line == '\t') line++;
 		if (table.type == TOML_UNKNOWN)
 		{
-			snprintf(addition, sizeof(addition), "%s[%s]\n%s = %s\n",
-				size && text[size - 1] != '\n' ? "\n" : "", section, dot + 1, number);
+			snprintf(addition, capacity, "%s[%s]\n%s = %s\n",
+				size && text[size - 1] != '\n' ? "\n" : "", section, dot + 1, token);
 			updated = config_replace_text(text, size, size, 0, addition);
 		}
 		else if (table.type == TOML_TABLE && line && *line == '[' && line[1] != '[')
@@ -1050,47 +1137,106 @@ static char *config_edit_number(const char *text, size_t size, const struct conf
 			const char *end = strchr(line, '\n');
 			size_t offset = end ? (size_t)(end + 1 - text) : size;
 
-			snprintf(addition, sizeof(addition), "%s%s = %s\n", end ? "" : "\n", dot + 1, number);
+			snprintf(addition, capacity, "%s%s = %s\n", end ? "" : "\n", dot + 1, token);
 			updated = config_replace_text(text, size, offset, 0, addition);
 		}
 		else if (table.type == TOML_TABLE)
 		{
 			/* Dotted-key tables can be extended at top level. Inline tables
 			are closed; the final parse rejects extending them. */
-			snprintf(addition, sizeof(addition), "%s = %s\n", name, number);
+			snprintf(addition, capacity, "%s = %s\n", name, token);
 			updated = config_replace_text(text, size, 0, 0, addition);
 		}
 	}
  done:
+	free(addition);
 	toml_free(parsed);
 	return updated;
 }
 
-int config_write_numbers(const char *const *names, const double *values, unsigned count)
+struct config_retired_string
+{
+	struct config_retired_string *next;
+	char *string;
+};
+static struct config_retired_string *config_retired_strings;
+
+int config_refresh_string(const char *name)
+{
+	long index = name ? config_setting_index(name) : -1;
+	char path[1024], *text;
+	size_t size = 0;
+	int succeeded = 0;
+
+	if (index < 0 || config_settings[index].type != _config_string || config_settings[index].environment)
+		return 0;
+	pthread_mutex_lock(&config_lock);
+	if (!config_loaded) { config_load(0);config_loaded = 1; }
+	config_path(path, sizeof(path));
+	text = config_read_file(path, &size);
+	if (text && size <= INT_MAX)
+	{
+		toml_result_t parsed = toml_parse(text, (int)size);
+		if (parsed.ok)
+		{
+			toml_datum_t datum = toml_seek(parsed.toptab, name);
+			const char *fallback = config_settings[index].default_value;
+			char *value = datum.type == TOML_STRING ? strdup(datum.u.s) :
+				config_copy(fallback + 1, strlen(fallback) - 2);
+			if (value && config_values[index].string && !strcmp(value, config_values[index].string))
+				succeeded = 1;
+			else if (value)
+			{
+				struct config_retired_string *retired = malloc(sizeof(*retired));
+				if (retired)
+				{
+					retired->string = config_values[index].string;retired->next = config_retired_strings;
+					config_retired_strings = retired;config_values[index].string = value;value = NULL;
+					succeeded = 1;
+				}
+			}
+			free(value);
+		}
+		toml_free(parsed);
+	}
+	free(text);
+	pthread_mutex_unlock(&config_lock);
+	return succeeded;
+}
+
+int config_write_values(const struct config_update *updates, unsigned count)
 {
 	long indices[NUMBER_OF_CONFIG_SETTINGS];
+	char *strings[NUMBER_OF_CONFIG_SETTINGS] = { 0 };
+	struct config_retired_string *retired[NUMBER_OF_CONFIG_SETTINGS] = { 0 };
 	char path[1024], *text = NULL;
 	size_t size = 0;
 	unsigned item;
 	int succeeded = 0;
 
-	if (count > NUMBER_OF_CONFIG_SETTINGS || (count && (!names || !values)))
+	if (count > NUMBER_OF_CONFIG_SETTINGS || (count && !updates))
 		return 0;
 	if (!count)
 		return 1;
 	for (item = 0; item < count; item++)
 	{
-		long index = names[item] ? config_setting_index(names[item]) : -1;
-		double value = values[item];
+		long index = updates[item].name ? config_setting_index(updates[item].name) : -1;
+		double value = updates[item].number;
 		unsigned previous;
 
-		if (index < 0 || !isfinite(value) || config_settings[index].type == _config_string)
+		if (index < 0 || (updates[item].type != _config_update_number && updates[item].type != _config_update_string))
 			return 0;
-		if (config_settings[index].type == _config_boolean && value != 0.0 && value != 1.0)
-			return 0;
-		if (config_settings[index].type == _config_integer &&
-			(value < (double)LONG_MIN || value >= -(double)LONG_MIN || (double)(long)value != value))
-			return 0;
+		if (updates[item].type == _config_update_string)
+		{
+			if (config_settings[index].type != _config_string || !updates[item].string) return 0;
+		}
+		else
+		{
+			if (config_settings[index].type == _config_string || !isfinite(value)) return 0;
+			if (config_settings[index].type == _config_boolean && value != 0.0 && value != 1.0) return 0;
+			if (config_settings[index].type == _config_integer &&
+				(value < (double)LONG_MIN || value >= -(double)LONG_MIN || (double)(long)value != value)) return 0;
+		}
 		for (previous = 0; previous < item; previous++)
 			if (indices[previous] == index)
 				return 0;
@@ -1110,7 +1256,30 @@ int config_write_numbers(const char *const *names, const double *values, unsigne
 		goto done;
 	for (item = 0; item < count; item++)
 	{
-		char *updated = config_edit_number(text, size, &config_settings[indices[item]], values[item]);
+		char number[64], *token, *updated;
+		const struct config_setting *setting = &config_settings[indices[item]];
+
+		if (setting->type == _config_string)
+		{
+			token = config_string_token(updates[item].string);
+			strings[item] = strdup(updates[item].string);
+			retired[item] = malloc(sizeof(*retired[item]));
+			if (!token || !strings[item] || !retired[item]) { free(token);goto done; }
+		}
+		else
+		{
+			if (setting->type == _config_boolean) snprintf(number, sizeof(number), "%s", updates[item].number ? "true" : "false");
+			else if (setting->type == _config_integer) snprintf(number, sizeof(number), "%ld", (long)updates[item].number);
+			else
+			{
+				snprintf(number, sizeof(number), "%.17g", updates[item].number);
+				if (!strpbrk(number, ".eE")) strcat(number, ".0");
+			}
+			token = strdup(number);
+			if (!token) goto done;
+		}
+		updated = config_edit_value(text, size, setting, token);
+		free(token);
 
 		if (!updated)
 			goto done;
@@ -1125,8 +1294,12 @@ int config_write_numbers(const char *const *names, const double *values, unsigne
 		int valid = check.ok;
 
 		for (item = 0; valid && item < count; item++)
-			valid = config_number_matches(toml_seek(check.toptab, names[item]),
-				config_settings[indices[item]].type, values[item]);
+		{
+			toml_datum_t datum = toml_seek(check.toptab, updates[item].name);
+			valid = updates[item].type == _config_update_string ?
+				datum.type == TOML_STRING && !strcmp(datum.u.s, updates[item].string) :
+				config_number_matches(datum, config_settings[indices[item]].type, updates[item].number);
+		}
 		toml_free(check);
 		if (valid)
 			succeeded = config_write_file_atomic(path, text);
@@ -1139,9 +1312,15 @@ int config_write_numbers(const char *const *names, const double *values, unsigne
 
 			switch (config_settings[indices[item]].type)
 			{
-			case _config_boolean: saved->boolean = values[item] != 0.0; break;
-			case _config_integer: saved->integer = (long)values[item]; break;
-			case _config_real: saved->real = values[item]; break;
+			case _config_boolean: saved->boolean = updates[item].number != 0.0; break;
+			case _config_integer: saved->integer = (long)updates[item].number; break;
+			case _config_real: saved->real = updates[item].number; break;
+			case _config_string:
+				retired[item]->string = saved->string;
+				retired[item]->next = config_retired_strings;
+				config_retired_strings = retired[item];retired[item] = NULL;
+				saved->string = strings[item];strings[item] = NULL;
+				break;
 			default: break;
 			}
 		}
@@ -1149,7 +1328,21 @@ int config_write_numbers(const char *const *names, const double *values, unsigne
  done:
 	pthread_mutex_unlock(&config_lock);
 	free(text);
+	for (item = 0; item < count; item++) { free(strings[item]);free(retired[item]); }
 	return succeeded;
+}
+
+int config_write_numbers(const char *const *names, const double *values, unsigned count)
+{
+	struct config_update updates[NUMBER_OF_CONFIG_SETTINGS];
+	unsigned item;
+	if (count > NUMBER_OF_CONFIG_SETTINGS || (count && (!names || !values))) return 0;
+	for (item = 0; item < count; item++)
+	{
+		updates[item].name = names[item];updates[item].type = _config_update_number;
+		updates[item].number = values[item];updates[item].string = NULL;
+	}
+	return config_write_values(updates, count);
 }
 
 int config_write_boolean(const char *name, int value)

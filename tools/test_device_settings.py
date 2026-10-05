@@ -14,6 +14,7 @@ HARNESS = r'''
 #include <stdio.h>
 #include <string.h>
 #include "device_settings.h"
+#include "port_config.h"
 #include "controller_settings.h"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define MAC_FULLSCREEN 1
@@ -37,6 +38,8 @@ static const char *names[] = {"audio.volume", "audio.music_volume", "audio.effec
     "input.fast_menu_repeat"};
 #define TEST_SETTING_COUNT (sizeof(names)/sizeof(names[0]))
 static double saved[TEST_SETTING_COUNT];
+static const char *renderer="angle",*antialiasing="off";
+static long render_height=480,frame_limit;
 static int fullscreen, native_fullscreen, write_ok, switch_ok, apply_ok, writes, audio_applies, video_applies, switches, starts, stops;
 static int write_fail_on, switch_fail_on, apply_fail_on;
 static int index_of(const char *name) {
@@ -48,12 +51,29 @@ int config_boolean(const char *name) {
     return saved[index_of(name)] != 0;
 }
 double config_real(const char *name) { return saved[index_of(name)]; }
-long config_integer(const char *name) { return (long)saved[index_of(name)]; }
-int config_write_numbers(const char *const *keys,const double *values,unsigned count) {
+long config_integer(const char *name) {
+    if(!strcmp(name,"display.render_height")) return render_height;
+    if(!strcmp(name,"display.frame_limit")) return frame_limit;
+    return (long)saved[index_of(name)];
+}
+const char *config_string(const char *name) {
+    if(!strcmp(name,"display.renderer")) return renderer;
+    assert(!strcmp(name,"display.anti_aliasing"));return antialiasing;
+}
+int config_refresh_string(const char *name) { assert(!strcmp(name,"display.renderer"));return 1; }
+int config_write_values(const struct config_update *updates,unsigned count) {
     writes++; if (!write_ok || writes==write_fail_on) return 0;
     for (unsigned i=0;i<count;i++) {
-        if (!strcmp(keys[i],"display.fullscreen")) assert(CONFIG_FULLSCREEN);
-        saved[index_of(keys[i])]=values[i];
+        const char *key=updates[i].name;
+        if(updates[i].type==_config_update_string) {
+            if(!strcmp(key,"display.renderer")) renderer=updates[i].string;
+            else { assert(!strcmp(key,"display.anti_aliasing"));antialiasing=updates[i].string; }
+            continue;
+        }
+        if(!strcmp(key,"display.render_height")) { render_height=(long)updates[i].number;continue; }
+        if(!strcmp(key,"display.frame_limit")) { frame_limit=(long)updates[i].number;continue; }
+        if (!strcmp(key,"display.fullscreen")) assert(CONFIG_FULLSCREEN);
+        saved[index_of(key)]=updates[i].number;
     }
     return 1;
 }
@@ -74,6 +94,7 @@ static void reset(double values[NUMBER_OF_DEVICE_SETTINGS]) {
     saved[18]=saved[19]=9000;
     saved[21]=0;
     saved[0]=0.15; fullscreen=native_fullscreen=1; write_ok=switch_ok=apply_ok=1;
+    renderer="angle";antialiasing="off";render_height=480;frame_limit=0;
     writes=audio_applies=video_applies=switches=starts=stops=0;
     write_fail_on=switch_fail_on=apply_fail_on=0;
     for(int i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) values[i]=device_settings_get(i);
@@ -309,6 +330,47 @@ int main(void) {
     assert(!device_settings_apply((1UL<<_device_setting_vsync)|(1UL<<_device_setting_show_og_maps)|
         (1UL<<_device_setting_join_in_progress),values));
     assert(writes==2 && saved[6]==1 && saved[15]==1 && saved[16]==1 && saved[17]==1);
+#if MAC_FULLSCREEN
+    assert(NUMBER_OF_DEVICE_SETTINGS==26);
+    reset(values);values[_device_setting_renderer]=1;values[_device_setting_render_height]=0;
+    values[_device_setting_frame_limit]=120;values[_device_setting_anti_aliasing]=1;
+    assert(device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_render_height)|
+        (1UL<<_device_setting_frame_limit)|(1UL<<_device_setting_anti_aliasing),values));
+    assert(writes==1 && !video_applies && !switches && !strcmp(renderer,"metal") && !strcmp(antialiasing,"fxaa"));
+    assert(!render_height && frame_limit==120 && device_settings_get(_device_setting_renderer)==1);
+    /* A live backend refusal restores the entire mixed pending/live batch. */
+    reset(values);values[_device_setting_renderer]=1;values[_device_setting_render_height]=2160;
+    values[_device_setting_anti_aliasing]=1;values[_device_setting_vsync]=0;apply_fail_on=1;
+    assert(!device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_render_height)|
+        (1UL<<_device_setting_anti_aliasing)|(1UL<<_device_setting_vsync),values));
+    assert(writes==2 && !strcmp(renderer,"angle") && !strcmp(antialiasing,"off") && render_height==480 && saved[6]==1);
+    assert(video_applies==2 && !switches);
+    /* Controller/menu preferences and pending Metal choices share one draft.
+     * A live video refusal must roll every changed type back together. */
+    reset(values);values[_device_setting_renderer]=1;values[_device_setting_frame_limit]=60;
+    values[_device_setting_left_stick_deadzone]=3277;values[_device_setting_fast_menu_repeat]=1;
+    values[_device_setting_vsync]=0;apply_fail_on=1;
+    assert(!device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_frame_limit)|
+        (1UL<<_device_setting_left_stick_deadzone)|(1UL<<_device_setting_fast_menu_repeat)|
+        (1UL<<_device_setting_vsync),values));
+    assert(writes==2 && !strcmp(renderer,"angle") && frame_limit==0 && saved[18]==9000 &&
+        saved[21]==0 && saved[6]==1 && halo_menu_repeat_milliseconds()==250);
+    assert(video_applies==2 && !audio_applies && !switches);
+    reset(values);values[_device_setting_renderer]=1;values[_device_setting_anti_aliasing]=1;write_ok=0;
+    assert(!device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_anti_aliasing),values));
+    assert(writes==1 && !video_applies && !strcmp(renderer,"angle") && !strcmp(antialiasing,"off"));
+    reset(values);values[_device_setting_renderer]=1;values[_device_setting_frame_limit]=45;
+    assert(!device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_frame_limit),values));
+    assert(!writes && !strcmp(renderer,"angle"));
+    values[_device_setting_frame_limit]=60;values[_device_setting_render_height]=2880;
+    assert(!device_settings_apply((1UL<<_device_setting_frame_limit)|(1UL<<_device_setting_render_height),values));
+    assert(!writes);
+    reset(values);render_height=720;values[_device_setting_render_height]=device_settings_get(_device_setting_render_height);
+    assert(values[_device_setting_render_height]==720);
+    assert(device_settings_apply(1UL<<_device_setting_render_height,values) && !writes);
+#else
+    assert(NUMBER_OF_DEVICE_SETTINGS==22);
+#endif
     puts("device settings save/apply tests passed");
 }
 '''
@@ -319,9 +381,7 @@ class DeviceSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="halo-device-settings-") as folder:
             path = Path(folder)
             (path / "test.c").write_text(HARNESS)
-            (path / "port_config.h").write_text(
-                "int config_boolean(const char *); double config_real(const char *); long config_integer(const char *);\n"
-                "int config_write_numbers(const char *const *, const double *, unsigned);\n")
+            (path / "port_config.h").write_text((ROOT / "port/linux/src/port_config.h").read_text())
             (path / "native_audio.h").write_text("void halo_audio_apply_settings(void);\n")
             (path / "native_video.h").write_text(
                 "int halo_video_fullscreen_get(void); int halo_video_fullscreen_set(int);\n"
@@ -353,8 +413,10 @@ class DeviceSettingsTests(unittest.TestCase):
                 self.run_save_apply_boundary(["-std=gnu89", "-D__STRICT_ANSI__", optimization])
 
     def test_mac_fullscreen_uses_native_preferences(self):
-        self.run_save_apply_boundary(["-std=gnu89", "-D__STRICT_ANSI__", "-O2"],
-                                     ["-DHALO_MACOS=1", "-DHALO_ANDROID=1"])
+        for renderer in ("0", "1"):
+            with self.subTest(native_metal=renderer):
+                self.run_save_apply_boundary(["-std=gnu89", "-D__STRICT_ANSI__", "-O2"],
+                    ["-DHALO_MACOS=1", "-DHALO_ANDROID=1", "-DHALO_MACOS_NATIVE_METAL=" + renderer])
 
     def test_mobile_fullscreen_stays_platform_owned(self):
         for platform_flags in (["-DHALO_ANDROID=1"],

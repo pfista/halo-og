@@ -6,6 +6,7 @@
 #include "native_audio.h"
 #include <float.h>
 #include <stddef.h>
+#include <string.h>
 
 /* Main menu music is controlled on the game thread, never the mixer thread. */
 void ui_apply_main_menu_music_setting(void);
@@ -26,6 +27,9 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
     "maps.show_og", "maps.show_community", "network.join_in_progress",
     "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration",
     "input.fast_menu_repeat"
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+    , "display.renderer", "display.render_height", "display.frame_limit", "display.anti_aliasing"
+#endif
 };
 
 static int device_setting_is_finite(double value)
@@ -39,6 +43,24 @@ double device_settings_get(short setting)
 {
     double value;
     if (setting < 0 || setting >= NUMBER_OF_DEVICE_SETTINGS) return 0.0;
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+    if (setting == _device_setting_renderer)
+    {
+        config_refresh_string(setting_names[setting]);
+        return !strcmp(config_string(setting_names[setting]), "metal");
+    }
+    if (setting == _device_setting_anti_aliasing) return !strcmp(config_string(setting_names[setting]), "fxaa");
+    if (setting == _device_setting_render_height)
+    {
+        long height = config_integer(setting_names[setting]);
+        return height == 0 || height == 480 || height == 720 || height == 1080 || height == 1440 || height == 2160 ? height : 480;
+    }
+    if (setting == _device_setting_frame_limit)
+    {
+        long cap = config_integer(setting_names[setting]);
+        return cap == 0 || cap == 30 || cap == 60 || cap == 120 ? cap : 0;
+    }
+#endif
     if (setting == _device_setting_fullscreen) return halo_video_fullscreen_get() != 0;
     if (setting == _device_setting_timer_position)
     {
@@ -61,8 +83,7 @@ double device_settings_get(short setting)
 int device_settings_apply(unsigned long changed_mask,
     const double values[NUMBER_OF_DEVICE_SETTINGS])
 {
-    const char *names[NUMBER_OF_DEVICE_SETTINGS];
-    double updates[NUMBER_OF_DEVICE_SETTINGS], previous[NUMBER_OF_DEVICE_SETTINGS];
+    struct config_update updates[NUMBER_OF_DEVICE_SETTINGS], previous[NUMBER_OF_DEVICE_SETTINGS];
     double old_fullscreen = 0.0;
     unsigned count = 0;
     unsigned long effective = 0;
@@ -86,6 +107,19 @@ int device_settings_apply(unsigned long changed_mask,
         double old;
         if (!(changed_mask & (1UL << setting))) continue;
         if (!device_setting_is_finite(values[setting])) return 0;
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+        if (setting == _device_setting_render_height)
+        {
+            double height = values[setting];
+            if (height != 0.0 && height != 480.0 && height != 720.0 && height != 1080.0 && height != 1440.0 && height != 2160.0) return 0;
+        }
+        else if (setting == _device_setting_frame_limit)
+        {
+            double cap = values[setting];
+            if (cap != 0.0 && cap != 30.0 && cap != 60.0 && cap != 120.0) return 0;
+        }
+        else
+#endif
         if (setting == _device_setting_timer_position)
         {
             if (values[setting] < 0.0 || values[setting] > 2.0 || values[setting] != (int)values[setting]) return 0;
@@ -112,9 +146,23 @@ int device_settings_apply(unsigned long changed_mask,
              * saved preference. Roll each back to its own previous value. */
             old = config_boolean(setting_names[setting]) != 0;
         }
-        names[count] = setting_names[setting];
-        updates[count] = values[setting];
-        previous[count++] = old;
+        updates[count].name = setting_names[setting];
+        updates[count].type = _config_update_number;
+        updates[count].number = values[setting];
+        updates[count].string = NULL;
+        previous[count] = updates[count];previous[count].number = old;
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+        if (setting == _device_setting_renderer || setting == _device_setting_anti_aliasing)
+        {
+            updates[count].type = previous[count].type = _config_update_string;
+            previous[count].string = config_string(setting_names[setting]);
+            updates[count].string = setting == _device_setting_renderer ?
+                (values[setting] != 0.0 ? "metal" : "angle") : (values[setting] != 0.0 ? "fxaa" : "off");
+        }
+        else if (setting == _device_setting_render_height || setting == _device_setting_frame_limit)
+            previous[count].number = config_integer(setting_names[setting]);
+#endif
+        count++;
     }
     if (!effective) return 1;
 
@@ -126,7 +174,7 @@ int device_settings_apply(unsigned long changed_mask,
         if (!halo_video_fullscreen_set(values[_device_setting_fullscreen] != 0.0)) return 0;
         fullscreen_changed = 1;
     }
-    if (count && !config_write_numbers(names, updates, count))
+    if (count && !config_write_values(updates, count))
     {
         if (fullscreen_changed && !halo_video_fullscreen_set(old_fullscreen != 0.0)) return -1;
         return 0;
@@ -135,7 +183,7 @@ int device_settings_apply(unsigned long changed_mask,
         !halo_video_apply_settings())
     {
         /* Restore the accepted preference if the display backend refuses it. */
-        int restored = !count || config_write_numbers(names, previous, count);
+        int restored = !count || config_write_values(previous, count);
         int video_restored = halo_video_apply_settings();
         int fullscreen_restored = !fullscreen_changed || halo_video_fullscreen_set(old_fullscreen != 0.0);
         if (!restored)

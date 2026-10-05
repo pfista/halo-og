@@ -61,7 +61,7 @@ UI_STUBS = r'''
 #define csmemcpy memcpy
 #define FLAG(n) (1L << (n))
 #define MAXIMUM_NUMBER_OF_LOCAL_PLAYERS 4
-enum { _ui_audio_feedback_flag_failure=7, _ui_widget_type_bitmap=0 };
+enum { _ui_audio_feedback_flag_failure=7, _ui_audio_feedback_cursor=1, _ui_widget_type_bitmap=0 };
 /* NATIVE PREVIEW CALLBACK */
 enum { _gamepad_analog_button_a=0, _gamepad_analog_button_b=1,
  _gamepad_binary_button_dpad_up=8, _gamepad_binary_button_dpad_down,
@@ -1380,7 +1380,159 @@ int main(int argc,char **argv) {
 }
 '''
 
-def game_settings_fixture_source():
+MAC_UI_TESTS = r'''
+static struct widget_instance *mac_video_column(struct widget_instance *root) {
+    struct widget_instance *column=root->child;
+    while(column && column->type!=_ui_widget_type_column_list) column=column->next;
+    assert(column); return column;
+}
+static unsigned mac_visible_rows(struct widget_instance *column) {
+    unsigned count=0;
+    for(struct widget_instance *row=column->child;row;row=row->next) {
+        assert(row->visible==!row->disabled);
+        if(row->visible) count++;
+    }
+    return count;
+}
+static void mac_settings_video(void) {
+    settings_setup(0); assert(device_settings_build());
+    assert(NUMBER_OF_DEVICE_SETTINGS==26 && device_settings_page_counts[_ds_video]==7 && device_settings_page_counts[_ds_timer]==7);
+    for(unsigned i=0;i<7;i++) assert(device_settings.column_children[_ds_main][_ds_video][i].vertical_offset+28<321);
+    assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_renderer],L"experimental"));
+    assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_renderer],L"next launch"));
+    assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_render_height],L"Relaunch"));
+    assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_anti_aliasing],L"Relaunch"));
+    settings_values[_device_setting_renderer]=0;
+    settings_values[_device_setting_render_height]=720;
+    settings_values[_device_setting_frame_limit]=60;
+    settings_values[_device_setting_anti_aliasing]=0;
+    struct widget_instance *root=open_settings(_ds_main,_ds_video,0),*column=mac_video_column(root);
+    struct widget_instance *renderer=setting_control(root,_device_setting_renderer);
+    struct widget_instance *resolution=setting_control(root,_device_setting_render_height);
+    struct widget_instance *limit=setting_control(root,_device_setting_frame_limit);
+    struct widget_instance *aa=setting_control(root,_device_setting_anti_aliasing);
+    assert(mac_visible_rows(column)==4 && !writes);
+    assert(!TEST_FLAG(device_settings.column[_ds_main][_ds_video].flags,_widget_dpad_updown_tabs_thru_list_items_bit));
+    assert(device_settings.column[_ds_main][_ds_video].event_handlers.count==4);
+    assert(column->focused_child==column->child);
+    assert(game_settings_event(column,_device_settings_previous));
+    assert(column->parameters.list.selected_index==3);
+    assert(game_settings_event(column,_device_settings_next));
+    assert(column->parameters.list.selected_index==0);
+    assert(!game_settings_event(resolution,_device_settings_next));
+    assert(!game_settings_event(limit,_device_settings_next));
+    assert(!game_settings_event(aa,_device_settings_next));
+    assert(game_settings_event(renderer,_device_settings_next));
+    assert(mac_visible_rows(column)==7 && !writes && settings_values[_device_setting_renderer]==0);
+    assert(device_settings_drafts[0].values[_device_setting_render_height]==720);
+    assert(!wcscmp(device_settings.text[resolution->parameters.list.selected_index],L"720p"));
+    assert(game_settings_event(resolution,_device_settings_next));
+    assert(device_settings_drafts[0].values[_device_setting_render_height]==0);
+    assert(!wcscmp(device_settings.text[resolution->parameters.list.selected_index],L"Native"));
+    assert(game_settings_event(resolution,_device_settings_next));
+    assert(device_settings_drafts[0].values[_device_setting_render_height]==2160);
+    assert(game_settings_event(resolution,_device_settings_next));
+    assert(device_settings_drafts[0].values[_device_setting_render_height]==1440);
+    assert(game_settings_event(resolution,_device_settings_previous));
+    assert(device_settings_drafts[0].values[_device_setting_render_height]==2160);
+    assert(game_settings_event(resolution,_device_settings_previous));
+    assert(device_settings_drafts[0].values[_device_setting_render_height]==0);
+    assert(game_settings_event(resolution,_device_settings_previous));
+    assert(device_settings_drafts[0].values[_device_setting_render_height]==1440);
+    assert(game_settings_event(limit,_device_settings_next));
+    assert(device_settings_drafts[0].values[_device_setting_frame_limit]==120);
+    assert(game_settings_event(limit,_device_settings_next));
+    assert(device_settings_drafts[0].values[_device_setting_frame_limit]==0);
+    assert(game_settings_event(limit,_device_settings_next));
+    assert(device_settings_drafts[0].values[_device_setting_frame_limit]==30);
+    assert(game_settings_event(limit,_device_settings_previous));
+    assert(device_settings_drafts[0].values[_device_setting_frame_limit]==0);
+    assert(game_settings_event(aa,_device_settings_next));
+    assert(device_settings_drafts[0].values[_device_setting_anti_aliasing]==1);
+    assert(!wcscmp(device_settings.text[aa->parameters.list.selected_index],L"FXAA"));
+    /* Moving the cursor cannot change settings; hiding a focused native row
+       resets focus and preserves all staged native values. */
+    column->focused_child=column->child;
+    for(unsigned i=0;i<6;i++) assert(game_settings_event(column,_device_settings_next));
+    assert(column->parameters.list.selected_index==6 && !writes);
+    assert(game_settings_event(renderer,_device_settings_next));
+    assert(mac_visible_rows(column)==4 && column->focused_child==column->child);
+    assert(game_settings_event(renderer,_device_settings_next));
+    assert(device_settings_drafts[0].values[_device_setting_render_height]==1440);
+    assert(device_settings_drafts[0].values[_device_setting_anti_aliasing]==1);
+    assert(game_settings_event(root,_device_settings_cancel));
+    assert(!writes && settings_values[_device_setting_renderer]==0 && settings_values[_device_setting_render_height]==720);
+    dispose(root); root=open_settings(_ds_main,_ds_video,0);
+    renderer=setting_control(root,_device_setting_renderer);
+    assert(device_settings_drafts[0].values[_device_setting_frame_limit]==60);
+    assert(game_settings_event(renderer,_device_settings_next));
+    assert(game_settings_event(root,_device_settings_accept));
+    assert(writes==1 && applied_mask==(1UL<<_device_setting_renderer));
+    assert(settings_values[_device_setting_renderer]==1 && settings_values[_device_setting_render_height]==720);
+    dispose(root);
+    /* Legacy sizes stay untouched and format truthfully until edited. */
+    const short legacy[]={480,720,1080};
+    for(unsigned i=0;i<3;i++) {
+        settings_values[_device_setting_render_height]=legacy[i];
+        root=open_settings(_ds_main,_ds_video,0);
+        assert(device_settings_drafts[0].values[_device_setting_render_height]==legacy[i]);
+        assert(game_settings_event(root,_device_settings_accept));
+        assert(writes==1);
+        dispose(root);
+    }
+}
+static void mac_settings_pause_layouts(void) {
+    for(short layout=_ds_pause_1p;layout<_ds_layout_count;layout++) {
+        settings_setup(layout<=_ds_pause_4p ? 1:2); assert(device_settings_build());
+        assert(!memcmp(originals,originals_before,sizeof(originals)));
+        for(short page=_ds_video;page<=_ds_timer;page++) {
+            struct ui_widget_child_reference *children=device_settings.screen_children[layout][page];
+            struct ui_widget_definition *frame=ui_widget_definition_get(children[0].widget_tag.index);
+            struct ui_widget_definition *screen=&device_settings.screen[layout][page];
+            struct ui_widget_definition *column=&device_settings.column[layout][page];
+            assert(frame->bounds.y1==240 && frame->bounds.x0==-4 && frame->bounds.x1==222);
+            assert(children[0].vertical_offset>=0 && children[0].vertical_offset+240<=screen->bounds.y1);
+            assert(column->child_widgets.count==8 && column->bounds.y1==181);
+            assert(children[1].vertical_offset+181<children[3].vertical_offset);
+            for(short i=0;i<7;i++) {
+                short row=device_settings_page_rows[page][i];
+                assert(device_settings.column_children[layout][page][i].vertical_offset==i*22);
+                assert(!memcmp(&device_settings.row[row].bounds,&originals[6].bounds,sizeof(rectangle2d)));
+                assert(device_settings.row[row].background_bitmap.index==originals[6].background_bitmap.index);
+                assert(device_settings.row[row].text_font.index==tag_loaded(FONT_GROUP_TAG,"ui\\small_ui"));
+            }
+        }
+        settings_values[_device_setting_renderer]=0;
+        struct widget_instance *one=open_settings(layout,_ds_video,0),*column=mac_video_column(one);
+        struct widget_instance *accept=widget_instance_find_by_tag_index_recursive(one,device_settings.accept_tag);
+        assert(mac_visible_rows(column)==5 && accept->vertical_offset==column->vertical_offset+4*22);
+        assert(game_settings_event(column,_device_settings_previous));
+        assert(column->focused_child==accept && column->parameters.list.selected_index==7);
+        assert(game_settings_event(column,_device_settings_previous));
+        assert(column->parameters.list.selected_index==3);
+        assert(game_settings_event(column,_device_settings_next));
+        assert(column->focused_child==accept);
+        assert(game_settings_event(column,_device_settings_next));
+        assert(column->parameters.list.selected_index==0);
+        struct widget_instance *two=open_settings(layout,_ds_video,3),*second_column=mac_video_column(two);
+        assert(game_settings_event(setting_control(two,_device_setting_renderer),_device_settings_next));
+        assert(mac_visible_rows(second_column)==8 && mac_visible_rows(column)==5);
+        struct widget_instance *second_accept=widget_instance_find_by_tag_index_recursive(two,device_settings.accept_tag);
+        assert(second_accept->vertical_offset==second_column->vertical_offset+7*22);
+        assert(device_settings_drafts[0].values[_device_setting_renderer]==0 && device_settings_drafts[3].values[_device_setting_renderer]==1);
+        assert(!writes && !memcmp(originals,originals_before,sizeof(originals)));
+        dispose(one); dispose(two);
+        /* Both original timer appearance controls remain available. */
+        struct widget_instance *timer=open_settings(layout,_ds_timer,0);
+        assert(setting_control(timer,_device_setting_timer_position));
+        assert(setting_control(timer,_device_setting_timer_scale));
+        dispose(timer);
+    }
+}
+'''
+
+
+def game_settings_fixture_source(*, mac_video=False):
     """Shared native widgets, including the renderer's actual input dispatch."""
     from tools.test_runtime_ui_tags import c_block
     source = fixture_source().split("static void shapes_and_preservation(void)", 1)[0]
@@ -1399,7 +1551,7 @@ def game_settings_fixture_source():
         "static void settings_widget_pause_delete(struct widget_instance *);\n"
         "static void settings_widget_focus_initialize(struct widget_instance *,struct ui_widget_definition *);\n"
         "static struct widget_instance *instantiate(", 1)
-    source = source.replace("w->focused_child=w->child;", "settings_widget_focus_initialize(w,d);", 1)
+    source = source.replace("w->focused_child=w->child;", "w->visible=TRUE; settings_widget_focus_initialize(w,d);", 1)
     child_offsets = re.search(r"child->horizontal_offset = reference->horizontal_offset \+ widget->horizontal_offset;\s*child->vertical_offset = reference->vertical_offset \+ widget->vertical_offset;", ui)[0]
     child_offsets = child_offsets.replace("reference->", "c->").replace("widget->", "w->")
     source = source.replace("child->previous=last; last=child;", "child->previous=last; last=child;\n" + child_offsets, 1)
@@ -1424,7 +1576,22 @@ def game_settings_fixture_source():
     back_dispatch = c_block(ui, "if (TEST_FLAG(handler->flags, _event_handler_go_back_to_previous_widget_bit))")
     render_offsets = re.search(r"offset.x \+= widget->horizontal_offset;\s*offset.y \+= widget->vertical_offset;", renderer)[0]
     text_bounds = re.search(r"bounds.x1 \+= offset.x;\s*bounds.y1 \+= offset.y;\s*bounds.x0 \+= offset.x;\s*bounds.y0 \+= offset.y;\s*bounds.x0 \+= definition->horizontal_offset;\s*bounds.y0 \+= definition->vertical_offset;", ui)[0]
-    return source + UI_HARNESS.replace("/* PRODUCTION ABOUT BACK DISPATCH */", back_dispatch).replace(
+    harness = UI_HARNESS
+    if mac_video:
+        start = harness.index("int main(int argc,char **argv) {")
+        harness = harness[:start] + MAC_UI_TESTS + '''
+int main(int argc,char **argv) {
+    if(argc==2 && !strcmp(argv[1],"--about-metrics")) { settings_about_metrics(); return 0; }
+    if(argc==2 && !strcmp(argv[1],"--controller-metrics")) { settings_controller_metrics(); return 0; }
+    mac_settings_video(); mac_settings_pause_layouts(); settings_about();
+    settings_native_chooser(); settings_game_chooser(); settings_staging();
+    settings_timer_staging(); settings_multiplayer_staging(); settings_controller_staging();
+    settings_acceleration_staging(); settings_menu_repeat_staging();
+    settings_registration_failure(); settings_cross_map_rebuild();
+    puts("native game settings tests passed"); return 0;
+}
+'''
+    return source + harness.replace("/* PRODUCTION ABOUT BACK DISPATCH */", back_dispatch).replace(
         "/* PRODUCTION RENDER OFFSET */", render_offsets).replace("/* PRODUCTION TEXT BOUNDS */", text_bounds)
 
 
@@ -1432,8 +1599,9 @@ class NativeGameSettingsTests(unittest.TestCase):
     def verify_controller_font_metrics(self, binary):
         """Measure deadzones and Controller choices with owned Xbox fonts."""
         from tools.verify_performance_sound_samples import Cache
-        paths = [ROOT / f"assets/maps/{name}.map" for name in ("ui", "bloodgulch")]
-        paths = [path for path in paths if path.exists()]
+        paths = [next((root / f"assets/maps/{name}.map" for root in (ROOT, ROOT.parent / "pfista-halo-macos")
+                       if (root / f"assets/maps/{name}.map").exists()), None) for name in ("ui", "bloodgulch")]
+        paths = [path for path in paths if path is not None]
         if not paths:
             return
         output = subprocess.run([str(binary), "--controller-metrics"], check=True,
@@ -1472,8 +1640,9 @@ class NativeGameSettingsTests(unittest.TestCase):
     def verify_about_font_metrics(self, binary):
         """Measure every production page with the owned UI font, including long names/counts."""
         from tools.verify_performance_sound_samples import Cache
-        path = ROOT / "assets/maps/ui.map"
-        if not path.exists():
+        path = next((root / "assets/maps/ui.map" for root in (ROOT, ROOT.parent / "pfista-halo-macos")
+                     if (root / "assets/maps/ui.map").exists()), None)
+        if path is None:
             return
         cache = Cache(path)
         fonts = {}
@@ -1508,8 +1677,9 @@ class NativeGameSettingsTests(unittest.TestCase):
     def test_resident_help_widths(self):
         """Use the shipped font advances to catch clipping that C layout mocks cannot."""
         from tools.verify_performance_sound_samples import Cache
-        paths = [ROOT / f"assets/maps/{name}.map" for name in ("bloodgulch", "ui")]
-        paths = [path for path in paths if path.exists()]
+        paths = [next((root / f"assets/maps/{name}.map" for root in (ROOT, ROOT.parent / "pfista-halo-macos")
+                       if (root / f"assets/maps/{name}.map").exists()), None) for name in ("bloodgulch", "ui")]
+        paths = [path for path in paths if path is not None]
         if not paths:
             self.skipTest("owned Xbox cache assets required for font metrics")
         source = (ROOT / "source/interface/game_settings_menu.inc").read_text()
@@ -1527,7 +1697,11 @@ class NativeGameSettingsTests(unittest.TestCase):
             for index in range(count):
                 code, advance, width, _, origin_x = cache.unpack("<H4h", address + index * 0x14)
                 glyphs[chr(code)] = (advance, width, origin_x)
-            for value in strings:
+            widths = [(value, 276) for value in strings]
+            widths.extend((value, 202) for value in ("Renderer: < Native Metal >", "Resolution: < 2160p >",
+                "Resolution: < Native >", "FPS Limit: < Uncapped >", "FPS Limit: < 120 FPS >", "AA: < FXAA >",
+                "Position: < Bottom Center >", "Timer Size: < 100% >"))
+            for value, available in widths:
                 lines = value.splitlines()
                 self.assertLessEqual(len(lines), 3, value)
                 for line in lines:
@@ -1537,18 +1711,20 @@ class NativeGameSettingsTests(unittest.TestCase):
                             advance, width, origin_x = glyphs[character]
                             ink_right = max(ink_right, cursor + origin_x + width)
                             cursor += advance
-                        self.assertLessEqual(max(cursor, ink_right), 276)
+                        self.assertLessEqual(max(cursor, ink_right), available)
 
     def test_native_menu(self):
-        source = game_settings_fixture_source()
         with tempfile.TemporaryDirectory(prefix="halo-native-settings-") as folder:
             directory = Path(folder)
-            (directory / "fixture.c").write_text(source)
             for platform in ("HALO_MACOS", "HALO_LINUX", "HALO_WINDOWS", "HALO_ANDROID", "HALO_IOS"):
                 with self.subTest(platform=platform):
+                    (directory / "fixture.c").write_text(game_settings_fixture_source(mac_video=platform == "HALO_MACOS"))
                     binary = directory / (platform + (".exe" if sys.platform == "win32" else ""))
+                    defines = [f"-D{platform}=1"]
+                    if platform == "HALO_IOS":
+                        defines.append("-DHALO_MACOS=1")
                     subprocess.run(["clang", "-std=c99", "-Wall", "-Wextra", "-Werror", "-Wno-multichar", "-Wno-format",
-                                    "-Wno-unused-function", "-D_CRT_SECURE_NO_WARNINGS", f"-D{platform}=1", "-I", str(ROOT / "source"), "-I", str(ROOT / "port/linux"), str(directory / "fixture.c"),
+                                    "-Wno-unused-function", "-D_CRT_SECURE_NO_WARNINGS", *defines, "-I", str(ROOT / "source"), "-I", str(ROOT / "port/linux"), str(directory / "fixture.c"),
                                     "-o", str(binary)], check=True)
                     result = subprocess.run([str(binary)], text=True, capture_output=True)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

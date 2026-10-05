@@ -9,6 +9,7 @@ import sys
 def main():
     llvm = Path(os.environ.get("HALO_MACOS_LLVM_BIN", "/opt/homebrew/opt/llvm/bin"))
     args = sys.argv[1:]
+    build_root = "build/macos-metal" if "-DHALO_MACOS_NATIVE_METAL=1" in args else "build/macos"
     if "-S" not in args:
         return subprocess.call([str(llvm / "clang"), *args])
     output_index = args.index("-o") + 1
@@ -17,7 +18,7 @@ def main():
     args[output_index] = str(ir)
     subprocess.run([str(llvm / "clang"), *args, "-emit-llvm", "-DHALO_MACOS=1"], check=True)
     rebased = ir.with_suffix(".rebased.ll")
-    subprocess.run([str(llvm / "opt"), "-load-pass-plugin=build/macos/guest_rebase.dylib",
+    subprocess.run([str(llvm / "opt"), f"-load-pass-plugin={build_root}/guest_rebase.dylib",
                     "-passes=halo-rebase,verify", "-S", str(ir), "-o", str(rebased)], check=True)
     subprocess.run([str(llvm / "llc"), "-O2", "-mtriple=arm64_32-apple-watchos",
                     "-aarch64-neon-syntax=generic", "-emulated-tls", str(rebased),
