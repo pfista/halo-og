@@ -14,6 +14,7 @@ extern int host_sdl_put_audio_stream_data(uint32_t, const void *, int);
 extern int host_sdl_resume_audio_stream_device(uint32_t);
 extern int host_sdl_init(uint32_t);
 extern int host_sdl_poll_event(void *);
+extern uint64_t host_sdl_window_flags(uint32_t);
 static unsigned mixed_callbacks;
 void host_perf_frame(double swap_ms) { (void)swap_ms; }
 void host_menu_window_changed(void) {}
@@ -58,6 +59,7 @@ uint32_t host_call_guest(uint32_t callback, uint32_t userdata, uint32_t stream, 
 int main(void) {
     SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
     assert(host_sdl_init(SDL_INIT_AUDIO | SDL_INIT_EVENTS));
+    assert(host_sdl_window_flags(0) == 0 && host_sdl_window_flags(256) == 0);
     /* Cocoa delivers opened URLs using native drop events. The URL must
        reach the instance's save folder without leaking a 64-bit pointer
        into the guest's 32-bit event layout. */
@@ -114,6 +116,7 @@ int main(void) {
     SDL_AudioSpec spec = {.format = SDL_AUDIO_F32, .channels = 2, .freq = 48000};
     uint32_t stream = host_sdl_open_audio_stream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, 1, 0);
     assert(stream);
+    assert(host_sdl_window_flags(stream) == 0);
     assert(host_sdl_resume_audio_stream_device(stream));
     for (int i = 0; i < 200 && __atomic_load_n(&mixed_callbacks, __ATOMIC_ACQUIRE) < 4; i++)
         SDL_Delay(10);

@@ -27,6 +27,14 @@ extern void *host_resolve_import(const char *name);
 static uint32_t (*guest)(uint32_t);
 static unsigned native_calls;
 
+uint64_t host_sdl_window_flags(uint32_t window)
+{
+    native_calls++;
+    if (!window) return 0;
+    assert(window == 0x12345678);
+    return UINT64_C(0x8000000012345678);
+}
+
 static void *pointer(uint32_t offset) { return (void *)(BASE + offset); }
 int halo_map_download_directory(char *out, size_t capacity)
 {
@@ -75,8 +83,8 @@ static void *map_at(uint64_t address, size_t size)
 static void *run(void *unused)
 {
     uint32_t result = guest(0);
-    printf("guest service result=%u expected=93; native calls=%u expected=6\n", result, native_calls);
-    return (void *)(uintptr_t)(result != 93 || native_calls != 6);
+    printf("guest service result=%u expected=93; native calls=%u expected=8\n", result, native_calls);
+    return (void *)(uintptr_t)(result != 93 || native_calls != 8);
 }
 int main(int argc, char **argv)
 {

@@ -2,6 +2,8 @@
 #include "../../linux/include/halo_custom_maps.h"
 #include "../../linux/src/game_directory.h"
 typedef unsigned int u32;
+typedef struct SDL_Window SDL_Window;
+unsigned long long SDL_GetWindowFlags(SDL_Window *window);
 _Static_assert(sizeof(void *) == 4, "guest pointer layout");
 
 u32 guest_test(u32 unused)
@@ -19,5 +21,9 @@ u32 guest_test(u32 unused)
     if (*status != 201 || *retry_after_seconds != 30 || response[0] != 'o' || response[1] != 'k' || response[2]) return 6;
     if (halo_directory_http((char *)0x02000100, (char *)0x02000300,
             0, 0, response, 17, status, retry_after_seconds) != -7 || *status != 0 || *retry_after_seconds != 0) return 7;
+    /* Window flags cross the ILP32 import ABI as a full unsigned 64-bit
+       scalar, including bits above the guest's pointer width. */
+    if (SDL_GetWindowFlags((SDL_Window *)0x12345678) != 0x8000000012345678ULL) return 8;
+    if (SDL_GetWindowFlags(0) != 0) return 9;
     return 93;
 }

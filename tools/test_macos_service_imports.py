@@ -31,18 +31,34 @@ class MacServiceImportTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 return result.stdout
 
-            run(sys.executable, "tools/macos_guest_cc.py", "--target=arm64_32-apple-watchos",
-                "-mcpu=cortex-a53", "-O2", "-fno-stack-protector", "-fno-unwind-tables",
-                "-fno-asynchronous-unwind-tables", "-S", "port/macos/tests/guest_services.c",
-                "-o", out / "guest.darwin.s")
-            run(sys.executable, "tools/android_asm_convert.py", out / "guest.darwin.s", out / "guest.s")
+            sdl_source = (ROOT / "port/android/guest/runtime/guest_sdl.c").read_text()
+            wrapper = "SDL_WindowFlags SDL_GetWindowFlags(" + sdl_source.split(
+                "SDL_WindowFlags SDL_GetWindowFlags(", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+            window_source = out / "window_bridge.c"
+            window_source.write_text(
+                '#include "guest_host.h"\n'
+                "typedef unsigned long long SDL_WindowFlags;\n"
+                "typedef struct SDL_Window SDL_Window;\n" + wrapper)
+            for name, source in (("guest", ROOT / "port/macos/tests/guest_services.c"),
+                                 ("window_bridge", window_source)):
+                run(sys.executable, "tools/macos_guest_cc.py", "--target=arm64_32-apple-watchos",
+                    "-mcpu=cortex-a53", "-O2", "-fno-stack-protector", "-fno-unwind-tables",
+                    "-fno-asynchronous-unwind-tables", "-Iport/android/guest/runtime",
+                    "-S", source, "-o", out / (name + ".darwin.s"))
+                run(sys.executable, "tools/android_asm_convert.py", out / (name + ".darwin.s"),
+                    out / (name + ".s"))
+            shared_imports = (ROOT / "port/android/host_imports.list").read_text().splitlines()
+            self.assertIn("host_sdl_window_flags", shared_imports)
+            window_import = out / "window_import.list"
+            window_import.write_text("host_sdl_window_flags\n")
             run(sys.executable, "tools/android_imports.py", "--host-table", out / "imports.c",
-                out / "imports.s", "port/macos/host_imports.list")
-            for name in ("guest", "imports"):
+                out / "imports.s", "port/macos/host_imports.list", window_import)
+            for name in ("guest", "window_bridge", "imports"):
                 run(LLVM / "clang", "--target=aarch64-linux-android", "-c", out / (name + ".s"),
                     "-o", out / (name + ".o"))
             run(ROOT / "build/macos/toolchain/bin/ld.lld", "-m", "aarch64linux", "-static", "-nostdlib",
-                "-Ttext=0x88000000", "-e", "guest_test", out / "guest.o", out / "imports.o",
+                "-Ttext=0x88000000", "-e", "guest_test", out / "guest.o", out / "window_bridge.o",
+                out / "imports.o",
                 "-o", out / "guest.elf")
             symbols = {}
             for line in run(LLVM / "llvm-nm", out / "guest.elf").splitlines():
@@ -54,7 +70,7 @@ class MacServiceImportTests(unittest.TestCase):
                 "port/macos/host/host_services.c", out / "imports.c", "-o", out / "service_host")
             output = run(out / "service_host", out / "guest.elf", symbols["__host_import_names"],
                          symbols["__host_import_table"], symbols["__host_import_count"])
-            self.assertIn("guest service result=93 expected=93; native calls=6 expected=6", output)
+            self.assertIn("guest service result=93 expected=93; native calls=8 expected=8", output)
 
 
 @unittest.skipUnless(shutil.which("clang"), "clang required")
