@@ -76,15 +76,19 @@ int posix_register_url_scheme(const char *scheme, const char *description)
 		!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, description, -1, application_name,
 			sizeof(application_name) / sizeof(*application_name)))
 		return 0;
-	swprintf(key_name, sizeof(key_name) / sizeof(*key_name), L"Software\\Classes\\%ls", scheme_name);
-	swprintf(label, sizeof(label) / sizeof(*label), L"URL:%ls", application_name);
+	/* Game sources retain the legacy swprintf ABI. Use the explicitly bounded
+	CRT entry point here so that flag cannot change these calls' signature. */
+	if (swprintf_s(key_name, sizeof(key_name) / sizeof(*key_name), L"Software\\Classes\\%ls", scheme_name) < 0 ||
+		swprintf_s(label, sizeof(label) / sizeof(*label), L"URL:%ls", application_name) < 0)
+		return 0;
 	if (RegCreateKeyExW(HKEY_CURRENT_USER, key_name, 0, NULL, 0, KEY_WRITE, NULL, &key, NULL) != ERROR_SUCCESS)
 		return 0;
 	ok &= RegSetValueExW(key, NULL, 0, REG_SZ, (const BYTE *)label,
 		(DWORD)((wcslen(label) + 1) * sizeof(*label))) == ERROR_SUCCESS;
 	ok &= RegSetValueExW(key, L"URL Protocol", 0, REG_SZ, (const BYTE *)L"", sizeof(WCHAR)) == ERROR_SUCCESS;
 	RegCloseKey(key);
-	swprintf(key_name, sizeof(key_name) / sizeof(*key_name), L"Software\\Classes\\%ls\\shell\\open\\command", scheme_name);
+	if (swprintf_s(key_name, sizeof(key_name) / sizeof(*key_name), L"Software\\Classes\\%ls\\shell\\open\\command", scheme_name) < 0)
+		return 0;
 	wcscpy(command, L"\"");
 	wcscat(command, executable);
 	wcscat(command, L"\" \"%1\"");

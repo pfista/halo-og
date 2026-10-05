@@ -16,16 +16,22 @@ import unittest
 import uuid
 
 from tools.test_discord_presence import function_source
+from tools.windows_build import WINDOWS_ABI_FLAGS
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PORT = ROOT / "port/linux/src"
 SECRET = "0123456789abcdef0123456789abcdeffedcba9876543210fedcba9876543210"
 SCHEMES = ("halo-og", "discord-1556496882329460736")
+WINDOWS_CRT_FORMAT_FLAGS = [
+    flag for flag in WINDOWS_ABI_FLAGS
+    if flag.split("=", 1)[0] == "-D_CRT_NON_CONFORMING_SWPRINTFS"
+]
 
 WINDOWS_HARNESS = r'''
 #include <assert.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,8 +45,38 @@ typedef int HKEY;
 enum { TRUE = 1, FALSE = 0, HKEY_CURRENT_USER = 7, KEY_WRITE = 8,
        REG_SZ = 1, ERROR_SUCCESS = 0, CP_UTF8 = 65001, MB_ERR_INVALID_CHARS = 8 };
 static WCHAR executable[32768], keys[2][256], values[3][32784];
-static int creations, writes, closes, failure;
+static int creations, writes, closes, failure, formats;
 static char command_line[4096];
+/* Model the production Windows CRT's legacy swprintf declaration on every OS.
+ * A bounded call accidentally using that name must fail to compile. */
+int fixture_legacy_swprintf(WCHAR *buffer, const WCHAR *format, ...);
+static int fixture_swprintf_s(WCHAR *buffer, size_t size, const WCHAR *format, ...)
+{
+    va_list arguments;
+    int result;
+    assert(buffer && size && format);
+    formats++;
+    if (failure >= 5 && failure <= 7 && formats == failure - 4) {
+        buffer[0] = L'\0';
+        return -1;
+    }
+    va_start(arguments, format);
+#ifdef _WIN32
+    result = vswprintf_s(buffer, size, format, arguments);
+#else
+    result = vswprintf(buffer, size, format, arguments);
+#endif
+    va_end(arguments);
+    return result;
+}
+#ifdef swprintf
+#undef swprintf
+#endif
+#ifdef swprintf_s
+#undef swprintf_s
+#endif
+#define swprintf fixture_legacy_swprintf
+#define swprintf_s fixture_swprintf_s
 static const char *GetCommandLineA(void) { return command_line; }
 static DWORD GetModuleFileNameW(void *module, WCHAR *buffer, DWORD size)
 {
@@ -99,13 +135,16 @@ int main(int argc, char **argv)
     int result = posix_register_url_scheme(argv[1], "Halo OG invite");
     assert(result == !failure);
     if (failure == 1 || failure == 2) assert(!creations && !writes && !closes);
+    else if (failure == 5 || failure == 6) assert(!creations && !writes && !closes);
+    else if (failure == 7) assert(creations == 1 && writes == 2 && closes == 1);
     else if (failure == 3) assert(creations == 1 && !writes && !closes);
     else {
         assert(creations == 2 && writes == 3 && closes == 2);
         assert(MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, argv[1], -1, scheme, 128));
-        swprintf(expected, 32784, L"Software\\Classes\\%ls", scheme);
+        wcscpy(expected, L"Software\\Classes\\");
+        wcscat(expected, scheme);
         assert(!wcscmp(keys[0], expected));
-        swprintf(expected, 32784, L"Software\\Classes\\%ls\\shell\\open\\command", scheme);
+        wcscat(expected, L"\\shell\\open\\command");
         assert(!wcscmp(keys[1], expected));
         assert(!wcscmp(values[0], L"URL:Halo OG invite"));
         assert(values[2][0] == L'"');
@@ -335,7 +374,8 @@ class UrlSchemeRegistrationTests(unittest.TestCase):
             source.write_text(harness.replace("/* PRODUCTION_" + platform.upper() + " */", functions[platform]).replace("@SECRET@", SECRET))
             binary = cls.root / (platform + (".exe" if sys.platform == "win32" else ""))
             try:
-                subprocess.run(["clang", "-std=c11", "-Wall", "-Wextra", "-Werror", *flags,
+                format_flags = WINDOWS_CRT_FORMAT_FLAGS if platform == "windows" else []
+                subprocess.run(["clang", "-std=c11", "-Wall", "-Wextra", "-Werror", *flags, *format_flags,
                                 str(source), "-I" + str(PORT), "-o", str(binary)], check=True)
             except Exception:
                 cls.temp.cleanup()
@@ -368,6 +408,11 @@ class UrlSchemeRegistrationTests(unittest.TestCase):
 
     def test_windows_reports_os_failures_without_using_a_truncated_path(self):
         for failure in range(1, 5):
+            with self.subTest(failure=failure):
+                subprocess.run([str(self.binaries["windows"]), "halo-og", str(failure)], check=True)
+
+    def test_windows_reports_each_formatting_failure_before_using_partial_output(self):
+        for failure in (5, 6, 7):
             with self.subTest(failure=failure):
                 subprocess.run([str(self.binaries["windows"]), "halo-og", str(failure)], check=True)
 
@@ -410,6 +455,7 @@ class UrlSchemeRegistrationTests(unittest.TestCase):
                 (ROOT / "port/windows/src/win32_p2p.c").read_text(), "posix_register_url_scheme")
             source.write_text(WINDOWS_NATIVE_HARNESS.replace("/* PRODUCTION_WINDOWS */", production).replace("@SECRET@", SECRET))
             subprocess.run(["clang", "-std=c11", "-Wall", "-Wextra", "-Werror", "-D_CRT_SECURE_NO_WARNINGS",
+                            *WINDOWS_CRT_FORMAT_FLAGS,
                             str(source), "-I" + str(PORT), "advapi32.lib", "shell32.lib", "-o", str(probe)], check=True)
             subprocess.run([str(probe), "--exercise", scheme], check=True, capture_output=True, text=True, timeout=15)
             self.wait_for_capture(probe.parent / "launched.txt", [str(probe), f"{scheme}://join/{SECRET}"])
