@@ -227,7 +227,9 @@ class MapLifecycleTests(unittest.TestCase):
             path.write_text(source)
             executable = path.with_suffix(".exe" if os.name == "nt" else "")
             flags = ["-std=c11", "-Wall", "-Wextra", "-Werror"]
-            if os.name != "nt":
+            if os.name == "nt":
+                flags.append("-D_CRT_SECURE_NO_WARNINGS")
+            else:
                 flags.append("-fsanitize=address,undefined")
             result = subprocess.run([
                 compiler, *flags,
