@@ -457,6 +457,7 @@ symbols in this file:
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "../../port/linux/game/performance_options.h"
 #include "performance_audio.h"
+#include "port_config.h"
 #endif
 #include "game/player_queues_new.h"
 #include "game/players.h"
@@ -892,10 +893,10 @@ static boolean network_game_server_performance_peers_support(
 	long index;
 
 #ifndef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-	if (flags & _performance_option_input_delay)
+	if (flags & PERFORMANCE_MATCH_RULE_FLAGS)
 	{
-		platform_show_message("Halo: input delay unavailable",
-			"This build does not support the game type's input delay. Turn Input Delay off, or use a compatible build.");
+		platform_show_message("Halo: match rules unavailable",
+			"This build does not support Input Delay, Hardcore, or Fiesta. Turn these options off, or use a compatible build.");
 		return FALSE;
 	}
 #endif
@@ -925,6 +926,21 @@ static boolean network_game_server_performance_peers_support(
 			!network_game_server_client_machine_is_local(server, machine) &&
 			!network_game_server_performance_supported(machine, flags))
 		{
+			if ((flags & _performance_option_fiesta) &&
+				!network_game_server_performance_supported(machine, _performance_option_fiesta))
+			{
+				platform_show_message("Halo: Fiesta unavailable",
+					"A connected player does not support Fiesta. Select Generic or Custom under Starting Equipment, "
+					"or have that player update before starting.");
+				return FALSE;
+			}
+			if ((flags & _performance_option_hardcore) &&
+				!network_game_server_performance_supported(machine, _performance_option_hardcore))
+			{
+				platform_show_message("Halo: Hardcore unavailable",
+					"A connected player does not support Hardcore. Turn Hardcore off, or have that player update before starting.");
+				return FALSE;
+			}
 			if ((flags & _performance_option_input_delay) &&
 				!network_game_server_performance_supported(machine, _performance_option_input_delay))
 			{
@@ -947,11 +963,25 @@ static boolean network_game_server_input_delay_change_allowed(
 	struct network_game_server *server,
 	unsigned flags)
 {
+	if (((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_fiesta) &&
+		(server->state != _network_game_server_state_pregame || server->sent_start_game_message))
+	{
+		platform_show_message("Halo: Fiesta locked",
+			"Starting Equipment is fixed for the match. Choose Fiesta in the game type before starting the next match.");
+		return FALSE;
+	}
 	if (((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_input_delay) &&
 		(server->state != _network_game_server_state_pregame || server->sent_start_game_message))
 	{
 		platform_show_message("Halo: input delay locked",
 			"Input Delay is fixed for the match. Choose it in the game type before starting the next match.");
+		return FALSE;
+	}
+	if (((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_hardcore) &&
+		(server->state != _network_game_server_state_pregame || server->sent_start_game_message))
+	{
+		platform_show_message("Halo: Hardcore locked",
+			"Hardcore is fixed for the match. Choose it in the game type before starting the next match.");
 		return FALSE;
 	}
 	return TRUE;
@@ -1239,6 +1269,13 @@ static boolean network_game_server_machine_may_add_player_ingame(
 {
 	short *count;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Recheck at queue consumption as well as connection admission. Closing
+	 * the match also prevents extra seats on an already connected machine. */
+	if (server->state == _network_game_server_state_ingame &&
+		!config_boolean("network.join_in_progress"))
+		return FALSE;
+#endif
 	if (!VALID_INDEX(machine_index, MAXIMUM_NETWORK_MACHINE_COUNT) ||
 		network_game_server_client_machine_is_local(server, &server->client_machines[machine_index]))
 	{
@@ -1987,6 +2024,13 @@ boolean network_game_server_game_is_open(
 	{
 		game_is_open = FALSE;
 	}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Local host preference: lobby joins remain available. All advertisement,
+	 * invite and admission paths consume this same in-progress gate. */
+	if (server->state == _network_game_server_state_ingame &&
+		!config_boolean("network.join_in_progress"))
+		game_is_open = FALSE;
+#endif
 
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x217,
 		(TRUE == game_is_open) || (FALSE == game_is_open));

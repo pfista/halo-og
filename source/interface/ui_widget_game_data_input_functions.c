@@ -971,6 +971,31 @@ static void difficulty_select_menu_update_extended_description(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static struct network_advertised_game *server_list_directory_games(
+	struct widget_instance *widget,
+	struct network_game_client *client,
+	long *count)
+{
+	struct widget_instance *ancestor;
+	*count = 0;
+	/* Game-data inputs run before the renderer's visibility check. Do not
+	   keep internet discovery active for a hidden list or a hidden parent. */
+	for (ancestor = widget; ancestor; ancestor = ancestor->parent)
+		if (!ancestor->visible)
+		{
+			game_directory_browse(FALSE);
+			return NULL;
+		}
+	if (!client)
+	{
+		game_directory_browse(FALSE);
+		return NULL;
+	}
+	return network_game_client_get_directory_games(client, count);
+}
+#endif
+
 static void server_list_menu_update(
 	struct widget_instance *widget)
 {
@@ -985,6 +1010,10 @@ static void server_list_menu_update(
 #endif
 	struct network_game_client *client = global_network_game_client_get();
 	long displayed_server_count = 0;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	long directory_count;
+	struct network_advertised_game *directory_servers = server_list_directory_games(widget, client, &directory_count);
+#endif
 
 	csmemset(
 		displayed_servers,
@@ -996,10 +1025,6 @@ static void server_list_menu_update(
 			widget->definition_tag_index);
 		struct network_advertised_game *available_games =
 			network_game_client_get_available_games(client);
-#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-		long directory_count;
-		struct network_advertised_game *directory_servers = network_game_client_get_directory_games(client, &directory_count);
-#endif
 		struct widget_instance *item;
 		unsigned long milliseconds_since_creation;
 		long game_index;
@@ -3310,20 +3335,31 @@ static void variant_profile_update_cache_for_nwide_list(
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 /* The card has 256 UTF-16 characters and room for one more small-ui line.
-Keep the indication generic as additional performance options are introduced. */
+Prioritize starting equipment and Hardcore over optional practice aids. */
 static void playlist_profile_append_performance_status(
 	wchar_t *description,
 	struct playlist_profile const *profile)
 {
-	static wchar_t const status[] = L"\r\nPB options active";
+	static wchar_t const status[] = L"\r\nPerformance options active";
+	static wchar_t const hardcore_status[] = L"\r\nHardcore: On";
+	static wchar_t const fiesta_status[] = L"\r\nStarting Equipment: Fiesta";
+	static wchar_t const fiesta_hardcore_status[] = L"\r\nFiesta / Hardcore: On";
+	unsigned flags;
 	unsigned long length;
 	wchar_t const *suffix;
 	unsigned long suffix_length;
 
-	if (!description || !performance_variant_get_flags((struct game_variant const *)profile))
+	if (!description)
+		return;
+	flags = performance_variant_get_flags((struct game_variant const *)profile);
+	if (!flags)
 		return;
 	length = ustrnlen(description, 0x100);
-	suffix = description[0] ? status : status + 2;
+	if (flags & _performance_option_fiesta)
+		suffix = (flags & _performance_option_hardcore) ? fiesta_hardcore_status : fiesta_status;
+	else
+		suffix = (flags & _performance_option_hardcore) ? hardcore_status : status;
+	if (!description[0]) suffix += 2;
 	suffix_length = ustrlen(suffix);
 	if (length + suffix_length < 0x100)
 		ustrncpy(description + length, suffix, suffix_length + 1);

@@ -8,7 +8,7 @@ for protocol details and limits.
 Upstream v11 interoperability covers original-rule sessions with the same maps.
 This build refuses unsupported PC gametype options before loading; use the
 original options, and leave Infinite Grenades off in mixed-build games with five
-or more players. PB Options require compatible fork builds when enabled. See the
+or more players. Performance Options require compatible fork builds when enabled. See the
 [v11 review and exact compatibility boundary](xbox-fidelity.md#protocol-compatibility).
 
 ## Play on Mac using an invite
@@ -18,22 +18,25 @@ asks. Internet play and clipboard invites are enabled in the default settings.
 
 1. On the host, choose **Multiplayer → System Link**, select a player profile,
    then create a game with **Y / Tab**. Pick a map and mode.
-2. Hosting copies a `halo://join/` link to the clipboard. Paste it into a message
+2. Hosting copies a `halo-og://join/` link to the clipboard. Paste it into a message
    for the other players. The link is also in `halo.log` in the save directory.
 3. On a joining Mac, open the link. Alternatively, copy the link and bring Halo
    to the front. Go to **Multiplayer → System Link**, select a profile, and join
    the advertised game.
 4. Once everyone appears in the lobby, start the match on the host.
 
-The app registers the `halo://` scheme. macOS delivers an opened link to the
+The app registers the `halo-og://` scheme. macOS delivers an opened link to the
 running app; the host queues it in that instance's save directory. A development
 launch can also take the link as an argument:
 
 ```sh
-"build/macos/Halo OG.app/Contents/MacOS/halo" 'halo://join/YOUR_64_HEX_DIGITS'
+"build/macos/Halo OG.app/Contents/MacOS/halo" 'halo-og://join/YOUR_64_HEX_DIGITS'
 ```
 
 Invites last for the hosting game process. Treat the link as access to the room.
+Legacy `halo://` invites remain usable through the clipboard or an explicit
+launch argument. Halo OG registers only its own `halo-og://` system handler.
+See [invite links](invite-links.md) for platform delivery and regression checks.
 Keep the host running and send a new invite after restarting it.
 
 Gameplay travels directly between players. Public MQTT brokers provide

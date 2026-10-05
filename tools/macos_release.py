@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from tools.macos_build import APP_NAME, APP_VERSION, update_configuration
+from tools.macos_build import APP_NAME, APP_VERSION, BUNDLE_ID, update_configuration
 from tools.macos_sparkle import setup_sparkle, DIRECTORY as SPARKLE
 from tools.macos_dmg import create_dmg
 from tools.macos_content_tools import audit_content_tools
@@ -29,6 +29,8 @@ from tools.halo_og_version import require_version
 CONFIG = ROOT / "port/macos/release-config.json"
 APP = ROOT / "build/macos" / (APP_NAME + ".app")
 ACCOUNT = "local.halo.ce-universal"
+# Keep the established Sparkle signing-key account when the app's bundle ID
+# changes, so existing feed signatures and public update keys remain valid.
 NAMESPACE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 ET.register_namespace("sparkle", NAMESPACE)
 
@@ -91,7 +93,7 @@ def audit_bundle(app):
 def audit_adhoc_signing(app):
     """Check all bundled code without exposing unexpected signing metadata."""
     with (app / "Contents/Info.plist").open("rb") as stream:
-        if plistlib.load(stream)["CFBundleIdentifier"] != ACCOUNT:
+        if plistlib.load(stream)["CFBundleIdentifier"] != BUNDLE_ID:
             raise RuntimeError("Unexpected app bundle identifier")
     # Inspect every real Mach-O, including nested Sparkle helpers. Vendor
     # capability entitlements remain intact; no signing certificate or team

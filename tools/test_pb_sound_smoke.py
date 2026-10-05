@@ -13,6 +13,7 @@ from macos_pb_sound_smoke import counter_delta, network_samples, parse_status, p
 
 
 INPUT_FIXTURE = r'''
+#include <assert.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,7 +33,8 @@ static const char *config_string(const char *name) { (void)name; return setting;
 int main(int argc,char **argv) {
     if(argc!=3) return 1; setting=argv[1]; test_input_hold_action(atoi(argv[2]));
     for(ticks=0;ticks<60000;ticks+=16) {
-        XINPUT_GAMEPAD pad={0}; test_input_gamepad(&pad);
+        XINPUT_GAMEPAD pad={0}; unsigned mask=test_input_gamepad(&pad);
+        assert(mask==(!setting[0] || atoi(argv[2]) ? 0u : !strncmp(setting,"look:",5) ? 12u : 7u));
         printf("%llu %d %d %d %d",ticks,pad.sThumbLY,pad.sThumbLX,pad.sThumbRX,pad.sThumbRY);
         for(int i=0;i<8;i++) printf(" %u",pad.bAnalogButtons[i]);
         putchar('\n');
@@ -46,7 +48,7 @@ class SoundInputWorkloadTests(unittest.TestCase):
     def test_original_bot_with_only_extra_switch_reload_presses(self):
         source = (ROOT / "port/linux/src/xinput_sdl.c").read_text()
         functions = "\n".join(block(source, signature) for signature in (
-            "void test_input_hold_action(", "static void test_input_gamepad("))
+            "void test_input_hold_action(", "static unsigned test_input_gamepad("))
         with tempfile.TemporaryDirectory(prefix="halo-sound-input-") as directory:
             path = Path(directory)
             fixture = path / "input.c"

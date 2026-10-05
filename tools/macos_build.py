@@ -37,6 +37,8 @@ APP_ICON = "AppIcon.icns"
 APP_VERSION = read_version()
 APP_BUILD = "11"
 APP_NAME = "Halo OG"
+BUNDLE_ID = "local.halo.og"
+LEGACY_BUNDLE_ID = "local.halo.ce-universal"
 LEGACY_APP_NAMES = ("Halo CE Universal.app",)
 
 
@@ -256,7 +258,7 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
     content_binaries = stage_content_tools(app, content_tools, sign_identity=sign_identity, release=release) if content_tools else []
     renderer_binaries = [] if RENDERER == "metal" else [frameworks / "libEGL.dylib", frameworks / "libGLESv2.dylib"]
     info = {
-        "CFBundleExecutable": "halo", "CFBundleIdentifier": "local.halo.ce-universal",
+        "CFBundleExecutable": "halo", "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleName": APP_NAME, "CFBundleDisplayName": APP_NAME,
         "CFBundleIconFile": APP_ICON,
         "CFBundlePackageType": "APPL", "CFBundleShortVersionString": version,
@@ -265,7 +267,7 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
             sdl, *renderer_binaries, sparkle / "Sparkle", *content_binaries]),
         "CFBundleURLTypes": [{"CFBundleURLName": "Halo multiplayer invite",
                               # Match the shared discord.application_id default.
-                              "CFBundleURLSchemes": ["halo", "discord-1556496882329460736"],
+                              "CFBundleURLSchemes": ["halo-og", "discord-1556496882329460736"],
                               "CFBundleTypeRole": "Viewer"}],
         "NSLocalNetworkUsageDescription": "Connect to players hosting Halo multiplayer games.",
         "NSHighResolutionCapable": True,
@@ -356,6 +358,28 @@ def development_app_bundles(build_root):
         subdirectories[:] = descend
 
 
+def is_halo_og_bundle(bundle, info):
+    """Identify this fork, including its bundles from before the ID split."""
+    if not isinstance(info, dict):
+        return False
+    identifier = info.get("CFBundleIdentifier")
+    if identifier == BUNDLE_ID:
+        return True
+    if identifier != LEGACY_BUNDLE_ID:
+        return False
+    # Halo OG used the upstream ID before adopting its own URI. Its current
+    # display name permits upgrades in place; older display names and renamed
+    # development bundles need this fork's build record to establish ownership.
+    if bundle.name == APP_NAME + ".app":
+        return True
+    try:
+        with (bundle / "Contents/Resources/BuildInfo.txt").open() as stream:
+            first_line = stream.readline(256)
+    except (OSError, UnicodeError):
+        return False
+    return first_line.startswith(APP_NAME + " ")
+
+
 def install_app(app, applications):
     """Stage and verify a complete app before replacing an installed copy."""
     app = require(app.resolve())
@@ -379,7 +403,7 @@ def install_app(app, applications):
         if destination.exists():
             with (destination / "Contents/Info.plist").open("rb") as stream:
                 installed = plistlib.load(stream)
-            if installed.get("CFBundleIdentifier") != "local.halo.ce-universal":
+            if not is_halo_og_bundle(destination, installed):
                 raise RuntimeError(f"Another application already exists at {destination}")
             previous = Path(tempfile.mkdtemp(prefix=".halo-previous-", dir=applications))
             unregister(destination)
@@ -405,7 +429,7 @@ def install_app(app, applications):
                     info = plistlib.load(stream)
             except (OSError, plistlib.InvalidFileException, ValueError, ExpatError):
                 continue
-            if isinstance(info, dict) and info.get("CFBundleIdentifier") == "local.halo.ce-universal":
+            if is_halo_og_bundle(legacy, info):
                 archive = Path(tempfile.mkdtemp(prefix=".halo-previous-", dir=applications))
                 unregister(legacy)
                 legacy.rename(archive / (legacy.name + ".backup"))
@@ -418,7 +442,7 @@ def install_app(app, applications):
                 info = plistlib.load(stream)
         except (OSError, plistlib.InvalidFileException, ValueError, ExpatError):
             continue
-        if isinstance(info, dict) and info.get("CFBundleIdentifier") == "local.halo.ce-universal":
+        if is_halo_og_bundle(prior, info):
             unregister(prior)
             prior.rename(prior.with_name(prior.name + ".backup"))
     # Spotlight can rediscover unregistered development bundles, and launching
@@ -440,7 +464,7 @@ def install_app(app, applications):
                 info = plistlib.load(stream)
         except (OSError, plistlib.InvalidFileException, ValueError, ExpatError):
             continue
-        if not isinstance(info, dict) or info.get("CFBundleIdentifier") != "local.halo.ce-universal":
+        if not is_halo_og_bundle(development_app, info):
             continue
         unregister(development_app)
         backup = backup_root / development_app.relative_to(development_root)

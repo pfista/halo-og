@@ -585,6 +585,9 @@ symbols in this file:
 #include "text/unicode.h"
 #include "units/bipeds.h"
 #include "units/units.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "game/starting_equipment.h"
+#endif
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -849,6 +852,11 @@ static void game_engine_rasterize_in_game_score(
 
 static void game_engine_predict_resources(
 	void);
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static short game_engine_fiesta_collect_weapons(long *weapon_indices);
+static void handle_fiesta_starting_equipment(long unit_index);
+#endif
 
 static void game_engine_verify_current_map(
 	void);
@@ -3834,6 +3842,9 @@ void game_engine_player_killed(
 	killer (port/linux/game/network_distributed.c) */
 	network_distributed_player_killed(&killing_player_index, &killing_object_index, dead_player_index,
 		&friendly_fire);
+	/* A retained attack can name a player datum that no longer exists. */
+	if (killing_player_index != NONE && !player_try_and_get(killing_player_index))
+		killing_player_index = NONE;
 	/* the host's kill of a player who quit, ahead of this client's clock
 	(game_update_quit_players has not come to its time yet) */
 	if (network_game_distributed_client() && dead_player->quit_out_of_game_time != NONE &&
@@ -6114,6 +6125,15 @@ static void game_engine_predict_resources(
 			game_engine_remap_weapon(weapon_indices[weapon_index]));
 	}
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (starting_equipment_get(&global_variant) == _starting_equipment_fiesta)
+	{
+		short fiesta_weapon_count = game_engine_fiesta_collect_weapons(weapon_indices);
+		for (weapon_index = 0; weapon_index < fiesta_weapon_count; weapon_index++)
+			object_definition_predict(weapon_indices[weapon_index]);
+	}
+#endif
+
 	return;
 }
 
@@ -7477,6 +7497,137 @@ static void game_engine_update_item_spawn(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* Use exact original multiplayer tag identities. A community map's extra
+ * weapons or replacement globals slots must never extend the Fiesta pool. */
+static short game_engine_fiesta_collect_weapons(long *weapon_indices)
+{
+	static char const *weapon_names[] =
+	{
+		"weapons\\assault rifle\\assault rifle",
+		"weapons\\needler\\needler",
+		"weapons\\pistol\\pistol",
+		"weapons\\plasma pistol\\plasma pistol",
+		"weapons\\plasma rifle\\plasma rifle",
+		"weapons\\rocket launcher\\rocket launcher",
+		"weapons\\shotgun\\shotgun",
+		"weapons\\sniper rifle\\sniper rifle",
+	};
+	short count = 0;
+	short name_index;
+	for (name_index = 0; name_index < NUMBEROF(weapon_names); name_index++)
+	{
+		long definition_index = tag_loaded('weap', weapon_names[name_index]);
+		short existing_index;
+		if (definition_index == NONE ||
+			object_definition_get(definition_index)->object.type != _object_type_weapon)
+			continue;
+		/* Objective behavior is tag-authored. Even a canonical-name community
+		 * replacement must not enter a pool whose failed creations are deleted. */
+		if (TEST_FLAG(weapon_definition_get(definition_index)->weapon.flags,
+			_weapon_must_be_readied_bit))
+			continue;
+		for (existing_index = 0; existing_index < count; existing_index++)
+			if (weapon_indices[existing_index] == definition_index)
+				break;
+		if (existing_index == count)
+			weapon_indices[count++] = definition_index;
+	}
+	return count;
+}
+
+static void handle_fiesta_starting_equipment(long unit_index)
+{
+	long definitions[8];
+	long weapons[2] = {NONE, NONE};
+	long previous_weapons[MAXIMUM_WEAPONS_PER_UNIT];
+	long previous_last_used[MAXIMUM_WEAPONS_PER_UNIT];
+	struct unit_datum *unit;
+	short previous_current;
+	short previous_desired;
+	short count;
+	short first;
+	short second;
+	short slot;
+	short weapon_number;
+
+	if (!game_engine_running() || network_game_distributed_client() || unit_index == NONE ||
+		starting_equipment_get(&global_variant) != _starting_equipment_fiesta)
+		return;
+	count = game_engine_fiesta_collect_weapons(definitions);
+	if (count < 2)
+		return; /* Keep the map's generic equipment when a pair is unavailable. */
+	unit = unit_get(unit_index);
+	for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+	{
+		if (unit->unit.weapon_object_indices[slot] != NONE &&
+			weapon_is_flag(unit->unit.weapon_object_indices[slot]))
+			return; /* Objective weapons belong to their engine, never this pool. */
+	}
+
+	/* Two bounded draws select an ordered pair without rejection sampling or
+	 * duplicate weapons. Non-Fiesta spawns consume no additional shared RNG. */
+	first = seed_random_range(get_global_random_seed_address(), 0, count);
+	second = seed_random_range(get_global_random_seed_address(), 0, count - 1);
+	if (second >= first)
+		second++;
+	for (weapon_number = 0; weapon_number < 2; weapon_number++)
+	{
+		struct object_placement_data placement_data;
+		object_placement_data_new(&placement_data,
+			definitions[weapon_number ? second : first], unit_index);
+		SET_FLAG(placement_data.flags, _new_object_skip_variant_remap_bit, TRUE);
+		weapons[weapon_number] = object_new(&placement_data);
+		if (weapons[weapon_number] == NONE ||
+			!unit_can_use_weapon(unit_index, weapons[weapon_number]))
+			break;
+	}
+	if (weapon_number < 2)
+	{
+		for (weapon_number = 0; weapon_number < 2; weapon_number++)
+			if (weapons[weapon_number] != NONE)
+				object_delete(weapons[weapon_number]);
+		return;
+	}
+
+	/* Creation and attachment can fail. Retain the old objects until both
+	 * new weapons are attached, and restore every inventory field on failure.
+	 * unit_delete_all_weapons intentionally keeps the current weapon, so it
+	 * cannot replace this complete loadout safely. */
+	previous_current = unit->unit.current_weapon_index;
+	previous_desired = unit->unit.desired_weapon_index;
+	for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+	{
+		previous_weapons[slot] = unit->unit.weapon_object_indices[slot];
+		previous_last_used[slot] = unit->unit.weapon_last_used_at_game_time[slot];
+		unit->unit.weapon_object_indices[slot] = NONE;
+		unit->unit.weapon_last_used_at_game_time[slot] = 0;
+	}
+	unit->unit.current_weapon_index = NONE;
+	unit->unit.desired_weapon_index = NONE;
+	if (!unit_add_weapon_to_inventory(unit_index, weapons[0], _unit_add_weapon_normal) ||
+		!unit_add_weapon_to_inventory(unit_index, weapons[1], _unit_add_weapon_normal))
+	{
+		object_delete(weapons[0]);
+		object_delete(weapons[1]);
+		for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+		{
+			unit->unit.weapon_object_indices[slot] = previous_weapons[slot];
+			unit->unit.weapon_last_used_at_game_time[slot] = previous_last_used[slot];
+		}
+		unit->unit.current_weapon_index = previous_current;
+		unit->unit.desired_weapon_index = previous_desired;
+		return;
+	}
+	/* Only a committed pair may change the local player's desired selection. */
+	player_control_set_desired_weapon(unit_index, 0);
+	unit->unit.desired_weapon_index = 0;
+	for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+		if (previous_weapons[slot] != NONE)
+			object_delete(previous_weapons[slot]);
+}
+#endif
+
 static void handle_custom_starting_equipment(
 	long unit_index,
 	long *fragmentation_grenade_count,
@@ -7611,13 +7762,21 @@ void game_engine_postspawn_player_update(
 			fragmentation_grenade_count;
 		long starting_plasma_grenade_count = 0;
 
-		if (!TEST_FLAG(global_variant.universal_variant.flags, _game_variant_generic_starting_equipment_bit))
+		if (!TEST_FLAG(global_variant.universal_variant.flags, _game_variant_generic_starting_equipment_bit)
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			&& starting_equipment_get(&global_variant) != _starting_equipment_fiesta
+#endif
+			)
 		{
 			handle_custom_starting_equipment(
 				unit_index,
 				&starting_fragmentation_grenade_count,
 				&starting_plasma_grenade_count);
 		}
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		handle_fiesta_starting_equipment(unit_index);
+#endif
 
 		if (game_engine_infinite_grenades_internal())
 		{

@@ -336,7 +336,9 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         n.build(outputs=filtered_imports, rule="macos_metal_imports", inputs=host_imports_list,
                 implicit=[Path("tools/macos_metal_imports.py")])
         host_imports_list = filtered_imports
-    platform_imports = [Path("port/macos/host_imports.list")] if macos else []
+    # Both Apple hosts compile host_services.c. iOS supplies unavailable-service
+    # stubs there, but the shared guest still needs their import ABI to link.
+    platform_imports = [Path("port/macos/host_imports.list")] if macos or ios else []
     if macos and not ios:
         platform_imports.append(Path("port/macos/metal_imports.list"))
     n.rule(

@@ -1,12 +1,14 @@
 #ifndef HALO_GAME_DIRECTORY_H
 #define HALO_GAME_DIRECTORY_H
 
+#include "p2p_invite.h"
+
 /* Shared desktop directory. Fixed-width character buffers and ints keep the
    same layout in the Apple ILP32 guest and native host. No Cloudflare token. */
 #define HALO_DIRECTORY_MAX_GAMES 64
 #define HALO_DIRECTORY_BODY_LIMIT (256 * 1024)
 struct halo_directory_game {
-    char id[37], name[33], map[33], gametype[25], invite[77];
+    char id[37], name[33], map[33], gametype[25], invite[P2P_LINK_SIZE];
     int player_count, max_players, network_version, open, in_progress, has_teams;
     int lifetime_seconds;
     /* Older hosts omit the score; -1 means unavailable, while 0 is real. */
@@ -23,7 +25,10 @@ void game_directory_set_invite(const char *invite);
 void game_directory_publish(const char *name, const char *map, int engine,
     int players, int maximum, int version, int open, int in_progress, int teams,
     int score_limit, int oddball_variant, int enabled);
+/* Refresh the visibility lease from each rendered game-list update. */
 void game_directory_browse(int enabled);
+/* Foreground discovery only; public-host lease renewals stay independent. */
+void game_directory_set_foreground(int enabled);
 int game_directory_snapshot(struct halo_directory_game *games, int capacity);
 
 /* Synchronous only on a directory worker. Certificate/hostname verification,
@@ -33,6 +38,6 @@ int game_directory_snapshot(struct halo_directory_game *games, int capacity);
 #define halo_directory_http host_halo_directory_http
 #endif
 int halo_directory_http(const char *method, const char *url, const char *lease,
-    const char *body, char *response, int capacity, int *status);
+    const char *body, char *response, int capacity, int *status, int *retry_after_seconds);
 
 #endif

@@ -20,12 +20,12 @@ from macos_benchmark import Console, FAULT
 from macos_multiplayer_smoke import ROOT, BUILD, prepare, read_log
 from macos_performance_smoke import STATUS, free_port, wait_for
 
-INVITE = re.compile(r'halo://join/[0-9a-fA-F]{64}(?![0-9a-fA-F])')
+INVITE = re.compile(r'halo(?:-og)?://join/[0-9a-fA-F]{64}(?![0-9a-fA-F])')
 CASES = ('stock_session', 'enabled_session', 'legacy_host')
 
 
 def redact(text):
-    return INVITE.sub('halo://join/[redacted]', text)
+    return INVITE.sub('halo-og://join/[redacted]', text)
 
 
 def multiplayer_tick(log):
@@ -63,7 +63,10 @@ class PeerPair:
         guest = self.args.legacy_guest if legacy else self.args.guest
         command = [str(self.args.executable), str(guest)]
         if invite:
-            command.append(invite)
+            # Each guest receives the scheme it understands; the invite's
+            # shared host identity and token are unchanged.
+            scheme = 'halo' if legacy else 'halo-og'
+            command.append(re.sub(r'^halo(?:-og)?://', scheme + '://', invite))
         log = (folder / 'game.log').open('w')
         self.streams.append(log)
         self.processes[role] = subprocess.Popen(command, cwd=ROOT, env=environment,

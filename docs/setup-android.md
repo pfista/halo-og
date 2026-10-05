@@ -54,14 +54,14 @@ explains how. For the easiest first session, use a controller.
 ## Host or join a game
 
 Use the **same release and map** as your friends. Start with stock Blood Gulch,
-Slayer, and **PB Options → Stock**.
+Slayer, and **Performance Options → Stock**, with Input Delay and Hardcore Off.
 
 1. The host opens **Multiplayer → System Link**, selects a profile, and chooses
    **Create Game** (Y). Pick the map and mode.
 2. On the same Wi-Fi/LAN, other players open **Multiplayer → System Link**,
    select their profiles, choose the host, and join.
 3. For Internet play, the host shares the invite copied to the clipboard.
-   Joining players open the complete `halo://join/…` link, or copy it and
+   Joining players open the complete `halo-og://join/…` link, or copy it and
    return to Halo, then select the host in **System Link** and join.
 4. The host starts the match when everyone is in the lobby. **Keep Halo in
    the foreground** throughout: Android can stop it when you switch apps.

@@ -21,8 +21,9 @@ typedef int boolean;
 #define NUMBEROF(a) (sizeof(a)/sizeof((a)[0]))
 enum { _performance_option_match_timer=1, _performance_option_spawn_markers=2,
        _performance_option_timer_audio=4, _performance_option_silent_movement=8,
-       _performance_option_silent_weapon_ready=16, _performance_option_input_delay=32,
-       PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=63 };
+       _performance_option_silent_weapon_ready=16, _performance_option_input_delay=32, _performance_option_hardcore=64,
+       _performance_option_fiesta=128, PERFORMANCE_MATCH_RULE_FLAGS=224,
+       PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=255 };
 static unsigned long flags;
 static unsigned mutation_calls, peer_support=63;
 static boolean host=TRUE;
@@ -90,7 +91,7 @@ int main(void) {
     assert(strstr(output,"PB sound voices: normal=0 movement=12 ready=3"));
     const char *invalid[]={"pb bad","pb timer maybe","pb timer on extra","pb status extra",
         "pb practice extra","pb audio onxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","performance_options -1",
-        "performance_options 64","performance_options 99","performance_options 3x",
+        "performance_options 256","performance_options 999","performance_options 3x",
         "performance_options 3 extra"};
     for(unsigned i=0;i<NUMBEROF(invalid);i++) inspect(invalid[i]);
     change("pb practice",7);
@@ -125,6 +126,24 @@ int main(void) {
     change("pb practice",39);
     change("pb movement silent",47);
     change("pb stock",32);
+    flags=96;peer_support=127;
+    change("pb practice",103);
+    change("pb stock",96);
+    inspect("pb status");assert(strstr(output,"Hardcore: ON"));
+    /* Item Options owns Fiesta. Existing preset and live aid controls must
+     * retain that match rule, with and without Hardcore and Input Delay. */
+    peer_support=255;
+    for(unsigned extras=0;extras<=96;extras+=32) {
+        flags=128|extras;
+        change("pb practice",128|extras|7);
+        change("pb stock",128|extras);
+        change("pb movement silent",128|extras|8);
+        change("pb timer toggle",128|extras|9);
+        change("pb stock",128|extras);
+    }
+    change("performance_options 128",128);
+    change("performance_options 255",255);
+    inspect("performance_options 256");
     flags=3; peer_support=3;
     run("pb audio on"); assert(flags==3 && strstr(output,"change refused"));
     run("pb practice"); assert(flags==3 && strstr(output,"change refused"));

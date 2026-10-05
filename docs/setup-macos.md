@@ -79,7 +79,7 @@ what they do. [More controls and key names](../port/macos/README.md#launch).
 ## Host or join a game
 
 Everyone should use the **same release** and map. Start with stock Blood Gulch,
-Slayer, and **PB Options → Stock**; competitive options are optional and default off.
+Slayer, and **Performance Options → Stock**, with Input Delay and Hardcore Off.
 
 1. The host opens **Multiplayer → System Link**, selects a profile, and uses
    **Create Game** (Y on a controller, or Tab on the keyboard). Choose map and mode.
@@ -89,7 +89,7 @@ Slayer, and **PB Options → Stock**; competitive options are optional and defau
    in this same list. Select a game and wait for **Connecting…** to open its lobby.
    See [public discovery/private hosting](system-link-directory.md). For older
    builds or private games, the host pastes the invite copied to the clipboard into a
-   message to friends. Joining players open the `halo://join/…` link, or copy
+   message to friends. Joining players open the `halo-og://join/…` link, or copy
    it and return to Halo OG. Then select the host in **System Link** and join.
 4. Once everyone is in the lobby, the host starts the match. Keep the host app running.
 

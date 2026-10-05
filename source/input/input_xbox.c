@@ -120,6 +120,9 @@ symbols in this file:
 #include "input/input_abstraction.h"
 #include "interface/player_ui.h"
 #include "main/console.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "controller_settings.h"
+#endif
 
 /* ---------- constants */
 
@@ -366,6 +369,73 @@ short fix_dead_zone(
 
 	return 0;
 }
+
+static void input_update_gamepad_sticks(
+	short gamepad_index,
+	struct gamepad_state *gamepad_state,
+	XINPUT_GAMEPAD const *gamepad)
+{
+	short left_dead_range = GAMEPAD_STICK_DEAD_RANGE;
+	short right_dead_range = GAMEPAD_STICK_DEAD_RANGE;
+	unsigned physical_axes = 0;
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	left_dead_range = halo_controller_deadzone_for_stick(FALSE);
+	right_dead_range = halo_controller_deadzone_for_stick(TRUE);
+	physical_axes = halo_controller_physical_axes(gamepad_index);
+#else
+	(void)gamepad_index;
+#endif
+	/* Preserve the original transform for keyboard/scripted winners. The raw
+	 * merge happens before this one transform, exactly as at the Xbox default. */
+	gamepad_state->sticks[_gamepad_stick_left].x = fix_dead_zone(gamepad->sThumbLX,
+		physical_axes & 1u ? left_dead_range : GAMEPAD_STICK_DEAD_RANGE);
+	gamepad_state->sticks[_gamepad_stick_left].y = fix_dead_zone(gamepad->sThumbLY,
+		physical_axes & 2u ? left_dead_range : GAMEPAD_STICK_DEAD_RANGE);
+	gamepad_state->sticks[_gamepad_stick_right].x = fix_dead_zone(gamepad->sThumbRX,
+		physical_axes & 4u ? right_dead_range : GAMEPAD_STICK_DEAD_RANGE);
+	gamepad_state->sticks[_gamepad_stick_right].y = fix_dead_zone(gamepad->sThumbRY,
+		physical_axes & 8u ? right_dead_range : GAMEPAD_STICK_DEAD_RANGE);
+}
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static int controller_look_axis_active(short value, short dead_range)
+{
+	/* Keep the existing native mouse handoff at the Xbox default. Custom
+	 * ranges hand off as soon as the same axial transform produces motion. */
+	return dead_range == HALO_CONTROLLER_DEADZONE_DEFAULT ?
+		value > 8000 || value < -8000 : fix_dead_zone(value, dead_range) != 0;
+}
+
+int halo_controller_look_active(short gamepad_index,
+	short left_x, short left_y, short right_x, short right_y)
+{
+	struct game_input_preferences preferences;
+	short left_dead_range = halo_controller_deadzone_for_stick(FALSE);
+	short right_dead_range = halo_controller_deadzone_for_stick(TRUE);
+
+	input_abstraction_get_local_player_preferences(gamepad_index, &preferences);
+	/* These are the four existing input_abstraction joystick presets: Default,
+	 * Southpaw, Legacy and Legacy Southpaw. Each may source yaw/pitch separately. */
+	switch (preferences.joystick_controls)
+	{
+	case 0:
+		return controller_look_axis_active(right_x, right_dead_range) ||
+			controller_look_axis_active(right_y, right_dead_range);
+	case 1:
+		return controller_look_axis_active(left_x, left_dead_range) ||
+			controller_look_axis_active(left_y, left_dead_range);
+	case 2:
+		return controller_look_axis_active(left_x, left_dead_range) ||
+			controller_look_axis_active(right_y, right_dead_range);
+	case 3:
+		return controller_look_axis_active(right_x, right_dead_range) ||
+			controller_look_axis_active(left_y, left_dead_range);
+	default:
+		return FALSE;
+	}
+}
+#endif
 
 void update_ticks(
 	byte *ticks,
@@ -961,18 +1031,7 @@ static void input_get_device_states(
 				input_globals.raw_gamepad_states[gamepad_index].sticks[_gamepad_stick_right].x = input_state.Gamepad.sThumbRX;
 				input_globals.raw_gamepad_states[gamepad_index].sticks[_gamepad_stick_right].y = input_state.Gamepad.sThumbRY;
 
-				gamepad_state->sticks[_gamepad_stick_left].x = fix_dead_zone(
-					input_state.Gamepad.sThumbLX,
-					GAMEPAD_STICK_DEAD_RANGE);
-				gamepad_state->sticks[_gamepad_stick_left].y = fix_dead_zone(
-					input_state.Gamepad.sThumbLY,
-					GAMEPAD_STICK_DEAD_RANGE);
-				gamepad_state->sticks[_gamepad_stick_right].x = fix_dead_zone(
-					input_state.Gamepad.sThumbRX,
-					GAMEPAD_STICK_DEAD_RANGE);
-				gamepad_state->sticks[_gamepad_stick_right].y = fix_dead_zone(
-					input_state.Gamepad.sThumbRY,
-					GAMEPAD_STICK_DEAD_RANGE);
+				input_update_gamepad_sticks(gamepad_index, gamepad_state, &input_state.Gamepad);
 			}
 			else
 			{

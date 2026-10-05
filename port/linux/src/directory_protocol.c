@@ -165,7 +165,25 @@ static int directory_id(const char *id)
     return 1;
 }
 static int directory_invite(const char *invite)
-{ return !strncmp(invite, "halo://join/", 12) && directory_hex_string(invite + 12, 64); }
+{
+    const size_t prefix_size = sizeof(P2P_INVITE_PREFIX) - 1;
+    return !strncmp(invite, P2P_INVITE_PREFIX, prefix_size) &&
+        directory_hex_string(invite + prefix_size, P2P_INVITE_CODE_SIZE);
+}
+static int directory_read_invite(char invite[P2P_LINK_SIZE])
+{
+    static const char legacy_prefix[] = "halo://join/";
+    const size_t legacy_size = sizeof(legacy_prefix) - 1;
+    const size_t prefix_size = sizeof(P2P_INVITE_PREFIX) - 1;
+    if (directory_invite(invite)) return 1;
+    if (strncmp(invite, legacy_prefix, legacy_size) ||
+        !directory_hex_string(invite + legacy_size, P2P_INVITE_CODE_SIZE)) return 0;
+    /* Older Halo hosts share the same invite token format. Normalize their
+       directory listings without registering or opening their URL scheme. */
+    memmove(invite + prefix_size, invite + legacy_size, P2P_INVITE_CODE_SIZE + 1);
+    memcpy(invite, P2P_INVITE_PREFIX, prefix_size);
+    return 1;
+}
 static int directory_map(const char *map)
 {
     int i, length = (int)strlen(map);
@@ -217,7 +235,7 @@ static int directory_game(struct directory_json *j, struct halo_directory_game *
         if (!directory_token(j, ',')) return 0;
     } while (1);
     return (fields & 511) == 511 && directory_id(game->id) && game->name[0] &&
-        directory_map(game->map) && directory_invite(game->invite) && game->network_version > 0 &&
+        directory_map(game->map) && directory_read_invite(game->invite) && game->network_version > 0 &&
         game->max_players > 0 && game->player_count <= game->max_players && game->gametype[0];
 }
 int halo_directory_parse_games(const char *json, int size, struct halo_directory_game *games, int capacity)

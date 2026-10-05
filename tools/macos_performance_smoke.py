@@ -213,7 +213,7 @@ def main():
         response = native_command('host', args.flags)
         if 'change refused' in response or status('host')['flags'] != args.flags:
             raise AssertionError('Host could not enable requested pregame options: ' + response.strip())
-        invite = wait_for(lambda: re.search(r'halo://join/[0-9a-fA-F]{64}(?![0-9a-fA-F])', read_log(folders['host'])),
+        invite = wait_for(lambda: re.search(r'halo-og://join/[0-9a-fA-F]{64}(?![0-9a-fA-F])', read_log(folders['host'])),
                           'Host did not create invite')[0]
         if args.late_join:
             # Network play requires two machines/players to start. Start with a

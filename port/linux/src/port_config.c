@@ -147,8 +147,24 @@ static const struct config_setting config_settings[] =
 	{ "input.mouse_aim_assist", _config_boolean, "false", "HALO_MOUSE_AIM_ASSIST", _environment_value, _platform_desktop,
 		"Magnetism while aiming with the mouse, as with a controller: the view\n"
 		"slowed and dragged along by a target. The last of the mouse and the\n"
-		"right stick to move decides. The bullets' autoaim (bent toward the\n"
+		"controller look axes to move decides. The bullets' autoaim (bent toward the\n"
 		"target) stays either way." },
+	{ "input.left_stick_deadzone", _config_integer, "9000", NULL, _environment_value, _platform_all,
+		"Left-stick axial dead zone, 0 to 16000 in the signed stick range.\n"
+		"9000 preserves the original Xbox filter; in-game Controller settings\n"
+		"offer Xbox and lower/higher presets. Applies to every local controller." },
+	{ "input.right_stick_deadzone", _config_integer, "9000", NULL, _environment_value, _platform_all,
+		"Right-stick axial dead zone, 0 to 16000 in the signed stick range.\n"
+		"9000 preserves the original Xbox filter. These are local preferences,\n"
+		"independent of player profiles and host-selected game rules." },
+	{ "input.look_acceleration", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Keep the original map-authored held-stick horizontal turning boost.\n"
+		"Controller settings call this Xbox; Off removes only this timed boost.\n"
+		"Sensitivity, pitch response and direct mouse aiming stay separate." },
+	{ "input.fast_menu_repeat", _config_boolean, "false", NULL, _environment_value, _platform_all,
+		"Repeat held menu directions every 100 ms instead of the original 250 ms.\n"
+		"Controller settings call this Menu Repeat: Original or Faster. Applies\n"
+		"to arrows, D-pad and sticks in menus and the on-screen keyboard only." },
 
 	/* Bindings are config-only: they do not need application environment variables. */
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
@@ -169,6 +185,15 @@ static const struct config_setting config_settings[] =
 	{ "game.language", _config_string, "\"\"", "HALO_LANGUAGE", _environment_value, _platform_all,
 		"The language the game asks the Xbox for: \"ja\", \"de\", \"fr\", \"es\" or \"it\";\n"
 		"empty for English. The game data decides what is translated." },
+
+	{ "maps.show_og", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Show original Xbox maps in the host map-selection menu. Keep at least\n"
+		"one set enabled; an empty selection falls back to original maps.\n"
+		"Map visibility does not prevent joining a host using a hidden map." },
+	{ "maps.show_community", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Show installed community maps in the host map-selection menu.\n"
+		"Includes alternate and refined imports; their caches remain available\n"
+		"for joining games and automatic map downloads when this is false." },
 
 	{ "paths.data", _config_string, "\"\"", "HALO_DATA_ROOT", _environment_value, _platform_desktop,
 		"The folder holding the game data's maps folder; empty looks in the\n"
@@ -192,6 +217,9 @@ static const struct config_setting config_settings[] =
 		"clipboard) that lets whoever has it join over the internet; opening a\n"
 		"link (or copying one before switching to the game) joins. Only people\n"
 		"with the invite can join. Off keeps system link to the local network." },
+	{ "network.join_in_progress", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Allow new players to join a hosted match after it starts. False closes\n"
+		"only running matches; players may still join the pregame lobby." },
 	{ "network.join_from_clipboard", _config_boolean, "true", "HALO_NET_JOIN_FROM_CLIPBOARD", _environment_value,
 		_platform_all,
 		"Join the game of an invite link found on the clipboard when the game\n"

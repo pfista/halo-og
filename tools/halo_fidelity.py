@@ -355,7 +355,7 @@ def _run_one(build, output, shots, rate, phase, tap, interpolation, role, transp
                     host_log = (folders["host"] / "game.log").read_text(errors="replace")
                     # The pinned historical invite has 44 hex digits; current
                     # native invites have 64. Accept exactly the known formats.
-                    match = re.search(r"halo://join/(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{44})(?![0-9a-fA-F])", host_log)
+                    match = re.search(r"halo(?:-og)?://join/(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{44})(?![0-9a-fA-F])", host_log)
                     if match:
                         invite = match[0]
                         break

@@ -32,6 +32,9 @@ symbols in this file:
 #include "cseries_windows.h"
 #include "event_manager.h"
 #include "input.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "controller_settings.h"
+#endif
 
 /* ---------- constants */
 
@@ -45,6 +48,12 @@ enum
 	STICK_EVENT_THRESHOLD = 29490,
 	STICK_EVENT_REPEAT_MILLISECONDS = 250
 };
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#define MENU_STICK_REPEAT_INTERVAL halo_menu_repeat_milliseconds()
+#else
+#define MENU_STICK_REPEAT_INTERVAL STICK_EVENT_REPEAT_MILLISECONDS
+#endif
 
 /* ---------- macros */
 
@@ -218,7 +227,7 @@ static void queue_event(
 				ABS(event_manager_globals.previous_stick_axes[_gamepad_stick_left][0][controller_index]) < STICK_EVENT_THRESHOLD) ||
 			(ABS(y) >= STICK_EVENT_THRESHOLD &&
 				ABS(event_manager_globals.previous_stick_axes[_gamepad_stick_left][1][controller_index]) < STICK_EVENT_THRESHOLD) ||
-			time - event_manager_globals.stick_event_times[_gamepad_stick_left][controller_index] >= STICK_EVENT_REPEAT_MILLISECONDS))
+			time - event_manager_globals.stick_event_times[_gamepad_stick_left][controller_index] >= MENU_STICK_REPEAT_INTERVAL))
 		{
 			post = FALSE;
 		}
@@ -269,7 +278,7 @@ static void queue_event(
 				ABS(event_manager_globals.previous_stick_axes[_gamepad_stick_right][0][controller_index]) < STICK_EVENT_THRESHOLD) ||
 			(ABS(y) >= STICK_EVENT_THRESHOLD &&
 				ABS(event_manager_globals.previous_stick_axes[_gamepad_stick_right][1][controller_index]) < STICK_EVENT_THRESHOLD) ||
-			time - event_manager_globals.stick_event_times[_gamepad_stick_right][controller_index] >= STICK_EVENT_REPEAT_MILLISECONDS))
+			time - event_manager_globals.stick_event_times[_gamepad_stick_right][controller_index] >= MENU_STICK_REPEAT_INTERVAL))
 		{
 			post = FALSE;
 		}

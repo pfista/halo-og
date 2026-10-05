@@ -207,6 +207,66 @@ int main(int argc, char **argv) {
 }
 '''
 
+GAMEPAD_HARNESS = r'''
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include <SDL3/SDL.h>
+typedef unsigned short WORD;
+static bool buttons[SDL_GAMEPAD_BUTTON_COUNT];
+static Sint16 axes[SDL_GAMEPAD_AXIS_COUNT];
+bool SDL_GetGamepadButton(SDL_Gamepad *pad, SDL_GamepadButton button) {
+    (void)pad; return buttons[button];
+}
+Sint16 SDL_GetGamepadAxis(SDL_Gamepad *pad, SDL_GamepadAxis axis) {
+    (void)pad; return axes[axis];
+}
+/* GAMEPAD_CODE */
+int main(void) {
+    SDL_Gamepad *controller = (SDL_Gamepad *)1;
+    XINPUT_GAMEPAD pad = {0};
+    buttons[SDL_GAMEPAD_BUTTON_LEFT_SHOULDER] = true;
+    sdl_gamepad_state(controller, &pad);
+    assert(pad.bAnalogButtons[XINPUT_GAMEPAD_BLACK] == 255); /* Switch grenades. */
+    assert(!pad.bAnalogButtons[XINPUT_GAMEPAD_WHITE]);
+    buttons[SDL_GAMEPAD_BUTTON_LEFT_SHOULDER] = false;
+    buttons[SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER] = true;
+    pad = (XINPUT_GAMEPAD){0}; sdl_gamepad_state(controller, &pad);
+    assert(pad.bAnalogButtons[XINPUT_GAMEPAD_WHITE] == 255); /* Flashlight. */
+    assert(!pad.bAnalogButtons[XINPUT_GAMEPAD_BLACK]);
+    buttons[SDL_GAMEPAD_BUTTON_LEFT_SHOULDER] = true;
+    pad = (XINPUT_GAMEPAD){0}; sdl_gamepad_state(controller, &pad);
+    assert(pad.bAnalogButtons[XINPUT_GAMEPAD_WHITE] == 255 && pad.bAnalogButtons[XINPUT_GAMEPAD_BLACK] == 255);
+    memset(buttons, 0, sizeof(buttons));
+    pad = (XINPUT_GAMEPAD){0}; sdl_gamepad_state(controller, &pad);
+    assert(!pad.bAnalogButtons[XINPUT_GAMEPAD_WHITE] && !pad.bAnalogButtons[XINPUT_GAMEPAD_BLACK]);
+    /* Correcting shoulders must retain all other Xbox packet mappings. */
+    buttons[SDL_GAMEPAD_BUTTON_SOUTH] = buttons[SDL_GAMEPAD_BUTTON_EAST] = true;
+    buttons[SDL_GAMEPAD_BUTTON_WEST] = buttons[SDL_GAMEPAD_BUTTON_NORTH] = true;
+    buttons[SDL_GAMEPAD_BUTTON_DPAD_UP] = buttons[SDL_GAMEPAD_BUTTON_DPAD_DOWN] = true;
+    buttons[SDL_GAMEPAD_BUTTON_DPAD_LEFT] = buttons[SDL_GAMEPAD_BUTTON_DPAD_RIGHT] = true;
+    buttons[SDL_GAMEPAD_BUTTON_START] = buttons[SDL_GAMEPAD_BUTTON_BACK] = true;
+    buttons[SDL_GAMEPAD_BUTTON_LEFT_STICK] = buttons[SDL_GAMEPAD_BUTTON_RIGHT_STICK] = true;
+    axes[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] = 32767; axes[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] = 16384;
+    axes[SDL_GAMEPAD_AXIS_LEFTX] = 12345; axes[SDL_GAMEPAD_AXIS_LEFTY] = 20000;
+    axes[SDL_GAMEPAD_AXIS_RIGHTX] = -32768; axes[SDL_GAMEPAD_AXIS_RIGHTY] = -32768;
+    pad = (XINPUT_GAMEPAD){0}; sdl_gamepad_state(controller, &pad);
+    for (unsigned index = XINPUT_GAMEPAD_A; index <= XINPUT_GAMEPAD_Y; index++) assert(pad.bAnalogButtons[index] == 255);
+    assert(pad.wButtons == (XINPUT_GAMEPAD_DPAD_UP | XINPUT_GAMEPAD_DPAD_DOWN |
+        XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_RIGHT | XINPUT_GAMEPAD_START |
+        XINPUT_GAMEPAD_BACK | XINPUT_GAMEPAD_LEFT_THUMB | XINPUT_GAMEPAD_RIGHT_THUMB));
+    assert(pad.bAnalogButtons[XINPUT_GAMEPAD_LEFT_TRIGGER] == 255 && pad.bAnalogButtons[XINPUT_GAMEPAD_RIGHT_TRIGGER] == 127);
+    assert(pad.sThumbLX == 12345 && pad.sThumbLY == -20001 && pad.sThumbRX == -32768 && pad.sThumbRY == 32767);
+    /* Keyboard input continues to merge without a neutral controller erasing it. */
+    memset(buttons, 0, sizeof(buttons)); memset(axes, 0, sizeof(axes));
+    pad = (XINPUT_GAMEPAD){0}; pad.bAnalogButtons[XINPUT_GAMEPAD_WHITE] = 255;
+    pad.bAnalogButtons[XINPUT_GAMEPAD_RIGHT_TRIGGER] = 255; pad.sThumbLX = 20000;
+    sdl_gamepad_state(controller, &pad);
+    assert(pad.bAnalogButtons[XINPUT_GAMEPAD_WHITE] == 255 && pad.bAnalogButtons[XINPUT_GAMEPAD_RIGHT_TRIGGER] == 255 && pad.sThumbLX == 20000);
+    return 0;
+}
+'''
+
 
 @unittest.skipUnless(shutil.which("clang") and (SDL / "include/SDL3/SDL.h").exists(), "clang and SDL3 headers required")
 class InputBindings(unittest.TestCase):
@@ -256,6 +316,19 @@ class InputBindings(unittest.TestCase):
 
     def test_parser_names_and_rejected_partial_bindings(self):
         self.run_probe("parser")
+
+    def test_controller_bumpers_and_preserved_packet_mappings(self):
+        xinput = (PORT / "xinput_sdl.c").read_text()
+        gamepad = "static SHORT stick(" + xinput.split("static SHORT stick(", 1)[1].split("/* ---------- XAPI */", 1)[0]
+        source = self.directory / "gamepad.c"
+        source.write_text(GAMEPAD_HARNESS.replace("/* GAMEPAD_CODE */", gamepad))
+        executable = self.directory / "gamepad"
+        compiled = subprocess.run(["clang", "-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror",
+            "-include", str(self.directory / "prefix.h"), f"-I{SDL / 'include'}",
+            str(source), "-o", str(executable)], text=True, capture_output=True, timeout=30)
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        tested = subprocess.run([executable], text=True, capture_output=True, timeout=5)
+        self.assertEqual(tested.returncode, 0, tested.stderr)
 
     def test_mac_defaults_packets_holds_console_and_mouse(self):
         config, _ = self.run_probe()

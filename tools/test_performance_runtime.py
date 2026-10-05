@@ -229,11 +229,21 @@ int main(void) {
     performance_options_apply_host_flags(0); performance_options_update();
     assert(!TEST_FLAG(object_header_get(replacement)->flags, _object_header_being_deleted_bit));
     finish_deletes();
-    performance_options_apply_host_flags(0x82); assert(performance_options_get_flags() == 0);
+    /* Fiesta is retained as a match rule without enabling presentation aids
+     * or consuming gameplay RNG. Unknown bits still reject the whole set. */
+    int fiesta_creates=creates,fiesta_deletes=deletes,fiesta_draws=draw_count,fiesta_audio=audio_plays;
+    unsigned long fiesta_seed=rng;
+    performance_options_apply_host_flags(_performance_option_fiesta);
+    performance_options_update(); performance_options_render();
+    assert(performance_options_get_flags()==_performance_option_fiesta && rng==fiesta_seed);
+    assert(creates==fiesta_creates && deletes==fiesta_deletes && draw_count==fiesta_draws && audio_plays==fiesta_audio);
+    performance_options_apply_host_flags(_performance_option_fiesta|_performance_option_spawn_markers);
+    assert(performance_options_get_flags()==(_performance_option_fiesta|_performance_option_spawn_markers));
+    performance_options_apply_host_flags(256); assert(performance_options_get_flags() == 0);
     /* Reload discards old ownership and re-reads the authoritative variant. */
     performance_options_dispose_from_old_map(); assert(performance_options_markers_supported_count() == 0);
-    variant.flags = 3; performance_options_initialize_for_new_map();
-    assert(performance_options_get_flags() == 3 && performance_options_markers_visible_count() == 0);
+    variant.flags = 3|_performance_option_fiesta; performance_options_initialize_for_new_map();
+    assert(performance_options_get_flags() == (3|_performance_option_fiesta) && performance_options_markers_visible_count() == 0);
     performance_options_apply_host_flags(0); performance_options_update();
     assert(!TEST_FLAG(object_header_get(replacement)->flags, _object_header_being_deleted_bit));
     /* Unsafe map content cannot be turned into an effect or collision source. */

@@ -17,6 +17,7 @@ Built with the host's ABI, as the other posix_*.c.
 
 #include "update.h"
 #include "game_directory.h"
+#include "directory_retry_after.h"
 
 #include "mbedtls/error.h"
 #include "mbedtls/net_sockets.h"
@@ -310,6 +311,7 @@ struct download
 	void *context;
 	unsigned long long received, total, maximum;
 	int limit_exceeded;
+	int response_status, retry_after_seconds;
 };
 
 static int body_write(struct download *download, const unsigned char *data, size_t size)
@@ -424,6 +426,7 @@ static int https_request(const char *url, struct download *download, char *locat
 		goto done;
 	}
 	location[0] = 0;
+	if (download->memory) download->response_status = status;
 	/* the headers */
 	for (;;)
 	{
@@ -454,6 +457,10 @@ static int https_request(const char *url, struct download *download, char *locat
 		else if (!strcasecmp(line, "Location"))
 		{
 			snprintf(location, location_size, "%s", value);
+		}
+		else if (download->memory && !strcasecmp(line, "Retry-After"))
+		{
+			download->retry_after_seconds = halo_directory_retry_after_seconds(value);
 		}
 	}
 	if (status == 200 || download->memory)
@@ -568,13 +575,14 @@ int update_download(const char *url, const char *path, update_progress_proc prog
 }
 
 int halo_directory_http(const char *method, const char *url, const char *lease,
-	const char *body, char *response, int capacity, int *status)
+	const char *body, char *response, int capacity, int *status, int *retry_after_seconds)
 {
 	struct download download = {0};
 	char location[2048], error[256];
 	int size = -1;
-	*status = 0;
-	if (capacity < 2 || capacity > HALO_DIRECTORY_BODY_LIMIT ||
+	if (status) *status = 0;
+	if (retry_after_seconds) *retry_after_seconds = 0;
+	if (!status || !method || !url || !response || capacity < 2 || capacity > HALO_DIRECTORY_BODY_LIMIT ||
 		(lease && *lease && (strlen(lease) != 64 || strspn(lease, "0123456789abcdef") != 64)) ||
 		(body && strlen(body) > 4096) || strpbrk(url, "\r\n")) return -1;
 	download.memory = (unsigned char *)response;
@@ -586,8 +594,10 @@ int halo_directory_http(const char *method, const char *url, const char *lease,
 		pthread_mutex_unlock(&download_lock);
 		return -1;
 	}
-	*status = https_request(url, &download, location, sizeof(location), error, sizeof(error), method, body, lease);
-	if (*status && !download.limit_exceeded) {
+	int completed = https_request(url, &download, location, sizeof(location), error, sizeof(error), method, body, lease);
+	*status = download.response_status;
+	if (retry_after_seconds) *retry_after_seconds = download.retry_after_seconds;
+	if (completed && !download.limit_exceeded) {
 		size = (int)download.received;
 		response[size] = 0;
 	}

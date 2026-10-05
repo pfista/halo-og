@@ -30,7 +30,7 @@ def main():
     print("HTTPS and Durable Object health: passed")
     listing = {
         "name": "Directory deployment check", "map": "downrush", "gametype": "Slayer",
-        "invite": "halo://join/" + secrets.token_hex(32), "player_count": 1,
+        "invite": "halo-og://join/" + secrets.token_hex(32), "player_count": 1,
         "max_players": 16, "network_version": 11, "platform": "linux", "build": "service-smoke",
         "score_limit": 50, "oddball_variant": False,
     }

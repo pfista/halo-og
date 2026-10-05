@@ -45,13 +45,13 @@ static char const *const performance_pause_names[_pp_widget_count] =
  * writable, including on ports that place wide string literals in rodata. */
 static wchar_t performance_pause_text[][64] =
 {
-	L"PB OPTIONS", L"APPLY", L"RETURN",
+	L"PERFORMANCE OPTIONS", L"APPLY", L"RETURN",
 	L"Apply to change host settings.",
 	L"Host settings (view only).",
 	L"Preset: < Stock >", L"Preset: < Practice >", L"Preset: < Custom >",
 	L"Match timer: < Off >", L"Match timer: < On >",
 	L"Markers: < Off >", L"Markers: < On >",
-	L"PB OPTIONS",
+	L"PERFORMANCE OPTIONS",
 	L"Timer sounds: <Off>", L"Timer sounds: <On>", L"GAME SETTINGS",
 	L"Movement: <Normal>", L"Movement: <Silent>",
 	L"Weapon: < Normal >", L"Weapon: < Silent >",
@@ -208,7 +208,7 @@ static boolean performance_pause_build(void)
 	}
 
 	/* Native pause entries retain Resume, Quit, their actions and all three
-	 * original viewport placements. The list gains PB and local settings. */
+	 * original viewport placements. The list gains performance and local settings. */
 	for (layout = 0; layout < 3; layout++)
 	{
 		struct ui_widget_definition *pause = &performance_pause_definitions[_pp_pause_1p + layout];
@@ -265,6 +265,9 @@ static boolean performance_pause_build(void)
 				_gamepad_binary_button_start, 0, FLAG(_event_handler_open_widget_bit), settings_tag);
 			performance_pause_block(&settings->event_handlers, 2, performance_pause_settings_events[layout]);
 		}
+		/* The full label is 224 px in large_ui; small_ui fits the resident
+		 * 202 px button while retaining its authored bitmap and placement. */
+		entry->text_font.index = font;
 
 		options->type = _ui_widget_type_container;
 		/* Opening a submenu must keep the local player who invoked it. The
@@ -334,9 +337,8 @@ static boolean performance_pause_build(void)
 	}
 	performance_pause_definitions[_pp_apply].string_list_index = 1;
 	performance_pause_block(&performance_pause_definitions[_pp_apply].event_handlers, 2, performance_pause_apply_events);
-	performance_pause_definitions[_pp_title].text_font = original_resume->text_font;
-	/* large_ui has a 21-pixel line advance; these uppercase glyphs occupy
-	 * y4..17, leaving the authored top border visible in the 22-pixel title. */
+	performance_pause_definitions[_pp_title].text_font.index = font;
+	/* small_ui fits the full title within the authored 202-pixel frame. */
 	performance_pause_definitions[_pp_title].bounds.y1 = 22;
 	performance_pause_definitions[_pp_title].horizontal_offset = 0;
 	performance_pause_definitions[_pp_title].vertical_offset = 0;
@@ -376,7 +378,7 @@ static boolean performance_pause_is_spinner(struct widget_instance *widget)
 
 static short performance_pause_preset(unsigned flags)
 {
-	flags &= ~_performance_option_input_delay;
+	flags &= ~PERFORMANCE_MATCH_RULE_FLAGS;
 	return flags == 0 ? 0 : (flags == PERFORMANCE_PRACTICE_FLAGS ? 1 : 2);
 }
 
@@ -426,14 +428,14 @@ static void performance_pause_update(struct widget_instance *widget)
 	{
 		draft->preset = preset->parameters.list.selected_index;
 		if (draft->preset == 0)
-			draft->flags &= _performance_option_input_delay;
+			draft->flags &= PERFORMANCE_MATCH_RULE_FLAGS;
 		else if (draft->preset == 1)
-			draft->flags = (draft->flags & _performance_option_input_delay) | PERFORMANCE_PRACTICE_FLAGS;
+			draft->flags = (draft->flags & PERFORMANCE_MATCH_RULE_FLAGS) | PERFORMANCE_PRACTICE_FLAGS;
 	}
 	else
 	{
-		/* Match-start timing has no pause control and cannot be changed here. */
-		flags = (draft->flags & _performance_option_input_delay) |
+		/* Pregame match rules have no pause controls and cannot be changed here. */
+		flags = (draft->flags & PERFORMANCE_MATCH_RULE_FLAGS) |
 			(timer->parameters.list.selected_index ? _performance_option_match_timer : 0) |
 			(markers->parameters.list.selected_index ? _performance_option_spawn_markers : 0) |
 			(audio->parameters.list.selected_index ? _performance_option_timer_audio : 0) |

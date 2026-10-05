@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 project(HaloIOS LANGUAGES C CXX OBJC ASM)
 get_filename_component(HALO_ROOT "../.." ABSOLUTE)
 set(HALO_BUILD "${HALO_ROOT}/build/ios")
-set(HALO_BUNDLE_IDENTIFIER "local.halo.ce-universal.ios" CACHE STRING "Unique iOS app bundle identifier")
+set(HALO_BUNDLE_IDENTIFIER "local.halo.og.ios" CACHE STRING "Unique iOS app bundle identifier")
 set(HALO_VERSION_HEADER "${HALO_ROOT}/port/linux/include/halo_og_version.h")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${HALO_VERSION_HEADER}")
 file(STRINGS "${HALO_VERSION_HEADER}" HALO_VERSION_DEFINITION

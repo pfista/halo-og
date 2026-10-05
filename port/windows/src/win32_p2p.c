@@ -3,7 +3,7 @@ WIN32_P2P.C
 
 The process and desktop half of port/linux/src/posix.h for Windows, which
 internet play uses (p2p.c; the Linux versions are in posix_net.c): the
-command line, the registry entry that makes this executable open halo://
+command line, the registry entry that makes this executable open halo-og://
 links, the user's secret, and Discord's local pipe.
 */
 
@@ -11,6 +11,7 @@ links, the user's secret, and Discord's local pipe.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wchar.h>
 
 #include "posix.h"
 
@@ -59,24 +60,38 @@ posix_ulong posix_process_id(void)
 int posix_register_url_scheme(const char *scheme, const char *description)
 {
 	/* HKEY_CURRENT_USER\Software\Classes\<scheme>, as Windows looks links up */
-	char executable[MAX_PATH], key_name[256], command[MAX_PATH + 16], label[256];
+	/* Keep the actual executable path in Unicode, including installs below
+	user directories that the ANSI code page cannot represent. */
+	WCHAR executable[32768], key_name[256], command[32768 + 16], label[256];
+	WCHAR scheme_name[128], application_name[248];
+	DWORD length;
 	HKEY key;
 	BOOL ok = TRUE;
 
-	if (!GetModuleFileNameA(NULL, executable, sizeof(executable)))
+	length = GetModuleFileNameW(NULL, executable, sizeof(executable) / sizeof(*executable));
+	if (!length || length >= sizeof(executable) / sizeof(*executable))
 		return 0;
-	snprintf(key_name, sizeof(key_name), "Software\\Classes\\%s", scheme);
-	snprintf(label, sizeof(label), "URL:%s", description);
-	if (RegCreateKeyExA(HKEY_CURRENT_USER, key_name, 0, NULL, 0, KEY_WRITE, NULL, &key, NULL) != ERROR_SUCCESS)
+	if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, scheme, -1, scheme_name,
+			sizeof(scheme_name) / sizeof(*scheme_name)) ||
+		!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, description, -1, application_name,
+			sizeof(application_name) / sizeof(*application_name)))
 		return 0;
-	ok &= RegSetValueExA(key, NULL, 0, REG_SZ, (const BYTE *)label, (DWORD)strlen(label) + 1) == ERROR_SUCCESS;
-	ok &= RegSetValueExA(key, "URL Protocol", 0, REG_SZ, (const BYTE *)"", 1) == ERROR_SUCCESS;
+	swprintf(key_name, sizeof(key_name) / sizeof(*key_name), L"Software\\Classes\\%ls", scheme_name);
+	swprintf(label, sizeof(label) / sizeof(*label), L"URL:%ls", application_name);
+	if (RegCreateKeyExW(HKEY_CURRENT_USER, key_name, 0, NULL, 0, KEY_WRITE, NULL, &key, NULL) != ERROR_SUCCESS)
+		return 0;
+	ok &= RegSetValueExW(key, NULL, 0, REG_SZ, (const BYTE *)label,
+		(DWORD)((wcslen(label) + 1) * sizeof(*label))) == ERROR_SUCCESS;
+	ok &= RegSetValueExW(key, L"URL Protocol", 0, REG_SZ, (const BYTE *)L"", sizeof(WCHAR)) == ERROR_SUCCESS;
 	RegCloseKey(key);
-	snprintf(key_name, sizeof(key_name), "Software\\Classes\\%s\\shell\\open\\command", scheme);
-	snprintf(command, sizeof(command), "\"%s\" \"%%1\"", executable);
-	if (RegCreateKeyExA(HKEY_CURRENT_USER, key_name, 0, NULL, 0, KEY_WRITE, NULL, &key, NULL) != ERROR_SUCCESS)
+	swprintf(key_name, sizeof(key_name) / sizeof(*key_name), L"Software\\Classes\\%ls\\shell\\open\\command", scheme_name);
+	wcscpy(command, L"\"");
+	wcscat(command, executable);
+	wcscat(command, L"\" \"%1\"");
+	if (RegCreateKeyExW(HKEY_CURRENT_USER, key_name, 0, NULL, 0, KEY_WRITE, NULL, &key, NULL) != ERROR_SUCCESS)
 		return 0;
-	ok &= RegSetValueExA(key, NULL, 0, REG_SZ, (const BYTE *)command, (DWORD)strlen(command) + 1) == ERROR_SUCCESS;
+	ok &= RegSetValueExW(key, NULL, 0, REG_SZ, (const BYTE *)command,
+		(DWORD)((wcslen(command) + 1) * sizeof(*command))) == ERROR_SUCCESS;
 	RegCloseKey(key);
 	return ok ? 1 : 0;
 }

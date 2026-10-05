@@ -53,6 +53,13 @@ Text glyphs keep the fonts in the game data and have clear borders to
 prevent neighboring characters from bleeding into their edges, and widescreen
 menu dimming and flat backgrounds cover the whole display.
 
+For current controller or mouse aim while keeping Smooth Motion, quit Halo and
+set `direct_camera = true` in the existing `[display]` section of
+`~/Library/Application Support/Halo OG/config.toml`, then restart. Direct Camera
+is off by default. It uses current aim for the first-person view on foot;
+world movement, vehicles and cinematics retain their existing presentation.
+VSync and the 30 Hz simulation are unchanged.
+
 Saves, cache files, `config.toml`, and `halo.log` are under:
 
 ```text
@@ -147,8 +154,8 @@ appears in the System Link browser.
 With the Discord desktop client running, Halo connects to its local RPC socket
 and accepts Discord game invitations. Hosting a System Link game publishes
 "Hosting a game" with an invite in Discord. Enable activity sharing in Discord
-to make it visible. The installed app handles both `halo://` links and the
-upstream Discord application's launch scheme, so an invite can start Halo
+to make it visible. The installed app handles both `halo-og://` links and the
+Halo OG Discord application's launch scheme, so an invite can start Halo
 when it is closed. Ordinary campaign/client gameplay does not publish activity.
 This branch uses multiplayer protocol 11 and 64-digit invite codes; all players
 need matching builds. Command-W is ignored while playing, and Command-Q or

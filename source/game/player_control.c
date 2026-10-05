@@ -209,6 +209,9 @@ symbols in this file:
 #include "units/vehicles.h"
 
 #include "real_math.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "port_config.h"
+#endif
 
 /* ---------- constants */
 
@@ -1049,6 +1052,44 @@ void player_control_new_unit(
 	return;
 }
 
+static void player_control_apply_look_acceleration(
+	struct player_control *control,
+	struct game_globals_player_control const *constants,
+	real clamped_yaw,
+	real time_delta_sec,
+	real_euler_angles2d *look_delta)
+{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Optional native controller preference: retain the sensitivity curve and
+	 * bypass only the map-authored time boost on yaw, including seated look. */
+	if (!config_boolean("input.look_acceleration"))
+	{
+		control->look_acceleration_time = 0.f;
+		return;
+	}
+#endif
+	match_assert(
+		"c:\\halo\\SOURCE\\game\\player_control.c",
+		0x1E3,
+		constants->look_acceleration_time>0.0f);
+	if (fabs(clamped_yaw) >= constants->look_pegging_threshold)
+	{
+		real acceleration = PIN(
+			control->look_acceleration_time /
+				constants->look_acceleration_time,
+			0.f,
+			1.f);
+
+		look_delta->yaw *= (constants->look_acceleration_scale - 1.f) *
+			acceleration + 1.f;
+		control->look_acceleration_time += time_delta_sec;
+	}
+	else
+	{
+		control->look_acceleration_time = 0.f;
+	}
+}
+
 static void get_local_player_input_blob(
 	short local_player_index,
 	real time_delta_sec,
@@ -1202,26 +1243,8 @@ static void get_local_player_input_blob(
 						look_delta.pitch *= stun_scale;
 					}
 
-					match_assert(
-						"c:\\halo\\SOURCE\\game\\player_control.c",
-						0x1E3,
-						constants->look_acceleration_time>0.0f);
-					if (fabs(clamped_yaw) >= constants->look_pegging_threshold)
-					{
-						real acceleration = PIN(
-							control->look_acceleration_time /
-								constants->look_acceleration_time,
-							0.f,
-							1.f);
-
-						look_delta.yaw *= (constants->look_acceleration_scale - 1.f) *
-							acceleration + 1.f;
-						control->look_acceleration_time += time_delta_sec;
-					}
-					else
-					{
-						control->look_acceleration_time = 0.f;
-					}
+					player_control_apply_look_acceleration(control, constants,
+						clamped_yaw, time_delta_sec, &look_delta);
 
 					{
 						real_euler_angles2d target_angular_position;

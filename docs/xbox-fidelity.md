@@ -14,7 +14,8 @@ v10 (`d1c7243cb20eab4488efa1266e259b1f4d5240f6`, local
 `694cc79d48654d862d3ecda51e71ea559f93bd2d`). These are focused ports, not merges
 of intervening upstream changes.
 
-**Reviewed through:** `23b542601f2ca505c7a0143703e92fbda6075e18`.
+**Reviewed through:** OpenCE
+`685bf260a0a648a1d898928a99b17428a2549b92` (October 4, 2026 review).
 Review subsequent diffs individually. Keep review and integration boundaries
 separate, and record new decisions here with their validation and local commit.
 
@@ -36,6 +37,53 @@ were diff-reviewed and remain unintegrated; their runtime behavior is unvalidate
 | `e8e0c2215ab6871bbe6f855f67b3459d94817b35` | Defer compiler include-path changes required only by the excluded PC menus. |
 | `62b630a2610e7c0df88ffa43d6f03914cb35345e` | Exclude new weapon/loadout policy. |
 | `23b542601f2ca505c7a0143703e92fbda6075e18` | Exclude altered infinite-grenade and unarmed-loadout rules; retain existing Xbox behavior. October 4 compatibility changes deliberately remove the v11 gametype-options gate for best-effort mixed-host tests; protocol, PB capability, packet and map checks remain enforced. This admission change does not implement the excluded rules. |
+| `133d6a5dc1ea65a00ff6369c16d58d167fcd96f7` | Defer departed-player slot reuse. Unit/death/statistics packets identify players by absolute slot without a generation fence; delayed traffic can affect the replacement occupant. No slot-reuse code is adopted. |
+| `601a4c1f506662dcd93d79105e3fe69410397a87` | Adopt loaded-map cleanup before the next network game. A stopped menu clock still leaves a loaded map and texture cache. Committed locally; validation is recorded below. |
+| `809408c6635a1434fe4dbe3b64195211ddcbe8cf` | Adopt only invalid full-datum killer/assist guards, retaining valid-player scoring. Defer queue replacement coupled to the excluded slot reuse; guards do not make slot-only packets generation-safe. Committed locally; validation is recorded below. |
+| `933aac61754eb5de2c8496dbe9b8278f033e4c1f` | Exclude no-map-weapons and unarmed-grenade rules. |
+| `c04765d7f49f49bda706a258826134ef41c566ca` | Defer upstream service/browser adapter as separate discovery work; do not import PC menus or listing dependencies. |
+| `3304965653692fc2f4cbea84f1bea2bb7d0f2bdd` | Exclude test-harness repair for the deferred upstream lobby feature. |
+| `c3adcfe5bf917922d732f2551341b1ad00977867` | Exclude unrelated release-ZIP compression change from this core-fix port. |
+| `46edf53657227837bee89a98d5e25f265f929922` | Exclude PC pause menu/settings artwork and workflow. |
+| `2e3841ff7d7fe32647fe71014da51e2566f37f8e` | Exclude optional replacement shotgun-meter artwork alignment from the stock-HUD baseline. |
+| `1a15a171ac7e030f108352c88b81d32ba6cccf9b` | Exclude vehicle-seat repair for unadopted unarmed-action rules; its failure mechanism is absent locally. |
+| `39350fb81fda3bdf08693961d4ff2cece603e7f3` | Exclude overhead-label/motion-sensor relationship changes. |
+| `ce77db8404ba8cbaa102da79c45462edfbfec697` | Exclude cryotube crash repair for unadopted unarmed-melee borrowing; the added helper is absent locally. |
+| `c05864b3fc9b6333a071fcb23e186a0dc833e148` | Defer removing departed players from the scoreboard; presentation/ranking behavior is separate from reference safety. |
+| `812ffeea3353d748fc4afc801c5758f76416eed4` | Exclude focused-row artwork for the unadopted PC browser. |
+| `a227872ccbe4c897f970c0d14648a15287562f3f` | Merge of `ce77db84`; no additional independent fix. |
+| `d3fc997fdc2513ee641dba96a5485ecc3d0e0c6a` | Exclude multiplayer second-weapon auto-pickup. Defer selected-slot swap and delayed client readiness pending Xbox timing and manual-selection evidence. |
+| `d578f88bd0ef447b9039353a3f04affea55295a5` | Defer name sanitation for the unadopted upstream browser and name-policy helper. |
+| `193cbf59c7e483386538fa34e28fb2503ab79a4b` | Defer PC-menu split-screen co-op workflow/controller routing; separate port adaptation. |
+| `e3389991ac334ee9772dc04aa2f25d3c6631c629` | Defer PC-menu online split-screen/controller reassignment; separate port adaptation. |
+| `88a7c07ec781fde6fe00467b89507918b629d2bb` | Defer MQTT broker-file configuration with the upstream discovery adapter. |
+| `ffc1512dcbdc1ec6a3ea1dac400c99cc8ee9f132` | Exclude Android repair for the unadopted broker-file addition. |
+| `7e00135d31bf55250c477295279f6625e3e45983` | Adopt null-client connection recovery before frame idle, mirroring the existing end-frame recovery. Committed locally; validation is recorded below. |
+| `c115f5292db6d700ad84e8d712d9ae977de3bb3f` | Defer multiple local joiners in the PC preview/lobby workflow. |
+| `933ed2b7b8e5a7dc560102bc1d1d13ddaeda0d60` | Exclude updater destination change; Halo OG keeps its own update source. |
+| `685bf260a0a648a1d898928a99b17428a2549b92` | Defer either-player co-op menu selection routing with the unadopted PC menu workflow. |
+
+The October 4 safe-fix port leaves the integrated build-64 and selective v11
+baselines intact. It changes map/client resource lifetime and invalid full-datum
+reference handling, with no wire-layout/version, simulation, weapon-pickup,
+movement, balance, scoreboard or platform-renderer change. These are native port
+reliability corrections rather than claims that original Xbox quirks are fixed.
+
+Slot reuse remains deferred because `distributed_handle_unit_state` can apply a
+dead state to the current occupant of an absolute slot, and the statistics
+receiver can overwrite that occupant's counts. `distributed_message_stale`
+tracks times per sender/message kind, not identity turnover. The paired upstream
+changes provide no generation fence. Full-datum null guards cannot solve this
+separate protocol identity problem.
+
+The separate decompilation review reached `bnunu/halo-1`
+`1b25ea9a37a4977ee138bd26d6ef441a8c3650f6` (all 11 outstanding commits) and
+screened `punpckhdq/halo` through
+`acd34e7d6b15e4a51d11b29d790ab058c8793a57` (60 commits after the common
+ancestor, with targeted function comparisons). No confirmed missing gameplay
+correction was adopted. Helper/codegen/source-storage gains still need native
+ABI/floating-point validation, and the spectator fallback needs reference
+executable evidence before changing original behavior.
 
 Prioritize verified matching corrections, correctness, stability, performance
 and renderer/platform fixes that preserve the baseline. Assess netcode for
@@ -77,23 +125,46 @@ PB capability flag `0x04` is separate from the in-progress flag `0x02`.
 Options-off games advertise stock v11; enabled PB games advertise `0x800B` and
 require supporting peers. Input Delay: 33ms also requires peers that confirm
 the delay capability; older PB builds cannot join an enabled-delay match.
-v10/PB-v10 builds must update. For mixed cybersecurity tests, leave PB Options
-Stock and Input Delay Off. Games with five or more players should leave
+v10/PB-v10 builds must update. For mixed cybersecurity tests, leave Performance
+Options Stock, Input Delay Off and Hardcore Off. Games with five or more players should leave
 Infinite Grenades off because the native Xbox rule still differs even though
 the best-effort gate admits that setting.
-See [networking](../port/linux/NETCODE.md), [PB Options](performance-options.md)
+See [networking](../port/linux/NETCODE.md), [Performance Options](performance-options.md)
 and [playtesting](playtesting.md) for implementation and player guidance.
 
 ## Optional competitive features
 
-PB Options permits host-selected match timers, timer announcements, spawn
-markers, silent movement/weapon-ready sounds and fixed 33ms input delay.
+The October 5 meeting-feedback implementation adds an explicit Hardcore
+precision rule, default Off, independent of Stock/Practice aid presets. It
+changes only pistol/unscoped-sniper initial spread and retains maximum spread,
+buildup, recovery and firing RNG calls. Enabled matches require peer support
+and a host acknowledgement; active match rules are locked. Local map filters
+do not restrict joining, and Join In Progress defaults On to retain the prior
+host behavior. These are requested options, not reference-Xbox corrections.
+
+The requested pistol hollow-metal effect and dirt-only overshield material
+changes are intentional content refinements of retail quirks. Loaded native
+tags are changed selectively; source caches and custom authored effects remain
+intact. See [the meeting implementation record](meeting-fixes-2026-10-05.md)
+for exact boundaries, evidence and remaining work.
+
+Performance Options permits host-selected match timers, timer announcements,
+spawn markers, silent movement/weapon-ready sounds, fixed 33ms input delay
+and Hardcore precision spread.
 All modifications default off; sounds default Normal. Timer audio/display
 preferences are local. These limited
 options do not authorize other Performance Build mechanics, weapon changes or
 a different tick rate. Original PC v7 caches remain unsupported.
 
 ## Defaults and comparison profile
+
+Controller settings offer **Menu Repeat: Original / Faster** as an intentional
+local UI preference. Original retains the reconstructed 250 ms cadence; Faster
+opts into 100 ms held navigation for arrows, D-pad directions and sticks in
+menus and the on-screen keyboard. It defaults Original and applies only after
+Accept, with no simulation, gameplay-button or network-rule change. This does
+not alter the original event-queue or stick-edge behavior. See
+[menu repeat](menu-repeat.md) for the option and validation boundaries.
 
 New configurations set `display.high_res_hud`, `display.interpolation` and
 `display.direct_camera` to `false`. Existing choices are preserved. Simulation
@@ -201,6 +272,38 @@ These are native integration corrections, with no wire-layout/version change
 and no change to the 30 Hz simulation, trail tags/lifetimes, ammunition rules,
 or original teleport cooldown. Regression fixtures run on Mac, Windows and
 Linux; they do not establish reference-Xbox or cross-platform gameplay parity.
+
+### Safe upstream reliability corrections (October 4, 2026)
+
+The selective OpenCE port adopts loaded-map cleanup (`601a4c1f`), null-client
+frame recovery (`7e00135d`) and only the invalid full-datum killer/assist guards
+from `809408c6`. Valid-player credit, betrayal penalties and message behavior
+remain covered by the existing production functions. Slot reuse, queue replacement
+and weapon-pickup rule changes remain excluded.
+
+Local commits: loaded-map cleanup `26654de7`; null-client recovery
+`15fdbf00`; stale killer/assist guards are included in the commit
+containing this ledger (`fix(game): ignore stale players in kill and assist scoring`).
+The same 81 targeted tests pass again during October 5 commit preparation.
+
+The three new production-function fixture suites pass 31 tests. They reproduce
+the original stopped-map and missing-client failures with negative controls,
+exercise deleted and generation-mismatched attacker references, and cover valid
+scoring, load failures and consecutive transitions. Combined with the targeted
+network, inventory, teleport and timing suites, 81 tests pass locally on macOS.
+The new suites are also wired into Mac, Linux and Windows CI; those remote runs
+have not been executed for this port.
+
+In the October 4 pre-commit validation, the native Mac guest/app built successfully
+and the installed app passed strict signature verification. The installed guest
+hash matched the built guest and `BuildInfo.txt` identified the source as
+containing local changes. An isolated 75-second native map-cycle smoke passed,
+with one acknowledged transition from Prisoner to Chill Out, 3,660 rendered frames
+and a clean exit. The two-instance LAN smoke exited cleanly without assertions,
+but the client remained in discovery and no match started. Consecutive-match
+network behavior is therefore unverified;
+these fixtures and build results do not certify original-Xbox parity. Generated
+evidence is under `build/macos/safe-upstream-*`.
 
 ### Original target
 

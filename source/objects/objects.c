@@ -3275,6 +3275,9 @@ long object_new(
 	if (game_engine_running() && definition_index!=NONE
 		/* (the host's object, which the host made as the game type has it) */
 		&& !network_objects_creating_host_object()
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		&& !TEST_FLAG(data->flags, _new_object_skip_variant_remap_bit)
+#endif
 		)
 	{
 		definition_index = game_engine_remap_object_definition(definition_index);

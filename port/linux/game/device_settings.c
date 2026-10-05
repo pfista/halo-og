@@ -1,6 +1,7 @@
 /* The menus edit a local draft. This is their shared save/apply boundary. */
 #include "device_settings.h"
 #include "port_config.h"
+#include "../include/controller_settings.h"
 #include "native_video.h"
 #include "native_audio.h"
 #include <float.h>
@@ -22,7 +23,10 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
 #endif
     "display.vsync", "display.interpolation",
     "audio.timer_countdown", "audio.timer_beeps", "audio.timer_minutes", "audio.timer_items",
-    "display.timer_position", "display.timer_scale"
+    "display.timer_position", "display.timer_scale",
+    "maps.show_og", "maps.show_community", "network.join_in_progress",
+    "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration",
+    "input.fast_menu_repeat"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
     , "display.renderer", "display.render_height", "display.frame_limit", "display.anti_aliasing"
 #endif
@@ -68,6 +72,8 @@ double device_settings_get(short setting)
         value = config_real(setting_names[setting]);
         return !device_setting_is_finite(value) ? 1.0 : value < 0.5 ? 0.5 : value > 1.0 ? 1.0 : value;
     }
+    if (setting == _device_setting_left_stick_deadzone || setting == _device_setting_right_stick_deadzone)
+        return halo_controller_deadzone(config_integer(setting_names[setting]));
     if (setting >= _device_setting_menu_music) return config_boolean(setting_names[setting]) != 0;
     value = config_real(setting_names[setting]);
     /* Keep malformed file values out of slider indices. */
@@ -86,6 +92,16 @@ int device_settings_apply(unsigned long changed_mask,
     if (changed_mask & ~((1UL << NUMBER_OF_DEVICE_SETTINGS) - 1)) return 0;
     if (!changed_mask) return 1;
     if (!values) return 0;
+    /* A local map-selection preference must retain at least one enabled set.
+     * Unchanged rows come from the current config, not the caller's draft. */
+    if (changed_mask & ((1UL << _device_setting_show_og_maps) | (1UL << _device_setting_show_community_maps)))
+    {
+        double og = changed_mask & (1UL << _device_setting_show_og_maps) ?
+            values[_device_setting_show_og_maps] : device_settings_get(_device_setting_show_og_maps);
+        double community = changed_mask & (1UL << _device_setting_show_community_maps) ?
+            values[_device_setting_show_community_maps] : device_settings_get(_device_setting_show_community_maps);
+        if (og == 0.0 && community == 0.0) return 0;
+    }
     for (setting = 0; setting < NUMBER_OF_DEVICE_SETTINGS; setting++)
     {
         double old;
@@ -111,6 +127,11 @@ int device_settings_apply(unsigned long changed_mask,
         else if (setting == _device_setting_timer_scale)
         {
             if (values[setting] < 0.5 || values[setting] > 1.0) return 0;
+        }
+        else if (setting == _device_setting_left_stick_deadzone || setting == _device_setting_right_stick_deadzone)
+        {
+            if (values[setting] < 0.0 || values[setting] > HALO_CONTROLLER_DEADZONE_MAX ||
+                values[setting] != (int)values[setting]) return 0;
         }
         else if (values[setting] < 0.0 || values[setting] > 1.0 ||
             (setting >= _device_setting_menu_music && values[setting] != 0.0 && values[setting] != 1.0)) return 0;

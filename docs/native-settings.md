@@ -1,4 +1,4 @@
-# Native audio, video and Mac window controls
+# Native game settings and Mac window controls
 
 Open **Settings → Game Settings** from the main menu, or **Game Settings**
 from Pause in multiplayer, campaign or cooperative play. **Profile Settings**
@@ -11,7 +11,7 @@ Spartan artwork; Game Settings shows the controller artwork. Moving between
 the rows updates the preview, with the original fonts, blue highlights and
 button legend retained.
 
-Game Settings uses the same two-column chooser for Audio and Video, with the
+Game Settings uses the same two-column chooser for Audio, Video, Controller and Multiplayer, with the
 original controller-calibration and TV/Xbox illustrations. Its Audio and Video
 pages clone the original Advanced Controls editor: blue option rows, separate
 labels and values, the original arrow graphics, contextual help, and the native
@@ -24,11 +24,63 @@ Select/Back legend. Taller option pages extend the middle of the frame while
 preserving its corners and footer divider. Split-screen pages fit within their
 local viewport; focused help appears beneath the frame in full-screen layouts.
 
-Audio and Video preferences belong to the local installation. They are not
-part of a player profile, map or network gametype. PB Options remain saved
+Audio, Video, Controller and Multiplayer preferences belong to the local installation. They are not
+part of a player profile, map or network gametype. Performance Options remain saved
 gametype options with host authority. Timer cue groups, volume, position and
 size are local preferences; the host still controls whether the timer and
 timer audio are enabled.
+
+## Controller
+
+Controller has separate **Left Stick Deadzone** and **Right Stick Deadzone**
+controls. Each offers 0%, 10%, 20%, Xbox, 30%, 40% and 49% presets. **Xbox** is
+the default and restores the original raw dead-zone value of 9000, approximately
+27.5% of the stick's range. Lower values respond to smaller stick movements but
+can expose drift; the same original axial filter rescales the remaining range.
+
+The settings save locally as `input.left_stick_deadzone` and
+`input.right_stick_deadzone`, integer values from 0 to 16000. They apply to every
+connected local controller, including touch sticks on iOS, rather than being
+stored in player profiles. Sensitivity and control layout retain their original
+profile controls. Left/right stick labels also fit Southpaw and Legacy layouts.
+
+Accept saves and applies the draft; Cancel leaves the current preferences in
+place. Mouse sensitivity and keyboard movement are separate. Controller use
+after mouse aiming follows the chosen dead zones and the active profile's
+look-stick layout.
+
+**Look Acceleration** offers **Xbox** and **Off**, saving locally as
+`input.look_acceleration` (default `true`). Xbox retains the original
+map-authored turning boost when the horizontal look stick stays near full
+deflection. Off removes that timed boost and clears its accumulated time.
+Profile sensitivity, the underlying stick-response curve, vertical turning,
+zoom scaling and direct mouse aiming retain their existing behavior.
+
+**Menu Repeat** offers **Original** (250 ms) and **Faster** (100 ms).
+Original is the default. This controls held arrow keys, D-pad directions and
+stick navigation in menus and the on-screen name-entry keyboard. Accept saves
+and applies it immediately for all local players; Cancel discards the draft.
+It saves as `input.fast_menu_repeat` (default `false`) and does not change
+gameplay input or simulation timing. See [menu repeat](menu-repeat.md).
+
+## Multiplayer
+
+| Menu control | Config key | Default | Meaning |
+| --- | --- | --- | --- |
+| OG Maps | `maps.show_og` | On | Show the original Xbox maps when hosting |
+| Community Maps | `maps.show_community` | On | Show installed community maps, including alternate/refined imports |
+| Join In Progress | `network.join_in_progress` | On | Permit new players to join a running hosted match |
+
+Map visibility affects the host's map-selection list. Hidden maps remain
+available for joining and approved downloads. At least one set must remain
+On; if no visible community map is installed, the list falls back to OG maps.
+Separate alternate/refined categories require reviewed catalog metadata.
+
+Join In Progress is a local host preference. Off closes admission and reports
+a running match as closed in discovery/invites; pregame lobby joining remains
+available. Queue consumption rechecks it too, preventing extra split-screen
+seats or queued additions after closing the match. Applying it does not remove
+existing players.
 
 ## Audio
 

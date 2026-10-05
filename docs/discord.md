@@ -33,6 +33,11 @@ configs holding the previous bundled Halo CE ID, `1553978809840050229`, use the
 new application at runtime without rewriting that saved value. Empty and custom
 IDs are preserved, and `HALO_DISCORD_APPLICATION` still overrides the file.
 
+Halo OG registers `halo-og://` for multiplayer invite links and
+`discord-1556496882329460736://` for Discord launches. Its Mac bundle identifier
+is `local.halo.og`, so installing it alongside the original fork keeps each
+application's launch handlers separate.
+
 ## Validation
 
 Run the production presence fixtures without Discord or game data:

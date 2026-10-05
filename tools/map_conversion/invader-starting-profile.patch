@@ -1,0 +1,13 @@
+--- a/src/tag/parser/compile/scenario/pre_compile.cpp
++++ b/src/tag/parser/compile/scenario/pre_compile.cpp
+@@ -325,6 +325,10 @@
+ 
+                         case HEK::ScenarioScriptValueType::SCENARIO_SCRIPT_VALUE_TYPE_DEVICE_GROUP:
+                             new_node.data.short_int = find_thing(scenario.device_groups, n.string_data);
++                            break;
++
++                        case HEK::ScenarioScriptValueType::SCENARIO_SCRIPT_VALUE_TYPE_STARTING_PROFILE:
++                            new_node.data.short_int = find_thing(scenario.player_starting_profile, n.string_data);
+                             break;
+ 
+                         case HEK::ScenarioScriptValueType::SCENARIO_SCRIPT_VALUE_TYPE_TRIGGER_VOLUME:

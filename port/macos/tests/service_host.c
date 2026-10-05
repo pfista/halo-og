@@ -27,6 +27,14 @@ extern void *host_resolve_import(const char *name);
 static uint32_t (*guest)(uint32_t);
 static unsigned native_calls;
 
+uint64_t host_sdl_window_flags(uint32_t window)
+{
+    native_calls++;
+    if (!window) return 0;
+    assert(window == 0x12345678);
+    return UINT64_C(0x8000000012345678);
+}
+
 static void *pointer(uint32_t offset) { return (void *)(BASE + offset); }
 int halo_map_download_directory(char *out, size_t capacity)
 {
@@ -44,15 +52,17 @@ int halo_map_download_request(const char *name)
     return HALO_MAP_DOWNLOAD_PENDING;
 }
 int halo_directory_http(const char *method, const char *url, const char *lease,
-    const char *body, char *response, int capacity, int *status)
+    const char *body, char *response, int capacity, int *status, int *retry_after_seconds)
 {
     native_calls++;
     assert(method == pointer(0x02000100) && !strcmp(method, "GET"));
     assert(url == pointer(0x02000300) && !strcmp(url, "https://fixture.invalid/v1/games"));
     assert(response == pointer(0x02000800) && status == pointer(0x02000c00));
+    assert(retry_after_seconds == pointer(0x02000c04));
     if (!lease) {
         assert(!body && capacity == 17);
         *status = 0;
+        *retry_after_seconds = 0;
         return -7;
     }
     assert(lease == pointer(0x02000500) && !strcmp(lease, "fixture lease"));
@@ -60,6 +70,7 @@ int halo_directory_http(const char *method, const char *url, const char *lease,
     assert(capacity == 1024);
     memcpy(response, "ok", 3);
     *status = 201;
+    *retry_after_seconds = 30;
     return 3;
 }
 static void *map_at(uint64_t address, size_t size)
@@ -72,8 +83,8 @@ static void *map_at(uint64_t address, size_t size)
 static void *run(void *unused)
 {
     uint32_t result = guest(0);
-    printf("guest service result=%u expected=93; native calls=%u expected=6\n", result, native_calls);
-    return (void *)(uintptr_t)(result != 93 || native_calls != 6);
+    printf("guest service result=%u expected=93; native calls=%u expected=8\n", result, native_calls);
+    return (void *)(uintptr_t)(result != 93 || native_calls != 8);
 }
 int main(int argc, char **argv)
 {

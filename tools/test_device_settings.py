@@ -15,6 +15,7 @@ HARNESS = r'''
 #include <string.h>
 #include "device_settings.h"
 #include "port_config.h"
+#include "controller_settings.h"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define MAC_FULLSCREEN 1
 #define MOBILE_FULLSCREEN 0
@@ -31,14 +32,18 @@ HARNESS = r'''
 static const char *names[] = {"audio.volume", "audio.music_volume", "audio.effects_volume",
     "audio.dialogue_volume", "audio.timer_volume", "audio.menu_music", "display.vsync", "display.interpolation",
     "audio.timer_countdown", "audio.timer_beeps", "audio.timer_minutes", "audio.timer_items",
-    "display.timer_position", "display.timer_scale", "display.fullscreen"};
-static double saved[15];
+    "display.timer_position", "display.timer_scale", "display.fullscreen",
+    "maps.show_og", "maps.show_community", "network.join_in_progress",
+    "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration",
+    "input.fast_menu_repeat"};
+#define TEST_SETTING_COUNT (sizeof(names)/sizeof(names[0]))
+static double saved[TEST_SETTING_COUNT];
 static const char *renderer="angle",*antialiasing="off";
 static long render_height=480,frame_limit;
 static int fullscreen, native_fullscreen, write_ok, switch_ok, apply_ok, writes, audio_applies, video_applies, switches, starts, stops;
 static int write_fail_on, switch_fail_on, apply_fail_on;
 static int index_of(const char *name) {
-    for (int i=0;i<15;i++) if (!strcmp(names[i],name)) return i;
+    for (unsigned i=0;i<TEST_SETTING_COUNT;i++) if (!strcmp(names[i],name)) return (int)i;
     assert(!"unknown preference"); return -1;
 }
 int config_boolean(const char *name) {
@@ -85,15 +90,87 @@ int halo_video_apply_settings(void) { video_applies++; return apply_ok && video_
 void halo_audio_apply_settings(void) { audio_applies++; }
 void ui_apply_main_menu_music_setting(void) { if (saved[5]) starts++; else stops++; }
 static void reset(double values[NUMBER_OF_DEVICE_SETTINGS]) {
-    for (int i=0;i<15;i++) saved[i]=(i==7 || i==11 || i==12) ? 0.0 : 1.0;
+    for (unsigned i=0;i<TEST_SETTING_COUNT;i++) saved[i]=(i==7 || i==11 || i==12) ? 0.0 : 1.0;
+    saved[18]=saved[19]=9000;
+    saved[21]=0;
     saved[0]=0.15; fullscreen=native_fullscreen=1; write_ok=switch_ok=apply_ok=1;
     renderer="angle";antialiasing="off";render_height=480;frame_limit=0;
     writes=audio_applies=video_applies=switches=starts=stops=0;
     write_fail_on=switch_fail_on=apply_fail_on=0;
     for(int i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) values[i]=device_settings_get(i);
 }
+static void check_controller_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) {
+    /* Controller edits persist atomically without touching audio or video;
+     * Android and iOS use the same preference boundary as desktop. */
+    reset(values);
+    assert(values[_device_setting_left_stick_deadzone]==9000 && values[_device_setting_right_stick_deadzone]==9000);
+    values[_device_setting_left_stick_deadzone]=0; values[_device_setting_right_stick_deadzone]=16000;
+    assert(device_settings_apply((1UL<<_device_setting_left_stick_deadzone)|(1UL<<_device_setting_right_stick_deadzone),values));
+    assert(writes==1 && saved[18]==0 && saved[19]==16000 && !audio_applies && !video_applies && !switches);
+    reset(values); saved[18]=1234; values[_device_setting_left_stick_deadzone]=1234;
+    assert(device_settings_apply(1UL<<_device_setting_left_stick_deadzone,values) && !writes && saved[18]==1234);
+    values[_device_setting_left_stick_deadzone]=6553; values[_device_setting_right_stick_deadzone]=3277; write_ok=0;
+    assert(!device_settings_apply((1UL<<_device_setting_left_stick_deadzone)|(1UL<<_device_setting_right_stick_deadzone),values));
+    assert(saved[18]==1234 && saved[19]==9000 && !audio_applies && !video_applies && !switches);
+    reset(values);
+    for(int setting=_device_setting_left_stick_deadzone;setting<=_device_setting_right_stick_deadzone;setting++) {
+        const double bad[]={-1,16001,0.5,NAN,INFINITY};
+        for(unsigned i=0;i<sizeof(bad)/sizeof(bad[0]);i++) {
+            values[setting]=bad[i]; assert(!device_settings_apply(1UL<<setting,values));
+        }
+        values[setting]=9000;
+    }
+    assert(!writes && !audio_applies && !video_applies && !switches);
+    saved[18]=-1; saved[19]=16001;
+    assert(device_settings_get(_device_setting_left_stick_deadzone)==9000 && device_settings_get(_device_setting_right_stick_deadzone)==9000);
+    reset(values);
+    assert(values[_device_setting_look_acceleration]==1);
+    values[_device_setting_look_acceleration]=0.5;
+    assert(!device_settings_apply(1UL<<_device_setting_look_acceleration,values) && !writes);
+    values[_device_setting_look_acceleration]=0;
+    assert(device_settings_apply(1UL<<_device_setting_look_acceleration,values));
+    assert(writes==1 && saved[20]==0 && !audio_applies && !video_applies && !switches);
+    values[_device_setting_look_acceleration]=1; values[_device_setting_left_stick_deadzone]=3277; write_ok=0;
+    assert(!device_settings_apply((1UL<<_device_setting_look_acceleration)|(1UL<<_device_setting_left_stick_deadzone),values));
+    assert(saved[20]==0 && saved[18]==9000 && !audio_applies && !video_applies && !switches);
+}
+static void check_menu_repeat_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) {
+    unsigned long menu_repeat = 1UL << _device_setting_fast_menu_repeat;
+    const double bad[] = {-1, 2, 0.5, NAN, INFINITY, -INFINITY};
+    reset(values);
+    assert(values[_device_setting_fast_menu_repeat]==0 && halo_menu_repeat_milliseconds()==250);
+    assert(device_settings_apply(menu_repeat,values) && !writes);
+    for(unsigned i=0;i<sizeof(bad)/sizeof(bad[0]);i++) {
+        values[_device_setting_fast_menu_repeat]=bad[i];
+        assert(!device_settings_apply(menu_repeat,values));
+    }
+    assert(!writes && !audio_applies && !video_applies && !switches);
+    values[_device_setting_fast_menu_repeat]=1;
+    write_ok=0;
+    assert(!device_settings_apply(menu_repeat,values));
+    assert(saved[21]==0 && device_settings_get(_device_setting_fast_menu_repeat)==0 &&
+        halo_menu_repeat_milliseconds()==250 && writes==1);
+    write_ok=1;
+    assert(device_settings_apply(menu_repeat,values));
+    assert(saved[21]==1 && device_settings_get(_device_setting_fast_menu_repeat)==1 &&
+        halo_menu_repeat_milliseconds()==100 && writes==2);
+    assert(!audio_applies && !video_applies && !switches && !starts && !stops);
+    assert(device_settings_apply(menu_repeat,values) && writes==2);
+    values[_device_setting_fast_menu_repeat]=0;
+    assert(device_settings_apply(menu_repeat,values));
+    assert(saved[21]==0 && halo_menu_repeat_milliseconds()==250 && writes==3);
+    /* A mixed draft remains atomic when another backend rejects it. */
+    reset(values);
+    values[_device_setting_fast_menu_repeat]=1;
+    values[_device_setting_vsync]=0;
+    apply_fail_on=1;
+    assert(!device_settings_apply(menu_repeat | (1UL<<_device_setting_vsync),values));
+    assert(saved[21]==0 && saved[6]==1 && halo_menu_repeat_milliseconds()==250 && writes==2);
+}
 int main(void) {
     double values[NUMBER_OF_DEVICE_SETTINGS];
+    check_controller_settings(values);
+    check_menu_repeat_settings(values);
     if (MOBILE_FULLSCREEN) {
         /* Android/iOS remain fullscreen and never read or persist the
          * desktop-only preference, even in a mixed settings draft. */
@@ -228,8 +305,33 @@ int main(void) {
     saved[13]=-DBL_MAX; assert(device_settings_get(_device_setting_timer_scale)==0.5);
     saved[13]=DBL_MAX; assert(device_settings_get(_device_setting_timer_scale)==1.0);
     saved[13]=0.625; assert(device_settings_get(_device_setting_timer_scale)==0.625);
+    /* Map filtering and late joins are local preferences with original
+     * defaults. They do not reconfigure audio/video or change match rules. */
+    reset(values);
+    assert(values[_device_setting_show_og_maps]==1 && values[_device_setting_show_community_maps]==1 &&
+        values[_device_setting_join_in_progress]==1);
+    values[_device_setting_show_community_maps]=0; values[_device_setting_join_in_progress]=0;
+    unsigned long multiplayer=(1UL<<_device_setting_show_community_maps)|(1UL<<_device_setting_join_in_progress);
+    assert(device_settings_apply(multiplayer,values));
+    assert(writes==1 && saved[15]==1 && saved[16]==0 && saved[17]==0);
+    assert(!audio_applies && !video_applies && !switches && !starts && !stops);
+    values[_device_setting_show_og_maps]=0;
+    assert(!device_settings_apply(1UL<<_device_setting_show_og_maps,values) && writes==1);
+    assert(saved[15]==1);
+    reset(values); values[_device_setting_show_og_maps]=0; values[_device_setting_show_community_maps]=0;
+    values[0]=0.2;
+    assert(!device_settings_apply(1UL|(1UL<<_device_setting_show_og_maps)|(1UL<<_device_setting_show_community_maps),values));
+    assert(!writes && saved[0]==0.15 && saved[15]==1 && saved[16]==1);
+    reset(values); values[_device_setting_show_og_maps]=0; write_ok=0;
+    assert(!device_settings_apply(1UL<<_device_setting_show_og_maps,values));
+    assert(saved[15]==1 && saved[16]==1 && writes==1);
+    reset(values); values[_device_setting_show_og_maps]=0; values[_device_setting_join_in_progress]=0;
+    values[_device_setting_vsync]=0; apply_fail_on=1;
+    assert(!device_settings_apply((1UL<<_device_setting_vsync)|(1UL<<_device_setting_show_og_maps)|
+        (1UL<<_device_setting_join_in_progress),values));
+    assert(writes==2 && saved[6]==1 && saved[15]==1 && saved[16]==1 && saved[17]==1);
 #if MAC_FULLSCREEN
-    assert(NUMBER_OF_DEVICE_SETTINGS==19);
+    assert(NUMBER_OF_DEVICE_SETTINGS==26);
     reset(values);values[_device_setting_renderer]=1;values[_device_setting_render_height]=0;
     values[_device_setting_frame_limit]=120;values[_device_setting_anti_aliasing]=1;
     assert(device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_render_height)|
@@ -243,6 +345,17 @@ int main(void) {
         (1UL<<_device_setting_anti_aliasing)|(1UL<<_device_setting_vsync),values));
     assert(writes==2 && !strcmp(renderer,"angle") && !strcmp(antialiasing,"off") && render_height==480 && saved[6]==1);
     assert(video_applies==2 && !switches);
+    /* Controller/menu preferences and pending Metal choices share one draft.
+     * A live video refusal must roll every changed type back together. */
+    reset(values);values[_device_setting_renderer]=1;values[_device_setting_frame_limit]=60;
+    values[_device_setting_left_stick_deadzone]=3277;values[_device_setting_fast_menu_repeat]=1;
+    values[_device_setting_vsync]=0;apply_fail_on=1;
+    assert(!device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_frame_limit)|
+        (1UL<<_device_setting_left_stick_deadzone)|(1UL<<_device_setting_fast_menu_repeat)|
+        (1UL<<_device_setting_vsync),values));
+    assert(writes==2 && !strcmp(renderer,"angle") && frame_limit==0 && saved[18]==9000 &&
+        saved[21]==0 && saved[6]==1 && halo_menu_repeat_milliseconds()==250);
+    assert(video_applies==2 && !audio_applies && !switches);
     reset(values);values[_device_setting_renderer]=1;values[_device_setting_anti_aliasing]=1;write_ok=0;
     assert(!device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_anti_aliasing),values));
     assert(writes==1 && !video_applies && !strcmp(renderer,"angle") && !strcmp(antialiasing,"off"));
@@ -256,7 +369,7 @@ int main(void) {
     assert(values[_device_setting_render_height]==720);
     assert(device_settings_apply(1UL<<_device_setting_render_height,values) && !writes);
 #else
-    assert(NUMBER_OF_DEVICE_SETTINGS==15);
+    assert(NUMBER_OF_DEVICE_SETTINGS==22);
 #endif
     puts("device settings save/apply tests passed");
 }
@@ -286,6 +399,7 @@ class DeviceSettingsTests(unittest.TestCase):
             executable = path / ("test.exe" if sys.platform == "win32" else "test")
             subprocess.run(["clang", "-std=c99", *platform_flags, "-Wall", "-Wextra", "-Werror",
                             "-I", str(path), "-I", str(ROOT / "port/linux/game"),
+                            "-iquote", str(ROOT / "port/linux/include"),
                             str(path / "test.c"), str(production),
                             "-o", str(executable)], check=True)
             subprocess.run([str(executable)], check=True)

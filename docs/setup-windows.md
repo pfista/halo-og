@@ -75,7 +75,7 @@ their actions. [All key names and controls](../port/linux/README.md#controls).
 ## Host or join a game
 
 Use the **same release and map** as your friends. Start with stock Blood Gulch,
-Slayer, and **PB Options → Stock**; optional competitive changes default off.
+Slayer, and **Performance Options → Stock**, with Input Delay and Hardcore Off.
 
 1. The host opens **Multiplayer → System Link**, selects a profile, and chooses
    **Create Game** (Y on a controller, or Tab). Select the map and mode.
@@ -86,7 +86,7 @@ Slayer, and **PB Options → Stock**; optional competitive changes default off.
    **games.oghalo.com** in System Link. Select a game and wait for **Connecting…**.
    See [public discovery/private hosting](system-link-directory.md). For older
    builds or private games, the host pastes the invite copied to its clipboard into a
-   message. Joining players **copy the complete `halo://join/…` link and switch
+   message. Joining players **copy the complete `halo-og://join/…` link and switch
    back to Halo**, then select the host in **System Link** and join.
 4. Once everyone is in the lobby, the host starts the match and keeps the game open.
 

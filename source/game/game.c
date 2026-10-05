@@ -643,6 +643,14 @@ void game_initialize_for_new_map(
 	return;
 }
 
+/* A loaded map can outlive its game clock, including the main menu map
+after a client finishes a match. */
+boolean game_map_loaded(
+	void)
+{
+	return game_globals->map_loaded;
+}
+
 boolean game_map_loading_in_progress(
 	real *progress)
 {

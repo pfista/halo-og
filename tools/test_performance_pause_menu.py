@@ -37,7 +37,8 @@ enum { _gamepad_analog_button_a=0, _gamepad_analog_button_b=1,
 enum { UNICODE_STRING_LIST_TAG='ustr', _performance_option_match_timer=1,
  _performance_option_spawn_markers=2, _performance_option_timer_audio=4,
  _performance_option_silent_movement=8, _performance_option_silent_weapon_ready=16,
- _performance_option_input_delay=32, PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=63 };
+ _performance_option_input_delay=32, _performance_option_hardcore=64, _performance_option_fiesta=128,
+ PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=255, PERFORMANCE_MATCH_RULE_FLAGS=224 };
 struct tag_block { long count; void *address; void *definition; };
 struct tag_reference { unsigned long group_tag; char *name; long name_length,index; };
 struct tag_data { long size; unsigned long pad; long file_offset; void *address,*definition; };
@@ -195,7 +196,7 @@ int main(void) {
  }
  assert(!performance_pause_is_spinner(NULL));
  assert(performance_pause_definitions[_pp_title].bounds.y1==22);
- assert(performance_pause_definitions[_pp_title].text_font.index==9);
+ assert(performance_pause_definitions[_pp_title].text_font.index==7);
  assert(performance_pause_definitions[_pp_title].vertical_offset==0);
  // Seven complete buttons finish at the cap-preserved footer divider (240-29).
  assert(22+performance_pause_definitions[_pp_column].bounds.y1==211);
@@ -207,6 +208,9 @@ int main(void) {
  assert(!line_break);
  }
  assert(performance_pause_definitions[_pp_entry_1p].string_list_index==0);
+ assert(performance_pause_definitions[_pp_entry_1p].text_font.index==7);
+ assert(performance_pause_definitions[_pp_settings_1p].text_font.index==9);
+ assert(ustrlen(performance_pause_text[0])==19 && ustrlen(performance_pause_text[12])==19);
  assert(performance_pause_root_events[1].flags==FLAG(_event_handler_go_back_to_previous_widget_bit));
  assert(performance_pause_apply_events[0].flags==(FLAG(_event_handler_run_function_bit)|FLAG(_event_handler_go_back_to_previous_widget_bit)));
  for(unsigned flags=0;flags<=PERFORMANCE_OPTIONS_MASK;flags++) {
@@ -287,7 +291,32 @@ int main(void) {
  assert(performance_pause_event(control(root,_pp_apply),_performance_pause_apply) && host_flags==39);
  control(root,_pp_preset)->parameters.list.selected_index=0; performance_pause_update(root);
  assert(performance_pause_event(control(root,_pp_apply),_performance_pause_apply) && host_flags==32);
- free_widget(root); long old=performance_pause_tags[_pp_pause_1p];
+ free_widget(root);
+ /* Hardcore remains a pregame rule when either aid preset changes or a
+  * host applies live aid edits, with and without the action delay. */
+ for(unsigned timing=0;timing<=32;timing+=32) {
+   host_flags=64|timing|8; root=open_options(0,0);
+   control(root,_pp_preset)->parameters.list.selected_index=0; performance_pause_update(root);
+   assert(performance_pause_drafts[0].flags==(64|timing));
+   control(root,_pp_timer)->parameters.list.selected_index=1; performance_pause_update(root);
+   assert(performance_pause_drafts[0].flags==(64|timing|1));
+   control(root,_pp_preset)->parameters.list.selected_index=1; performance_pause_update(root);
+   assert(performance_pause_drafts[0].flags==(64|timing|7));
+   assert(performance_pause_event(control(root,_pp_apply),_performance_pause_apply) && host_flags==(64|timing|7));
+   free_widget(root);
+ }
+ long old=performance_pause_tags[_pp_pause_1p];
+ for(unsigned extras=0;extras<=96;extras+=32) {
+   host_flags=128|extras; root=open_options(0,0);
+   assert(control(root,_pp_preset)->parameters.list.selected_index==0);
+   control(root,_pp_preset)->parameters.list.selected_index=1; performance_pause_update(root);
+   assert(performance_pause_drafts[0].flags==(128|extras|7));
+   assert(performance_pause_event(control(root,_pp_apply),_performance_pause_apply) && host_flags==(128|extras|7));
+   control(root,_pp_preset)->parameters.list.selected_index=0; performance_pause_update(root);
+   assert(performance_pause_drafts[0].flags==(128|extras));
+   assert(performance_pause_event(control(root,_pp_apply),_performance_pause_apply) && host_flags==(128|extras));
+   free_widget(root);
+ }
  registry_count=0; generation++; assert(performance_pause_remap_tag(1)!=old && registry_count==32);
  assert(!performance_pause_drafts[0].root && !performance_pause_drafts[1].root);
  return 0;

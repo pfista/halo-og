@@ -30,11 +30,15 @@ static pthread_mutex_t input_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct platform_keystroke keystroke_queue[KEYSTROKE_QUEUE_SIZE];
 static unsigned long keystroke_head, keystroke_count;
 static int captured, console_open, capture_fails;
+static int directory_foreground;
+static SDL_WindowFlags window_flags = SDL_WINDOW_INPUT_FOCUS;
 static SDL_Event events[16];
 static int event_count, event_next;
 
 void platform_log(const char *format, ...) { (void)format; }
 unsigned char console_is_active(void) { return console_open; }
+void game_directory_set_foreground(int enabled) { directory_foreground = enabled; }
+SDL_WindowFlags SDL_GetWindowFlags(SDL_Window *window) { assert(window); return window_flags; }
 const char *config_string(const char *name) {
 #define BINDING(action, mac, other, comment) if (!strcmp(name, "bindings." #action)) return mac;
 #include "input_bindings.def"
@@ -85,9 +89,31 @@ static void click(int down) {
     event.button.button = SDL_BUTTON_LEFT; event.button.down = down;
     event.button.x = 321; event.button.y = 234; pump(event);
 }
+static void directory_window_event(Uint32 type, SDL_WindowFlags flags, int expected) {
+    SDL_Event event = {.type = type}; window_flags = flags; pump(event);
+    assert(directory_foreground == expected);
+}
 int main(void) {
     struct platform_input_state state;
     struct platform_ui_pointer pointer;
+    /* Hidden launches never browse; restoring an unfocused window does not
+       resume discovery until focus actually returns. */
+    window_flags = SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_HIDDEN;
+    platform_directory_foreground_update(); assert(!directory_foreground);
+    platform_window = NULL; platform_directory_foreground_update(); assert(!directory_foreground);
+    platform_window = (SDL_Window *)1; window_flags = SDL_WINDOW_INPUT_FOCUS;
+    platform_directory_foreground_update(); assert(directory_foreground);
+    directory_window_event(SDL_EVENT_WINDOW_FOCUS_LOST, 0, 0);
+    directory_window_event(SDL_EVENT_WINDOW_FOCUS_GAINED, SDL_WINDOW_INPUT_FOCUS, 1);
+    directory_window_event(SDL_EVENT_WINDOW_MINIMIZED, SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MINIMIZED, 0);
+    directory_window_event(SDL_EVENT_WINDOW_RESTORED, 0, 0);
+    directory_window_event(SDL_EVENT_WINDOW_FOCUS_GAINED, SDL_WINDOW_INPUT_FOCUS, 1);
+    directory_window_event(SDL_EVENT_WINDOW_HIDDEN, SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_HIDDEN, 0);
+    directory_window_event(SDL_EVENT_WINDOW_SHOWN, 0, 0);
+    directory_window_event(SDL_EVENT_WINDOW_FOCUS_GAINED, SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MINIMIZED, 0);
+    directory_window_event(SDL_EVENT_WINDOW_RESTORED, SDL_WINDOW_INPUT_FOCUS, 1);
+    directory_window_event(SDL_EVENT_WINDOW_HIDDEN, SDL_WINDOW_HIDDEN, 0);
+    directory_window_event(SDL_EVENT_WINDOW_SHOWN, SDL_WINDOW_INPUT_FOCUS, 1);
     input_state.focused = TRUE;
     platform_mouse_resume_gameplay(); assert(captured);
     key(SDL_SCANCODE_W, 1, 0); click(1);
@@ -198,10 +224,13 @@ int main(void) {
 
     def test_real_event_state_and_capture_transitions(self):
         source = (PORT / "sdl_platform.c").read_text()
+        foreground = "static void platform_directory_foreground_update(" + source.split(
+            "static void platform_directory_foreground_update(", 1)[1].split(
+            "static struct platform_input_state", 1)[0]
         controls = source.split("void platform_mouse_capture(", 1)[1].split("/* ---------- keyboard translation */", 1)[0]
         translation = source.split("/* ---------- keyboard translation */", 1)[1].split("/* ---------- internet play", 1)[0]
         events = source.split("void platform_pump_events(", 1)[1]
-        production = "void platform_mouse_capture(" + controls + translation + "void platform_pump_events(" + events
+        production = foreground + "void platform_mouse_capture(" + controls + translation + "void platform_pump_events(" + events
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             (directory / "prefix.h").write_text(PREFIX)

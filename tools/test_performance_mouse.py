@@ -131,7 +131,7 @@ static void fixture_setup(void) {
 }
 static void all_arrow_rows_and_staging(void) {
     fixture_setup(); struct widget_instance *root=open_pb();
-    for(short row=0;row<7;row++) {
+    for(short row=0;row<8;row++) {
         arrow(root,row,TRUE); assert(edited.flags==0 && mutation_calls==0);
         arrow(root,row,FALSE); assert(edited.flags==0 && mutation_calls==0);
     }
@@ -205,13 +205,13 @@ class PerformanceMouse(unittest.TestCase):
 
     def test_settings_mouse_arrows_and_wheel(self):
         from tools.test_game_settings import game_settings_fixture_source
-        source = game_settings_fixture_source().split("int main(void)", 1)[0]
+        source = game_settings_fixture_source().split("int main(", 1)[0]
         ui = (ROOT / "source/interface/ui_widget.c").read_text()
         # Reuse the OS pointer/event boundary. Settings recognition and value
         # handlers come from the actual native page builder above.
         stubs = STUBS.split("/* PRODUCTION ENUMS */", 1)[1].split("/* PRODUCTION FOCUS */", 1)[0]
         stubs = stubs.replace("static struct {struct widget_instance *active_widgets[4]; int initialization_thread;} widget_globals;", "")
-        for name in ("game_settings_is_native_spinner", "game_settings_is_adjustable", "ui_play_audio_feedback_sound"):
+        for name in ("game_settings_is_native_spinner", "game_settings_is_adjustable", "widget_instance_can_handle_events", "ui_play_audio_feedback_sound"):
             stubs = stubs.replace(c_block(stubs, ("static void " if name.startswith("ui_play") else "static boolean ") + name + "("), "")
         source += """
 #define ABS(value) ((value)<0 ? -(value):(value))

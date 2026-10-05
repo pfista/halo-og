@@ -1,4 +1,4 @@
-/* Optional practice settings stored in the original signed game variant. */
+/* Optional practice and match rules stored in the original signed variant. */
 #ifndef __PERFORMANCE_VARIANT_H
 #define __PERFORMANCE_VARIANT_H
 #pragma once
@@ -13,9 +13,14 @@ enum
 	_performance_option_silent_movement = 8,
 	_performance_option_silent_weapon_ready = 16,
 	_performance_option_input_delay = 32,
+	_performance_option_hardcore = 64,
+	/* Starting Equipment selects Fiesta; it is not a Performance menu aid. */
+	_performance_option_fiesta = 128,
+	/* Match rules are selected before starting, independently of aid presets. */
+	PERFORMANCE_MATCH_RULE_FLAGS = 224,
 	/* The existing Practice preset keeps the original movement/weapon audio. */
 	PERFORMANCE_PRACTICE_FLAGS = 7,
-	PERFORMANCE_OPTIONS_MASK = 63,
+	PERFORMANCE_OPTIONS_MASK = 255,
 	/* Nominal Xbox duration; one 30 Hz simulation update is 33.333 ms.
 	 * Preserve this duration if simulation frequency changes in the future. */
 	PERFORMANCE_INPUT_DELAY_MILLISECONDS = 33,
@@ -26,6 +31,7 @@ enum
  * dirty checks and whole-variant copies (including rename/save-as). The format
  * is PFO, version 1, flags, flags XOR 0xA5. Stock/off is all zeros. Old padding,
  * unknown versions/flags and damaged extensions always mean all options off.
+ * Fiesta occupies the final flags-byte bit; future rules need a new format.
  * Never encode options in game_variant.flags: the editor excludes that field
  * when checking for changes, and the upper byte identifies default profiles. */
 static inline unsigned performance_variant_get_flags(

@@ -95,6 +95,9 @@ symbols in this file:
 #include "text/font_group.h"
 #include "text/text_group.h"
 #include "text/unicode.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "controller_settings.h"
+#endif
 
 /* ---------- constants */
 
@@ -110,6 +113,12 @@ enum
 	FIRST_VIRTUAL_KEYBOARD_FORTUNE_STRING_INDEX = 11,
 	NUMBER_OF_VIRTUAL_KEYBOARD_FORTUNES = 10,
 };
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#define MENU_KEYBOARD_REPEAT_INTERVAL halo_menu_repeat_milliseconds()
+#else
+#define MENU_KEYBOARD_REPEAT_INTERVAL VIRTUAL_KEYBOARD_TAB_REPEAT_MILLISECONDS
+#endif
 
 enum virtual_key_code
 {
@@ -1181,7 +1190,7 @@ static void virtual_keyboard_process_internal(
 
 			case _gamepad_binary_button_dpad_up:
 				if (virtual_keyboard_globals.last_event != _event_tab_up ||
-					time - time_of_last_tab >= VIRTUAL_KEYBOARD_TAB_REPEAT_MILLISECONDS ||
+					time - time_of_last_tab >= MENU_KEYBOARD_REPEAT_INTERVAL ||
 					event.data.button.value == 1)
 				{
 					action = _event_tab_up;
@@ -1191,7 +1200,7 @@ static void virtual_keyboard_process_internal(
 
 			case _gamepad_binary_button_dpad_left:
 				if (virtual_keyboard_globals.last_event != _event_tab_left ||
-					time - time_of_last_tab >= VIRTUAL_KEYBOARD_TAB_REPEAT_MILLISECONDS ||
+					time - time_of_last_tab >= MENU_KEYBOARD_REPEAT_INTERVAL ||
 					event.data.button.value == 1)
 				{
 					action = _event_tab_left;
@@ -1201,7 +1210,7 @@ static void virtual_keyboard_process_internal(
 
 			case _gamepad_binary_button_dpad_down:
 				if (virtual_keyboard_globals.last_event != _event_tab_down ||
-					time - time_of_last_tab >= VIRTUAL_KEYBOARD_TAB_REPEAT_MILLISECONDS ||
+					time - time_of_last_tab >= MENU_KEYBOARD_REPEAT_INTERVAL ||
 					event.data.button.value == 1)
 				{
 					action = _event_tab_down;
@@ -1211,7 +1220,7 @@ static void virtual_keyboard_process_internal(
 
 			case _gamepad_binary_button_dpad_right:
 				if (virtual_keyboard_globals.last_event != _event_tab_right ||
-					time - time_of_last_tab >= VIRTUAL_KEYBOARD_TAB_REPEAT_MILLISECONDS ||
+					time - time_of_last_tab >= MENU_KEYBOARD_REPEAT_INTERVAL ||
 					event.data.button.value == 1)
 				{
 					action = _event_tab_right;

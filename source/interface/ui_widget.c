@@ -681,6 +681,7 @@ struct widget_instance;
 #include "halo_custom_maps.h"
 #include "halo_og_version.h"
 #include "port_config.h"
+#include "controller_settings.h"
 #include "../../port/linux/game/performance_options.h"
 #include "game/game.h"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
@@ -908,6 +909,12 @@ enum
 	NUMBER_OF_DPAD_DIRECTIONS =
 		_widget_event_dpad_right - _widget_event_dpad_up + 1
 };
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#define MENU_DPAD_REPEAT_INTERVAL halo_menu_repeat_milliseconds()
+#else
+#define MENU_DPAD_REPEAT_INTERVAL DPAD_EVENT_REPEAT_MILLISECONDS
+#endif
 
 enum
 {
@@ -1433,6 +1440,7 @@ static boolean ui_check_for_pause_game(
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "../../port/linux/game/device_settings.h"
 #include "performance_editor_menu.inc"
+#include "fiesta_item_options_menu.inc"
 #include "native_pause_frame.inc"
 #include "performance_pause_menu.inc"
 #include "game_settings_menu.inc"
@@ -3772,6 +3780,7 @@ struct widget_instance *ui_widget_load_by_name_or_tag(
 	{
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		tag_index = performance_editor_remap_tag(tag_index);
+		tag_index = fiesta_item_options_remap_tag(tag_index);
 		tag_index = performance_pause_remap_tag(tag_index);
 		tag_index = game_settings_remap_tag(tag_index);
 #endif
@@ -6493,7 +6502,7 @@ static void widget_instance_process_one_event_recursive(
 		widget_globals.current_system_milliseconds -
 			dpad_event_times[event->controller_index]
 				[event->data.button.index - _widget_event_dpad_up] >=
-			DPAD_EVENT_REPEAT_MILLISECONDS)
+			MENU_DPAD_REPEAT_INTERVAL)
 	{
 		event->data.button.value = 1;
 	}

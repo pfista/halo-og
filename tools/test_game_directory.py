@@ -16,7 +16,7 @@ PORT = ROOT / "port/linux/src"
 class Game(ctypes.Structure):
     _fields_ = [("id", ctypes.c_char * 37), ("name", ctypes.c_char * 33),
                 ("map", ctypes.c_char * 33), ("gametype", ctypes.c_char * 25),
-                ("invite", ctypes.c_char * 77)] + [
+                ("invite", ctypes.c_char * 80)] + [
         (field, ctypes.c_int) for field in ("player_count", "max_players", "network_version",
                                           "open", "in_progress", "has_teams", "lifetime_seconds",
                                           "score_limit", "oddball_variant")]
@@ -58,7 +58,7 @@ class DirectoryTests(unittest.TestCase):
 
     def listing(self, **changes):
         return dict(id="12345678-1234-1234-1234-123456789abc", name="Test host", map="downrush",
-                    gametype="Slayer", invite="halo://join/" + "a" * 64,
+                    gametype="Slayer", invite="halo-og://join/" + "a" * 64,
                     player_count=1, max_players=16, network_version=11, expires_at=1090,
                     netcode="distributed", open=True, in_progress=False, has_teams=False,
                     score_limit=50, oddball_variant=False, **changes)
@@ -106,6 +106,7 @@ class DirectoryTests(unittest.TestCase):
         out = ctypes.create_string_buffer(1024)
         self.assertEqual(self.lib.halo_directory_encode(ctypes.byref(game), out, len(out)), 1)
         self.assertEqual(json.loads(out.value)["name"], 'Test "host" \\')
+        self.assertEqual(json.loads(out.value)["invite"], self.listing()["invite"])
         self.assertEqual(json.loads(out.value)["score_limit"], 50)
         self.assertIs(json.loads(out.value)["oddball_variant"], False)
         self.assertEqual(self.lib.halo_directory_encode(ctypes.byref(game), out, 8), 0)
@@ -117,6 +118,16 @@ class DirectoryTests(unittest.TestCase):
         self.assertEqual(token.value, b"b" * 64)
         raw = raw.replace(b"b" * 64, b"x" * 64)
         self.assertEqual(self.lib.halo_directory_parse_lease(raw, len(raw), identifier, token), 0)
+
+    def test_legacy_directory_invites_use_the_halo_og_scheme_without_truncation(self):
+        record = self.listing()
+        record["invite"] = "halo://join/" + "a" * 64
+        count, games = self.parse([record])
+        self.assertEqual(count, 1)
+        self.assertEqual(games[0].invite.decode(), self.listing()["invite"])
+        out = ctypes.create_string_buffer(1024)
+        self.assertEqual(self.lib.halo_directory_encode(ctypes.byref(games[0]), out, len(out)), 1)
+        self.assertEqual(json.loads(out.value)["invite"], self.listing()["invite"])
 
     def test_real_score_zero_oddball_and_legacy_unknown_round_trip(self):
         record = self.listing()
@@ -249,12 +260,12 @@ static int network_game_client_advertised_game_is_valid(struct network_advertise
 void game_directory_browse(int enabled) { browsing=enabled; }
 int game_directory_snapshot(struct halo_directory_game *g,int cap) { assert(cap>=cached_count); memcpy(g,cached,sizeof(*g)*cached_count); return cached_count; }
 int p2p_invite_identity(const char *text,unsigned char *out) {
- if(strlen(text)!=76) return 0;
- for(int i=0;i<6;i++) { unsigned value; assert(sscanf(text+12+2*i,"%2x",&value)==1); out[i]=(unsigned char)value; }
+ if(strlen(text)!=79) return 0;
+ for(int i=0;i<6;i++) { unsigned value; assert(sscanf(text+15+2*i,"%2x",&value)==1); out[i]=(unsigned char)value; }
  out[0]=(unsigned char)((out[0]&0xFC)|0x02); return 1;
 }
 int p2p_invite_peer_address(const char *text,unsigned long *out) { (void)text; *out=peer_address; return connected; }
-int p2p_join_invite(const char *text) { assert(strlen(text)==76); requested++; return 1; }
+int p2p_join_invite(const char *text) { assert(strlen(text)==79); requested++; return 1; }
 void platform_show_message(const char *a,const char *b) { (void)a;(void)b;errors++; }
 '''.replace("@XNADDR_DECLARATIONS@", declarations)
         fixture += '\n#include "' + str(ROOT / "source/networking/network_directory.inc") + '"\n'
@@ -263,7 +274,7 @@ int main(void) {
  struct network_game_client client={0}; long count; XNADDR address={0}; unsigned char identity[6];
  client.state=2; cached_count=1;
  strcpy(cached[0].name,"Host"); strcpy(cached[0].map,"downrush"); strcpy(cached[0].gametype,"Slayer");
- strcpy(cached[0].invite,"halo://join/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+ strcpy(cached[0].invite,"halo-og://join/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
  cached[0].network_version=11;cached[0].open=1;cached[0].player_count=1;cached[0].max_players=16;
  cached[0].score_limit=50;
  assert(p2p_invite_identity(cached[0].invite,identity));
@@ -292,16 +303,16 @@ int main(void) {
  ad->unknown100=50; /* The real advertisement supplies the Xbox score limit. */
  address.ina.S_un.S_addr=0xC0A80102; memcpy(ad->xnaddr.data,&address,sizeof(address));
  network_game_client_get_directory_games(&client,&count); assert(count==0 && ad->unknown100==50); /* LAN dedup, preserving real rules */
- cached[1]=cached[0]; memset(cached[1].invite+44,'b',32); cached_count=2;
+ cached[1]=cached[0]; memset(cached[1].invite+47,'b',32); cached_count=2;
  network_game_client_get_directory_games(&client,&count); assert(count==0); /* same identity despite renewed invite token */
  ad->valid=0; network_game_client_get_directory_games(&client,&count); assert(count==1);
- memset(cached[1].invite+12,'c',64); network_game_client_get_directory_games(&client,&count); assert(count==2); /* distinct host remains visible */
+ memset(cached[1].invite+15,'c',64); network_game_client_get_directory_games(&client,&count); assert(count==2); /* distinct host remains visible */
  cached_count=1;
  {
   struct halo_directory_game original=cached[0], older=original, newer=original;
   strcpy(older.name,"Old host"); older.lifetime_seconds=20; older.score_limit=10; older.player_count=12;
   strcpy(newer.name,"Fresh host"); newer.lifetime_seconds=80; newer.score_limit=25; newer.oddball_variant=1; newer.player_count=1;
-  strcpy(newer.gametype,"Oddball"); memset(newer.invite+44,'b',32);
+  strcpy(newer.gametype,"Oddball"); memset(newer.invite+47,'b',32);
   cached[0]=older; cached[1]=newer; cached_count=2;
   network_game_client_get_directory_games(&client,&count);
   assert(count==1 && !wcscmp(games[0].game_name,L"Fresh host") && games[0].unknown100==25 && games[0].oddball_variant && games[0].player_count==1);

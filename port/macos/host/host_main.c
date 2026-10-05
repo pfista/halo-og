@@ -1,6 +1,7 @@
 /* Native macOS entry point. SDL video remains on the real main thread. */
 #include "host.h"
 #include "host_renderer.h"
+#include "../../linux/src/p2p_invite.h"
 #include "../native/host_menu.h"
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
@@ -95,10 +96,10 @@ int main(int argc, char **argv) {
             force_angle = 1;
             continue;
         }
-        if (!strncmp(argv[i], "halo://join/", 12) || host_is_discord_launch_url(argv[i]))
+        if (p2p_invite_prefix_length(argv[i]) || host_is_discord_launch_url(argv[i]))
             continue;
         if (image_argument) {
-            fprintf(stderr, "Usage: %s [--renderer-angle] [halo_guest.elf] [halo://join/invite]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [--renderer-angle] [halo_guest.elf] [" P2P_INVITE_PREFIX "invite]\n", argv[0]);
             return 2;
         }
         image_argument = argv[i];
