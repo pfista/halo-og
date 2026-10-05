@@ -301,10 +301,16 @@ static int fixture_close(int descriptor) { assert(descriptor == 7); return 0; }
 
 int main(int argc, char **argv)
 {
-    char invite[256], argument[256];
-    assert(argc == 6);
-    scheme = argv[1]; mode = argv[2]; directory = argv[3]; executable = argv[4];
-    spawn_status = atoi(argv[5]);
+    char invite[256], argument[256], executable_path[8192];
+    assert(argc == 5);
+    scheme = argv[1]; mode = argv[2]; directory = argv[3];
+    /* Windows' narrow argv uses the legacy code page. Model Linux's UTF-8
+     * readlink bytes through stdin instead, without losing Unicode paths. */
+    size_t length = fread(executable_path, 1, sizeof(executable_path) - 1, stdin);
+    assert(feof(stdin) && !ferror(stdin));
+    executable_path[length] = '\0';
+    executable = executable_path;
+    spawn_status = atoi(argv[4]);
     int result = posix_register_url_scheme(scheme, "Halo OG invite");
     snprintf(invite, sizeof(invite), "%s://join/@SECRET@", scheme);
     strcpy(process_arguments, "/opt/Halo OG/halo");
@@ -391,8 +397,8 @@ class UrlSchemeRegistrationTests(unittest.TestCase):
 
     def linux(self, scheme="halo-og", mode="xdg", executable="/opt/Halo OG/halo", status=0, directory=None):
         result = subprocess.run([str(self.binaries["linux"]), scheme, mode,
-                                 (directory or self.directory / "new" / "data").as_posix(), executable, str(status)],
-                                capture_output=True, text=True, check=True)
+                                 (directory or self.directory / "new" / "data").as_posix(), str(status)],
+                                input=executable.encode("utf-8"), capture_output=True, check=True)
         return tuple(map(int, result.stdout.split()))
 
     def desktop_file(self, scheme="halo-og", mode="xdg"):
@@ -478,7 +484,7 @@ class UrlSchemeRegistrationTests(unittest.TestCase):
         executable = '/opt/Halo OG \u674e $cash `tick` "quote" \\backslash 100%/halo'
         self.assertEqual(self.linux(executable=executable), (1, 1))
         invite = f"halo-og://join/{SECRET}"
-        self.assertEqual(desktop_launch(self.desktop_file().read_text(), invite),
+        self.assertEqual(desktop_launch(self.desktop_file().read_text(encoding="utf-8"), invite),
                          ["/usr/bin/env", executable, invite])
 
     @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("gio"), "native Linux gio required")
