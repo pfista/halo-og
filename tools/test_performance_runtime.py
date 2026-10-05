@@ -7,6 +7,7 @@ It does not claim to validate graphics, sockets or the compiled map tags.
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -18,7 +19,10 @@ FIXTURE = r'''
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#ifndef _WIN32
 #include <strings.h>
+#define _stricmp strcasecmp
+#endif
 #include <stdlib.h>
 #include <math.h>
 #include "performance_timer_schedule.h"
@@ -37,7 +41,6 @@ typedef struct { float a, r, g, b; } real_argb_color;
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define TEST_FLAG(v,b) (((v) & (1u << (b))) != 0)
 #define SET_FLAG(v,b,on) ((v) = (on) ? (v) | (1u << (b)) : (v) & ~(1u << (b)))
-#define _stricmp strcasecmp
 #define TICKS_PER_SECOND 30
 #define MAXIMUM_OBJECT_NAMES_PER_SCENARIO 512
 /* PRODUCTION DECLARATIONS */
@@ -560,12 +563,15 @@ class PerformanceRuntime(unittest.TestCase):
         fixture = fixture.replace("/* PRODUCTION */", source).replace("/* EXTENDED CHECKS */", EXTENDED_CHECKS)
         with tempfile.TemporaryDirectory() as directory:
             probe = Path(directory) / "runtime.c"
-            binary = Path(directory) / "runtime"
+            binary = Path(directory) / ("runtime.exe" if sys.platform == "win32" else "runtime")
             probe.write_text(fixture)
+            flags = ["-D_CRT_SECURE_NO_WARNINGS"] if sys.platform == "win32" else []
+            math_library = [] if sys.platform == "win32" else ["-lm"]
             compiled = subprocess.run(["clang", "-std=c11", "-O2", "-Wall", "-Werror",
+                                       *flags,
                                        "-I", str(ROOT / "port/linux/game"),
                                        "-iquote", str(ROOT / "port/linux/include"),
-                                       str(probe), "-o", str(binary)], text=True, capture_output=True)
+                                       str(probe), *math_library, "-o", str(binary)], text=True, capture_output=True)
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
             ran = subprocess.run([str(binary)], text=True, capture_output=True)
             self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)

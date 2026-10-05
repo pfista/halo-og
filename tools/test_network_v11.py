@@ -6,7 +6,9 @@ validation separately. Optional match rules retain the original variant layout.
 """
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -577,9 +579,13 @@ class NetworkV11Tests(unittest.TestCase):
         source = source.replace("wchar_t", "uint16_t")
         path = Path(cls.directory.name) / "v11.c"
         path.write_text(source)
-        cls.executable = path.with_suffix("")
+        cls.executable = path.with_suffix(".exe" if sys.platform == "win32" else "")
+        compiler = shutil.which("clang") or shutil.which("cc")
+        if not compiler:
+            raise AssertionError("A native C compiler is required")
+        flags = ["-D_CRT_SECURE_NO_WARNINGS"] if sys.platform == "win32" else ["-fsanitize=address,undefined"]
         result = subprocess.run([
-            "clang", "-std=c11", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
+            compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", *flags,
             "-I", str(ROOT / "source"), "-iquote", str(ROOT / "port/linux/include"),
             str(path), "-o", str(cls.executable),
         ], capture_output=True, text=True, timeout=30)

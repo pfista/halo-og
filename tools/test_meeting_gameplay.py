@@ -1,6 +1,7 @@
 """Exercise the production firing cone and shared host admission gate."""
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -12,11 +13,12 @@ ROOT = Path(__file__).resolve().parents[1]
 def run_fixture(text):
     with tempfile.TemporaryDirectory(prefix="halo-meeting-gameplay-") as temporary:
         source = Path(temporary) / "fixture.c"
-        binary = source.with_suffix("")
+        binary = source.with_suffix(".exe" if sys.platform == "win32" else "")
         source.write_text(text)
+        math_library = [] if sys.platform == "win32" else ["-lm"]
         subprocess.run(["clang", "-std=c99", "-Wall", "-Wextra", "-Werror",
                         "-Wno-unused-function", "-I", str(ROOT / "source"),
-                        str(source), "-lm", "-o", str(binary)], check=True)
+                        str(source), *math_library, "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
 
 

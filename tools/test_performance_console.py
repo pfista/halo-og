@@ -1,6 +1,8 @@
 """Compile the production PB console parser and completion with authority stubs."""
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -174,10 +176,14 @@ class PerformanceConsoleTests(unittest.TestCase):
     def test_controls_completion_and_authority(self):
         with tempfile.TemporaryDirectory(prefix="halo-pb-console-") as temporary:
             source = Path(temporary) / "console_test.c"
-            binary = Path(temporary) / "console_test"
+            binary = Path(temporary) / ("console_test.exe" if sys.platform == "win32" else "console_test")
             source.write_text(HARNESS)
+            compiler = shutil.which("clang") or shutil.which("cc")
+            if not compiler:
+                self.fail("A native C compiler is required")
+            flags = ["-D_CRT_SECURE_NO_WARNINGS"] if sys.platform == "win32" else []
             subprocess.run([
-                "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "source"),
+                compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", *flags, "-I", str(ROOT / "source"),
                 "-iquote", str(ROOT / "port/linux/include"),
                 "-iquote", str(ROOT / "port/linux/game"),
                 str(source), "-o", str(binary),

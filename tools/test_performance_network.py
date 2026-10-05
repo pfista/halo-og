@@ -1,6 +1,8 @@
 """Run production host authorization and pre-join capabilities with socket stubs."""
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -361,10 +363,14 @@ class PerformanceNetworkTests(unittest.TestCase):
         fixture = fixture.replace("/* PRODUCTION ANNOUNCEMENT */", client[start:end])
         with tempfile.TemporaryDirectory(prefix="halo-pb-network-") as temporary:
             source = Path(temporary) / "network.c"
-            binary = Path(temporary) / "network"
+            binary = Path(temporary) / ("network.exe" if sys.platform == "win32" else "network")
             source.write_text(fixture)
+            compiler = shutil.which("clang") or shutil.which("cc")
+            if not compiler:
+                self.fail("A native C compiler is required")
+            flags = ["-D_CRT_SECURE_NO_WARNINGS"] if sys.platform == "win32" else []
             subprocess.run([
-                "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "source"),
+                compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", *flags, "-I", str(ROOT / "source"),
                 "-iquote", str(ROOT / "port/linux/include"), str(source), "-o", str(binary),
             ], check=True)
             subprocess.run([str(binary)], check=True)

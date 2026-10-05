@@ -8,7 +8,9 @@ The guest's 32-bit longs and 16-bit wchar_t are made explicit on the test host.
 """
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -409,9 +411,13 @@ class PerformanceVariantsTest(unittest.TestCase):
         generated = re.sub(r"\bwchar_t\b", "game_wchar_t", generated) + HARNESS
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory) / "variants.c"
-            executable = Path(directory) / "variants"
+            executable = Path(directory) / ("variants.exe" if sys.platform == "win32" else "variants")
             fixture.write_text(generated)
-            subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
+            compiler = shutil.which("clang") or shutil.which("cc")
+            if not compiler:
+                self.fail("A native C compiler is required")
+            flags = ["-D_CRT_SECURE_NO_WARNINGS"] if sys.platform == "win32" else []
+            subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter", *flags,
                             "-I", str(ROOT / "source"), str(fixture), "-o", str(executable)], check=True)
             subprocess.run([str(executable)], check=True)
 
