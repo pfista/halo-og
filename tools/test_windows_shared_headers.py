@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SHARED_HEADERS = (
     "performance_sound.h", "performance_audio.h", "native_audio.h",
     "native_video.h", "native_input_events.h", "halo_port_capacity.h",
+    "controller_settings.h",
 )
 
 
@@ -50,10 +51,12 @@ def generated_game_include_flags():
             windows_build.generate_windows_build(writer, solution)
     finally:
         os.chdir(previous)
-    # Both the failed engine unit and the new settings module must receive
-    # exactly this search path; future changes to the generator are exercised.
+    # Every controller-header consumer and the original bridge consumers must
+    # receive this search path; future generator changes are exercised.
     result = {}
-    for source in ("source/effects/effects.c", "port/linux/game/device_settings.c"):
+    for source in ("source/effects/effects.c", "port/linux/game/device_settings.c",
+                   "source/input/input_xbox.c", "source/interface/event_manager.c",
+                   "source/interface/ui_widget.c", "source/interface/virtual_keyboard.c"):
         tokens = shlex.split(writer.compile_flags[source].replace("\\", "/"))
         includes = []
         index = 0
@@ -76,6 +79,7 @@ PROBE = r'''
 #include "native_video.h"
 #include "native_input_events.h"
 #include "halo_port_capacity.h"
+#include "controller_settings.h"
 #include "port_config.h"
 
 typedef char windows_pointer_is_32_bits[sizeof(void *) == 4 ? 1 : -1];
@@ -83,6 +87,7 @@ typedef char windows_long_is_32_bits[sizeof(long) == 4 ? 1 : -1];
 typedef char windows_wchar_is_16_bits[sizeof(__WCHAR_TYPE__) == 2 ? 1 : -1];
 typedef char native_input_event_is_present[HALO_NATIVE_MOUSE_RELEASE != 0 ? 1 : -1];
 typedef char native_sound_capacity_is_present[HALO_PORT_MAXIMUM_EFFECTS >= 256 ? 1 : -1];
+typedef char original_controller_deadzone_is_present[HALO_CONTROLLER_DEADZONE_DEFAULT == 9000 ? 1 : -1];
 
 void native_bridge_declarations(void)
 {
@@ -102,6 +107,10 @@ void native_bridge_declarations(void)
     halo_video_apply_settings();
     platform_mouse_release_gameplay();
     platform_mouse_resume_gameplay();
+    halo_menu_repeat_milliseconds();
+    halo_controller_deadzone_for_stick(0);
+    halo_controller_look_active(0, 0, 0, 0, 0);
+    halo_controller_physical_axes(0);
     config_write_boolean("audio.menu_music", 1);
 }
 '''
@@ -117,7 +126,8 @@ class WindowsSharedHeadersTests(unittest.TestCase):
 
     def test_native_bridges_compile_with_generated_windows_game_paths(self):
         paths = list(self.include_flags.values())
-        self.assertEqual(paths[0], paths[1])
+        for path in paths[1:]:
+            self.assertEqual(paths[0], path)
         with tempfile.TemporaryDirectory(prefix="halo-windows-headers-") as temporary:
             directory = Path(temporary)
             source = directory / "native_bridges.c"
