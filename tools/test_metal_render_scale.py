@@ -22,7 +22,7 @@ OK, INVALID = 0, -1
 
 class Dimensions(C.Structure):
     _fields_ = [(name, C.c_uint32) for name in
-                ('logical_width', 'logical_height', 'storage_width', 'storage_height')]
+                ('logical_width', 'logical_height', 'storage_width', 'storage_height', 'scale_mode')]
 
 
 class Edges(C.Structure):
@@ -38,7 +38,8 @@ class Point(C.Structure):
 
 
 def values(value):
-    return tuple(getattr(value, name) for name, _ in value._fields_)
+    fields = value._fields_[:4] if isinstance(value, Dimensions) else value._fields_
+    return tuple(getattr(value, name) for name, _ in fields)
 
 
 def sentinel(kind):
@@ -50,9 +51,10 @@ def sentinel(kind):
 def oracle(d, edges):
     # Rational arithmetic independently expresses GL's nearest physical edge.
     ratio = Fraction(d.storage_height, d.logical_height)
+    xratio = Fraction(d.storage_width, d.logical_width) if d.scale_mode == 1 else ratio
     left, top, right, bottom = edges
-    x0 = math.floor(max(0, min(d.logical_width, left)) * ratio + Fraction(1, 2))
-    x1 = math.floor(max(0, min(d.logical_width, right)) * ratio + Fraction(1, 2))
+    x0 = math.floor(max(0, min(d.logical_width, left)) * xratio + Fraction(1, 2))
+    x1 = math.floor(max(0, min(d.logical_width, right)) * xratio + Fraction(1, 2))
     y0 = math.floor(max(0, min(d.logical_height, top)) * ratio + Fraction(1, 2))
     y1 = math.floor(max(0, min(d.logical_height, bottom)) * ratio + Fraction(1, 2))
     return x0, y0, x1 - x0, y1 - y0
@@ -70,6 +72,8 @@ class RenderScaleTests(unittest.TestCase):
         cls.lib = C.CDLL(str(library))
         cls.lib.halo_metal_render_target_dimensions.argtypes = [
             C.c_uint32, C.c_uint32, C.c_uint32, C.c_uint32, C.POINTER(Dimensions)]
+        cls.lib.halo_metal_render_native_target_dimensions.argtypes = [
+            C.c_uint32, C.c_uint32, C.c_uint32, C.c_uint32, C.c_uint32, C.POINTER(Dimensions)]
         cls.lib.halo_metal_render_scale_rectangle.argtypes = [
             C.POINTER(Dimensions), C.POINTER(Edges), C.POINTER(Rectangle)]
         cls.lib.halo_metal_render_presentation_box.argtypes = [
@@ -77,7 +81,7 @@ class RenderScaleTests(unittest.TestCase):
         cls.lib.halo_metal_render_window_point.argtypes = [C.POINTER(Dimensions),
             C.c_uint32, C.c_uint32, C.c_uint32, C.c_uint32,
             C.c_double, C.c_double, C.c_int32, C.POINTER(Point)]
-        for name in ('target_dimensions', 'scale_rectangle', 'presentation_box', 'window_point'):
+        for name in ('target_dimensions', 'native_target_dimensions', 'scale_rectangle', 'presentation_box', 'window_point'):
             getattr(cls.lib, 'halo_metal_render_' + name).restype = C.c_int
 
     @classmethod
@@ -88,6 +92,13 @@ class RenderScaleTests(unittest.TestCase):
         result = Dimensions()
         self.assertEqual(self.lib.halo_metal_render_target_dimensions(width, height,
             screen_width if screen_width is not None else width, preset, C.byref(result)), OK)
+        self.assertEqual(result.scale_mode, 0)
+        return result
+
+    def native_dimensions(self, width=738, height=480, screen_width=738, storage_width=3600, storage_height=2338):
+        result = sentinel(Dimensions)
+        self.assertEqual(self.lib.halo_metal_render_native_target_dimensions(
+            width, height, screen_width, storage_width, storage_height, C.byref(result)), OK)
         return result
 
     def rectangle(self, d, edges):
@@ -138,6 +149,59 @@ class RenderScaleTests(unittest.TestCase):
         # Rounded width /738 would round this divider to831 instead of830.
         self.assertEqual(self.rectangle(d, (0, 0, 369, 480)), (0, 0, 830, 1080))
         self.assertEqual(self.rectangle(d, (369, 0, 738, 480)), (830, 0, 831, 1080))
+
+    def test_native_exact_retina_dimensions_and_separate_axis_edges(self):
+        d = self.native_dimensions()
+        self.assertEqual(values(d), (738, 480, 3600, 2338))
+        self.assertEqual(d.scale_mode, 1)
+        self.assertEqual(self.rectangle(d, (0, 0, 738, 480)), (0, 0, 3600, 2338))
+        self.assertEqual(self.rectangle(d, (0, 0, 369, 240)), (0, 0, 1800, 1169))
+        self.assertEqual(self.rectangle(d, (369, 240, 738, 480)), (1800, 1169, 1800, 1169))
+        self.assertEqual(self.box(d, 3600, 2338), (0, 0, 3600, 2338))
+        self.assertEqual(self.point(d, 1800, 1169, 3600, 2338, 900, 584.5, 49), (320, 240))
+        # After changing to a square window, use the host's exact aspect fit.
+        self.assertEqual(self.box(d, 2000, 2000), (0, 351, 2000, 1298))
+        self.assertEqual(self.point(d, 1000, 1000, 2000, 2000, 500, 500, 49), (320, 240))
+
+    def test_native_pixels_and_split_edges_cover_limits_without_gaps(self):
+        for logical_width, storage_width, storage_height in ((738, 3600, 2338), (854, 3840, 2160),
+                                                            (1600, 8192, 8192), (640, 8191, 6143)):
+            d = self.native_dimensions(logical_width, screen_width=logical_width,
+                                       storage_width=storage_width, storage_height=storage_height)
+            for extent, axis in ((logical_width, 'x'), (480, 'y')):
+                end = 0
+                for edge in range(extent):
+                    edges = (edge, 0, edge+1, 480) if axis == 'x' else (0, edge, logical_width, edge+1)
+                    rectangle = self.rectangle(d, edges)
+                    origin, length = (rectangle[0], rectangle[2]) if axis == 'x' else (rectangle[1], rectangle[3])
+                    self.assertEqual(origin, end)
+                    end += length
+                self.assertEqual(end, storage_width if axis == 'x' else storage_height)
+            areas = [self.rectangle(d, (x0, y0, x1, y1)) for x0, x1 in
+                     ((0, logical_width//2), (logical_width//2, logical_width)) for y0, y1 in ((0, 240), (240, 480))]
+            self.assertEqual(sum(r[2]*r[3] for r in areas), storage_width*storage_height)
+
+    def test_native_authored_targets_unchanged_and_invalid_dimensions_atomic(self):
+        for width, height in ((320, 240), (738, 479), (8192, 8192), (127, 31)):
+            d = self.native_dimensions(width, height)
+            self.assertEqual(values(d), (width, height, width, height))
+            self.assertEqual(d.scale_mode, 0)
+        for width, height, screen_width, sw, sh in ((738,480,738,0,2338), (738,480,738,3600,0),
+                                                  (738,480,738,8193,2338), (738,480,738,3600,8193),
+                                                  (738,480,739,3600,2338), (0,480,738,3600,2338),
+                                                  (738,480,738,2**32-1,2**32-1)):
+            out = sentinel(Dimensions)
+            before = bytes(out)
+            self.assertEqual(self.lib.halo_metal_render_native_target_dimensions(
+                width, height, screen_width, sw, sh, C.byref(out)), INVALID)
+            self.assertEqual(bytes(out), before)
+        self.assertEqual(self.lib.halo_metal_render_native_target_dimensions(738,480,738,3600,2338,None), INVALID)
+        d = self.native_dimensions()
+        d.scale_mode = 2
+        out, edges = sentinel(Rectangle), Edges(0,0,738,480)
+        before = bytes(out)
+        self.assertEqual(self.lib.halo_metal_render_scale_rectangle(C.byref(d),C.byref(edges),C.byref(out)), INVALID)
+        self.assertEqual(bytes(out), before)
 
     def test_adjacent_pixels_and_splitscreen_cover_without_gaps(self):
         for width in (640, 642, 738, 854, 1600):
@@ -279,6 +343,25 @@ int main(void) {
         assert(!memcmp(&point,&before,sizeof(point)));
         assert(halo_metal_render_window_point(&d,640,480,640,480,NAN,INFINITY,0,&point)==HALO_METAL_INVALID);
         assert(!memcmp(&point,&before,sizeof(point)));
+    }
+    const uint32_t native_sizes[][3]={{738,3600,2338},{854,3840,2160},{1600,8192,8192}};
+    for(unsigned n=0;n<3;n++) {
+        uint32_t width=native_sizes[n][0];
+        struct halo_metal_render_dimensions d;
+        assert(!halo_metal_render_native_target_dimensions(width,480,width,
+            native_sizes[n][1],native_sizes[n][2],&d));
+        assert(d.scale_mode==HALO_METAL_RENDER_SCALE_NATIVE_AXES);
+        uint32_t end=0;
+        for(uint32_t x=0;x<width;x++) {
+            struct halo_metal_render_edges e={x,0,(int64_t)x+1,480};
+            struct halo_metal_render_rectangle r;
+            assert(!halo_metal_render_scale_rectangle(&d,&e,&r));
+            assert(r.x==end && r.y==0 && r.height==d.storage_height);end+=r.width;
+        }
+        assert(end==d.storage_width);
+        struct halo_metal_render_dimensions before=d;
+        assert(halo_metal_render_native_target_dimensions(width,480,width,8193,2338,&d)==HALO_METAL_INVALID);
+        assert(!memcmp(&d,&before,sizeof(d)));
     }
     return 0;
 }

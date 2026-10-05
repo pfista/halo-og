@@ -22,6 +22,10 @@ static int valid_dimensions(const struct halo_metal_render_dimensions *d) {
         d->logical_height > HALO_METAL_RENDER_MAX_DIMENSION ||
         d->storage_width > HALO_METAL_RENDER_MAX_DIMENSION ||
         d->storage_height > HALO_METAL_RENDER_MAX_DIMENSION) return 0;
+    if (d->scale_mode == HALO_METAL_RENDER_SCALE_NATIVE_AXES)
+        return valid_screen_width(d->logical_width) &&
+            d->logical_height == HALO_METAL_RENDER_LOGICAL_HEIGHT;
+    if (d->scale_mode != HALO_METAL_RENDER_SCALE_UNIFORM) return 0;
     if (d->storage_width == d->logical_width && d->storage_height == d->logical_height) return 1;
     return valid_screen_width(d->logical_width) && d->logical_height == HALO_METAL_RENDER_LOGICAL_HEIGHT &&
         valid_preset(d->storage_height) &&
@@ -32,10 +36,28 @@ int halo_metal_render_target_dimensions(uint32_t width, uint32_t height, uint32_
     if (!dimensions || !width || !height || width > HALO_METAL_RENDER_MAX_DIMENSION ||
         height > HALO_METAL_RENDER_MAX_DIMENSION || !valid_screen_width(screen_width) ||
         !valid_preset(preset_height)) return HALO_METAL_INVALID;
-    struct halo_metal_render_dimensions result = {width, height, width, height};
+    struct halo_metal_render_dimensions result = {width, height, width, height,
+        HALO_METAL_RENDER_SCALE_UNIFORM};
     if (width == screen_width && height == HALO_METAL_RENDER_LOGICAL_HEIGHT) {
         result.storage_width = rounded_edge(width, preset_height, height);
         result.storage_height = preset_height;
+    }
+    if (!valid_dimensions(&result)) return HALO_METAL_INVALID;
+    *dimensions = result;
+    return HALO_METAL_OK;
+}
+int halo_metal_render_native_target_dimensions(uint32_t width, uint32_t height, uint32_t screen_width,
+    uint32_t storage_width, uint32_t storage_height, struct halo_metal_render_dimensions *dimensions) {
+    if (!dimensions || !width || !height || width > HALO_METAL_RENDER_MAX_DIMENSION ||
+        height > HALO_METAL_RENDER_MAX_DIMENSION || !valid_screen_width(screen_width) ||
+        !storage_width || !storage_height || storage_width > HALO_METAL_RENDER_MAX_DIMENSION ||
+        storage_height > HALO_METAL_RENDER_MAX_DIMENSION) return HALO_METAL_INVALID;
+    struct halo_metal_render_dimensions result = {width, height, width, height,
+        HALO_METAL_RENDER_SCALE_UNIFORM};
+    if (width == screen_width && height == HALO_METAL_RENDER_LOGICAL_HEIGHT) {
+        result.storage_width = storage_width;
+        result.storage_height = storage_height;
+        result.scale_mode = HALO_METAL_RENDER_SCALE_NATIVE_AXES;
     }
     if (!valid_dimensions(&result)) return HALO_METAL_INVALID;
     *dimensions = result;
@@ -50,8 +72,12 @@ int halo_metal_render_scale_rectangle(const struct halo_metal_render_dimensions 
     const struct halo_metal_render_edges *edges, struct halo_metal_render_rectangle *rectangle) {
     if (!valid_dimensions(d) || !edges || !rectangle ||
         edges->left > edges->right || edges->top > edges->bottom) return HALO_METAL_INVALID;
-    uint32_t left = rounded_edge(clipped_edge(edges->left, d->logical_width), d->storage_height, d->logical_height);
-    uint32_t right = rounded_edge(clipped_edge(edges->right, d->logical_width), d->storage_height, d->logical_height);
+    uint32_t x_numerator = d->scale_mode == HALO_METAL_RENDER_SCALE_NATIVE_AXES ?
+        d->storage_width : d->storage_height;
+    uint32_t x_denominator = d->scale_mode == HALO_METAL_RENDER_SCALE_NATIVE_AXES ?
+        d->logical_width : d->logical_height;
+    uint32_t left = rounded_edge(clipped_edge(edges->left, d->logical_width), x_numerator, x_denominator);
+    uint32_t right = rounded_edge(clipped_edge(edges->right, d->logical_width), x_numerator, x_denominator);
     uint32_t top = rounded_edge(clipped_edge(edges->top, d->logical_height), d->storage_height, d->logical_height);
     uint32_t bottom = rounded_edge(clipped_edge(edges->bottom, d->logical_height), d->storage_height, d->logical_height);
     struct halo_metal_render_rectangle result = {left, top, right - left, bottom - top};

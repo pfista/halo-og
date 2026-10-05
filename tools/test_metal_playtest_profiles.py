@@ -87,11 +87,12 @@ class ProfileTests(unittest.TestCase):
         self.template.write_text(TEMPLATE)
         self.folder = self.base / 'profile with spaces'
 
-    def draft(self, cap=60, height=720, vsync=False, output=None):
+    def draft(self, cap=60, height=720, vsync=False, output=None, native_fullscreen=False, native_size=None):
         return profiles.prepare(output or self.folder, 'bloodgulch', cap, height, vsync,
-                                self.assets, self.template, self.repo)
+                                self.assets, self.template, self.repo,
+                                native_fullscreen=native_fullscreen, native_size=native_size)
 
-    def build(self, options=True):
+    def build(self, options=True, native_resolution=False):
         snapshot = self.repo / 'frozen-build'
         graph, compiled, bindings = {}, {}, []
         for relative in sorted(profiles.REQUIRED_BUILD_PATHS):
@@ -123,9 +124,12 @@ class ProfileTests(unittest.TestCase):
             obj = f'build/macos-metal/guest/obj/port/linux/src/{name}.o'
             graph[name] = f'build {obj}: android_guest_cc port/linux/src/{name}.c'
             symbols = sorted(profiles.HELPER_SYMBOLS[name])
+            if name == 'metal_render_scale' and native_resolution:
+                symbols.append(profiles.NATIVE_RESOLUTION_SYMBOL)
             compiled[name] = dict(object={'path': obj, 'sha256': by_path[obj]}, symbol=symbols[0],
                                   additional_linked_symbols=symbols[1:], linked_in_guest=True, native_ilp32_flags=True)
         build = dict(schema_version=1, passed=True, actual_build_tool_exit=0, display_options=options,
+            native_resolution=native_resolution,
             no_angle_gl_linkage_or_imports=True, source_snapshot='frozen-build',
             source_bindings=bindings, evidence_bindings=[], native_compiled_objects=compiled,
             native_guest_graph=dict(source_edges=graph, no_gl_native_edges=True,
@@ -138,34 +142,42 @@ class ProfileTests(unittest.TestCase):
     def runtime(self, build_path):
         manifest = json.loads((self.folder / 'profile.json').read_text())
         v = manifest['profile']
-        build = profiles.checked_build(build_path, self.repo)
+        build = profiles.checked_build(build_path, self.repo, v.get('native_fullscreen', False))
         runtime_saves = self.base / 'runtime-saves'
         runtime_saves.mkdir(exist_ok=True)
         config = runtime_saves / 'config.toml'
         config.write_bytes((self.folder / 'saves/config.toml').read_bytes())
         log = self.base / 'launch.log'
-        log.write_text('CPU fixture only; no native process was launched\n')
+        log_text = 'CPU fixture only; no native process was launched\n'
+        if v.get('native_fullscreen', False):
+            width, height = profiles.physical_size(v)
+            log_text += (f'Metal API Validation Enabled\nMetal drawable {width}x{height} (borderless fullscreen)\n'
+                         f'Native resolution: {width}x{height} storage, {v["logical_width"]}x480 logical, '
+                         f'{width}x{height} drawable, startup aspect native\n')
+        log.write_text(log_text)
         execution = self.base / 'execution.json'
         write_json(execution, dict(returncode=0, elapsed_seconds=15.5,
                                   log=profiles.descriptor(log),
                                   command=[build['host']['file'], build['guest']['file']],
                                   environment_overrides=dict(HALO_SAVE_ROOT=str(runtime_saves.resolve()),
-                                      HALO_DATA_ROOT=str((self.folder / 'data').resolve()), HALO_WINDOWED='1')))
+                                      HALO_DATA_ROOT=str((self.folder / 'data').resolve()), HALO_WINDOWED=profiles.windowed_environment(v))))
         capture = self.base / 'native.bmp'
-        width, height = v['expected_physical_width'], v['render_height']
+        width, height = profiles.physical_size(v)
         size = width * height * 4
         header = bytearray(54)
         header[:2] = b'BM'
         struct.pack_into('<I', header, 2, 54 + size)
         struct.pack_into('<I', header, 10, 54)
         struct.pack_into('<IiiHHI', header, 14, 40, width, -height, 1, 32, 0)
-        capture.write_bytes(header + bytes(size))
+        capture.write_bytes(header + (bytes((1,2,3,255))*(width*height) if v.get('native_fullscreen', False) else bytes(size)))
         runtime = dict(schema_version=1, kind='metal_playtest_profile_runtime', bounded_runtime_gate=True,
             build_proof=build['proof'], map=v['map'], display=tomllib.loads((self.folder / 'saves/config.toml').read_text())['display'],
             actual_host_returncode=0, actual_guest_returncode=0, api_validation_enabled=True, renderer_api_errors=[],
             test_config=profiles.descriptor(config), execution=profiles.descriptor(execution),
             launch_log=profiles.descriptor(log),
             render_capture=profiles.descriptor(capture))
+        if v.get('native_fullscreen', False):
+            runtime['native_resolution'] = profiles.checked_native_startup(log_text, v)
         path = self.base / 'runtime.json'
         write_json(path, runtime)
         return path
@@ -190,6 +202,80 @@ class ProfileTests(unittest.TestCase):
         for bad in (True, 1, 59, 240):
             with self.assertRaises(ValueError):
                 profiles.profile_values('bloodgulch', bad, 480, False)
+
+    def test_native_fullscreen_values_use_measured_pixels_and_independent_caps_vsync(self):
+        for cap in (60,120,0):
+            for vsync in (False,True):
+                values = profiles.profile_values('bloodgulch', cap, 0, vsync, True, (3600,2338))
+                self.assertEqual(profiles.physical_size(values), (3600,2338))
+                self.assertEqual(values['logical_width'], 738)
+                config = tomllib.loads(profiles.controlled_config(TEMPLATE, values))
+                self.assertTrue(config['display']['fullscreen'])
+                self.assertEqual(config['display']['screen_width'], 0)
+                self.assertEqual(config['display']['render_height'], 0)
+                self.assertEqual(config['display']['frame_limit'], cap)
+                self.assertIs(config['display']['vsync'], vsync)
+                self.assertEqual(config['game'], tomllib.loads(TEMPLATE)['game'])
+        self.assertEqual(profiles.parse_native_size('3600x2338'), (3600,2338))
+        for invalid in ('0x2338', '8193x2160', '3600', '3600x2338extra', (True,2338), (3600,0), (8192,8192)):
+            with self.assertRaises(ValueError): profiles.parse_native_size(invalid)
+        with self.assertRaises(ValueError): profiles.profile_values('bloodgulch', 60, 2160, False, True, (3600,2338))
+        with self.assertRaises(ValueError): profiles.profile_values('bloodgulch', 60, 2160, False, False, (3600,2338))
+
+    def test_native_profile_without_measured_expectation_stays_unready(self):
+        manifest = self.draft(height=0, native_fullscreen=True)
+        self.assertIsNone(manifest['profile']['native_size'])
+        self.assertFalse(manifest['experiment_ready'])
+        profiles.verify_profile(self.folder)
+        with self.assertRaisesRegex(ValueError, 'measured native size'):
+            profiles.physical_size(manifest['profile'])
+        self.assertEqual(manifest['launch_environment']['HALO_WINDOWED'], '0')
+
+    def test_native_build_guard_startup_capture_and_fullscreen_launcher(self):
+        self.draft(height=0, native_fullscreen=True, native_size=(3600,2338))
+        old = self.build()
+        with self.assertRaisesRegex(ValueError, 'Pre-native-resolution'):
+            profiles.checked_build(old, self.repo, True)
+        build = self.build(native_resolution=True)
+        proof = self.runtime(build)
+        profiles.promote(self.folder, build, proof)
+        profiles.verify_profile(self.folder, True)
+        launcher = self.folder / 'Launch Native Metal.command'
+        text = launcher.read_text()
+        self.assertIn('HALO_WINDOWED=0', text)
+        self.assertNotIn('HALO_WINDOWED=1', text)
+        self.assertIn('-u HALO_GPU_STATS', text)
+        subprocess.run(['zsh','-n',str(launcher)],check=True,capture_output=True)
+
+    def test_native_startup_wrong_pixels_windowed_or_fitted_cannot_promote(self):
+        self.draft(height=0, native_fullscreen=True, native_size=(3600,2338))
+        proof = self.build(native_resolution=True)
+        path = self.runtime(proof)
+        original = json.loads(path.read_text())
+        log = Path(original['launch_log']['file']); text = log.read_text()
+        for changed in (text.replace('3600x2338 drawable','3595x2338 drawable'),
+                        text.replace('borderless fullscreen','windowed'),
+                        text.replace('aspect native','aspect fitted'),
+                        text.replace('Metal API Validation Enabled\n','')):
+            log.write_text(changed)
+            evidence = dict(original,launch_log=profiles.descriptor(log))
+            execution = Path(original['execution']['file']); observed=json.loads(execution.read_text())
+            observed['log']=evidence['launch_log'];write_json(execution,observed)
+            evidence['execution']=profiles.descriptor(execution);write_json(path,evidence)
+            with self.assertRaises(ValueError): profiles.promote(self.folder,proof,path)
+            self.assertFalse((self.folder/'ready.json').exists())
+        log.write_text(text)
+
+    def test_native_black_or_truncated_capture_and_timing_records_cannot_promote(self):
+        self.draft(height=0, native_fullscreen=True, native_size=(3600,2338))
+        proof=self.build(native_resolution=True);path=self.runtime(proof)
+        original=json.loads(path.read_text());capture=Path(original['render_capture']['file']);raw=capture.read_bytes()
+        for pixels in (raw[:54]+bytes((0,0,0,255))*(3600*2338),raw[:-4]):
+            capture.write_bytes(pixels);evidence=dict(original,render_capture=profiles.descriptor(capture));write_json(path,evidence)
+            with self.assertRaises(ValueError): profiles.promote(self.folder,proof,path)
+            self.assertFalse((self.folder/'ready.json').exists())
+        capture.write_bytes(raw);write_json(path,dict(original,timing_only=True))
+        with self.assertRaisesRegex(ValueError,'Timing-only'): profiles.promote(self.folder,proof,path)
 
     def test_draft_is_fresh_isolated_and_cannot_be_used_as_ready(self):
         before = profiles.sha(self.assets / 'maps/bloodgulch.map')

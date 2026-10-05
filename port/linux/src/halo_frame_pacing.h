@@ -21,8 +21,9 @@ void halo_frame_pacing_reset(struct halo_frame_pacing *pacing);
  * Only 30, 60 and 120 are supported caps. Zero/unknown values and disabled
  * interpolation reset the planner and never add a wait to the original
  * engine throttle. A new cap or backwards clock starts a fresh period.
- * Expired deadlines are discarded and the next period starts at now, so
- * loading stalls cannot accumulate catch-up frames or extra sleep debt.
+ * Lateness below one period retains the absolute phase, so a following
+ * fast frame can recover cadence. A whole period of lateness starts fresh
+ * at now; loading stalls cannot accumulate catch-up frames or sleep debt.
  * Integer fractional periods preserve the requested average cadence. */
 uint64_t halo_frame_pacing_deadline(struct halo_frame_pacing *pacing,
     uint64_t now_ns, long frame_limit, int interpolation_enabled);

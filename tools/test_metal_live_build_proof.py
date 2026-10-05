@@ -64,6 +64,14 @@ def symbols(names=FIXED_SYMBOLS):
 
 
 class BindingTests(unittest.TestCase):
+    def test_native_fullscreen_requires_display_and_preserves_legacy_inputs(self):
+        with self.assertRaisesRegex(ValueError, 'requires.*display-options'):
+            proof.binding_paths(None, fixed_function=True, native_fullscreen=True)
+        base, old_evidence = proof.binding_paths(reference(), 'copy-volume-depth-border', True, True)
+        primary, evidence = proof.binding_paths(reference(), 'copy-volume-depth-border', True, True, True)
+        self.assertEqual(primary, base)
+        self.assertEqual(evidence, old_evidence + list(proof.NATIVE_FULLSCREEN_TESTS))
+
     def test_default_primary_and_evidence_contract_is_unchanged(self):
         primary, evidence = proof.binding_paths(reference())
         self.assertEqual(primary, [f'base-input-{index}' for index in range(29)] + [
@@ -239,6 +247,17 @@ class ImplementationTests(unittest.TestCase):
 
 
 class DisplayImplementationTests(unittest.TestCase):
+    def test_native_helper_must_be_defined_in_object_and_final_guest(self):
+        required = DISPLAY_SYMBOLS['metal_render_scale'] + (proof.NATIVE_FULLSCREEN_SYMBOL,)
+        proof.implementation_checks('metal_render_scale', required, symbols(required), symbols(required),
+                                    compile_line('metal_render_scale'), True)
+        for missing in ('object', 'guest'):
+            with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, 'omits'):
+                proof.implementation_checks('metal_render_scale', required,
+                    symbols(required[:-1] if missing == 'object' else required),
+                    symbols(required[:-1] if missing == 'guest' else required),
+                    compile_line('metal_render_scale'), True)
+
     def test_each_helper_export_is_present_in_object_and_final_guest(self):
         for name, required in DISPLAY_SYMBOLS.items():
             proof.implementation_checks(name, required, symbols(required), symbols(required), compile_line(name), True)

@@ -25,11 +25,14 @@ CASES = (
     "two_minute_exact_cadence_with_render_work",
     "cap_change_starts_fresh_period",
     "uncapped_and_reenabled_reset",
-    "stalls_and_slow_frames_discard_debt",
+    "long_stalls_discard_debt_and_short_lateness_recovers",
     "backwards_clock_starts_fresh_period",
     "uint64_overflow_cannot_wrap_deadline",
     "wake_jitter_does_not_accumulate_drift",
     "null_and_explicit_reset",
+    "alternating_30hz_render_work_recovers_60fps",
+    "short_oversleep_preserves_absolute_cadence",
+    "one_period_lateness_discards_debt",
 )
 
 HARNESS = r'''
@@ -46,6 +49,13 @@ _Static_assert(offsetof(struct halo_frame_pacing, fraction) == 20, "ILP32 state 
 _Static_assert(sizeof(long) == 4 && sizeof(void *) == 4, "actual guest ILP32");
 _Static_assert(sizeof(time_t) == 4 && sizeof(struct timespec) == 8, "guest time32 ABI");
 _Static_assert(offsetof(struct timespec, tv_nsec) == 4, "guest nanosecond offset");
+/* Aggregate zero initialization may lower to memset in this freestanding
+ * fixture. Volatile stores prevent its implementation becoming recursive. */
+void *memset(void *destination, int value, size_t count) {
+    volatile unsigned char *bytes = (volatile unsigned char *)destination;
+    for (size_t i = 0; i < count; i++) bytes[i] = (unsigned char)value;
+    return destination;
+}
 #endif
 static uint64_t ceil_period(unsigned cap) {
     return (UINT64_C(1000000000) + cap - 1) / cap;
@@ -108,21 +118,26 @@ int halo_pacing_test(unsigned test) {
         CHECK(!halo_frame_pacing_deadline(&p, base + 1000, 0, 1) && clean(&p));
         CHECK(halo_frame_pacing_deadline(&p, base + 100000, 60, 1) == base + 100000 + ceil_period(60));
         break;
-    case 5:
+    case 5: {
+        uint64_t restarted;
         deadline = halo_frame_pacing_deadline(&p, base, 120, 1);
         now = deadline + UINT64_C(10000000000);
         CHECK(!halo_frame_pacing_deadline(&p, now, 120, 1));
         CHECK(p.deadline_ns == now);
+        restarted = now;
         CHECK(halo_frame_pacing_deadline(&p, now + 1000, 120, 1) == now + ceil_period(120));
         now = p.deadline_ns + ceil_period(120) + 1;
         CHECK(!halo_frame_pacing_deadline(&p, now, 120, 1));
-        CHECK(halo_frame_pacing_deadline(&p, now + 1000, 120, 1) == now + ceil_period(120));
+        CHECK(p.deadline_ns == restarted + (UINT64_C(2000000000) + 119) / 120);
+        CHECK(halo_frame_pacing_deadline(&p, now + 1000, 120, 1) ==
+            restarted + (UINT64_C(3000000000) + 119) / 120);
         /* Continuously slower rendering never adds an extra period. */
         for (frame = 0; frame < 1000; frame++) {
             now += UINT64_C(100000000);
             CHECK(!halo_frame_pacing_deadline(&p, now, 120, 1));
         }
         break;
+    }
     case 6:
         (void)halo_frame_pacing_deadline(&p, base, 60, 1);
         CHECK(halo_frame_pacing_deadline(&p, base - 100, 60, 1) == base - 100 + ceil_period(60));
@@ -150,13 +165,88 @@ int halo_pacing_test(unsigned test) {
         halo_frame_pacing_reset(&p);
         CHECK(clean(&p));
         break;
+    case 10: {
+        unsigned missed = 0, waited = 0;
+        now = halo_frame_pacing_deadline(&p, base, 60, 1);
+        for (frame = 0; frame < 7200; frame++) {
+            uint64_t expected = base + ((uint64_t)(frame + 2) * UINT64_C(1000000000) + 59) / 60;
+            /* Simulation work arrives at 30 Hz: a 22 ms frame followed by a 7 ms
+             * interpolation frame. The 29 ms pair fits within two 60 Hz slots. */
+            now += (frame & 1) ? UINT64_C(7000000) : UINT64_C(22000000);
+            deadline = halo_frame_pacing_deadline(&p, now, 60, 1);
+            CHECK(p.deadline_ns == expected);
+            if (frame & 1) {
+                CHECK(deadline == expected && deadline > now);
+                now = deadline;
+                waited++;
+            } else {
+                CHECK(!deadline && now > expected && now - expected < ceil_period(60));
+                missed++;
+            }
+        }
+        CHECK(missed == 3600 && waited == 3600);
+        CHECK(now == base + (UINT64_C(7201000000000) + 59) / 60);
+        break;
+    }
+    case 11: {
+        unsigned missed = 0;
+        now = base;
+        for (frame = 0; frame < 7200; frame++) {
+            uint64_t expected = base + ((uint64_t)(frame + 1) * UINT64_C(1000000000) + 119) / 120;
+            deadline = halo_frame_pacing_deadline(&p, now, 120, 1);
+            CHECK(p.deadline_ns == expected);
+            if (now >= expected) {
+                CHECK(!deadline);
+                missed++;
+            } else {
+                CHECK(deadline == expected);
+                now = deadline;
+            }
+            /* Occasionally oversleep beyond the next slot by 1.25 ms. A
+             * subsequent 1 ms frame must restore the original phase. */
+            now += frame % 17 == 0 ? ceil_period(120) + UINT64_C(1250000) : UINT64_C(1000000);
+        }
+        CHECK(missed > 0);
+        CHECK(p.deadline_ns == base + UINT64_C(60000000000));
+        break;
+    }
+    case 12:
+        for (i = 0; i < 3; i++) {
+            unsigned cap = caps[i];
+            uint64_t first = base + ceil_period(cap);
+            uint64_t second = base + (UINT64_C(2000000000) + cap - 1) / cap;
+            uint64_t third = base + (UINT64_C(3000000000) + cap - 1) / cap;
+            uint64_t second_period = second - first;
+            halo_frame_pacing_reset(&p);
+            CHECK(halo_frame_pacing_deadline(&p, base, cap, 1) == first);
+            CHECK(!halo_frame_pacing_deadline(&p, second, cap, 1));
+            CHECK(p.deadline_ns == second);
+            CHECK(halo_frame_pacing_deadline(&p, second, cap, 1) == third);
+            halo_frame_pacing_reset(&p);
+            CHECK(halo_frame_pacing_deadline(&p, base, cap, 1) == first);
+            now = second + second_period - 1;
+            CHECK(!halo_frame_pacing_deadline(&p, now, cap, 1));
+            CHECK(p.deadline_ns == second);
+            deadline = halo_frame_pacing_deadline(&p, now, cap, 1);
+            CHECK(p.deadline_ns == third);
+            /* The following fractional period can be 1 ns shorter, placing
+             * this exact-boundary fake clock directly on its deadline. */
+            CHECK(deadline == (third > now ? third : 0));
+            halo_frame_pacing_reset(&p);
+            CHECK(halo_frame_pacing_deadline(&p, base, cap, 1) == first);
+            now = second + second_period;
+            CHECK(!halo_frame_pacing_deadline(&p, now, cap, 1));
+            CHECK(p.deadline_ns == now);
+            CHECK(halo_frame_pacing_deadline(&p, now + 1000, cap, 1) == now + ceil_period(cap));
+        }
+        break;
     default: return -1;
     }
     return 0;
 }
 unsigned guest_test(unsigned unused) {
     (void)unused;
-    for (unsigned i = 0; i < 10; i++) {
+    for (unsigned i = 0; i < 13; i++) {
         int status = halo_pacing_test(i);
         if (status) return 1000 * (i + 1) + (unsigned)status;
     }

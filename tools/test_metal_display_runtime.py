@@ -26,10 +26,17 @@ def bmp(path, width, height, rgb=(12, 34, 56), alpha=255, positive_height=False)
 
 
 def log_line(values, fps=60.0, hz=30.0, first=30, last=60):
+    width,height=runtime.profiles.physical_size(values)
     return (f'Native display: {fps:.3f} FPS, {hz:.3f} simulation Hz, '
-            f'{values["expected_physical_width"]}x{values["render_height"]} storage, '
-            f'640x480 logical, cap {values["frame_limit"]}, interpolation {int(values["interpolation"])}, '
+            f'{width}x{height} storage, '
+            f'{values["logical_width"]}x480 logical, cap {values["frame_limit"]}, interpolation {int(values["interpolation"])}, '
             f'ticks {first}-{last}\n')
+
+
+HOST_LINE = ('Native Metal host metrics: 60 frames, 900 submits, 5000 draws, 1000000 bytes; '
+             'packet-copy 100 us, prepare 200 us, encode 300 us, drawable-wait 400 us, commit 500 us, '
+             'completion-wait 600 us, gpu 700 us/900 samples; packet-buffers 1, sampler-hits 4900, '
+             'sampler-misses 100, sampler-allocations 100, sampler-cache 100, upload-buffers 200, visibility-buffers 300\n')
 
 
 class DisplayRuntimeTests(unittest.TestCase):
@@ -48,15 +55,34 @@ class DisplayRuntimeTests(unittest.TestCase):
 
     def fake_runner(self, command, cwd, environment, log_path, timeout):
         self.calls.append(dict(command=command, cwd=cwd, environment=environment, timeout=timeout))
-        text = 'Metal API Validation Enabled\n' + log_line(self.values, hz=0, first=0, last=0)
+        width,height=runtime.profiles.physical_size(self.values)
+        text = 'Metal API Validation Enabled\n'
+        if self.values.get('native_fullscreen',False):
+            text += (f'Metal drawable {width}x{height} (borderless fullscreen)\n'
+                     f'Native resolution: {width}x{height} storage, {self.values["logical_width"]}x480 logical, '
+                     f'{width}x{height} drawable, startup aspect native\n')
+        text += log_line(self.values, hz=0, first=0, last=0)
         text += log_line(self.values) + log_line(self.values, first=60, last=90) + 'Game exited (0)\n'
+        text += HOST_LINE
+        text += ('Native timing: frame 301, monotonic 1000000000 ns, tick 150, initialized 1\n'
+                 'Native timing: frame 302, monotonic 1016000000 ns, tick 150, initialized 1\n'
+                 'Native timing: frame 303, monotonic 1033000000 ns, tick 151, initialized 1\n')
         Path(log_path).write_text(text)
-        bmp(Path(cwd) / 'captures/frame00300.bmp', self.values['expected_physical_width'], self.values['render_height'])
+        configuration=tomllib.loads((Path(cwd)/'saves/config.toml').read_text())
+        if configuration['debug']['screenshot_every']:
+            bmp(Path(cwd) / 'captures/frame00300.bmp', width,height)
         return dict(returncode=0, elapsed_seconds=20.5, timed_out=False)
 
-    def run_fixture(self, runner=None):
+    def run_fixture(self, runner=None, **options):
         with mock.patch.object(runtime.subprocess, 'Popen', side_effect=AssertionError('CPU test must never launch')):
-            return runtime.run(self.output, self.profile, self.proof, runner=runner or self.fake_runner)
+            return runtime.run(self.output, self.profile, self.proof, runner=runner or self.fake_runner, **options)
+
+    def native_fixture(self):
+        self.fixture.folder=self.fixture.base/'native full resolution profile'
+        self.profile=self.fixture.folder
+        self.fixture.draft(cap=60,height=0,native_fullscreen=True,native_size=(3600,2338))
+        self.proof=self.fixture.build(native_resolution=True)
+        self.values=runtime.profiles.verify_profile(self.profile)['profile']
 
     def test_config_preserves_every_display_key_across_caps_heights_and_vsync(self):
         template = self.fixture.template.read_text()
@@ -100,6 +126,123 @@ class DisplayRuntimeTests(unittest.TestCase):
         ready = runtime.profiles.promote(self.profile, self.proof, self.output / 'runtime.json')
         self.assertTrue(ready['experiment_ready'])
         self.assertFalse(ready['original_xbox_fidelity_gate'])
+
+    def test_native_fullscreen_measured_startup_capture_and_statistics_binding(self):
+        self.native_fixture()
+        with mock.patch.dict(runtime.os.environ,{'HALO_WINDOWED':'1','HALO_GPU_STATS':'0'}):
+            result=self.run_fixture()
+        self.assertTrue(result['bounded_runtime_gate'])
+        self.assertEqual((result['image']['width'],result['image']['height']),(3600,2338))
+        self.assertEqual(result['native_resolution']['drawable_width'],3600)
+        self.assertEqual(result['native_resolution']['logical_width'],738)
+        self.assertEqual(result['host_metrics'][0]['gpu_samples'],900)
+        self.assertEqual(self.calls[0]['environment']['HALO_WINDOWED'],'0')
+        self.assertEqual(self.calls[0]['environment']['HALO_GPU_STATS'],'1')
+        config=tomllib.loads((self.output/'saves/config.toml').read_text())
+        self.assertTrue(config['display']['fullscreen'])
+        self.assertEqual(config['display']['screen_width'],0)
+        self.assertEqual(config['display']['render_height'],0)
+        self.assertTrue(config['debug']['gpu_stats'])
+        ready=runtime.profiles.promote(self.profile,self.proof,self.output/'runtime.json')
+        self.assertTrue(ready['experiment_ready'])
+
+    def test_native_wrong_startup_drawable_cannot_pass_even_with_correct_capture(self):
+        self.native_fixture()
+        def wrong(*arguments):
+            observation=self.fake_runner(*arguments)
+            path=Path(arguments[3]);path.write_text(path.read_text().replace('3600x2338 drawable','3595x2338 drawable'))
+            return observation
+        result=self.run_fixture(wrong)
+        self.assertFalse(result['bounded_runtime_gate'])
+        self.assertTrue(any('Measured native' in error for error in result['validation_failures']))
+
+    def test_unmeasured_native_probe_records_pixels_without_ready_promotion(self):
+        self.fixture.folder=self.fixture.base/'unmeasured native profile';self.profile=self.fixture.folder
+        self.fixture.draft(height=0,native_fullscreen=True)
+        self.proof=self.fixture.build(native_resolution=True)
+        self.values=runtime.profiles.profile_values('bloodgulch',60,0,False,True,(3600,2338))
+        result=self.run_fixture()
+        self.assertEqual(len(self.calls),1)
+        self.assertTrue(result['native_probe'])
+        self.assertTrue(result['diagnostic_execution_gate'])
+        self.assertFalse(result['native_size_expectation_bound'])
+        self.assertFalse(result['bounded_runtime_gate'])
+        self.assertEqual(result['observed_native_size'],[3600,2338])
+        self.assertIsNone(runtime.profiles.verify_profile(self.profile)['profile']['native_size'])
+        with self.assertRaises(ValueError): runtime.profiles.promote(self.profile,self.proof,self.output/'runtime.json')
+
+    def test_timing_only_disables_all_captures_and_cannot_promote(self):
+        self.native_fixture()
+        result=self.run_fixture(timing_only=True,api_validation=False)
+        self.assertTrue(result['timing_execution_gate'])
+        self.assertFalse(result['diagnostic_execution_gate'])
+        self.assertFalse(result['bounded_runtime_gate'])
+        self.assertFalse(result['passed'])
+        self.assertIsNone(result['render_capture'])
+        self.assertIsNone(result['image'])
+        self.assertEqual(list((self.output/'captures').iterdir()),[])
+        self.assertFalse((self.output/'inspection.png').exists())
+        config=tomllib.loads((self.output/'saves/config.toml').read_text())
+        self.assertEqual(config['debug']['screenshot_every'],0)
+        self.assertEqual(config['debug']['screenshot_directory'],'')
+        self.assertEqual(len(result['host_metrics']),1)
+        self.assertEqual(len(result['metrics']),3)
+        self.assertEqual(self.calls[0]['environment']['HALO_GPU_STATS'],'1')
+        with self.assertRaises(ValueError): runtime.profiles.promote(self.profile,self.proof,self.output/'runtime.json')
+
+    def test_timing_only_missing_host_metrics_or_unexpected_capture_fails(self):
+        for problem in ('host','capture'):
+            self.output=self.fixture.base/('timing-'+problem)
+            def wrong(*arguments):
+                observation=self.fake_runner(*arguments)
+                if problem=='host':
+                    path=Path(arguments[3]);path.write_text(path.read_text().replace(HOST_LINE,''))
+                else: bmp(Path(arguments[1])/'captures/frame00300.bmp',1440,1080)
+                return observation
+            result=self.run_fixture(wrong,timing_only=True)
+            self.assertFalse(result['timing_execution_gate'])
+            self.assertFalse(result['bounded_runtime_gate'])
+
+    def test_statistics_environment_override_requires_matching_bound_debug_setting(self):
+        self.run_fixture()
+        execution_path=self.output/'execution.json';execution=json.loads(execution_path.read_text())
+        execution['environment_overrides']['HALO_GPU_STATS']='1';execution_path.write_text(json.dumps(execution))
+        record_path=self.output/'runtime.json';record=json.loads(record_path.read_text())
+        record['execution']=runtime.descriptor(execution_path);record_path.write_text(json.dumps(record))
+        build=runtime.profiles.checked_build(self.proof,self.fixture.repo)
+        runtime.profiles.checked_runtime(record_path,self.values,build)
+        config=self.output/'saves/config.toml'
+        config.write_text(runtime.profiles.set_key(config.read_text(),'debug','gpu_stats','false'))
+        record['test_config']=runtime.descriptor(config);record_path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError,'statistics override'):
+            runtime.profiles.checked_runtime(record_path,self.values,build)
+
+    def test_frame_timing_parser_and_steady_percentiles_include_logging_cost(self):
+        text=('Native timing: frame 10, monotonic 1000000000 ns, tick 149, initialized 1\n'
+              'Native timing: frame 11, monotonic 1008000000 ns, tick 150, initialized 1\n'
+              'Native timing: frame 12, monotonic 1016000000 ns, tick 150, initialized 1\n'
+              'Native timing: frame 13, monotonic 1032000000 ns, tick 151, initialized 1\n'
+              'Native timing: frame 14, monotonic 1072000000 ns, tick 152, initialized 1\n')
+        state=runtime.parse_log(text)
+        self.assertEqual(len(state['frame_timing']),5)
+        summary=runtime.summarize_frame_timing(state['frame_timing'])
+        self.assertEqual(summary['interval_count'],3)
+        self.assertEqual(summary['p50_ms'],16.0)
+        self.assertAlmostEqual(summary['p95_ms'],37.6)
+        self.assertAlmostEqual(summary['p99_ms'],39.52)
+        self.assertEqual(summary['max_ms'],40.0)
+        self.assertEqual(summary['over_16_67_ms'],1)
+        self.assertEqual(summary['over_8_33_ms'],2)
+        self.assertTrue(summary['logging_cost_included'])
+        self.assertIn('cap waits',summary['scope'])
+        self.assertIsNone(runtime.summarize_frame_timing(state['frame_timing'][:2]))
+        broken=list(state['frame_timing'])
+        broken[3]=dict(broken[3],frame=20)
+        summary=runtime.summarize_frame_timing(broken)
+        self.assertEqual(summary['interval_count'],1)
+        self.assertEqual(summary['discarded_nonconsecutive_intervals'],2)
+        malformed=runtime.parse_log('Native timing: frame10 malformed\n')
+        self.assertTrue(malformed['telemetry_errors'])
 
     def test_stale_build_or_human_profile_rejected_before_runner_and_output_creation(self):
         current = self.fixture.repo / 'port/linux/src/halo_frame_pacing.c'

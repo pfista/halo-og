@@ -7,10 +7,15 @@ Examples (each output must be new):
     --template /path/to/normal/config.toml --output /path/to/new-profile
   python3 tools/metal_playtest_profiles.py promote --profile /path/to/new-profile \
     --build-proof /path/to/NEW/result.json --runtime-proof /path/to/runtime.json
+  python3 tools/metal_playtest_profiles.py prepare --map bloodgulch \
+    --render-cap 60 --native-fullscreen --native-size 3600x2338 --vsync on \
+    --assets /path/to/assets --template /path/to/config.toml --output /path/to/new-native-profile
 
 Promotion requires exact profile-specific bounded runtime evidence. Neither
 preparation nor promotion proves achieved FPS, manual input/audio or fidelity.
 Original assets are referenced by symlinks, never copied or modified.
+Native size is a measured expectation, never a display-mode override. Omit it
+for an unready measurement probe, then prepare a new profile with its result.
 The initial configuration is immutable provenance. The live configuration can
 retain ordinary audio/input preferences while its tested display preset stays
 fixed; launch verification never rewrites either configuration.
@@ -33,6 +38,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MAPS = ('bloodgulch', 'damnation', 'hangemhigh')
 CAPS = (30, 60, 120, 0)
 HEIGHTS = (480, 720, 1080, 1440, 2160)
+NATIVE_MAX_DIMENSION = 8192
+NATIVE_RESOLUTION_SYMBOL = 'halo_metal_render_native_target_dimensions'
 HOST = 'build/macos-metal/halo'
 GUEST = 'build/macos-metal/halo_guest.elf'
 HELPERS = ('halo_frame_pacing', 'metal_render_scale')
@@ -82,15 +89,69 @@ def new_json(path, value):
         handle.write('\n')
 
 
-def profile_values(map_name, cap, height, vsync):
+def parse_native_size(value):
+    if isinstance(value, str):
+        match = re.fullmatch(r'([1-9][0-9]*)[xX]([1-9][0-9]*)', value)
+        require(match is not None, 'Native size must be measured physical pixels in WxH form')
+        value = tuple(map(int, match.groups()))
+    require(isinstance(value, (tuple, list)) and len(value) == 2
+            and all(type(axis) is int and 0 < axis <= NATIVE_MAX_DIMENSION for axis in value),
+            'Native size must have two positive physical axes no larger than8192')
+    logical_width = (480 * value[0] // value[1]) & ~1
+    require(640 <= logical_width <= 1600, 'Native fullscreen aspect exceeds the supported logical canvas')
+    return tuple(value)
+
+
+def profile_values(map_name, cap, height, vsync, native_fullscreen=False, native_size=None):
     require(map_name in MAPS, 'Unsupported playtest map')
     require(type(cap) is int and cap in CAPS, 'Render cap must be 30, 60, 120 or 0')
-    require(type(height) is int and height in HEIGHTS, 'Unsupported actual render height')
     require(type(vsync) is bool, 'Vsync must be a boolean independent of render cap')
+    require(type(native_fullscreen) is bool, 'Native fullscreen selection must be a boolean')
+    if native_fullscreen:
+        require(height is None or (type(height) is int and height == 0), 'Native fullscreen must use render height0')
+        size = parse_native_size(native_size) if native_size is not None else None
+        return dict(map=map_name, frame_limit=cap, render_height=0, vsync=vsync,
+                    interpolation=cap != 30, high_res_hud=False, direct_camera=False, reference_30=False,
+                    native_fullscreen=True, native_size=list(size) if size else None,
+                    logical_width=((480 * size[0] // size[1]) & ~1) if size else None, logical_height=480,
+                    expected_physical_width=size[0] if size else None, expected_physical_height=size[1] if size else None)
+    require(native_size is None, 'Native size expectation requires native fullscreen')
+    require(type(height) is int and height in HEIGHTS, 'Unsupported actual render height')
     return dict(map=map_name, frame_limit=cap, render_height=height, vsync=vsync,
                 interpolation=cap != 30, high_res_hud=False, direct_camera=False,
                 reference_30=cap == 30 and height == 480,
                 logical_width=640, logical_height=480, expected_physical_width=height * 4 // 3)
+
+
+def physical_size(values):
+    width, height = values['expected_physical_width'], values.get('expected_physical_height', values['render_height'])
+    require(type(width) is int and type(height) is int and 0 < width <= NATIVE_MAX_DIMENSION
+            and 0 < height <= NATIVE_MAX_DIMENSION, 'An explicit measured native size is required for runtime validation/promotion')
+    return width, height
+
+
+def windowed_environment(values):
+    return '0' if values.get('native_fullscreen', False) else '1'
+
+
+def checked_native_startup(log, values, require_expected=True):
+    """Match measured SDL pixels, renderer backing and logical startup units."""
+    if not values.get('native_fullscreen', False):
+        return None
+    lines = re.findall(r'Native resolution: (\d+)x(\d+) storage, (\d+)x(\d+) logical, '
+                       r'(\d+)x(\d+) drawable, startup aspect (native|fitted)', log)
+    require(len(lines) == 1, 'Exactly one measured native resolution startup record is required')
+    sw, sh, lw, lh, dw, dh = map(int, lines[0][:6])
+    width, height = physical_size(values) if require_expected or values.get('native_size') else parse_native_size((dw,dh))
+    logical_width = values['logical_width'] if values.get('native_size') else ((480*width//height)&~1)
+    require((sw, sh) == (dw, dh) == (width, height) and (lw, lh) ==
+            (logical_width, values['logical_height']) and lines[0][6] == 'native',
+            'Measured native storage/logical/drawable dimensions differ from the profile expectation')
+    drawables = re.findall(r'Metal drawable (\d+)x(\d+) \((borderless fullscreen|windowed)\)', log)
+    require(len(drawables) == 1 and tuple(map(int, drawables[0][:2])) == (width, height)
+            and drawables[0][2] == 'borderless fullscreen', 'SDL native fullscreen drawable differs from measured expectation')
+    return dict(storage_width=sw, storage_height=sh, logical_width=lw, logical_height=lh,
+                drawable_width=dw, drawable_height=dh, aspect='native', fullscreen=True)
 
 
 def set_key(text, section, key, value):
@@ -118,7 +179,8 @@ def controlled_config(template, values):
             'Provide normal nonempty human input bindings')
     result = template
     updates = {
-        'display': {'fullscreen': False, 'screen_width': 640, 'window_scale': 2,
+        'display': {'fullscreen': values.get('native_fullscreen', False),
+                    'screen_width': 0 if values.get('native_fullscreen', False) else 640, 'window_scale': 2,
                     **{k: values[k] for k in ('frame_limit', 'render_height', 'vsync',
                                              'interpolation', 'high_res_hud', 'direct_camera')}},
         'audio': {'enabled': True},
@@ -145,12 +207,16 @@ def validate_display(config, values):
     for key in ('frame_limit', 'render_height', 'vsync', 'interpolation', 'high_res_hud', 'direct_camera'):
         require(type(display.get(key)) is type(values[key]) and display[key] == values[key],
                 'Profile display mismatch: ' + key)
-    require(display.get('screen_width') == 640, 'Profile must retain the original logical 4:3 viewport')
+    require(type(display.get('screen_width')) is int and display['screen_width'] ==
+            (0 if values.get('native_fullscreen', False) else 640), 'Profile logical aspect selection differs')
+    if values.get('native_fullscreen', False):
+        require(display.get('fullscreen') is True, 'Native profile must start fullscreen')
 
 
 def validate_config(config, values, initial=None):
     validate_display(config, values)
-    require(config['display']['fullscreen'] is False and config['display']['window_scale'] == 2,
+    require(config['display']['fullscreen'] is values.get('native_fullscreen', False)
+            and config['display']['window_scale'] == 2,
             'Unexpected window presentation')
     volume = config['audio'].get('volume', 0)
     sensitivity = config['input'].get('mouse_sensitivity', 0)
@@ -198,10 +264,11 @@ def cache_header(path, expected, scenario_type):
     require(struct.unpack_from('<H', raw, 96)[0] == scenario_type, 'Wrong cache scenario type')
 
 
-def prepare(output, map_name, cap, height, vsync, assets, template, root=ROOT):
+def prepare(output, map_name, cap, height, vsync, assets, template, root=ROOT,
+            native_fullscreen=False, native_size=None):
     output, assets, template, root = map(lambda p: Path(p).resolve(), (output, assets, template, root))
     require(not output.exists(), 'Output already exists; saves and config are preserved. Choose a new profile path.')
-    values = profile_values(map_name, cap, height, vsync)
+    values = profile_values(map_name, cap, height, vsync, native_fullscreen, native_size)
     configuration = controlled_config(template.read_text(), values)
     require((assets / 'maps').is_dir() and (assets / 'sounds').is_dir(), 'Original maps and sounds directories required')
     asset_records = []
@@ -230,7 +297,8 @@ def prepare(output, map_name, cap, height, vsync, assets, template, root=ROOT):
         config=descriptor(output / 'saves/config.toml'), init=descriptor(output / 'data/init.txt'),
         initial_config=descriptor(output / 'initial-config.toml'),
         configuration_policy='immutable-display-mutable-human-v1',
-        launch_environment=dict(HALO_DATA_ROOT=str(output / 'data'), HALO_SAVE_ROOT=str(output / 'saves'), HALO_WINDOWED='1'),
+        launch_environment=dict(HALO_DATA_ROOT=str(output / 'data'), HALO_SAVE_ROOT=str(output / 'saves'),
+                                HALO_WINDOWED=windowed_environment(values)),
         prepared=True, experiment_ready=False, simulation_hz=30,
         simulation_source_modified=False, runtime_options_verified=False,
         manual_input_audio_gate=False, achieved_render_fps_gate=False, performance_improvement_gate=False,
@@ -240,12 +308,14 @@ def prepare(output, map_name, cap, height, vsync, assets, template, root=ROOT):
     return manifest
 
 
-def checked_build(path, root):
+def checked_build(path, root, require_native_resolution=False):
     path, root = Path(path).resolve(), Path(root).resolve()
     build = json.loads(path.read_text())
     require(build.get('passed') is True and type(build.get('actual_build_tool_exit')) is int
             and build['actual_build_tool_exit'] == 0, 'Successful observed native build required')
     require(build.get('display_options') is True, 'Pre-option build is ineligible; require NEW --display-options proof')
+    if require_native_resolution:
+        require(build.get('native_resolution') is True, 'Pre-native-resolution build; require NEW --native-fullscreen build proof')
     require(build.get('no_angle_gl_linkage_or_imports') is True, 'Native no-GL/ANGLE build proof required')
     bindings = build.get('source_bindings', []) + build.get('evidence_bindings', [])
     require(isinstance(bindings, list) and all(isinstance(b, dict) for b in bindings), 'Malformed build bindings')
@@ -278,6 +348,8 @@ def checked_build(path, root):
                 'Compiled helper/object identity mismatch')
         symbols = {compiled['symbol'], *compiled.get('additional_linked_symbols', [])}
         require(HELPER_SYMBOLS[helper] <= symbols, 'Missing required actual linked display helper symbols')
+        if helper == 'metal_render_scale' and require_native_resolution:
+            require(NATIVE_RESOLUTION_SYMBOL in symbols, 'Pre-native-resolution build cannot validate a native fullscreen profile')
     text = (snapshot / 'port/linux/src/port_config.c').read_text()
     for key, default in (('frame_limit', 0), ('render_height', 480)):
         pattern = r'\{\s*"display\.' + key + r'"\s*,\s*_config_integer\s*,\s*"' + str(default) + r'"\s*,\s*NULL\s*,'
@@ -293,9 +365,12 @@ def checked_build(path, root):
             'Native loader AArch64 guest container required')
     environment_names = sorted(set(re.findall(r'"(HALO_[A-Z0-9_]+)"', text))
                                - {'HALO_DATA_ROOT', 'HALO_SAVE_ROOT', 'HALO_WINDOWED'})
-    return dict(proof=descriptor(path), snapshot=str(snapshot), bindings=bindings,
+    result = dict(proof=descriptor(path), snapshot=str(snapshot), bindings=bindings,
                 configuration_environment_names=environment_names,
                 host=descriptor(host), guest=descriptor(guest), display_options=True)
+    if require_native_resolution:
+        result['native_resolution_api_verified'] = True
+    return result
 
 
 def checked_runtime(path, values, build):
@@ -305,6 +380,7 @@ def checked_runtime(path, values, build):
             'Explicit profile runtime evidence required')
     require(runtime.get('bounded_runtime_gate') is True and runtime.get('map') == values['map'],
             'Runtime evidence is incomplete or for a different map')
+    require(runtime.get('timing_only') is not True, 'Timing-only evidence cannot promote a ready profile')
     require(runtime.get('build_proof') == build['proof'], 'Runtime/build proof identity mismatch')
     require(type(runtime.get('actual_host_returncode')) is int and runtime['actual_host_returncode'] == 0
             and type(runtime.get('actual_guest_returncode')) is int and runtime['actual_guest_returncode'] == 0,
@@ -316,7 +392,13 @@ def checked_runtime(path, values, build):
     config = tomllib.loads(config_path.read_text())
     validate_display(config, values)
     launch_log = runtime.get('launch_log')
-    checked_descriptor(launch_log)
+    log_path = checked_descriptor(launch_log)
+    if values.get('native_fullscreen', False):
+        require(build.get('native_resolution_api_verified') is True, 'Native resolution helper guard is missing')
+        log_text = log_path.read_text(errors='replace')
+        require('Metal API Validation Enabled' in log_text, 'Native runtime lacks the actual API validation startup marker')
+        startup = checked_native_startup(log_text, values)
+        require(runtime.get('native_resolution') == startup, 'Runtime native startup binding differs from the actual log')
     execution = json.loads(checked_descriptor(runtime['execution']).read_text())
     require(execution.get('log') == launch_log, 'Execution/runtime launch log identity mismatch')
     require(type(execution.get('returncode')) is int and execution['returncode'] == 0,
@@ -325,11 +407,15 @@ def checked_runtime(path, values, build):
             'Execution is not the exact frozen host/guest command')
     environment = execution.get('environment_overrides', {})
     require(environment.get('HALO_SAVE_ROOT') == str(config_path.parent)
-            and environment.get('HALO_WINDOWED') == '1', 'Execution does not bind the tested config/window')
+            and environment.get('HALO_WINDOWED') == windowed_environment(values),
+            'Execution does not bind the tested config/window')
     require(isinstance(environment.get('HALO_DATA_ROOT'), str)
             and Path(environment['HALO_DATA_ROOT']).is_absolute(), 'Execution data root is not bound')
-    require(not (set(environment) & set(build['configuration_environment_names'])),
+    allowed_diagnostics = {'HALO_GPU_STATS'} if environment.get('HALO_GPU_STATS') == '1' and config.get('debug', {}).get('gpu_stats') is True else set()
+    require(not ((set(environment) & set(build['configuration_environment_names'])) - allowed_diagnostics),
             'Execution overrides presentation or normal configuration via environment')
+    require('HALO_GPU_STATS' not in environment or 'HALO_GPU_STATS' in allowed_diagnostics,
+            'GPU statistics override does not match the tested configuration')
     elapsed = execution.get('elapsed_seconds')
     require(type(elapsed) in (int, float) and 15 <= elapsed <= 600,
             'Bounded runtime evidence must observe at least15 seconds')
@@ -337,6 +423,8 @@ def checked_runtime(path, values, build):
     raw = capture.read_bytes()
     header = raw[:54]
     require(len(header) == 54, 'Truncated runtime capture header')
+    if values.get('native_fullscreen', False):
+        require(header[:2] == b'BM', 'Native runtime requires the original physical Metal BMP capture')
     if header[:8] == b'\x89PNG\r\n\x1a\n' and header[12:16] == b'IHDR':
         width, height = struct.unpack_from('>II', header, 16)
     elif header[:2] == b'BM' and len(header) == 54 and struct.unpack_from('<I', header, 14)[0] >= 40:
@@ -344,7 +432,7 @@ def checked_runtime(path, values, build):
         height = abs(height)
     else:
         raise ValueError('Runtime capture must be an actual BMP or PNG')
-    require((width, height) == (values['expected_physical_width'], values['render_height']),
+    require((width, height) == physical_size(values),
             'Runtime capture does not prove requested physical render dimensions')
     if header[:2] == b'BM':
         offset = struct.unpack_from('<I', header, 10)[0]
@@ -352,6 +440,9 @@ def checked_runtime(path, values, build):
         require(planes == 1 and bits in (24, 32) and compression == 0
                 and offset >= 54 and len(raw) == offset + ((width * bits + 31) // 32) * 4 * height
                 and struct.unpack_from('<I', header, 2)[0] == len(raw), 'Truncated/unsupported BMP capture')
+        if values.get('native_fullscreen', False):
+            require(bits == 32 and offset == 54 and any(any(raw[offset+channel::4]) for channel in (0,1,2)),
+                    'Native physical capture must contain complete nonblack original BGRA pixels')
     else:
         require(header[24] == 8 and header[25] in (2, 6) and header[26:29] == bytes(3),
                 'Unsupported PNG pixel layout')
@@ -388,7 +479,8 @@ def verify_profile(folder, require_ready=False):
             'Invalid profile manifest')
     require(manifest['profile_directory'] == str(folder), 'Profile was moved; create a new profile')
     values = manifest['profile']
-    require(values == profile_values(values['map'], values['frame_limit'], values['render_height'], values['vsync']),
+    require(values == profile_values(values['map'], values['frame_limit'], values['render_height'], values['vsync'],
+                                    values.get('native_fullscreen', False), values.get('native_size')),
             'Profile values were altered')
     require(manifest.get('configuration_policy') == 'immutable-display-mutable-human-v1',
             'Profile uses an older configuration policy; preserve it and prepare a fresh profile')
@@ -418,12 +510,12 @@ def verify_profile(folder, require_ready=False):
         str((assets / 'maps' / (values['map'] + '.map')).resolve()),
         str((assets / 'maps/ui.map').resolve())}, 'Asset identities do not match the requested map/UI')
     require(manifest['launch_environment'] == dict(HALO_DATA_ROOT=str(folder / 'data'),
-            HALO_SAVE_ROOT=str(folder / 'saves'), HALO_WINDOWED='1'), 'Unexpected application environment')
+            HALO_SAVE_ROOT=str(folder / 'saves'), HALO_WINDOWED=windowed_environment(values)), 'Unexpected application environment')
     if require_ready:
         ready = json.loads((folder / 'ready.json').read_text())
         require(ready.get('experiment_ready') is True and ready['profile'] == descriptor(manifest_path),
                 'Prepared profile lacks a valid ready promotion')
-        build = checked_build(checked_descriptor(ready['build']['proof']), manifest['repository'])
+        build = checked_build(checked_descriptor(ready['build']['proof']), manifest['repository'], values.get('native_fullscreen', False))
         require(build == ready['build'], 'Build promotion changed')
         checked_runtime(checked_descriptor(ready['runtime_proof']), values, build)
         python = checked_descriptor(ready['verifier_python'])
@@ -439,12 +531,13 @@ def verify_profile(folder, require_ready=False):
 def launcher_text(folder, build, python):
     folder = Path(folder).resolve()
     quote = shlex.quote
-    removals = ' '.join('-u ' + name for name in build['configuration_environment_names'])
+    removals = ' '.join('-u ' + name for name in sorted(set(build['configuration_environment_names']) | {'HALO_GPU_STATS'}))
+    values = json.loads((folder / 'profile.json').read_text())['profile']
     return ('#!/bin/zsh\nset -eu\n' + quote(str(python)) + ' ' + quote(str(folder / 'producer.py'))
             + ' verify --profile ' + quote(str(folder)) + ' --require-ready\n'
             + 'cd ' + quote(str(folder)) + '\nexec env ' + removals
             + ' HALO_DATA_ROOT=' + quote(str(folder / 'data'))
-            + ' HALO_SAVE_ROOT=' + quote(str(folder / 'saves')) + ' HALO_WINDOWED=1 '
+            + ' HALO_SAVE_ROOT=' + quote(str(folder / 'saves')) + ' HALO_WINDOWED=' + windowed_environment(values) + ' '
             + quote(build['host']['file']) + ' ' + quote(build['guest']['file']) + '\n')
 
 
@@ -452,7 +545,7 @@ def promote(folder, build_proof, runtime_proof):
     folder = Path(folder).resolve()
     require(not (folder / 'ready.json').exists(), 'Ready record exists; preserve it and choose a new profile')
     manifest = verify_profile(folder)
-    build = checked_build(build_proof, manifest['repository'])
+    build = checked_build(build_proof, manifest['repository'], manifest['profile'].get('native_fullscreen', False))
     runtime = checked_runtime(runtime_proof, manifest['profile'], build)
     # Runtime bytes remain immutable evidence, separate from preferences the
     # human game is allowed to save during later launches.
@@ -487,12 +580,14 @@ def chooser(output, profiles):
         folder = Path(folder).resolve()
         manifest = verify_profile(folder, True)
         v = manifest['profile']
-        identity = tuple(v[k] for k in ('map', 'frame_limit', 'render_height', 'vsync'))
+        identity = tuple(v[k] for k in ('map', 'frame_limit', 'render_height', 'vsync')) + (v.get('native_fullscreen', False),)
         require(identity not in identities, 'Duplicate chooser presentation profile')
         identities.add(identity)
         cap = str(v['frame_limit']) + ' FPS cap' if v['frame_limit'] else ('Display paced' if v['vsync'] else 'Uncapped')
         label = {'bloodgulch': 'Blood Gulch', 'damnation': 'Damnation', 'hangemhigh': 'Hang Em High'}[v['map']]
-        labels.append(f'{label} | {cap} | {v["expected_physical_width"]}x{v["render_height"]} pixels | vsync {"on" if v["vsync"] else "off"}')
+        width, height = physical_size(v)
+        presentation = 'native fullscreen' if v.get('native_fullscreen', False) else 'pixels'
+        labels.append(f'{label} | {cap} | {width}x{height} {presentation} | vsync {"on" if v["vsync"] else "off"}')
         records.append(dict(directory=str(folder), profile=descriptor(folder / 'profile.json'),
                             ready=descriptor(folder / 'ready.json'), launcher=descriptor(folder / 'Launch Native Metal.command')))
     quote = shlex.quote
@@ -520,7 +615,10 @@ def main():
     draft = commands.add_parser('prepare', help='Create a new isolated unready profile; never launch')
     draft.add_argument('--map', choices=MAPS, required=True)
     draft.add_argument('--render-cap', choices=CAPS, type=int, required=True)
-    draft.add_argument('--render-height', choices=HEIGHTS, type=int, required=True)
+    resolution = draft.add_mutually_exclusive_group(required=True)
+    resolution.add_argument('--render-height', choices=HEIGHTS, type=int)
+    resolution.add_argument('--native-fullscreen', action='store_true', help='Render at actual fullscreen Retina drawable pixels')
+    draft.add_argument('--native-size', type=parse_native_size, help='Measured expected drawable WxH; an expectation, not a resolution override')
     draft.add_argument('--vsync', choices=('on', 'off'), required=True)
     draft.add_argument('--assets', type=Path, required=True)
     draft.add_argument('--template', type=Path, required=True)
@@ -538,7 +636,8 @@ def main():
     args = parser.parse_args()
     if args.command == 'prepare':
         result = prepare(args.output, args.map, args.render_cap, args.render_height,
-                         args.vsync == 'on', args.assets, args.template)
+                         args.vsync == 'on', args.assets, args.template,
+                         native_fullscreen=args.native_fullscreen, native_size=args.native_size)
     elif args.command == 'promote':
         result = promote(args.profile, args.build_proof, args.runtime_proof)
     elif args.command == 'verify':

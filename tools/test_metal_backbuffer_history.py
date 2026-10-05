@@ -107,7 +107,7 @@ struct xgpu_texture_description { unsigned long width,height,depth,levels;
 struct native_resource { struct native_resource *next; struct halo_metal_ref ref;
     DWORD data,format_word,size_word; struct xgpu_texture_description description;
     unsigned long generation,palette_hash; uint64_t last_rendered; uint32_t format,usage;
-    BOOL mip_composite,volume; uint32_t storage_width,storage_height; };
+    BOOL mip_composite,volume; uint32_t storage_width,storage_height,scale_mode; };
 static struct { D3DPRESENT_PARAMETERS presentation;
     D3DSurface back_buffer,history_buffer,depth_buffer;
     D3DSurface *render_target,*depth_stencil; D3DVIEWPORT8 viewport;
@@ -127,6 +127,7 @@ static int vertical_blank_lock,vertical_blank_condition;
 static unsigned allocations,viewport_updates,video_calls;
 static long requested_width=640;
 static unsigned render_height=480;
+static uint32_t native_storage_width,native_storage_height;
 static unsigned frame_waits,frame_statistics,event_pumps,phase,wait_phase,pump_phase;
 static long screenshot_every;
 static const char *screenshot_directory="";
@@ -229,8 +230,16 @@ static struct native_resource *target_get(const D3DSurface *surface) {
     entry->native.storage_width=entry->native.description.width;
     entry->native.storage_height=entry->native.description.height;
     if(entry->native.description.height==SCREEN_HEIGHT) {
-        entry->native.storage_width=(entry->native.description.width*render_height+SCREEN_HEIGHT/2)/SCREEN_HEIGHT;
-        entry->native.storage_height=render_height;
+        if(render_height) {
+            entry->native.storage_width=(entry->native.description.width*render_height+SCREEN_HEIGHT/2)/SCREEN_HEIGHT;
+            entry->native.storage_height=render_height;
+        } else {
+            struct halo_metal_render_dimensions dimensions;
+            assert(!halo_metal_render_native_target_dimensions(entry->native.description.width,
+                entry->native.description.height,halo_screen_width(),native_storage_width,native_storage_height,&dimensions));
+            entry->native.storage_width=dimensions.storage_width;entry->native.storage_height=dimensions.storage_height;
+            entry->native.scale_mode=dimensions.scale_mode;
+        }
     }
     entry->native.format=HALO_METAL_BGRA8;entry->native.usage=HALO_METAL_SHADER_READ|HALO_METAL_RENDER_TARGET;
     entry->pixels=malloc(entry->native.storage_width*entry->native.storage_height*sizeof(uint32_t));assert(entry->pixels);
@@ -429,6 +438,35 @@ static void test_scaled_snapshot(const char *directory) {
     D3DDevice_Present(NULL,NULL,NULL,NULL);assert_pattern(past,1440,11);
     assert(frame_waits==2 && frame_statistics==2 && event_pumps==2);
 }
+static void test_native_snapshot(const char *directory) {
+    render_height=0;screen_width=738;native_storage_width=3600;native_storage_height=2338;create(738);
+    DWORD logical_size=(480u<<16)|738u,zero=device.back_buffer.Data,history=device.history_buffer.Data;
+    struct native_resource *back=target_get(&device.back_buffer);packet_flush();fill(back,12);
+    assert(back->description.width==738 && back->description.height==480 && back->scale_mode==1);
+    assert(back->storage_width==3600 && back->storage_height==2338);
+    assert(device.viewport.Width==738 && device.viewport.Height==480);
+    D3DDevice_Present(NULL,NULL,NULL,NULL);
+    struct native_resource *past=target_get(&device.history_buffer);assert_pattern(past,3600,12);
+    struct halo_metal_copy_subresource copy={0};unsigned found=0;
+    for(unsigned i=0;i<event_count;i++) if(events[i].kind==HALO_METAL_COPY_SUBRESOURCE) {
+        memcpy(&copy,events[i].command,sizeof(copy));found++;
+    }
+    assert(found==1 && copy.width==3600 && copy.height==2338 && copy.destination.id==past->ref.id);
+    screenshot_directory=directory;write_screenshot(back);
+    char path[1024];snprintf(path,sizeof(path),"%s/frame00001.bmp",directory);
+    FILE *file=fopen(path,"rb");assert(file);
+    unsigned char header[54];assert(fread(header,1,54,file)==54);
+    uint32_t width,image_size;int32_t height;
+    memcpy(&width,header+18,4);memcpy(&height,header+22,4);memcpy(&image_size,header+34,4);
+    assert(width==3600 && height==-2338 && image_size==3600u*2338u*4u);
+    uint32_t *pixels=malloc(image_size);assert(pixels);
+    assert(fread(pixels,1,image_size,file)==image_size && fgetc(file)==EOF);
+    for(unsigned y=0;y<2338;y++) for(unsigned x=0;x<3600;x++) assert(pixels[y*3600+x]==pattern(x,y,12));
+    free(pixels);assert(!fclose(file));
+    assert(device.back_buffer.Size==logical_size && device.history_buffer.Size==logical_size);
+    assert(device.back_buffer.Data==zero && device.history_buffer.Data==history && allocations==3);
+    assert(copy_count==1 && present_count==1 && readback_count==1);
+}
 static void test_resize(void) {
     create(640);screen_width=640;DWORD zero=device.back_buffer.Data,history=device.history_buffer.Data;
     D3DBaseTexture aliases[2]={{0},{0}};aliases[0].Data=aliases[1].Data=zero;
@@ -470,6 +508,7 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"first_history_use")) test_first_history_use();
     else if(!strcmp(argv[1],"snapshot")) { assert(argc==3);test_snapshot(argv[2]); }
     else if(!strcmp(argv[1],"scaled_snapshot")) { assert(argc==3);test_scaled_snapshot(argv[2]); }
+    else if(!strcmp(argv[1],"native_snapshot")) { assert(argc==3);test_native_snapshot(argv[2]); }
     else if(!strcmp(argv[1],"resize")) test_resize();
     else if(!strcmp(argv[1],"scaled_resize")) { render_height=1080;test_resize(); }
     else assert(0);
@@ -508,7 +547,7 @@ class BackbufferHistoryTests(unittest.TestCase):
             raise AssertionError(compiled.stderr)
 
     def run_case(self, name):
-        result = subprocess.run([str(self.executable), name, *([str(self.directory)] if name in ("snapshot", "scaled_snapshot") else [])],
+        result = subprocess.run([str(self.executable), name, *([str(self.directory)] if name in ("snapshot", "scaled_snapshot", "native_snapshot") else [])],
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("production frontend CPU checks passed", result.stdout)
@@ -539,6 +578,9 @@ class BackbufferHistoryTests(unittest.TestCase):
 
     def test_1080_resize_copies_physical_overlap_and_clears_cached_regrowth(self):
         self.run_case("scaled_resize")
+
+    def test_native_retina_history_copy_and_complete_bmp_preserve_logical_headers(self):
+        self.run_case("native_snapshot")
 
 
 if __name__ == "__main__":

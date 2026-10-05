@@ -18,18 +18,49 @@ use config files, with no environment overrides:
 ```toml
 [display]
 frame_limit = 60       # 0 (uncapped), 30, 60 or 120
-render_height = 1080   # 480, 720, 1080, 1440 or 2160; requires restart
+render_height = 0      # Native drawable pixels; fixed-height presets also remain available
+fullscreen = true
+screen_width = 0       # Use the display aspect at startup
 interpolation = true
 vsync = false
 high_res_hud = false
 direct_camera = false
 ```
 
+The focused fullscreen playtests use `render_height=0`, `screen_width=0` and
+`fullscreen=true`. Native color/depth backing is resolved after SDL creates and
+synchronizes the Retina window, using its actual drawable pixels. Independent
+X/Y scale ratios cover the complete drawable despite rounding the logical
+screen width. Display aspect uses the existing wider-screen game path; authored
+textures, shader constants and gameplay remain logical. Restart after changing
+resolution or moving to another display. The backing remains fixed until restart.
+
+On this Mac the measured fullscreen drawable is **3600x2338**, with the original
+logical vertical canvas of 480 lines and a logical width of 738. That is about
+35% more pixels than the previous 2880x2160 preset. It describes the current
+macOS drawable, not a forced system display mode. The new focused chooser offers
+native 60/120 caps with VSync independently on/off, plus native uncapped; lower
+presets and the original 30 FPS reference remain available for internal comparisons.
+
+The host caches exact validated sampler states, including raw float LOD bits and
+border companion states, with a bounded 256-entry fallback. Draw input slices
+share one immutable packet buffer per synchronous submission. Texture uploads and
+visibility result words keep separate lifetimes. Original command order, shader
+code, atomic packet validation and synchronous completion remain unchanged.
+
+`debug.gpu_stats=true` enables completed-present intervals and host aggregate
+metrics. Performance runs use `--timing-only --api-validation off`, disabling
+screenshots and explicitly recording diagnostic logging cost. These runs cannot
+promote playtest launchers; separate API-validation runs with full-size captures
+are required. GPU duration overlaps completion wait and must not be added to it.
+
 The reference profile uses interpolation=false, frame_limit=30 and
 render_height=480. The original throttle owns that mode. Other profiles enable
 the existing presentation interpolation and apply a monotonic deadline cap
-after native submission, before pumping the next frame's input. A missed
-deadline is discarded; loading pauses do not accumulate catch-up frames.
+after native submission, before pumping the next frame's input. Lateness below
+one period retains the absolute phase, allowing a light interpolation frame to
+recover after a heavier simulation frame. A whole period of lateness starts
+fresh; loading pauses do not accumulate catch-up frames.
 Vsync is independent: cap0/vsync=true follows display pacing, while
 cap0/vsync=false applies no additional software wait. These settings do not
 change TICKS_PER_SECOND or the original gameplay tick queue.
@@ -52,6 +83,63 @@ profiles. Each launcher verifies its frozen binaries/config/evidence before
 running. Original asset directories are referenced without modification.
 Bounded runtime success is distinct from achieved FPS, manual input/audio,
 original pixel fidelity and a performance improvement.
+
+The current native fullscreen checkpoint is
+`build/macos-metal/native-fullscreen-build-proof-attempt3/result.json`
+(SHA256 `5104e543b18e91a459702a8891aa2298cae2d8598e98f31be0675a14dd5bbb9b`).
+The observed build binds 41 source/binary inputs and 26 evidence files, including
+the actual ILP32 native-size and pacing objects and their final guest exports.
+All 154 targeted CPU tests pass. The 13 pacing fake-clock cases also pass in an
+actual 32-bit-pointer guest (`frame-pacing-ilp32-attempt6`), including alternating
+22 ms/7 ms work at 60 FPS and long-stall reset boundaries.
+
+Host cache validation preserves all 378 ordered original color/depth/stencil/query
+checkpoints, all 1,050 volume-color readbacks and 20 atomic rejection cases,
+26 history readbacks, and the 26 visibility-query cases. Alpha-border attachment
+bytes match the frozen baseline exactly, with 13 atomic rejections. Its existing
+ideal-rounding oracle still reports 246 color-component differences; this is
+preserved separately and is not reported as passing. The host validation outputs
+are under `build/metal-poc/*native-cache-attempt1/` and bind the unchanged host
+implementation used by the final pacing build.
+
+The focused ready chooser is generated under
+`build/macos-metal/native-fullscreen-playtests-attempt2/chooser/`. Each profile
+requires a separate API-validation run and a complete 3600x2338 physical capture
+under `native-fullscreen-runtime-attempt2`; the initial unmeasured native probe
+cannot be promoted. Older profile folders and evidence are preserved.
+
+Timing observations use the same native aspect, original assets and scripted
+`bot:0` input with fresh saves, no screenshots, API validation off and diagnostic
+logging included. `tools/metal_native_benchmark.py` independently verifies the old
+host's frozen build, swaps only that host while sharing the new guest, and records
+original submission/draw counts. It does not produce readiness or fidelity proof.
+
+| Native 3600x2338 observation | Render FPS | Median / p95 frame time |
+| --- | ---: | ---: |
+| Previous host, original cap planner, two runs | 49.89 / 50.16 | 19.98 / 24.24 ms; 19.39 / 25.04 ms |
+| Cached host, original cap planner, repeated 60-cap run | 54.26 | 16.87 / 24.02 ms |
+| Cached host, revised cap planner, 60 cap | 58.29 | 16.69 / 20.09 ms |
+| Cached host, revised cap planner, 120 cap | 59.96 | 15.66 / 22.90 ms |
+
+The first host comparison is retained in `native-fullscreen-benchmark-attempt1`;
+the revised planner observation is `native-fullscreen-pacing-benchmark-attempt1`.
+The final 120-cap observation is `native-fullscreen-final-120-benchmark-attempt1`:
+59.96 render FPS, 29.98 simulation Hz and a 60.83 ms maximum interval. The cap
+does not establish sustained 120 FPS.
+An additional cached-host run with the old planner averaged 51.52 FPS including
+a 1,026.70 ms interval. That interval correlated with about one second blocked
+in CAMetalLayer `nextDrawable`; its underlying compositor/availability cause is
+unresolved. The final planner run retains a 198.37 ms maximum interval. These
+outliers are included, and smooth sustained 60/120 FPS is not established.
+Healthy host-comparison runs observed 29.98-30.00 simulation Hz; pauses lower the
+measured wall-clock average without changing the original 30 Hz simulation step.
+The original-planner 120-cap/uncapped native observations averaged 65.33/64.47 FPS
+under `native-fullscreen-benchmark-modes-attempt1`, not 120 FPS.
+
+The remaining per-draw LOAD/STORE render passes and synchronous GPU waits are
+measured costs. Any future adjacent-draw pass grouping requires separate grouped
+state/boundary tests; the 378-checkpoint replay alone submits one draw per packet
+and would not exercise that optimization.
 
 The display-options build checkpoint is
 `build/macos-metal/display-options-build-proof-attempt1/result.json`

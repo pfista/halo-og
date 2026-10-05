@@ -29,6 +29,10 @@ DISPLAY_IMPLEMENTATIONS = {
 }
 DISPLAY_TESTS = ('tools/test_halo_frame_pacing.py', 'tools/test_metal_render_scale.py',
                  'tools/test_metal_live_build_proof.py')
+NATIVE_FULLSCREEN_SYMBOL = 'halo_metal_render_native_target_dimensions'
+NATIVE_FULLSCREEN_TESTS = ('tools/test_metal_display_frontend.py',
+                           'tools/test_metal_backbuffer_history.py',
+                           'tools/test_metal_host_input_cache.py')
 
 
 def digest(data):
@@ -75,14 +79,17 @@ def record_command(output, name, command):
     }
 
 
-def require_display_dependencies(fixed_function, display_options):
+def require_display_dependencies(fixed_function, display_options, native_fullscreen=False):
     if display_options and not fixed_function:
         raise ValueError('Display options require the fixed-function build contract')
+    if native_fullscreen and not display_options:
+        raise ValueError('Native fullscreen requires the display-options build contract')
 
 
-def binding_paths(reference, texture_contract='original', fixed_function=False, display_options=False):
+def binding_paths(reference, texture_contract='original', fixed_function=False, display_options=False,
+                  native_fullscreen=False):
     """Select the existing proof inputs plus explicitly requested helpers."""
-    require_display_dependencies(fixed_function, display_options)
+    require_display_dependencies(fixed_function, display_options, native_fullscreen)
     paths = [item['path'] for item in reference['source_bindings']]
     for path in ('port/linux/src/metal_packet_room.c', 'port/linux/src/metal_packet_room.h',
                  'port/linux/src/xbox_xapi.c'):
@@ -119,6 +126,8 @@ def binding_paths(reference, texture_contract='original', fixed_function=False, 
         additional_paths += [f'build/macos-metal/guest/obj/port/linux/src/{name}.o'
                              for name in DISPLAY_IMPLEMENTATIONS]
         additional_paths += list(DISPLAY_TESTS)
+    if native_fullscreen:
+        additional_paths += list(NATIVE_FULLSCREEN_TESTS)
     return paths, additional_paths
 
 
@@ -213,8 +222,8 @@ def display_configuration_checks(text):
 
 
 def prepare(output, execution_path, reference_path, texture_contract='original', fixed_function=False,
-            display_options=False):
-    require_display_dependencies(fixed_function, display_options)
+            display_options=False, native_fullscreen=False):
+    require_display_dependencies(fixed_function, display_options, native_fullscreen)
     if output.exists():
         raise ValueError('Output already exists; historical proofs must be preserved')
     execution_bytes = execution_path.read_bytes()
@@ -232,7 +241,8 @@ def prepare(output, execution_path, reference_path, texture_contract='original',
     reference = read_json(reference_path)
     extended = texture_contract in ('copy-volume', 'copy-volume-depth', 'copy-volume-depth-border')
     typed_depth = texture_contract in ('copy-volume-depth', 'copy-volume-depth-border')
-    paths, additional_paths = binding_paths(reference, texture_contract, fixed_function, display_options)
+    paths, additional_paths = binding_paths(reference, texture_contract, fixed_function, display_options,
+                                            native_fullscreen)
     bindings = [describe(ROOT / path) for path in paths]
     evidence_bindings = [describe(ROOT / path) for path in additional_paths]
     display_configuration = None
@@ -305,6 +315,8 @@ def prepare(output, execution_path, reference_path, texture_contract='original',
             symbols += ('metal_fixed_function_vertex_to_msl',)
         if display_options and name in DISPLAY_IMPLEMENTATIONS:
             symbols = DISPLAY_IMPLEMENTATIONS[name]
+        if native_fullscreen and name == 'metal_render_scale':
+            symbols += (NATIVE_FULLSCREEN_SYMBOL,)
         implementation_checks(name, symbols, object_symbols, guest_symbols, compile_text,
                               exact_source=display_options and name in DISPLAY_IMPLEMENTATIONS)
         compiled[name] = {'object': describe(ROOT / path), 'symbol': symbol,
@@ -354,6 +366,8 @@ def prepare(output, execution_path, reference_path, texture_contract='original',
     if display_options:
         result['display_options'] = True
         result['display_configuration'] = display_configuration
+    if native_fullscreen:
+        result['native_resolution'] = True
     write_new(output / 'result.json', (json.dumps(result, indent=2) + '\n').encode())
     print(json.dumps({'result': describe(output / 'result.json'), 'bindings': len(bindings),
                       'no_angle_gl_linkage_or_imports': True}, indent=2))
@@ -371,12 +385,18 @@ def main():
         help='Additionally bind the bounded unlit fixed-function sources and linked ILP32 guest object')
     parser.add_argument('--display-options', action='store_true',
         help='Bind native integer display settings, render pacing and physical backing helpers; requires --fixed-function')
+    parser.add_argument('--native-fullscreen', action='store_true',
+        help='Additionally bind the linked native drawable resolution helper; requires --display-options')
     args = parser.parse_args()
     if args.display_options and not args.fixed_function:
         parser.error('--display-options requires --fixed-function')
+    if args.native_fullscreen and not args.display_options:
+        parser.error('--native-fullscreen requires --display-options')
     options = {'fixed_function': args.fixed_function}
     if args.display_options:
         options['display_options'] = True
+    if args.native_fullscreen:
+        options['native_fullscreen'] = True
     prepare(args.output.resolve(), args.execution.resolve(), args.reference.resolve(), args.texture_contract,
             **options)
 

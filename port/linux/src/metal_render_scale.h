@@ -10,9 +10,12 @@
 #define HALO_METAL_RENDER_MAX_SCREEN_WIDTH 1600u
 /* The existing host's make_texture validation limits each storage axis. */
 #define HALO_METAL_RENDER_MAX_DIMENSION 8192u
+#define HALO_METAL_RENDER_SCALE_UNIFORM 0u
+#define HALO_METAL_RENDER_SCALE_NATIVE_AXES 1u
 
 struct halo_metal_render_dimensions {
     uint32_t logical_width, logical_height, storage_width, storage_height;
+    uint32_t scale_mode;
 };
 struct halo_metal_render_edges { int64_t left, top, right, bottom; };
 struct halo_metal_render_rectangle { uint32_t x, y, width, height; };
@@ -26,9 +29,21 @@ struct halo_metal_render_point { int32_t x, y; };
 int halo_metal_render_target_dimensions(uint32_t logical_width, uint32_t logical_height,
     uint32_t screen_width, uint32_t preset_height, struct halo_metal_render_dimensions *dimensions);
 
+/* Native backing dimensions are measured from the synchronized SDL drawable.
+ * Screen targets use those exact physical dimensions, with separate X/Y edge
+ * scales like desktop OpenGL. The title still sees its logical screen_width
+ * x480 surface. Other authored/offscreen sizes remain unchanged. Callers fit
+ * an explicitly requested aspect before passing its native backing size.
+ * Zero and dimensions above the host's8192-axis limit fail without mutation. */
+int halo_metal_render_native_target_dimensions(uint32_t logical_width, uint32_t logical_height,
+    uint32_t screen_width, uint32_t storage_width, uint32_t storage_height,
+    struct halo_metal_render_dimensions *dimensions);
+
 /* Clip ordered logical edges to the target, round each edge half up, then
  * subtract endpoints. Use the uniform storage_height/logical_height ratio for
- * BOTH axes, including when storage_width was rounded. Adjacent logical edges
+ * BOTH axes in uniform mode, including when storage_width was rounded. Native
+ * mode uses storage_width/logical_width for X and the height ratio for Y.
+ * Adjacent logical edges
  * therefore share exactly one pixel edge. Empty/intersection-free rectangles
  * succeed with zero extent; callers skip them. Reversed edges fail INVALID.
  * UI offsets and viewport intersections are applied in logical units first. */

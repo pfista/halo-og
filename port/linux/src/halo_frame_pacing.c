@@ -46,9 +46,20 @@ uint64_t halo_frame_pacing_deadline(struct halo_frame_pacing *pacing,
     deadline = pacing->deadline_ns + period;
     if (deadline <= now_ns)
     {
-        /* Do not walk through old periods after a slow frame or stall. */
-        pacing->deadline_ns = now_ns;
-        pacing->fraction = limit - 1;
+        if (now_ns - deadline < period)
+        {
+            /* Preserve short lateness so a following fast frame can recover
+             * the absolute cadence without accumulating fractional drift. */
+            pacing->deadline_ns = deadline;
+            pacing->fraction = fraction;
+        }
+        else
+        {
+            /* A whole missed period or stall starts fresh; do not walk
+             * through old deadlines or accumulate catch-up frames. */
+            pacing->deadline_ns = now_ns;
+            pacing->fraction = limit - 1;
+        }
         return 0;
     }
     pacing->deadline_ns = deadline;
