@@ -1,6 +1,7 @@
 /* The menus edit a local draft. This is their shared save/apply boundary. */
 #include "device_settings.h"
 #include "port_config.h"
+#include "../include/controller_settings.h"
 #include "native_video.h"
 #include "native_audio.h"
 #include <float.h>
@@ -22,7 +23,8 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
     "display.vsync", "display.interpolation",
     "audio.timer_countdown", "audio.timer_beeps", "audio.timer_minutes", "audio.timer_items",
     "display.timer_position", "display.timer_scale",
-    "maps.show_og", "maps.show_community", "network.join_in_progress"
+    "maps.show_og", "maps.show_community", "network.join_in_progress",
+    "input.left_stick_deadzone", "input.right_stick_deadzone"
 };
 
 static int device_setting_is_finite(double value)
@@ -47,6 +49,8 @@ double device_settings_get(short setting)
         value = config_real(setting_names[setting]);
         return !device_setting_is_finite(value) ? 1.0 : value < 0.5 ? 0.5 : value > 1.0 ? 1.0 : value;
     }
+    if (setting == _device_setting_left_stick_deadzone || setting == _device_setting_right_stick_deadzone)
+        return halo_controller_deadzone(config_integer(setting_names[setting]));
     if (setting >= _device_setting_menu_music) return config_boolean(setting_names[setting]) != 0;
     value = config_real(setting_names[setting]);
     /* Keep malformed file values out of slider indices. */
@@ -88,6 +92,11 @@ int device_settings_apply(unsigned long changed_mask,
         else if (setting == _device_setting_timer_scale)
         {
             if (values[setting] < 0.5 || values[setting] > 1.0) return 0;
+        }
+        else if (setting == _device_setting_left_stick_deadzone || setting == _device_setting_right_stick_deadzone)
+        {
+            if (values[setting] < 0.0 || values[setting] > HALO_CONTROLLER_DEADZONE_MAX ||
+                values[setting] != (int)values[setting]) return 0;
         }
         else if (values[setting] < 0.0 || values[setting] > 1.0 ||
             (setting >= _device_setting_menu_music && values[setting] != 0.0 && values[setting] != 1.0)) return 0;

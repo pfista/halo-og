@@ -39,17 +39,19 @@ void SDL_free(void *data) { free(data); }
 #endif
 int main(int argc,char **argv) {
     assert(argc==5);
-    const char *read_setting=!strcmp(argv[3],"maps.show_og") || !strcmp(argv[3],"maps.show_community") ||
+    int numeric=!strcmp(argv[2],"number") || !strcmp(argv[2],"number_failure");
+    const char *read_setting=numeric || !strcmp(argv[3],"maps.show_og") || !strcmp(argv[3],"maps.show_community") ||
         !strcmp(argv[3],"network.join_in_progress") ? argv[3]:"audio.menu_music";
-    int original=config_boolean(read_setting);
+    int original=numeric ? (int)config_integer(read_setting):config_boolean(read_setting);
     if(!strcmp(argv[1],"read")) { printf("%d\n",original); return 0; }
     char path[1024]; snprintf(path,sizeof(path),"%s/config.toml",getenv("HALO_SAVE_ROOT"));
     FILE *input=fopen(argv[1],"rb"),*output=fopen(path,"wb"); assert(input && output);
     for(int c;(c=fgetc(input))!=EOF;) assert(fputc(c,output)!=EOF);
     assert(!fclose(input) && !fclose(output));
-    if(!strcmp(argv[2],"failure")) assert(!chmod(path,0400));
-    int result=config_write_boolean(argv[3],atoi(argv[4]));
-    printf("%d %d %d\n",original,result,config_boolean(read_setting));
+    if(!strcmp(argv[2],"failure") || !strcmp(argv[2],"number_failure")) assert(!chmod(path,0400));
+    const char *names[]={argv[3]}; double values[]={strtod(argv[4],NULL)};
+    int result=numeric ? config_write_numbers(names,values,1):config_write_boolean(argv[3],atoi(argv[4]));
+    printf("%d %d %d\n",original,result,numeric ? (int)config_integer(read_setting):config_boolean(read_setting));
     assert(!chmod(path,0600)); return 0;
 }
 '''
@@ -394,6 +396,8 @@ static void settings_setup(short mode) {
     settings_values[_device_setting_master_volume]=0.125;
     settings_values[_device_setting_timer_items]=0;
     settings_values[_device_setting_timer_position]=0;
+    settings_values[_device_setting_left_stick_deadzone]=9000;
+    settings_values[_device_setting_right_stick_deadzone]=9000;
 }
 static struct widget_instance *open_settings(short layout,short page,short local) {
     unsigned previous_unloads=unload_calls;
@@ -413,10 +417,11 @@ static struct widget_instance *setting_control(struct widget_instance *root,shor
 static void settings_structure(void) {
     settings_setup(0); assert(game_settings_remap_tag(entry_id)!=entry_id);
     assert(device_settings.settings_menu.child_widgets.count==3);
-    assert(device_settings.column[0][_ds_game].child_widgets.count==3);
+    assert(device_settings.column[0][_ds_game].child_widgets.count==4);
     assert(device_settings.column[0][_ds_audio].child_widgets.count==6);
     assert(device_settings.column[0][_ds_video].child_widgets.count==5);
     assert(device_settings.column[0][_ds_timer].child_widgets.count==5);
+    assert(device_settings.column[0][_ds_controller].child_widgets.count==2);
     assert(device_settings.column[0][_ds_multiplayer].child_widgets.count==3);
     assert(!game_settings_is_adjustable(NULL));
     struct widget_instance item={0};
@@ -440,7 +445,7 @@ static void settings_structure(void) {
     assert(!memcmp(originals,originals_before,sizeof(originals)));
     assert(!memcmp(&chooser,&chooser_before,sizeof(chooser)));
     assert(!memcmp(&advanced,&advanced_before,sizeof(advanced)));
-    assert(pb_editor_build()); assert(register_calls==142 && register_calls<MAXIMUM_RUNTIME_UI_TAGS);
+    assert(pb_editor_build()); assert(register_calls==153 && register_calls<MAXIMUM_RUNTIME_UI_TAGS);
     long old=device_settings.entry_tag; scenario_tags_unload();
     cache_file_globals.tags_loaded=TRUE; global_tag_instances=settings_map;
     assert(!tag_index_is_group(old,'DeLa'));
@@ -632,10 +637,10 @@ static void settings_native_options(void) {
         L"MASTER VOLUME:",L"MUSIC VOLUME:",L"EFFECTS VOLUME:",L"DIALOGUE VOLUME:",L"TIMER VOLUME:",
         L"MENU MUSIC:",L"FULLSCREEN:",L"VSYNC:",L"SMOOTH MOTION:",L"COUNTDOWN:",L"BEEPS:",
         L"MINUTE ANNOUNCEMENTS:",L"ITEM CUES:",L"TIMER POSITION:",L"TIMER SIZE:",
-        L"OG MAPS:",L"COMMUNITY MAPS:",L"JOIN IN PROGRESS:"};
-    static const short rows_by_page[4][6]={
-        {0,1,2,3,NONE,5}, {6,7,8,13,14}, {4,9,10,11,12}, {15,16,17}};
-    static const short counts[4]={6,5,5,3};
+        L"OG MAPS:",L"COMMUNITY MAPS:",L"JOIN IN PROGRESS:",L"LEFT STICK DEADZONE:",L"RIGHT STICK DEADZONE:"};
+    static const short rows_by_page[5][6]={
+        {0,1,2,3,NONE,5}, {6,7,8,13,14}, {4,9,10,11,12}, {18,19}, {15,16,17}};
+    static const short counts[5]={6,5,5,2,3};
     settings_setup(0); assert(device_settings_build());
     assert(device_settings.native_pages && !game_settings_is_native_spinner(NULL));
     for(short page=_ds_audio;page<=_ds_multiplayer;page++) {
@@ -763,20 +768,23 @@ static void settings_game_chooser(void) {
     settings_setup(0); assert(device_settings_build());
     struct ui_widget_definition *screen=&device_settings.screen[_ds_main][_ds_game];
     struct ui_widget_definition *column=&device_settings.column[_ds_main][_ds_game];
-    assert(screen->child_widgets.count==4 && column->child_widgets.count==3);
+    assert(screen->child_widgets.count==4 && column->child_widgets.count==4);
     assert(!memcmp(&screen->bounds,&chooser.defs[CHOOSER_ROOT].bounds,sizeof(screen->bounds)));
     struct ui_widget_child_reference *children=screen->child_widgets.address,*rows=column->child_widgets.address;
     assert(!memcmp(&children[2],&chooser.root[2],sizeof(children[2])));
-    assert(children[3].vertical_offset==chooser.root[3].vertical_offset);
+    assert(children[3].vertical_offset==219 && children[3].vertical_offset==chooser.root[3].vertical_offset+33);
     assert(column->game_data_inputs.count==1);
     assert(((struct ui_widget_game_data_input_reference *)column->game_data_inputs.address)->function==31980);
-    static const wchar_t *names[]={L"AUDIO",L"VIDEO",L"MULTIPLAYER"};
-    static const short pages[]={_ds_audio,_ds_video,_ds_multiplayer};
-    for(unsigned i=0;i<3;i++) {
+    static const wchar_t *names[]={L"AUDIO",L"VIDEO",L"CONTROLLER",L"MULTIPLAYER"};
+    static const short pages[]={_ds_audio,_ds_video,_ds_controller,_ds_multiplayer};
+    for(unsigned i=0;i<4;i++) {
         struct ui_widget_definition *row=ui_widget_definition_get(rows[i].widget_tag.index);
         assert(row->background_bitmap.index==chooser.defs[CHOOSER_COOP+i].background_bitmap.index);
         assert(row->text_font.index==chooser.defs[CHOOSER_COOP+i].text_font.index);
         assert(row->horizontal_offset==13 && row->vertical_offset==5);
+        assert(rows[i].vertical_offset==-33);
+        assert(row->bounds.y0+rows[i].vertical_offset==78+33*(int)i);
+        assert(row->bounds.y1+rows[i].vertical_offset==110+33*(int)i);
         assert(!wcscmp(string_at(row,row->string_list_index),names[i]));
         assert(row->event_handlers.count==2);
         struct ui_widget_event_handler_reference *events=row->event_handlers.address;
@@ -790,19 +798,19 @@ static void settings_game_chooser(void) {
     struct ui_widget_definition *description=ui_widget_definition_get(parts[2].widget_tag.index);
     assert(audio->background_bitmap.index==chooser.defs[CHOOSER_PROFILE_PICTURE].background_bitmap.index);
     assert(video->background_bitmap.index==chooser.defs[CHOOSER_MP_PICTURE].background_bitmap.index);
-    assert(unicode_string_list_definition_get(description->text_label_string_list.index)->strings.count==3);
+    assert(unicode_string_list_definition_get(description->text_label_string_list.index)->strings.count==4);
     struct widget_instance *root=open_settings(_ds_main,_ds_game,0);
     struct widget_instance *list=widget_instance_find_by_tag_index_recursive(root,children[1].widget_tag.index);
     struct widget_instance *extended=list->parameters.list.extended_description;
     assert(extended && extended->child && extended->child->next && extended->child->next->next);
-    for(unsigned turn=0;turn<4;turn++) {
-        short selected=turn==3 ? 0:turn;
+    for(unsigned turn=0;turn<5;turn++) {
+        short selected=turn==4 ? 0:turn;
         list->focused_child=list->child;
         for(short i=0;i<selected;i++) list->focused_child=list->focused_child->next;
         list->parameters.list.selected_index=(short)selected;
         settings_render_inputs(list);
-        assert(extended->child->visible==!selected && extended->child->next->visible==(selected!=0));
-        assert(extended->child->animation.current_frame_index==2);
+        assert(extended->child->visible==(selected==0 || selected==2) && extended->child->next->visible==(selected==1 || selected==3));
+        assert(extended->child->animation.current_frame_index==(selected==2 ? 1:2));
         assert(extended->child->next->animation.current_frame_index==0);
         assert(extended->child->next->next->parameters.text_box.string_list_index==(short)selected);
     }
@@ -997,11 +1005,70 @@ static void settings_timer_video(void) {
     assert(writes==1 && applied_mask==((1UL<<_device_setting_timer_position)|(1UL<<_device_setting_timer_scale)));
     dispose(root);
 }
+static void settings_controller_staging(void) {
+    const short layouts[]={_ds_main,_ds_pause_1p,_ds_pause_2p,_ds_pause_4p,_ds_solo,_ds_coop};
+    const short modes[]={0,1,1,1,2,2}, locals[]={0,0,1,3,0,1};
+    const short presets[]={0,3277,6553,9000,9830,13107,16000};
+    const wchar_t *values[]={L"0%",L"10%",L"20%",L"Xbox",L"30%",L"40%",L"49%"};
+    for(unsigned layout=0;layout<NUMBEROF(layouts);layout++) {
+        short local=locals[layout]; settings_setup(modes[layout]); assert(device_settings_build());
+        struct widget_instance *root=open_settings(layouts[layout],_ds_controller,local);
+        struct widget_instance *left=setting_control(root,_device_setting_left_stick_deadzone);
+        short index=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_left_stick_deadzone;
+        assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==9000);
+        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Xbox":L"Left Deadzone: < Xbox >"));
+        for(unsigned i=0;i<3;i++) assert(game_settings_event(left,_device_settings_previous));
+        assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==0);
+        assert(game_settings_event(left,_device_settings_previous));
+        assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==0);
+        for(unsigned i=1;i<NUMBEROF(presets);i++) {
+            assert(game_settings_event(left,_device_settings_next));
+            assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==presets[i]);
+            assert(wcsstr(device_settings.text[index],values[i]));
+            assert(device_settings_drafts[local].values[_device_setting_right_stick_deadzone]==9000);
+        }
+        assert(game_settings_event(left,_device_settings_next));
+        assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==16000);
+        assert(!writes && settings_values[_device_setting_left_stick_deadzone]==9000);
+        assert(game_settings_event(root,_device_settings_cancel)); dispose(root);
+        root=open_settings(layouts[layout],_ds_controller,local);
+        assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==9000);
+        left=setting_control(root,_device_setting_left_stick_deadzone);
+        struct widget_instance *right=setting_control(root,_device_setting_right_stick_deadzone);
+        assert(game_settings_event(left,_device_settings_previous));
+        assert(game_settings_event(right,_device_settings_next));
+        save_succeeds=FALSE; assert(!game_settings_event(root,_device_settings_accept));
+        assert(writes==1 && settings_values[_device_setting_left_stick_deadzone]==9000 && settings_values[_device_setting_right_stick_deadzone]==9000);
+        assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==6553);
+        assert(device_settings_drafts[local].values[_device_setting_right_stick_deadzone]==9830);
+        save_succeeds=TRUE; assert(game_settings_event(root,_device_settings_accept));
+        assert(writes==2 && applied_mask==((1UL<<_device_setting_left_stick_deadzone)|(1UL<<_device_setting_right_stick_deadzone)));
+        assert(settings_values[_device_setting_left_stick_deadzone]==6553 && settings_values[_device_setting_right_stick_deadzone]==9830);
+        assert(game_settings_event(root,_device_settings_accept) && writes==2); dispose(root);
+        /* A hand-edited raw value must survive opening/canceling. Editing
+         * selects its nearest preset in the requested direction. */
+        settings_values[_device_setting_left_stick_deadzone]=4000;
+        root=open_settings(layouts[layout],_ds_controller,local);
+        assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==4000);
+        assert(wcsstr(device_settings.text[index],device_settings.native_pages ? L"12.2%":L"12%"));
+        assert(game_settings_event(root,_device_settings_cancel)); dispose(root);
+        assert(settings_values[_device_setting_left_stick_deadzone]==4000 && writes==2);
+        root=open_settings(layouts[layout],_ds_controller,local); left=setting_control(root,_device_setting_left_stick_deadzone);
+        assert(game_settings_event(left,_device_settings_previous));
+        assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==3277);
+        assert(game_settings_event(root,_device_settings_cancel)); dispose(root);
+        root=open_settings(layouts[layout],_ds_controller,local); left=setting_control(root,_device_setting_left_stick_deadzone);
+        assert(game_settings_event(left,_device_settings_next));
+        assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==6553);
+        assert(game_settings_event(root,_device_settings_cancel)); dispose(root);
+    }
+}
+
 static void settings_pause_and_campaign(void) {
     settings_setup(1); assert(performance_pause_remap_tag(original_root_ids[0])!=original_root_ids[0]);
     assert(!device_settings.native_pages);
     for(unsigned i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) assert(device_settings_native.spinner_tags[i]==NONE);
-    assert(register_calls==107 && !memcmp(originals,originals_before,sizeof(originals)));
+    assert(register_calls==120 && !memcmp(originals,originals_before,sizeof(originals)));
     for(unsigned i=0;i<3;i++) {
         assert(performance_pause_list_children[i][0].widget_tag.index==resume_id);
         assert(performance_pause_list_children[i][3].widget_tag.index==quit_id);
@@ -1012,7 +1079,7 @@ static void settings_pause_and_campaign(void) {
             assert(!TEST_FLAG(device_settings.screen[i+1][page].flags,_widget_pause_game_time_bit));
             struct ui_widget_child_reference *children=device_settings.screen_children[i+1][page];
             struct ui_widget_definition *frame=ui_widget_definition_get(children[0].widget_tag.index);
-            short height=page==_ds_game || page==_ds_multiplayer ? 159:page==_ds_audio ? 240:213;
+            short height=page==_ds_game || page==_ds_controller || page==_ds_multiplayer ? 159:page==_ds_audio ? 240:213;
             assert(frame->bounds.y1==height && frame->bounds.x0==-4 && frame->bounds.x1==222);
             assert(children[0].horizontal_offset==children[1].horizontal_offset-8);
             assert(children[0].vertical_offset>=0 && children[0].vertical_offset+height<=originals[i].bounds.y1);
@@ -1046,6 +1113,7 @@ static void settings_pause_and_campaign(void) {
     assert(device_settings.column[_ds_pause_1p][_ds_audio].child_widgets.count==7);
     assert(device_settings.column[_ds_pause_4p][_ds_video].child_widgets.count==6);
     assert(device_settings.column[_ds_pause_4p][_ds_timer].child_widgets.count==6);
+    assert(device_settings.column[_ds_pause_4p][_ds_controller].child_widgets.count==3);
     assert(game_settings_event(setting_control(two,_device_setting_master_volume),_device_settings_next));
     assert(device_settings_drafts[3].values[_device_setting_master_volume]==0.2 && device_settings_drafts[0].values[_device_setting_master_volume]==0.125);
     assert(!wcscmp(device_settings.text[_ds_value_start+3*NUMBER_OF_DEVICE_SETTINGS],L"Master: < 20% >"));
@@ -1091,7 +1159,7 @@ static void settings_pause_and_campaign(void) {
         assert(!memcmp(originals,originals_before,sizeof(originals)));
         one=open_settings(_ds_solo+i,_ds_audio,i); dispose(one);
     }
-    assert(register_calls==67);
+    assert(register_calls==77);
 }
 static void settings_registration_failure(void) {
     settings_setup(0); assert(device_settings_build()); unsigned count=register_calls;
@@ -1157,10 +1225,41 @@ static void settings_about_metrics(void) {
         }
     }
 }
+static void settings_text_metrics(struct ui_widget_definition *definition,wchar_t *text) {
+    printf("%s %d",tag_get_name(definition->text_font.index),
+        definition->bounds.x1-definition->bounds.x0-definition->horizontal_offset);
+    for(unsigned i=0;text[i];i++) printf(" %u",(unsigned)text[i]);
+    puts("");
+}
+static void settings_controller_metrics(void) {
+    for(short mode=0;mode<2;mode++) {
+        settings_setup(mode); assert(device_settings_build());
+        struct widget_instance *root=open_settings(mode ? _ds_pause_4p:_ds_main,_ds_controller,0);
+        struct ui_widget_definition *heading=&device_settings.heading[_ds_controller];
+        settings_text_metrics(heading,string_at(heading,heading->string_list_index));
+        for(short setting=_device_setting_left_stick_deadzone;setting<=_device_setting_right_stick_deadzone;setting++) {
+            struct ui_widget_definition *definition;
+            if(!mode) {
+                definition=&device_settings_native.row_labels[setting];
+                settings_text_metrics(definition,string_at(definition,definition->string_list_index));
+            }
+            definition=!mode ? &device_settings_native.spinners[setting]:&device_settings.row[setting];
+            /* Check every valid raw value through production rendering. Tiny
+             * custom percentages are wider than the normal preset labels. */
+            for(long raw=0;raw<=16000;raw++) {
+                device_settings_drafts[0].values[setting]=raw;
+                device_settings_render_draft(&device_settings_drafts[0]);
+                settings_text_metrics(definition,device_settings.text[_ds_value_start+setting]);
+            }
+        }
+        dispose(root);
+    }
+}
 int main(int argc,char **argv) {
     if(argc==2 && !strcmp(argv[1],"--about-metrics")) { settings_about_metrics(); return 0; }
+    if(argc==2 && !strcmp(argv[1],"--controller-metrics")) { settings_controller_metrics(); return 0; }
     settings_structure(); settings_native_chooser(); settings_about(); settings_native_options(); settings_game_chooser(); settings_staging();
-    settings_timer_staging(); settings_timer_video(); settings_multiplayer_staging();
+    settings_timer_staging(); settings_timer_video(); settings_multiplayer_staging(); settings_controller_staging();
     settings_pause_and_campaign(); settings_registration_failure(); settings_cross_map_rebuild();
     puts("native game settings tests passed"); return 0;
 }
@@ -1215,6 +1314,46 @@ def game_settings_fixture_source():
 
 
 class NativeGameSettingsTests(unittest.TestCase):
+    def verify_controller_font_metrics(self, binary):
+        """Measure production strings for every valid deadzone with owned Xbox fonts."""
+        from tools.verify_performance_sound_samples import Cache
+        paths = [ROOT / f"assets/maps/{name}.map" for name in ("ui", "bloodgulch")]
+        paths = [path for path in paths if path.exists()]
+        if not paths:
+            return
+        output = subprocess.run([str(binary), "--controller-metrics"], check=True,
+                                text=True, capture_output=True).stdout
+        strings = []
+        for value in output.splitlines():
+            font, width, *codes = value.split()
+            strings.append((font, int(width), "".join(chr(int(code)) for code in codes)))
+        self.assertGreater(len(strings), 64000)
+        self.assertEqual({font for font, _, _ in strings}, {r"ui\large_ui", r"ui\small_ui"})
+        for path in paths:
+            cache = Cache(path)
+            fonts = {}
+            for name in (r"ui\large_ui", r"ui\small_ui"):
+                font = cache.by_path[name]
+                _, _, _, inset = cache.unpack("<4h", font["address"] + 4)
+                count, address, _ = cache.unpack("<3I", font["address"] + 0x7C)
+                glyphs = {}
+                for index in range(count):
+                    code, advance, ink_width, _, origin_x = cache.unpack("<H4h", address + index * 0x14)
+                    glyphs[chr(code)] = (advance, ink_width, origin_x)
+                fonts[name] = (inset, glyphs)
+            measured = {}
+            for name, width, value in strings:
+                key = (name, value)
+                if key not in measured:
+                    cursor, glyphs = fonts[name]
+                    ink_right = cursor
+                    for character in value:
+                        advance, ink_width, origin_x = glyphs[character]
+                        ink_right = max(ink_right, cursor + origin_x + ink_width)
+                        cursor += advance
+                    measured[key] = max(cursor, ink_right)
+                self.assertLessEqual(measured[key], width, f"{path.stem}: {value!r} clips in {name}")
+
     def verify_about_font_metrics(self, binary):
         """Measure every production page with the owned UI font, including long names/counts."""
         from tools.verify_performance_sound_samples import Cache
@@ -1290,7 +1429,7 @@ class NativeGameSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="halo-native-settings-") as folder:
             directory = Path(folder)
             (directory / "fixture.c").write_text(source)
-            for platform in ("HALO_MACOS", "HALO_LINUX", "HALO_WINDOWS", "HALO_ANDROID"):
+            for platform in ("HALO_MACOS", "HALO_LINUX", "HALO_WINDOWS", "HALO_ANDROID", "HALO_IOS"):
                 with self.subTest(platform=platform):
                     binary = directory / (platform + (".exe" if sys.platform == "win32" else ""))
                     subprocess.run(["clang", "-std=c99", "-Wall", "-Wextra", "-Werror", "-Wno-multichar", "-Wno-format",
@@ -1301,6 +1440,7 @@ class NativeGameSettingsTests(unittest.TestCase):
                     self.assertEqual(result.stdout.strip(), "native game settings tests passed")
                     if platform == "HALO_MACOS":
                         self.verify_about_font_metrics(binary)
+                        self.verify_controller_font_metrics(binary)
 
 
 @unittest.skipUnless(shutil.which("clang") and (SDL / "include/SDL3/SDL.h").exists(), "clang and SDL3 headers required")
@@ -1326,7 +1466,7 @@ class ConfigBooleanPersistenceTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.temporary.cleanup()
 
-    def run_save(self, original, expected, *, mode="save", success=True, value=0, setting="audio.menu_music"):
+    def run_save(self, original, expected, *, mode="save", success=True, value=0, setting="audio.menu_music", original_value=1):
         for target, executable in self.executables.items():
             with self.subTest(target=target), tempfile.TemporaryDirectory(dir=self.directory) as folder:
                 directory = Path(folder)
@@ -1337,7 +1477,7 @@ class ConfigBooleanPersistenceTests(unittest.TestCase):
                 result = subprocess.run([str(executable), str(fixture), mode, setting, str(value)],
                                         env=environment, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(result.stdout.strip(), f"1 {int(success)} {value if success else 1}")
+                self.assertEqual(result.stdout.strip(), f"{original_value} {int(success)} {value if success else original_value}")
                 self.assertEqual((directory / "config.toml").read_bytes(), expected.encode())
                 if success:
                     reload = subprocess.run([str(executable), "read", mode, setting, str(value)],
@@ -1383,6 +1523,16 @@ class ConfigBooleanPersistenceTests(unittest.TestCase):
             table, key = setting.split(".")
             original = f'# player preferences\n[{table}]\n{key} = true # retain\n'
             self.run_save(original, original.replace('= true # retain', '= false # retain'), setting=setting)
+
+    def test_deadzone_raw_integers_save_reload_and_failure(self):
+        for setting in ("input.left_stick_deadzone", "input.right_stick_deadzone"):
+            _, key = setting.split(".")
+            original = f'# controller preferences\n[input]\n{key} = 9000 # Xbox default\ncustom = "keep"\n'
+            for value in (0, 3277, 6553, 9000, 9830, 13107, 16000, 4000, 1):
+                self.run_save(original, original.replace('= 9000 # Xbox', f'= {value} # Xbox'),
+                              setting=setting, mode="number", value=value, original_value=9000)
+            self.run_save(original, original, setting=setting, mode="number_failure", value=4000,
+                          original_value=9000, success=False)
 
 
 if __name__ == "__main__":

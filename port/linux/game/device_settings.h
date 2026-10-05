@@ -22,10 +22,13 @@ enum
     _device_setting_show_og_maps,
     _device_setting_show_community_maps,
     _device_setting_join_in_progress,
+    _device_setting_left_stick_deadzone,
+    _device_setting_right_stick_deadzone,
     NUMBER_OF_DEVICE_SETTINGS
 };
 
-/* Volumes are 0..1; switches are 0/1. Timer position is 0..2 and scale .5..1. */
+/* Volumes are 0..1; switches are 0/1. Timer position is 0..2 and scale .5..1.
+ * Stick deadzones are raw integer ranges 0..16000; Xbox is exactly 9000. */
 double device_settings_get(short setting);
 /* Save only changed rows, then apply to the current session. Returns 1 on
  * success, 0 on failure with prior settings restored, or -1 when a backend

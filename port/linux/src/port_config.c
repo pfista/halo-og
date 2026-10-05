@@ -130,8 +130,16 @@ static const struct config_setting config_settings[] =
 	{ "input.mouse_aim_assist", _config_boolean, "false", "HALO_MOUSE_AIM_ASSIST", _environment_value, _platform_desktop,
 		"Magnetism while aiming with the mouse, as with a controller: the view\n"
 		"slowed and dragged along by a target. The last of the mouse and the\n"
-		"right stick to move decides. The bullets' autoaim (bent toward the\n"
+		"controller look axes to move decides. The bullets' autoaim (bent toward the\n"
 		"target) stays either way." },
+	{ "input.left_stick_deadzone", _config_integer, "9000", NULL, _environment_value, _platform_all,
+		"Left-stick axial dead zone, 0 to 16000 in the signed stick range.\n"
+		"9000 preserves the original Xbox filter; in-game Controller settings\n"
+		"offer Xbox and lower/higher presets. Applies to every local controller." },
+	{ "input.right_stick_deadzone", _config_integer, "9000", NULL, _environment_value, _platform_all,
+		"Right-stick axial dead zone, 0 to 16000 in the signed stick range.\n"
+		"9000 preserves the original Xbox filter. These are local preferences,\n"
+		"independent of player profiles and host-selected game rules." },
 
 	/* Bindings are config-only: they do not need application environment variables. */
 #if defined(HALO_MACOS) && !defined(HALO_IOS)

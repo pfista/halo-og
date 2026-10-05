@@ -29,6 +29,7 @@ drive the controller.
 #include "sdl_platform.h"
 #include "port_config.h"
 #include "input_bindings.h"
+#include "../include/controller_settings.h"
 
 #include <SDL3/SDL.h>
 #include <math.h>
@@ -57,6 +58,7 @@ struct controller
 };
 
 static struct controller controllers[PORT_COUNT];
+static unsigned controller_physical_axis_flags[PORT_COUNT];
 static struct controller keyboard_device;
 static DWORD reported_gamepads = 0;
 static BOOL reported_keyboard = FALSE;
@@ -72,14 +74,10 @@ Y is held, and whether a scroll is under way */
 static Uint64 wheel_moved_ms = 0;
 static Uint64 wheel_press_until_ms = 0;
 static BOOL wheel_scrolling = FALSE;
-/* when port 0's aim last moved, by the mouse and by the right stick
+/* when port 0's aim last moved, by the mouse and by its physical look stick axes
 (halo_linux_mouse_aiming) */
 static Uint64 mouse_aimed_ms = 0;
 static Uint64 stick_aimed_ms = 0;
-
-/* the right stick's deflection that counts as aiming with it, clear of a
-worn stick's drift */
-#define STICK_AIMING_DEFLECTION 8000
 
 static float mouse_sensitivity(void)
 {
@@ -124,7 +122,7 @@ int halo_linux_mouse_look(short gamepad_index, float *yaw, float *pitch)
 }
 
 /* whether the player on the gamepad aims with the mouse (it moved after the
-right stick last did) and input.mouse_aim_assist is off: then the view's
+controller look axes last did) and input.mouse_aim_assist is off: then the view's
 magnetism leaves them be (player_control.c); the bullets' autoaim stays */
 int halo_linux_mouse_aiming(short gamepad_index)
 {
@@ -272,7 +270,7 @@ void test_input_hold_action(int hold)
 	test_input_holding_action = hold;
 }
 
-static void test_input_gamepad(XINPUT_GAMEPAD *pad)
+static unsigned test_input_gamepad(XINPUT_GAMEPAD *pad)
 {
 	static int checked;
 	static int seed = -1;
@@ -301,20 +299,20 @@ static void test_input_gamepad(XINPUT_GAMEPAD *pad)
 		}
 	}
 	if (seed < 0)
-		return;
+		return 0;
 	if (test_input_holding_action)
 	{
 		/* (standing still, the button held from a second on) */
 		if (SDL_GetTicks() - test_input_holding_action_since >= 1000)
 			pad->bAnalogButtons[XINPUT_GAMEPAD_X] = 255;
-		return;
+		return 0;
 	}
 	t = (double)SDL_GetTicks() / 1000.0 + seed * 1.7;
 	if (looking)
 	{
 		pad->sThumbRX = (SHORT)(sin(t * 0.5) * 14000.0);
 		pad->sThumbRY = (SHORT)(sin(t * 0.3) * 32000.0);
-		return;
+		return 4u | 8u; /* Script writes right X/Y. */
 	}
 	pad->sThumbLY = (SHORT)(sin(t * 0.9) * 32000.0);
 	pad->sThumbLX = (SHORT)(cos(t * 0.6 + seed) * 20000.0);
@@ -332,6 +330,7 @@ static void test_input_gamepad(XINPUT_GAMEPAD *pad)
 		if (fmod(t, 13.0) < 0.2)
 			pad->bAnalogButtons[XINPUT_GAMEPAD_X] = 255;
 	}
+	return 1u | 2u | 4u; /* Script writes left X/Y and right X. */
 }
 
 static void wheel_update(void)
@@ -404,13 +403,42 @@ static int sdl_gamepads(SDL_Gamepad *gamepads[PORT_COUNT])
 	return found;
 }
 
+static unsigned controller_physical_axis_mask(XINPUT_GAMEPAD const *physical,
+	XINPUT_GAMEPAD const *synthetic)
+{
+	unsigned mask = 0;
+	/* The established merge uses strictly greater raw deflection. Ties retain
+	 * keyboard/script input, whose response remains at the original 9000. */
+	if (abs(physical->sThumbLX) > abs(synthetic->sThumbLX)) mask |= HALO_CONTROLLER_AXIS_LEFT_X;
+	if (abs(physical->sThumbLY) > abs(synthetic->sThumbLY)) mask |= HALO_CONTROLLER_AXIS_LEFT_Y;
+	if (abs(physical->sThumbRX) > abs(synthetic->sThumbRX)) mask |= HALO_CONTROLLER_AXIS_RIGHT_X;
+	if (abs(physical->sThumbRY) > abs(synthetic->sThumbRY)) mask |= HALO_CONTROLLER_AXIS_RIGHT_Y;
+	return mask;
+}
+
 static SHORT stick(Sint16 value, BOOL flip)
 {
 	int result = flip ? -(int)value - 1 : value;
 
+	/* The asymmetric Xbox endpoints need the -1, but neutral must stay zero
+	 * when a user deliberately selects a zero dead zone. */
+	if (value == 0) return 0;
 	if (result < -32768) result = -32768;
 	if (result > 32767) result = 32767;
 	return (SHORT)result;
+}
+
+static inline void merge_gamepad_state(XINPUT_GAMEPAD const *physical, XINPUT_GAMEPAD *pad)
+{
+	int index;
+	pad->wButtons |= physical->wButtons;
+	for (index = 0; index < 8; index++)
+		if (physical->bAnalogButtons[index] > pad->bAnalogButtons[index])
+			pad->bAnalogButtons[index] = physical->bAnalogButtons[index];
+	if (abs(physical->sThumbLX) > abs(pad->sThumbLX)) pad->sThumbLX = physical->sThumbLX;
+	if (abs(physical->sThumbLY) > abs(pad->sThumbLY)) pad->sThumbLY = physical->sThumbLY;
+	if (abs(physical->sThumbRX) > abs(pad->sThumbRX)) pad->sThumbRX = physical->sThumbRX;
+	if (abs(physical->sThumbRY) > abs(pad->sThumbRY)) pad->sThumbRY = physical->sThumbRY;
 }
 
 static void merge_button(XINPUT_GAMEPAD *pad, int analog_index, BOOL down)
@@ -436,9 +464,12 @@ static void sdl_gamepad_state(SDL_Gamepad *gamepad, XINPUT_GAMEPAD *pad)
 		{ SDL_GAMEPAD_BUTTON_LEFT_STICK, XINPUT_GAMEPAD_LEFT_THUMB },
 		{ SDL_GAMEPAD_BUTTON_RIGHT_STICK, XINPUT_GAMEPAD_RIGHT_THUMB },
 	};
+	XINPUT_GAMEPAD physical = {0};
+	XINPUT_GAMEPAD *combined = pad;
 	int index;
 	int left_trigger, right_trigger;
 	SHORT value;
+	pad = &physical;
 
 	for (index = 0; index < (int)(sizeof(digital) / sizeof(digital[0])); index++)
 	{
@@ -470,6 +501,7 @@ static void sdl_gamepad_state(SDL_Gamepad *gamepad, XINPUT_GAMEPAD *pad)
 	if (abs(value) > abs(pad->sThumbRX)) pad->sThumbRX = value;
 	value = stick(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTY), TRUE);
 	if (abs(value) > abs(pad->sThumbRY)) pad->sThumbRY = value;
+	merge_gamepad_state(&physical, combined);
 }
 
 /* ---------- XAPI */
@@ -526,6 +558,7 @@ HANDLE WINAPI XInputOpen(PXPP_DEVICE_TYPE device_type, DWORD port, DWORD slot,
 	{
 		memset(&controllers[port], 0, sizeof(controllers[port]));
 		controllers[port].open = TRUE;
+		controller_physical_axis_flags[port] = 0;
 		return (HANDLE)&controllers[port];
 	}
 	if (device_type == XDEVICE_TYPE_DEBUG_KEYBOARD && port == 0)
@@ -557,6 +590,12 @@ static int controller_port(HANDLE device)
 	return -1;
 }
 
+unsigned halo_controller_physical_axes(short gamepad_index)
+{
+	return gamepad_index >= 0 && gamepad_index < PORT_COUNT && controllers[gamepad_index].open ?
+		controller_physical_axis_flags[gamepad_index] : 0;
+}
+
 DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 {
 	int port = controller_port(device);
@@ -566,6 +605,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	memset(state, 0, sizeof(*state));
 	if (port < 0)
 		return ERROR_DEVICE_NOT_CONNECTED;
+	controller_physical_axis_flags[port] = 0;
 	platform_pump_events();
 	count = sdl_gamepads(gamepads);
 	if (port == 0)
@@ -578,10 +618,18 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		if (!console_is_active())
 			keyboard_gamepad(&input, &state->Gamepad);
 		if (count > 0)
-			sdl_gamepad_state(gamepads[0], &state->Gamepad);
-		test_input_gamepad(&state->Gamepad);
-		if (abs(state->Gamepad.sThumbRX) > STICK_AIMING_DEFLECTION ||
-			abs(state->Gamepad.sThumbRY) > STICK_AIMING_DEFLECTION)
+		{
+			XINPUT_GAMEPAD physical = {0};
+			sdl_gamepad_state(gamepads[0], &physical);
+			controller_physical_axis_flags[0] = controller_physical_axis_mask(&physical, &state->Gamepad);
+			merge_gamepad_state(&physical, &state->Gamepad);
+		}
+		controller_physical_axis_flags[0] &= ~test_input_gamepad(&state->Gamepad);
+		if (halo_controller_look_active(0,
+			controller_physical_axis_flags[0] & HALO_CONTROLLER_AXIS_LEFT_X ? state->Gamepad.sThumbLX : 0,
+			controller_physical_axis_flags[0] & HALO_CONTROLLER_AXIS_LEFT_Y ? state->Gamepad.sThumbLY : 0,
+			controller_physical_axis_flags[0] & HALO_CONTROLLER_AXIS_RIGHT_X ? state->Gamepad.sThumbRX : 0,
+			controller_physical_axis_flags[0] & HALO_CONTROLLER_AXIS_RIGHT_Y ? state->Gamepad.sThumbRY : 0))
 		{
 			pthread_mutex_lock(&mouse_lock);
 			stick_aimed_ms = SDL_GetTicks();
@@ -591,6 +639,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	else if (port < count)
 	{
 		sdl_gamepad_state(gamepads[port], &state->Gamepad);
+		controller_physical_axis_flags[port] = 15u;
 	}
 
 	if (memcmp(&state->Gamepad, &controllers[port].previous, sizeof(state->Gamepad)))

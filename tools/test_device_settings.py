@@ -31,12 +31,14 @@ static const char *names[] = {"audio.volume", "audio.music_volume", "audio.effec
     "audio.dialogue_volume", "audio.timer_volume", "audio.menu_music", "display.vsync", "display.interpolation",
     "audio.timer_countdown", "audio.timer_beeps", "audio.timer_minutes", "audio.timer_items",
     "display.timer_position", "display.timer_scale", "display.fullscreen",
-    "maps.show_og", "maps.show_community", "network.join_in_progress"};
-static double saved[18];
+    "maps.show_og", "maps.show_community", "network.join_in_progress",
+    "input.left_stick_deadzone", "input.right_stick_deadzone"};
+#define TEST_SETTING_COUNT (sizeof(names)/sizeof(names[0]))
+static double saved[TEST_SETTING_COUNT];
 static int fullscreen, native_fullscreen, write_ok, switch_ok, apply_ok, writes, audio_applies, video_applies, switches, starts, stops;
 static int write_fail_on, switch_fail_on, apply_fail_on;
 static int index_of(const char *name) {
-    for (int i=0;i<18;i++) if (!strcmp(names[i],name)) return i;
+    for (unsigned i=0;i<TEST_SETTING_COUNT;i++) if (!strcmp(names[i],name)) return (int)i;
     assert(!"unknown preference"); return -1;
 }
 int config_boolean(const char *name) {
@@ -66,14 +68,41 @@ int halo_video_apply_settings(void) { video_applies++; return apply_ok && video_
 void halo_audio_apply_settings(void) { audio_applies++; }
 void ui_apply_main_menu_music_setting(void) { if (saved[5]) starts++; else stops++; }
 static void reset(double values[NUMBER_OF_DEVICE_SETTINGS]) {
-    for (int i=0;i<18;i++) saved[i]=(i==7 || i==11 || i==12) ? 0.0 : 1.0;
+    for (unsigned i=0;i<TEST_SETTING_COUNT;i++) saved[i]=(i==7 || i==11 || i==12) ? 0.0 : 1.0;
+    saved[18]=saved[19]=9000;
     saved[0]=0.15; fullscreen=native_fullscreen=1; write_ok=switch_ok=apply_ok=1;
     writes=audio_applies=video_applies=switches=starts=stops=0;
     write_fail_on=switch_fail_on=apply_fail_on=0;
     for(int i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) values[i]=device_settings_get(i);
 }
+static void check_controller_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) {
+    /* Controller edits persist atomically without touching audio or video;
+     * Android and iOS use the same preference boundary as desktop. */
+    reset(values);
+    assert(values[_device_setting_left_stick_deadzone]==9000 && values[_device_setting_right_stick_deadzone]==9000);
+    values[_device_setting_left_stick_deadzone]=0; values[_device_setting_right_stick_deadzone]=16000;
+    assert(device_settings_apply((1UL<<_device_setting_left_stick_deadzone)|(1UL<<_device_setting_right_stick_deadzone),values));
+    assert(writes==1 && saved[18]==0 && saved[19]==16000 && !audio_applies && !video_applies && !switches);
+    reset(values); saved[18]=1234; values[_device_setting_left_stick_deadzone]=1234;
+    assert(device_settings_apply(1UL<<_device_setting_left_stick_deadzone,values) && !writes && saved[18]==1234);
+    values[_device_setting_left_stick_deadzone]=6553; values[_device_setting_right_stick_deadzone]=3277; write_ok=0;
+    assert(!device_settings_apply((1UL<<_device_setting_left_stick_deadzone)|(1UL<<_device_setting_right_stick_deadzone),values));
+    assert(saved[18]==1234 && saved[19]==9000 && !audio_applies && !video_applies && !switches);
+    reset(values);
+    for(int setting=_device_setting_left_stick_deadzone;setting<=_device_setting_right_stick_deadzone;setting++) {
+        const double bad[]={-1,16001,0.5,NAN,INFINITY};
+        for(unsigned i=0;i<sizeof(bad)/sizeof(bad[0]);i++) {
+            values[setting]=bad[i]; assert(!device_settings_apply(1UL<<setting,values));
+        }
+        values[setting]=9000;
+    }
+    assert(!writes && !audio_applies && !video_applies && !switches);
+    saved[18]=-1; saved[19]=16001;
+    assert(device_settings_get(_device_setting_left_stick_deadzone)==9000 && device_settings_get(_device_setting_right_stick_deadzone)==9000);
+}
 int main(void) {
     double values[NUMBER_OF_DEVICE_SETTINGS];
+    check_controller_settings(values);
     if (MOBILE_FULLSCREEN) {
         /* Android/iOS remain fullscreen and never read or persist the
          * desktop-only preference, even in a mixed settings draft. */
