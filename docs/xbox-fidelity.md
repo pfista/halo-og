@@ -242,6 +242,23 @@ extends the generated-search-path probe to every affected consumer. Both Windows
 header tests pass, producing a real i686 MSVC COFF object and preserving Windows
 CRT isolation. This build correction changes no gameplay or rendering behavior.
 
+Windows URI registration follow-up `d5ea36de1e8cae23c16de5baf973da84de7c8c7d`
+corrects a second compilation error: the production
+`_CRT_NON_CONFORMING_SWPRINTFS` flag selects the older `swprintf` signature,
+while the URI registration calls supplied a buffer size. The three calls now
+use the explicitly bounded `swprintf_s` entry point and check formatting failure
+before using registry paths or labels. The shared legacy CRT flag remains intact.
+See [Microsoft's CRT signature documentation](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/sprintf-sprintf-l-swprintf-swprintf-l-swprintf-l?view=msvc-170).
+
+Validation: the 43-check invite, presence and Windows-header suite passes with
+two native OS checks skipped on Mac. Both portable and native Windows URI fixtures
+consume the actual build macro; the portable fixture models the old declaration
+and exercises failures in all three formatting operations. A negative control
+against the prior source reproduces all three size-to-format pointer errors.
+The real Windows registry/launcher exercise remains in Windows CI. This correction
+preserves URI names, Unicode executable paths and command quoting; it changes no
+gameplay or Metal rendering behavior.
+
 Use [xbox-ntsc.toml](../port/macos/profiles/xbox-ntsc.toml) with the existing
 `HALO_SCREEN_WIDTH=640` override for an isolated 4:3 comparison. This 30 FPS
 reference is separate from normal-play performance choices. Native maps can use
