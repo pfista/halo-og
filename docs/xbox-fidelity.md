@@ -77,8 +77,8 @@ PB capability flag `0x04` is separate from the in-progress flag `0x02`.
 Options-off games advertise stock v11; enabled PB games advertise `0x800B` and
 require supporting peers. Input Delay: 33ms also requires peers that confirm
 the delay capability; older PB builds cannot join an enabled-delay match.
-v10/PB-v10 builds must update. For mixed cybersecurity tests, leave Performance Options
-Stock and Input Delay Off. Games with five or more players should leave
+v10/PB-v10 builds must update. For mixed cybersecurity tests, leave Performance
+Options Stock, Input Delay Off and Hardcore Off. Games with five or more players should leave
 Infinite Grenades off because the native Xbox rule still differs even though
 the best-effort gate admits that setting.
 See [networking](../port/linux/NETCODE.md), [Performance Options](performance-options.md)
@@ -86,8 +86,23 @@ and [playtesting](playtesting.md) for implementation and player guidance.
 
 ## Optional competitive features
 
-Performance Options permits host-selected match timers, timer announcements, spawn
-markers, silent movement/weapon-ready sounds and fixed 33ms input delay.
+The October 5 meeting-feedback implementation adds an explicit Hardcore
+precision rule, default Off, independent of Stock/Practice aid presets. It
+changes only pistol/unscoped-sniper initial spread and retains maximum spread,
+buildup, recovery and firing RNG calls. Enabled matches require peer support
+and a host acknowledgement; active match rules are locked. Local map filters
+do not restrict joining, and Join In Progress defaults On to retain the prior
+host behavior. These are requested options, not reference-Xbox corrections.
+
+The requested pistol hollow-metal effect and dirt-only overshield material
+changes are intentional content refinements of retail quirks. Loaded native
+tags are changed selectively; source caches and custom authored effects remain
+intact. See [the meeting implementation record](meeting-fixes-2026-10-05.md)
+for exact boundaries, evidence and remaining work.
+
+Performance Options permits host-selected match timers, timer announcements,
+spawn markers, silent movement/weapon-ready sounds, fixed 33ms input delay
+and Hardcore precision spread.
 All modifications default off; sounds default Normal. Timer audio/display
 preferences are local. These limited
 options do not authorize other Performance Build mechanics, weapon changes or
