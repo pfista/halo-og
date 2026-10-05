@@ -4393,9 +4393,11 @@ static void mp_level_select_list_update_displayed_items(
 		map_description->parameters.text_box.string_list_index =
 			(short)displayed_item_indices[item_index];
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-		if (displayed_item_indices[item_index] >= 13)
+		/* Community entries can start at index zero when stock maps are hidden.
+		   Classify the selected map name, not its position in the filtered list. */
+		char *map = ((char **)list_widget->parameters.list.list_items)[displayed_item_indices[item_index]];
+		if (native_map_is_custom(map))
 		{
-			char *map = ((char **)list_widget->parameters.list.list_items)[displayed_item_indices[item_index]];
 			custom_map_text(map_name, native_map_basename(map));
 			custom_map_text(map_description, "Community map");
 			map_bitmap->animation.current_frame_index = 13;
