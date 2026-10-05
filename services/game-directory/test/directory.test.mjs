@@ -71,6 +71,26 @@ test('custom map cache names with spaces can be advertised', async (t) => {
     assert.equal((await request('/v1/games', 'POST', {...listing, map})).status, 400);
 });
 
+test('score metadata preserves actual limits, zero, Oddball units, and legacy absence', async (t) => {
+  const {request} = await setup(t);
+  const lease = await (await request('/v1/games', 'POST', {...listing, score_limit: 50})).json();
+  const path = `/v1/games/${lease.id}`;
+  const current = async () => (await (await request('/v1/games')).json()).games[0];
+  assert.equal((await current()).score_limit, 50);
+  assert.equal((await request(path, 'PUT', {...listing, gametype: 'Oddball',
+    score_limit: 0, oddball_variant: true}, lease.lease_token)).status, 200);
+  assert.equal((await current()).score_limit, 0);
+  assert.equal((await current()).oddball_variant, true);
+  for (const score_limit of [-1, 32768, true, '50', null, 1.5]) {
+    assert.equal((await request(path, 'PUT', {...listing, score_limit}, lease.lease_token)).status, 400);
+    assert.equal((await current()).score_limit, 0);
+  }
+  assert.equal((await request(path, 'PUT', {...listing, oddball_variant: 1}, lease.lease_token)).status, 400);
+  assert.equal((await request(path, 'PUT', listing, lease.lease_token)).status, 200);
+  assert.ok(!Object.hasOwn(await current(), 'score_limit'));
+  assert.equal((await current()).oddball_variant, false);
+});
+
 test('expired games disappear and their leases cannot revive them', async (t) => {
   const {request} = await setup(t);
   const lease = await (await request('/v1/games', 'POST', listing)).json();

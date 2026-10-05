@@ -2,7 +2,7 @@
 #if defined(HALO_ANDROID) && !defined(HALO_MACOS)
 void game_directory_set_invite(const char *invite) { (void)invite; }
 void game_directory_publish(const char *name, const char *map, int engine, int players, int maximum,
-    int version, int open, int in_progress, int teams, int enabled) {}
+    int version, int open, int in_progress, int teams, int score_limit, int oddball_variant, int enabled) {}
 void game_directory_browse(int enabled) { (void)enabled; }
 int game_directory_snapshot(struct halo_directory_game *games, int capacity) { return 0; }
 #else
@@ -33,8 +33,8 @@ static void *directory_worker(void *unused)
     struct halo_directory_game previous = {0}, desired, games[HALO_DIRECTORY_MAX_GAMES];
     char id[37] = {0}, lease[65] = {0}, body[1024], small[4096];
     char *response = malloc(HALO_DIRECTORY_BODY_LIMIT);
-    unsigned long published_time = 0, browse_time = 0;
-    int first_publish = 1, first_browse = 1, failure_logged = 0;
+    unsigned long published_time = 0, browse_time = 0, withdrawal_time = 0, lease_time = 0;
+    int first_publish = 1, first_browse = 1, first_withdrawal = 1, failure_logged = 0;
     if (!response) {
         pthread_mutex_lock(&directory_lock); running = 0; pthread_mutex_unlock(&directory_lock);
         return NULL;
@@ -48,15 +48,28 @@ static void *directory_worker(void *unused)
         publish = publishing && desired.invite[0]; browse = browsing;
         pthread_mutex_unlock(&directory_lock);
         if (id[0] && (!publish || strcmp(desired.invite, previous.invite))) {
-            request("DELETE", id, lease, NULL, small, sizeof(small), &status);
-            memset(id, 0, sizeof(id)); memset(lease, 0, sizeof(lease)); first_publish = 1;
-        }
+            /* Keep a failed withdrawal's lease: resuming the same host can
+               renew it instead of leaving two entries until the old one expires. */
+            int withdrawn = (unsigned long)(now - lease_time) >= 90000;
+            if (!withdrawn && (first_withdrawal || (unsigned long)(now - withdrawal_time) >= 5000)) {
+                first_withdrawal = 0; withdrawal_time = now;
+                size = request("DELETE", id, lease, NULL, small, sizeof(small), &status);
+                withdrawn = size >= 0 && (status == 204 || status == 404);
+            }
+            if (withdrawn) {
+                memset(id, 0, sizeof(id)); memset(lease, 0, sizeof(lease)); first_publish = 1;
+            }
+        } else first_withdrawal = 1;
         if (!publish) first_publish = 1;
-        if (publish && (first_publish || (unsigned long)(now - published_time) >= 30000 ||
+        if (publish && (!id[0] || !strcmp(desired.invite, previous.invite)) &&
+            (first_publish || (unsigned long)(now - published_time) >= 30000 ||
             ((unsigned long)(now - published_time) >= 5000 && memcmp(&desired, &previous, sizeof(desired))))) {
             first_publish = 0; published_time = now;
             if (halo_directory_encode(&desired, body, sizeof(body))) {
                 size = request(id[0] ? "PUT" : "POST", id, lease, body, small, sizeof(small), &status);
+                /* A lost response may still have renewed the server's 90s lease.
+                   Count from completion so time spent in HTTP cannot shorten it. */
+                lease_time = p2p_now();
                 if (size >= 0 && ((!id[0] && status == 201 && halo_directory_parse_lease(small, size, id, lease)) ||
                     (id[0] && status == 200))) {
                     previous = desired; failure_logged = 0;
@@ -107,7 +120,7 @@ void game_directory_set_invite(const char *invite)
     pthread_mutex_unlock(&directory_lock);
 }
 void game_directory_publish(const char *name, const char *map, int engine, int players, int maximum,
-    int version, int open, int in_progress, int teams, int enabled)
+    int version, int open, int in_progress, int teams, int score_limit, int oddball_variant, int enabled)
 {
     static const char *const modes[] = { "", "CTF", "Slayer", "Oddball", "King", "Race" };
     struct halo_directory_game game = {0}; const char *base = map ? map : "";
@@ -118,6 +131,7 @@ void game_directory_publish(const char *name, const char *map, int engine, int p
     snprintf(game.gametype, sizeof(game.gametype), "%s", engine >= 1 && engine <= 5 ? modes[engine] : "");
     game.player_count = players; game.max_players = maximum; game.network_version = version;
     game.open = open; game.in_progress = in_progress; game.has_teams = teams;
+    game.score_limit = score_limit; game.oddball_variant = oddball_variant;
     pthread_mutex_lock(&directory_lock);
     hosted = game;
     publishing = enabled && config_boolean("network.online") && config_boolean("network.public_games");

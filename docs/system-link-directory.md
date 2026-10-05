@@ -66,7 +66,12 @@ Only compatible protocol 11/optional PB-capable listings are displayed. Public
 metadata is untrusted: selecting a row must establish the authenticated P2P peer
 and receive its real advertisement before the existing join/compatibility checks
 run. Cached records expire against the directory server's time, avoiding local
-clock skew. LAN and directory records are deduplicated by host identity.
+clock skew. LAN, tunnel, and directory records are deduplicated by the Xbox
+address's host identity. The actual network advertisement takes priority so its
+current game rules remain visible. Directory-only rows show a score limit when
+the host supplies it; older hosts' missing score metadata is left blank rather
+than displayed as zero. A failed listing withdrawal retains the lease for retry
+or renewal, preventing a restart from creating a second live listing.
 
 Tests cover production parsing, response caps, lease headers, authenticated-peer
 and actual-advertisement gating, LAN deduplication, timeout and cancellation.
@@ -75,7 +80,7 @@ renewal passed. A two-instance invite smoke did not establish a match; physical
 two-Mac and cross-platform gameplay remain required playtests. Compilation and
 directory registration alone do not prove that a given NAT pairing can join.
 
-Run `python3 -m unittest tools.test_game_directory tools.test_download_transport_limits`
+Run `python3 -m unittest tools.test_game_directory tools.test_game_directory_worker tools.test_download_transport_limits`
 for fixtures. On Mac, `python3 tools/macos_directory_smoke.py` tests the live
 native HTTP adapter and removes its synthetic listing. Service details are in
 [the directory service README](../services/game-directory/README.md).

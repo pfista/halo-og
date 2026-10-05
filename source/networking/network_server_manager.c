@@ -1428,7 +1428,7 @@ void network_game_server_dispose(
 
 	p2p_set_game_player_counts(0, 0);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-	game_directory_publish(NULL, NULL, 0, 0, 0, 0, 0, 0, 0, FALSE);
+	game_directory_publish(NULL, NULL, 0, 0, 0, 0, 0, 0, 0, 0, 0, FALSE);
 #endif
 	network_event("network server disposed");
 
@@ -1510,6 +1510,9 @@ boolean network_game_server_idle(
 			server->game.player_count, server->game.maximum_players,
 			network_performance_advertised_version(performance_variant_get_flags(&server->game.variant), HALO_PORT_NETWORK_VERSION),
 			open, state != _network_game_server_state_pregame, server->game.variant.universal_variant.teams,
+			(short)server->game.variant.universal_variant.score_to_win,
+			server->game.variant.game_engine_index == game_engine_oddball &&
+				server->game.variant.game_engine_variant.oddball.oddball_ball_type == 2,
 			network_game_should_accept_remote_connections() && !network_game_is_splitscreen_local());
 	}
 #endif

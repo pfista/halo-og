@@ -88,6 +88,12 @@ function validateListing(body) {
     open: boolean(body.open, 'open', true),
     in_progress: boolean(body.in_progress, 'in_progress', false),
     has_teams: boolean(body.has_teams, 'has_teams', false),
+    // Legacy hosts have no score metadata. Preserve absence rather than
+    // making a missing score indistinguishable from a real zero limit.
+    ...(body.score_limit === undefined ? {} : {
+      score_limit: integer(body.score_limit, 'score_limit', 0, 32767),
+    }),
+    oddball_variant: boolean(body.oddball_variant, 'oddball_variant', false),
     invite,
   };
 }

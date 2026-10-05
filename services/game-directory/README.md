@@ -46,6 +46,8 @@ Example listing:
   "open": true,
   "in_progress": false,
   "has_teams": false,
+  "score_limit": 50,
+  "oddball_variant": false,
   "invite": "halo://join/<64 hexadecimal characters>"
 }
 ```
@@ -53,15 +55,20 @@ Example listing:
 Optional `map_sha256` is a 64-character SHA-256 digest. The directory treats it
 as host-provided metadata; the client must verify a downloaded map itself.
 Other optional fields are `platform`, `build`, `netcode`, and the booleans.
+`score_limit` is an optional integer from 0 to 32767; absence means the host
+did not supply its score limit, not a zero limit. `oddball_variant` marks
+Juggernaut's frag-based scoring instead of the usual Oddball minutes.
 Required names use printable ASCII to fit the Xbox-style menus.
 
 Public hosting registers once, updates every 30 seconds or when game details
 change, and deletes when hosting ends or becomes private. A 404 on update means
 the lease expired: register again. Changing the invite also requires a new
 registration. Use a new private invite after removing a public listing.
+If withdrawal fails, retain its lease and retry before registering a different
+invite; resuming the same invite renews its existing listing.
 Browse every 5–10 seconds while System Link is open, off the game thread; merge
 with LAN discovery and deduplicate by the invite's host identity. Selecting a
-listing uses `p2p_join_invite()` and waits for the actual host's LAN announcement
+listing uses `p2p_join_invite()` and waits for the actual host's network advertisement
 before joining. Download maps only from the configured trusted map catalog,
 not from URLs supplied by a listing. A protocol number alone does not prove
 gameplay compatibility.

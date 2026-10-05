@@ -189,7 +189,7 @@ static int directory_game(struct directory_json *j, struct halo_directory_game *
 {
     char key[64], value[32];
     unsigned fields = 0, bit;
-    memset(game, 0, sizeof(*game)); game->open = 1;
+    memset(game, 0, sizeof(*game)); game->open = 1; game->score_limit = -1;
     if (!directory_token(j, '{')) return 0;
     if (directory_token(j, '}')) return 0;
     do {
@@ -208,6 +208,8 @@ static int directory_game(struct directory_json *j, struct halo_directory_game *
         else if (!strcmp(key, "open")) { bit = 1024; if (!directory_boolean(j, &game->open)) return 0; }
         else if (!strcmp(key, "in_progress")) { bit = 2048; if (!directory_boolean(j, &game->in_progress)) return 0; }
         else if (!strcmp(key, "has_teams")) { bit = 4096; if (!directory_boolean(j, &game->has_teams)) return 0; }
+        else if (!strcmp(key, "score_limit")) { bit = 8192; if (!directory_int(j, &game->score_limit, 32767)) return 0; }
+        else if (!strcmp(key, "oddball_variant")) { bit = 16384; if (!directory_boolean(j, &game->oddball_variant)) return 0; }
         else if (!directory_skip(j, 1)) return 0;
         if (fields & bit) return 0;
         fields |= bit;
@@ -294,18 +296,21 @@ static int directory_quote(const char *text, char *out, int capacity)
 }
 int halo_directory_encode(const struct halo_directory_game *game, char *out, int capacity)
 {
-    char name[67]; int length;
+    char name[67], score[32] = {0}; int length;
     if (!game || !out || capacity < 1) return 0;
     if (!game->name[0] || strlen(game->name) > 32 || !directory_quote(game->name, name, sizeof(name)) ||
         !directory_map(game->map) || !directory_invite(game->invite) || !halo_directory_engine(game->gametype) ||
         game->network_version <= 0 || game->network_version > 65535 || game->player_count < 0 ||
-        game->max_players < 1 || game->max_players > 128 || game->player_count > game->max_players) return 0;
+        game->max_players < 1 || game->max_players > 128 || game->player_count > game->max_players ||
+        game->score_limit < -1 || game->score_limit > 32767) return 0;
+    if (game->score_limit >= 0)
+        snprintf(score, sizeof(score), ",\"score_limit\":%d", game->score_limit);
     length = snprintf(out, (unsigned)capacity,
         "{\"name\":\"%s\",\"map\":\"%s\",\"gametype\":\"%s\",\"invite\":\"%s\","
         "\"player_count\":%d,\"max_players\":%d,\"network_version\":%d,\"netcode\":\"distributed\","
-        "\"open\":%s,\"in_progress\":%s,\"has_teams\":%s}",
+        "\"open\":%s,\"in_progress\":%s,\"has_teams\":%s,\"oddball_variant\":%s%s}",
         name, game->map, game->gametype, game->invite, game->player_count, game->max_players,
         game->network_version, game->open ? "true" : "false", game->in_progress ? "true" : "false",
-        game->has_teams ? "true" : "false");
+        game->has_teams ? "true" : "false", game->oddball_variant ? "true" : "false", score);
     return length >= 0 && length < capacity;
 }

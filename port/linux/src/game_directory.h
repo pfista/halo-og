@@ -9,6 +9,8 @@ struct halo_directory_game {
     char id[37], name[33], map[33], gametype[25], invite[77];
     int player_count, max_players, network_version, open, in_progress, has_teams;
     int lifetime_seconds;
+    /* Older hosts omit the score; -1 means unavailable, while 0 is real. */
+    int score_limit, oddball_variant;
 };
 
 int halo_directory_parse_games(const char *json, int size,
@@ -19,7 +21,8 @@ int halo_directory_engine(const char *gametype);
 
 void game_directory_set_invite(const char *invite);
 void game_directory_publish(const char *name, const char *map, int engine,
-    int players, int maximum, int version, int open, int in_progress, int teams, int enabled);
+    int players, int maximum, int version, int open, int in_progress, int teams,
+    int score_limit, int oddball_variant, int enabled);
 void game_directory_browse(int enabled);
 int game_directory_snapshot(struct halo_directory_game *games, int capacity);
 

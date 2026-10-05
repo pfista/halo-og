@@ -42,7 +42,7 @@ def main():
 
         game = Game(name=b"Native directory smoke", map=b"custom map", gametype=b"Slayer",
                     invite=("halo://join/" + secrets.token_hex(32)).encode(), player_count=1,
-                    max_players=16, network_version=11, open=1)
+                    max_players=16, network_version=11, open=1, score_limit=50)
         encoded = ctypes.create_string_buffer(1024)
         assert lib.halo_directory_encode(ctypes.byref(game), encoded, len(encoded))
         status, response = request("POST", "/v1/games", encoded.value)
@@ -55,7 +55,8 @@ def main():
             games = (Game * 64)()
             count = lib.halo_directory_parse_games(response, len(response), games, 64)
             assert status == 200 and count >= 1
-            assert any(games[i].id.decode() == lease["id"] for i in range(count))
+            matched = next(games[i] for i in range(count) if games[i].id.decode() == lease["id"])
+            assert matched.score_limit == 50 and matched.oddball_variant == 0
             assert token not in response
             print("PASS native HTTPS registration and shared listing parser")
             assert request("PUT", path, encoded.value, b"0" * 64)[0] == 403

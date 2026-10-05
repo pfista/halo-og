@@ -1296,15 +1296,27 @@ static void server_list_menu_update(
 					0x369);
 				if (score_limit_text->parameters.text_box.text)
 				{
-					usnprintf(
-						score_limit_text->parameters.text_box.text,
-						3,
-						L"%d",
-						server->score_limit);
-					score_limit_text->parameters.text_box.text[3] = 0;
+					if (server->score_limit < 0)
+					{
+						/* Legacy directory records have no score metadata. */
+						score_limit_text->parameters.text_box.text[0] = 0;
+					}
+					else
+					{
+						usnprintf(
+							score_limit_text->parameters.text_box.text,
+							3,
+							L"%d",
+							server->score_limit);
+						score_limit_text->parameters.text_box.text[3] = 0;
+					}
 				}
 
-				switch (server->engine_type)
+				if (server->score_limit < 0)
+				{
+					score_limit_type_text->parameters.text_box.string_list_index = 1;
+				}
+				else switch (server->engine_type)
 				{
 				case game_engine_ctf:
 					score_limit_type_text->parameters.text_box.string_list_index =

@@ -32,6 +32,7 @@ def main():
         "name": "Directory deployment check", "map": "downrush", "gametype": "Slayer",
         "invite": "halo://join/" + secrets.token_hex(32), "player_count": 1,
         "max_players": 16, "network_version": 11, "platform": "linux", "build": "service-smoke",
+        "score_limit": 50, "oddball_variant": False,
     }
     status, lease = request("/v1/games", "POST", listing)
     assert status == 201, (status, lease.get("error"))
@@ -39,7 +40,8 @@ def main():
     try:
         status, games = request("/v1/games?network_version=11")
         assert status == 200
-        assert any(game["id"] == lease["id"] for game in games["games"])
+        matched = next(game for game in games["games"] if game["id"] == lease["id"])
+        assert matched["score_limit"] == 50 and matched["oddball_variant"] is False
         assert lease["lease_token"] not in json.dumps(games)
         status, filtered = request("/v1/games?network_version=65535")
         assert status == 200 and all(game["id"] != lease["id"] for game in filtered["games"])
@@ -48,6 +50,10 @@ def main():
         assert request(path, "DELETE", token="0" * 64)[0] == 403
         status, updated = request(path, "PUT", {**listing, "player_count": 2}, lease["lease_token"])
         assert status == 200, (status, updated)
+        status, games = request("/v1/games")
+        assert status == 200
+        matched = next(game for game in games["games"] if game["id"] == lease["id"])
+        assert matched["player_count"] == 2 and matched["score_limit"] == 50
         print("Ownership checks and heartbeat update: passed")
     finally:
         status, _ = request(path, "DELETE", token=lease["lease_token"])

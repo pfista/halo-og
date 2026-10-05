@@ -12,6 +12,20 @@ static boolean directory_join_event_posted;
 static unsigned long directory_join_event_time;
 void platform_show_message(char const *title, char const *message);
 
+typedef char directory_xnaddr_size_assert[
+    sizeof(XNADDR) == sizeof(((struct network_advertised_game *)0)->xnaddr) ? 1 : -1];
+
+static boolean directory_game_matches_host(struct network_advertised_game const *game,
+    unsigned char const identity[6], unsigned long const *address)
+{
+    XNADDR xnaddr;
+    /* The Xbox record begins with size/flags, then abEnet, then IPv4. Use
+       its actual type rather than assuming an IPv4/port/MAC byte layout. */
+    csmemcpy(&xnaddr, &game->xnaddr, sizeof(xnaddr));
+    return !csmemcmp(xnaddr.abEnet, identity, sizeof(xnaddr.abEnet)) &&
+        (!address || !csmemcmp(&xnaddr.ina, address, sizeof(xnaddr.ina)));
+}
+
 static long directory_game_index(struct network_advertised_game const *game)
 {
     long i;
@@ -39,6 +53,7 @@ struct network_advertised_game *network_game_client_get_directory_games(
     for (i = 0; i < input_count; i++) {
         struct network_advertised_game *game;
         unsigned char identity[6], previous_identity[6];
+        long output_index = directory_game_count;
         boolean duplicate = FALSE;
         if ((snapshot[i].network_version != HALO_PORT_NETWORK_VERSION &&
              snapshot[i].network_version != NETWORK_PERFORMANCE_ADVERTISED_VERSION) ||
@@ -47,13 +62,23 @@ struct network_advertised_game *network_game_client_get_directory_games(
         /* The same host reached over the LAN or a tunnel gets one row. */
         for (j = 0; j < MAXIMUM_NETWORK_ADVERTISED_GAMES; j++)
             if (network_game_client_advertised_game_is_valid(&client->available_games[j]) &&
-                !csmemcmp(client->available_games[j].xnaddr.data + 6, identity, 6)) duplicate = TRUE;
+                directory_game_matches_host(&client->available_games[j], identity, NULL)) duplicate = TRUE;
         for (j = 0; j < directory_game_count; j++)
             if (p2p_invite_identity(directory_metadata[j].invite, previous_identity) &&
-                !csmemcmp(identity, previous_identity, 6)) duplicate = TRUE;
+                !csmemcmp(identity, previous_identity, 6)) {
+                /* Every lease uses the same TTL: greater remaining lifetime
+                   identifies the more recently refreshed record for a host. */
+                if (snapshot[i].lifetime_seconds <= directory_metadata[j].lifetime_seconds)
+                    duplicate = TRUE;
+                else
+                    output_index = j;
+                break;
+            }
         if (duplicate) continue;
-        game = &directory_games[directory_game_count];
-        directory_metadata[directory_game_count++] = snapshot[i];
+        game = &directory_games[output_index];
+        csmemset(game, 0, sizeof(*game));
+        directory_metadata[output_index] = snapshot[i];
+        if (output_index == directory_game_count) directory_game_count++;
         for (j = 0; j < NETWORK_GAME_NAME_LENGTH - 1 && snapshot[i].name[j]; j++)
             game->game_name[j] = (wchar_t)(unsigned char)snapshot[i].name[j];
         if (!csstrcmp(snapshot[i].invite, directory_join_invite))
@@ -62,6 +87,8 @@ struct network_advertised_game *network_game_client_get_directory_games(
         game->engine_type = (short)halo_directory_engine(snapshot[i].gametype);
         game->player_count = (word)snapshot[i].player_count;
         game->maximum_player_count = (short)snapshot[i].max_players;
+        game->unknown100 = (short)snapshot[i].score_limit;
+        game->oddball_variant = (boolean)snapshot[i].oddball_variant;
         game->machine_count = 1;
         game->platform = _network_game_platform_xbox;
         game->open = (boolean)snapshot[i].open;
@@ -102,7 +129,7 @@ struct network_advertised_game *network_game_client_directory_join_ready(struct 
     for (i = 0; i < MAXIMUM_NETWORK_ADVERTISED_GAMES; i++) {
         struct network_advertised_game *game = &client->available_games[i];
         if (network_game_client_advertised_game_is_valid(game) &&
-            !csmemcmp(game->xnaddr.data, &address, 4) && !csmemcmp(game->xnaddr.data + 6, identity, 6)) return game;
+            directory_game_matches_host(game, identity, &address)) return game;
     }
     return NULL;
 }
