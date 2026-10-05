@@ -31,6 +31,48 @@ static NSDictionary *snapshot(NSURL *root) {
     }
     return result;
 }
+static void timerDownloadPreferenceFixtures(NSURL *test, NSURL *valid) {
+    NSURL *support = [test URLByAppendingPathComponent:@"timer-download-preferences"];
+    NSURL *file = [support URLByAppendingPathComponent:@"macos-settings.json"];
+    HaloPreferences *preferences = [[HaloPreferences alloc] initWithSupportDirectory:support];
+    assert(preferences.timerAudioDownloadsEnabled);
+    assert(![NSFileManager.defaultManager fileExistsAtPath:file.path]);
+    NSMutableDictionary *settings = [@{@"data_path":valid.path, @"windowed":@YES,
+        @"community_downloads":@NO, @"release_checks":@NO, @"future_setting":@"preserve me"} mutableCopy];
+    writeFixture([NSJSONSerialization dataWithJSONObject:settings options:0 error:nil], file);
+    preferences = [[HaloPreferences alloc] initWithSupportDirectory:support];
+    assert(preferences.timerAudioDownloadsEnabled); // Older settings inherit the default.
+    NSError *error = nil;
+    assert([preferences setTimerAudioDownloadsEnabled:NO error:&error]);
+    preferences = [[HaloPreferences alloc] initWithSupportDirectory:support];
+    assert(!preferences.timerAudioDownloadsEnabled);
+    assert([preferences setWindowed:NO error:&error]);
+    preferences = [[HaloPreferences alloc] initWithSupportDirectory:support];
+    assert(!preferences.timerAudioDownloadsEnabled); // Other settings preserve the opt-out.
+    assert([preferences setTimerAudioDownloadsEnabled:YES error:&error]);
+    preferences = [[HaloPreferences alloc] initWithSupportDirectory:support];
+    assert(preferences.timerAudioDownloadsEnabled);
+    assert([preferences.dataPath isEqual:valid.path] && !preferences.windowed &&
+        !preferences.communityDownloadsEnabled && !preferences.releaseChecksEnabled);
+    settings = [[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:file] options:0 error:nil] mutableCopy];
+    assert([settings[@"future_setting"] isEqual:@"preserve me"]);
+    for (id invalid in @[@"off", NSNull.null, @[], @{}]) {
+        settings[@"timer_audio_downloads"] = invalid;
+        writeFixture([NSJSONSerialization dataWithJSONObject:settings options:0 error:nil], file);
+        preferences = [[HaloPreferences alloc] initWithSupportDirectory:support];
+        assert(preferences.timerAudioDownloadsEnabled);
+        assert([preferences setTimerAudioDownloadsEnabled:NO error:&error]);
+        assert(![[HaloPreferences alloc] initWithSupportDirectory:support].timerAudioDownloadsEnabled);
+    }
+    NSURL *blocked = [test URLByAppendingPathComponent:@"timer-preferences-blocked"];
+    writeFixture([@"existing file" dataUsingEncoding:NSUTF8StringEncoding], blocked);
+    preferences = [[HaloPreferences alloc] initWithSupportDirectory:blocked];
+    error = nil;
+    assert(![preferences setTimerAudioDownloadsEnabled:NO error:&error] && error);
+    assert(preferences.timerAudioDownloadsEnabled); // Failed saves do not change memory.
+    assert([[NSString stringWithContentsOfURL:blocked encoding:NSUTF8StringEncoding error:nil] isEqual:@"existing file"]);
+    puts("Timer recording download preferences: defaults, opt-out/reload, invalid values and atomic failure preservation passed");
+}
 static void migrationFixtures(NSURL *test, NSURL *valid, NSURL *image) {
     NSURL *legacy = [test URLByAppendingPathComponent:@"migration/legacy"], *destination = [test URLByAppendingPathComponent:@"migration/Halo OG"];
     NSURL *oldImport = [legacy URLByAppendingPathComponent:@"Game Data/import-a"];
@@ -150,8 +192,12 @@ int main(int argc, const char **argv) {
             assert(!HaloValidateGameData([test URLByAppendingPathComponent:name], &error));
             assert(error.localizedDescription.length);
         }
+        timerDownloadPreferenceFixtures(test, valid);
         if (argc == 3) assert(HaloValidateGameData([NSURL fileURLWithPath:@(argv[2])], &error));
         HaloPreferences *preferences = [[HaloPreferences alloc] initWithSupportDirectory:support];
+        assert(preferences.communityDownloadsEnabled);
+        assert(preferences.releaseChecksEnabled);
+        assert(![NSFileManager.defaultManager fileExistsAtPath:[support URLByAppendingPathComponent:@"macos-settings.json"].path]);
         assert([preferences selectDataRoot:valid iso:nil error:&error]);
         NSURL *settings = [support URLByAppendingPathComponent:@"macos-settings.json"];
         NSMutableDictionary *saved = [[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:settings]
@@ -162,11 +208,21 @@ int main(int argc, const char **argv) {
         assert([@"[bindings]\nx = \"E\"\n" writeToURL:controls atomically:YES encoding:NSUTF8StringEncoding error:&error]);
         preferences = [[HaloPreferences alloc] initWithSupportDirectory:support];
         assert([preferences setWindowed:YES error:&error]);
-        assert(!preferences.communityDownloadsEnabled);
+        // Older settings with no saved choice inherit the enabled default.
+        assert(preferences.communityDownloadsEnabled);
+        assert(preferences.releaseChecksEnabled);
+        assert([preferences setReleaseChecksEnabled:NO error:&error]);
+        assert(![[HaloPreferences alloc] initWithSupportDirectory:support].releaseChecksEnabled);
         assert([preferences setCommunityDownloadsEnabled:YES error:&error]);
         assert([[HaloPreferences alloc] initWithSupportDirectory:support].communityDownloadsEnabled);
         assert([preferences setCommunityDownloadsEnabled:NO error:&error]);
         assert(![[HaloPreferences alloc] initWithSupportDirectory:support].communityDownloadsEnabled);
+        assert([preferences setWindowed:NO error:&error]);
+        assert(![[HaloPreferences alloc] initWithSupportDirectory:support].communityDownloadsEnabled);
+        assert([preferences setWindowed:YES error:&error]);
+        assert(![[HaloPreferences alloc] initWithSupportDirectory:support].releaseChecksEnabled);
+        assert([preferences setReleaseChecksEnabled:YES error:&error]);
+        assert([[HaloPreferences alloc] initWithSupportDirectory:support].releaseChecksEnabled);
         NSData *before = [NSData dataWithContentsOfURL:settings];
         assert(![preferences selectDataRoot:[test URLByAppendingPathComponent:@"pc"] iso:nil error:&error]);
         assert([[NSData dataWithContentsOfURL:settings] isEqualToData:before]);
@@ -199,6 +255,24 @@ int main(int argc, const char **argv) {
         assert(!HaloCopyGameData(linkedRoot, support, NULL, NULL, &error));
         assert([[NSData dataWithContentsOfURL:settings] isEqual:unchanged]);
         NSURL *image = [test URLByAppendingPathComponent:@"disc.iso"];
+        NSURL *nearby = [test URLByAppendingPathComponent:@"adjacent" isDirectory:YES];
+        assert([NSFileManager.defaultManager createDirectoryAtURL:nearby withIntermediateDirectories:YES attributes:nil error:&error]);
+        assert(!HaloFindAdjacentDiscImage(nearby, &error) && !error);
+        NSURL *unrelated = [nearby URLByAppendingPathComponent:@"other.iso"];
+        assert([@"not an Xbox disc" writeToURL:unrelated atomically:YES encoding:NSUTF8StringEncoding error:&error]);
+        assert(!HaloFindAdjacentDiscImage(nearby, &error) && error);
+        NSURL *autoImage = [nearby URLByAppendingPathComponent:@"Halo.XISO"];
+        assert([NSFileManager.defaultManager copyItemAtURL:image toURL:autoImage error:&error]);
+        assert([HaloFindAdjacentDiscImage(nearby, &error) isEqual:autoImage] && !error);
+        NSURL *duplicate = [nearby URLByAppendingPathComponent:@"second.iso"];
+        assert([NSFileManager.defaultManager copyItemAtURL:image toURL:duplicate error:&error]);
+        assert(!HaloFindAdjacentDiscImage(nearby, &error) && error);
+        assert([NSFileManager.defaultManager removeItemAtURL:duplicate error:&error]);
+        NSURL *link = [nearby URLByAppendingPathComponent:@"linked.iso"];
+        assert([NSFileManager.defaultManager createSymbolicLinkAtURL:link withDestinationURL:image error:&error]);
+        assert([HaloFindAdjacentDiscImage(nearby, &error) isEqual:autoImage] && !error);
+        assert([[NSData dataWithContentsOfURL:autoImage] isEqualToData:[NSData dataWithContentsOfURL:image]]);
+        assert([[NSString stringWithContentsOfURL:unrelated encoding:NSUTF8StringEncoding error:&error] isEqual:@"not an Xbox disc"]);
         NSURL *imported = HaloImportDiscImage(image, support, progress, NULL, &error);
         assert(imported && progressCalls == 2);
         assert([preferences.dataPath isEqualToString:valid.path]);

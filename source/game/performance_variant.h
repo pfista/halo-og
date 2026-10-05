@@ -12,9 +12,13 @@ enum
 	_performance_option_timer_audio = 4,
 	_performance_option_silent_movement = 8,
 	_performance_option_silent_weapon_ready = 16,
+	_performance_option_input_delay = 32,
 	/* The existing Practice preset keeps the original movement/weapon audio. */
 	PERFORMANCE_PRACTICE_FLAGS = 7,
-	PERFORMANCE_OPTIONS_MASK = 31,
+	PERFORMANCE_OPTIONS_MASK = 63,
+	/* Nominal Xbox duration; one 30 Hz simulation update is 33.333 ms.
+	 * Preserve this duration if simulation frequency changes in the future. */
+	PERFORMANCE_INPUT_DELAY_MILLISECONDS = 33,
 };
 
 /* These six named padding bytes are unused by the retail variant. Keeping the
@@ -65,6 +69,26 @@ static inline void performance_variant_set_flags(
 	settings->pad4 = flags ? 1 : 0;
 	settings->pad5 = (byte)flags;
 	settings->pad6 = flags ? (byte)(flags ^ 0xA5) : 0;
+}
+
+static inline unsigned performance_variant_get_input_delay_milliseconds(
+	struct game_variant const *variant)
+{
+	return (performance_variant_get_flags(variant) & _performance_option_input_delay) ?
+		PERFORMANCE_INPUT_DELAY_MILLISECONDS : 0;
+}
+
+static inline boolean performance_variant_set_input_delay_milliseconds(
+	struct game_variant *variant,
+	unsigned milliseconds)
+{
+	unsigned flags;
+	if (!variant || (milliseconds != 0 && milliseconds != PERFORMANCE_INPUT_DELAY_MILLISECONDS))
+		return FALSE;
+	flags = performance_variant_get_flags(variant) & ~_performance_option_input_delay;
+	if (milliseconds) flags |= _performance_option_input_delay;
+	performance_variant_set_flags(variant, flags);
+	return TRUE;
 }
 
 #endif /* __PERFORMANCE_VARIANT_H */

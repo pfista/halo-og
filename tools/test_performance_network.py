@@ -35,8 +35,11 @@ enum { _game_variant_draw_object_in_motion_sensor_bit=0, _game_variant_infinite_
 #define network_event(...) ((void)0)
 #define error(...) ((void)0)
 #define ustrncpy wcsncpy
-enum { _performance_option_timer_audio=4, PERFORMANCE_OPTIONS_MASK=31,
-       _network_game_server_state_pregame=1, _network_game_server_state_ingame=2, _message_server_begin_game=2 };
+enum { _performance_option_timer_audio=4, _performance_option_input_delay=32, PERFORMANCE_OPTIONS_MASK=63,
+       _network_game_server_state_pregame=1, _network_game_server_state_ingame=2,
+       _network_game_server_state_postgame=3, _message_server_begin_game=2,
+       _network_game_client_state_joining=1, _network_game_client_state_pregame=2, _network_game_client_state_ingame=3,
+       _network_game_client_state_postgame=4 };
 struct game_variant { unsigned flags; struct {int teams, flags, vehicle_set, weapon_set;} universal_variant; };
 struct network_game_server_client_machine {int machine_index,joined,local;};
 #include "game/game_variant_options.h"
@@ -51,7 +54,7 @@ struct network_game_server {
     struct network_game_server_client_machine client_machines[MAXIMUM_NETWORK_MACHINE_COUNT];
     struct game_data game; int state,sent_start_game_message,next_update_number;
 };
-struct network_game_client {void *connection;};
+struct network_game_client {void *connection; int state; struct game_data game;};
 struct message_server_begin_game {int unused;};
 static struct network_game_server server,*active=&server;
 static struct game_variant runtime_variant,playlist_variant;
@@ -60,6 +63,7 @@ static int network_game_server_start_players[16];
 static boolean network_game_server_started_with_five_players;
 static int recordings=1,apply_calls,override_calls,pregame_sends,setting_sends,start_sends,opened;
 static unsigned runtime_flags,capabilities[4],capability_count;
+static unsigned network_game_client_performance_host_capabilities;
 static char shown[512];
 int halo_performance_audio_available(void) {return recordings;}
 static void platform_show_message(const char *title,const char *message) {
@@ -106,6 +110,13 @@ static boolean announce(struct network_game_client *client) {
     /* PRODUCTION ANNOUNCEMENT */
     return TRUE;
 }
+#undef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static boolean announce_without_queue(struct network_game_client *client) {
+    /* PRODUCTION ANNOUNCEMENT */
+    return TRUE;
+}
+/* PRODUCTION NO-QUEUE HOST SUPPORT */
+#define HALO_PORT_MAXIMUM_NETWORK_PLAYERS 16
 static void unchanged(unsigned flags,int calls) {
     assert(server.game.variant.flags==flags && runtime_flags==flags && apply_calls==calls);
 }
@@ -138,6 +149,21 @@ int main(void) {
     assert(performance_options_set_host_flags(31));unchanged(31,6);
     assert(performance_options_set_host_flags(0));unchanged(0,7);
     assert(!performance_options_set_host_flags(32));unchanged(0,7);
+    /* Delay requires the new capability, and can change only before begin. */
+    network_game_server_performance_capability(&server.client_machines[1],63);
+    assert(performance_options_set_host_flags(32));unchanged(32,8);
+    int before_pregame=pregame_sends,before_settings=setting_sends,before_override=override_calls;
+    server.state=_network_game_server_state_ingame;
+    assert(!performance_options_set_host_flags(0));unchanged(32,8);
+    assert(strstr(shown,"input delay locked"));
+    assert(pregame_sends==before_pregame && setting_sends==before_settings && override_calls==before_override);
+    assert(performance_options_set_host_flags(39));unchanged(39,9);
+    assert(performance_options_set_host_flags(32));unchanged(32,10);
+    server.state=_network_game_server_state_postgame;
+    assert(!performance_options_set_host_flags(0));unchanged(32,10);
+    server.state=_network_game_server_state_pregame;
+    assert(performance_options_set_host_flags(0));unchanged(0,11);
+    assert(!performance_options_set_host_flags(64));unchanged(0,11);
     apply_calls=3;
     /* Saved variant selection cannot bypass the same missing-pack gate. */
     struct game_variant chosen={.flags=7};recordings=0;
@@ -152,13 +178,64 @@ int main(void) {
     assert(opened==1 && apply_calls==5);
     assert(network_game_server_start_network_game(&server));
     assert(server.sent_start_game_message && start_sends==1);
+    /* Loading remains pregame, but begin already fixes the match timing. */
+    before_pregame=pregame_sends;before_settings=setting_sends;before_override=override_calls;
+    assert(!performance_options_set_host_flags(39));unchanged(7,5);
+    chosen.flags=39;network_game_server_change_game_variant(&server,&chosen);unchanged(7,5);
+    assert(pregame_sends==before_pregame && setting_sends==before_settings && override_calls==before_override);
+    assert(performance_options_set_host_flags(3));unchanged(3,6);
+    assert(performance_options_set_host_flags(7));unchanged(7,7);
     /* Compile the actual ordered client announcement; missing assets must
      * never advertise audio support to an enabled host. */
     struct network_game_client client={0};
     recordings=0;capability_count=0;assert(announce(&client));
-    assert(capability_count==3 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27);
+    assert(capability_count==4 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==59);
     recordings=1;capability_count=0;assert(announce(&client));
-    assert(capability_count==3 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31);
+    assert(capability_count==4 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31 && capabilities[3]==63);
+    capability_count=0;assert(announce_without_queue(&client));
+    assert(capability_count==4 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==27);
+    assert(!network_game_server_performance_peers_support_without_queue(&server,32));
+    assert(strstr(shown,"This build does not support"));
+    assert(network_game_server_performance_peers_support_without_queue(&server,0));
+    /* Only a reliable acknowledgement from the selected host establishes
+     * timing support; old hosts can forward unknown saved extension bytes. */
+    active=NULL;client.state=_network_game_client_state_joining;
+    byte host_capability[NETWORK_PERFORMANCE_MESSAGE_SIZE];
+    network_performance_encode(host_capability,NETWORK_PERFORMANCE_CAPABILITY,63);
+    assert(!network_game_client_receive_performance_capability(&client,host_capability,16,FALSE));
+    assert(network_game_client_performance_host_capabilities==0);
+    assert(network_game_client_performance_settings_flags(&client,32)==0);
+    assert(network_game_client_performance_settings_flags(&client,39)==0);
+    assert(network_game_client_performance_settings_flags(&client,7)==7);
+    network_performance_encode(host_capability,NETWORK_PERFORMANCE_SETTINGS,32);
+    assert(!network_game_client_receive_performance_capability(&client,host_capability,16,TRUE));
+    assert(network_game_client_performance_host_capabilities==0);
+    network_performance_encode(host_capability,NETWORK_PERFORMANCE_CAPABILITY,63);
+    assert(network_game_client_receive_performance_capability(&client,host_capability,16,TRUE));
+    assert(network_game_client_performance_host_capabilities==63);
+    assert(network_game_client_performance_settings_flags(&client,39)==39);
+    /* A live reliable PB update preserves the applied delay in either
+     * direction. Pregame and next-match postgame settings may select it. */
+    client.state=_network_game_client_state_ingame;
+    client.game.variant.flags=32;
+    assert(network_game_client_performance_settings_flags(&client,7)==39);
+    client.game.variant.flags=0;
+    assert(network_game_client_performance_settings_flags(&client,39)==7);
+    client.state=_network_game_client_state_pregame;
+    assert(network_game_client_performance_settings_flags(&client,39)==39);
+    client.state=_network_game_client_state_postgame;
+    assert(network_game_client_performance_settings_flags(&client,32)==32);
+    active=&server;
+    /* Start repeats admission checks; an older peer cannot join a delayed
+     * match even if it connected while the delay was disabled. */
+    server.sent_start_game_message=FALSE;
+    server.game.variant.flags=32;
+    network_game_server_performance_capabilities[1]=31;
+    assert(!network_game_server_start_network_game(&server));
+    assert(!server.sent_start_game_message);
+    network_game_server_performance_capabilities[1]=63;
+    assert(network_game_server_start_network_game(&server));
+    assert(server.sent_start_game_message);
     /* Keep the Xbox grenade cutoff without admitting a mixed-rules match.
      * Four players still interoperate; a fork-only five-player game is safe. */
     server.game.variant.flags=0; server.game.variant.universal_variant.flags=4;
@@ -200,6 +277,7 @@ class PerformanceNetworkTests(unittest.TestCase):
             "void network_game_server_performance_capability(\n",
             "boolean network_game_server_performance_supported(\n",
             "static boolean network_game_server_performance_peers_support(\n",
+            "static boolean network_game_server_input_delay_change_allowed(\n",
             "static boolean network_game_server_original_grenade_peers_support(\n",
             "boolean performance_options_set_host_flags(\n",
             "void network_game_server_change_game_variant(\n",
@@ -208,9 +286,15 @@ class PerformanceNetworkTests(unittest.TestCase):
         private = server[server.index("/* ---------- private code */"):]
         functions += "\n" + block(private, "static boolean network_game_server_setup_game_from_playlist(\n")
         client = (ROOT / "source/networking/network_client_manager.c").read_text()
+        functions += "\n" + block(client, "static boolean network_game_client_receive_performance_capability(\n")
+        functions += "\n" + block(client, "static unsigned network_game_client_performance_settings_flags(\n")
         start = client.index("word capability[NETWORK_PERFORMANCE_MESSAGE_SIZE / sizeof(word)];")
         end = client.index("csmemset(&join_game_request", start)
         fixture = FIXTURE.replace("/* PRODUCTION */", functions)
+        no_queue_support = block(server, "static boolean network_game_server_performance_peers_support(\n")
+        no_queue_support = no_queue_support.replace("network_game_server_performance_peers_support(",
+            "network_game_server_performance_peers_support_without_queue(", 1)
+        fixture = fixture.replace("/* PRODUCTION NO-QUEUE HOST SUPPORT */", no_queue_support)
         fixture = fixture.replace("/* PRODUCTION ANNOUNCEMENT */", client[start:end])
         with tempfile.TemporaryDirectory(prefix="halo-pb-network-") as temporary:
             source = Path(temporary) / "network.c"

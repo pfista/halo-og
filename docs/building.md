@@ -76,6 +76,6 @@ executable is distinct from validating a native ARM/x86 port.
 
 [Community maps](community-maps.md) documents rebuilding source tags into Xbox
 v5 NTSC caches. [Release/data instructions](macos-menu-and-releases.md) cover
-asset-free packaging and opt-in managed downloads. Cross-platform gameplay,
+packaging without bundled game data and managed downloads. Cross-platform gameplay,
 physical controllers, campaign coverage, and reference-Xbox comparisons need
 explicit runtime evidence beyond successful compilation.

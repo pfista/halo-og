@@ -27,7 +27,16 @@ static NSError *failure(NSString *message) {
 - (NSString *)isoPath { return [_settings[@"iso_path"] isKindOfClass:NSString.class] ? _settings[@"iso_path"] : nil; }
 - (BOOL)windowed { return [_settings[@"windowed"] isKindOfClass:NSNumber.class] && [_settings[@"windowed"] boolValue]; }
 - (BOOL)communityDownloadsEnabled {
-    return [_settings[@"community_downloads"] isKindOfClass:NSNumber.class] && [_settings[@"community_downloads"] boolValue];
+    id saved = _settings[@"community_downloads"];
+    return !saved || ([saved isKindOfClass:NSNumber.class] && [saved boolValue]);
+}
+- (BOOL)timerAudioDownloadsEnabled {
+    id saved = _settings[@"timer_audio_downloads"];
+    return [saved isKindOfClass:NSNumber.class] ? [saved boolValue] : YES;
+}
+- (BOOL)releaseChecksEnabled {
+    id saved = _settings[@"release_checks"];
+    return !saved || ([saved isKindOfClass:NSNumber.class] && [saved boolValue]);
 }
 - (BOOL)save:(NSMutableDictionary *)settings error:(NSError **)error {
     NSData *data = [NSJSONSerialization dataWithJSONObject:settings options:NSJSONWritingPrettyPrinted error:error];
@@ -57,6 +66,16 @@ static NSError *failure(NSString *message) {
     settings[@"community_downloads"] = @(enabled);
     return [self save:settings error:error];
 }
+- (BOOL)setTimerAudioDownloadsEnabled:(BOOL)enabled error:(NSError **)error {
+    NSMutableDictionary *settings = [_settings mutableCopy];
+    settings[@"timer_audio_downloads"] = @(enabled);
+    return [self save:settings error:error];
+}
+- (BOOL)setReleaseChecksEnabled:(BOOL)enabled error:(NSError **)error {
+    NSMutableDictionary *settings = [_settings mutableCopy];
+    settings[@"release_checks"] = @(enabled);
+    return [self save:settings error:error];
+}
 @end
 
 static NSDictionary<NSString *, NSURL *> *entries(NSURL *directory, NSError **error) {
@@ -73,6 +92,34 @@ static NSDictionary<NSString *, NSURL *> *entries(NSURL *directory, NSError **er
         result[name] = file;
     }
     return result;
+}
+
+NSURL *HaloFindAdjacentDiscImage(NSURL *directory, NSError **error) {
+    if (error) *error = nil;
+    NSArray<NSURL *> *files = [NSFileManager.defaultManager contentsOfDirectoryAtURL:directory
+        includingPropertiesForKeys:@[NSURLIsRegularFileKey, NSURLIsSymbolicLinkKey]
+        options:NSDirectoryEnumerationSkipsHiddenFiles error:error];
+    if (!files) return nil;
+    NSURL *candidate = nil;
+    BOOL sawImage = NO;
+    for (NSURL *file in files) {
+        NSString *extension = file.pathExtension.lowercaseString;
+        if (![extension isEqualToString:@"iso"] && ![extension isEqualToString:@"xiso"]) continue;
+        NSNumber *regular = nil, *linked = nil;
+        if (![file getResourceValue:&regular forKey:NSURLIsRegularFileKey error:nil] || !regular.boolValue ||
+            ![file getResourceValue:&linked forKey:NSURLIsSymbolicLinkKey error:nil] || linked.boolValue) continue;
+        sawImage = YES;
+        char detail[512] = {0};
+        if (!xiso_probe_maps(file.fileSystemRepresentation, detail, sizeof(detail))) continue;
+        if (candidate) {
+            if (error) *error = failure(@"More than one supported Xbox Halo disc image is beside Halo OG. Choose the image you want to use.");
+            return nil;
+        }
+        candidate = file;
+    }
+    if (!candidate && sawImage && error)
+        *error = failure(@"The nearby ISO/XISO is not a supported original Xbox Halo disc image. Choose your original Xbox Halo image or a complete extracted maps folder.");
+    return candidate;
 }
 
 NSURL *HaloValidateGameData(NSURL *selection, NSError **error) {

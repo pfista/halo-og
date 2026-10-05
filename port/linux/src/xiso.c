@@ -77,6 +77,7 @@ static void platform_log(const char *format, ...) {
 #include "posix.h"
 #include "xiso.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -88,6 +89,9 @@ static void platform_log(const char *format, ...) {
 #endif
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
+#endif
+#ifndef O_BINARY
+#define O_BINARY 0
 #endif
 
 enum
@@ -267,7 +271,7 @@ static int copy_file(struct xiso_image *image, const struct xiso_file *file, con
 {
 	unsigned long long offset = image->partition + (unsigned long long)file->sector * SECTOR_SIZE;
 	unsigned long remaining = file->size;
-	int output = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+	int output = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_BINARY, 0644);
 
 	if (output < 0)
 		return fail(image, "Could not write %s.", path);
@@ -303,39 +307,23 @@ static int copy_file(struct xiso_image *image, const struct xiso_file *file, con
 	return 1;
 }
 
-int xiso_extract_maps(const char *image_path, const char *destination, xiso_progress_proc progress, void *context,
-	char *error, int error_size)
+/* Both automatic discovery and extraction inspect the same file-system
+structure. The probe does not create directories or read/copy map payloads. */
+static int load_maps_directory(struct xiso_image *image, struct xiso_file *entries, int *entry_count)
 {
-	struct xiso_image image;
-	struct xiso_file *entries = NULL;
 	unsigned char *table = NULL;
-	unsigned char *buffer = NULL;
 	unsigned long root_sector, root_size;
-	unsigned long long total = 0, done = 0;
-	char partial[1024], final[1024], path[1300];
 	int result = 0;
 	int index;
 
-	image.error = error;
-	image.error_size = error_size;
-	image.descriptor = open(image_path, O_RDONLY | O_LARGEFILE | O_CLOEXEC);
-	if (image.descriptor < 0)
-		return fail(&image, "Could not open %s.", image_path);
-	entries = calloc(MAXIMUM_FILES, sizeof(*entries));
-	buffer = malloc(COPY_BUFFER_SIZE);
-	if (!entries || !buffer)
-	{
-		fail(&image, "Out of memory.%s", NULL);
-		goto done;
-	}
-	if (!find_volume(&image, &root_sector, &root_size))
+	if (!find_volume(image, &root_sector, &root_size))
 		goto done;
 
 	/* the root's maps folder */
-	table = read_directory(&image, root_sector, root_size);
+	table = read_directory(image, root_sector, root_size);
 	if (!table)
 	{
-		fail(&image, "The disc image's file system is damaged.%s", NULL);
+		fail(image, "The disc image's file system is damaged.%s", NULL);
 		goto done;
 	}
 	{
@@ -346,14 +334,14 @@ int xiso_extract_maps(const char *image_path, const char *destination, xiso_prog
 			;
 		if (index == walk.entry_count)
 		{
-			fail(&image, "The disc image has no maps folder: it is not a Halo disc.%s", NULL);
+			fail(image, "The disc image has no maps folder: it is not a Halo disc.%s", NULL);
 			goto done;
 		}
 		free(table);
-		table = read_directory(&image, entries[index].sector, entries[index].size);
+		table = read_directory(image, entries[index].sector, entries[index].size);
 		if (!table)
 		{
-			fail(&image, "The disc image's maps folder is damaged.%s", NULL);
+			fail(image, "The disc image's maps folder is damaged.%s", NULL);
 			goto done;
 		}
 		root_size = entries[index].size;
@@ -367,35 +355,140 @@ int xiso_extract_maps(const char *image_path, const char *destination, xiso_prog
 		walk_directory(&walk, 0, 0);
 		for (index = 0; index < walk.entry_count; index++)
 		{
-			total += entries[index].size;
 			has_ui |= names_match(entries[index].name, "ui.map");
 		}
 		if (!has_ui)
 		{
-			fail(&image, "The disc image's maps folder has no ui.map: it is not a Halo disc.%s", NULL);
+			fail(image, "The disc image's maps folder has no ui.map: it is not a Halo disc.%s", NULL);
 			goto done;
 		}
-		snprintf(partial, sizeof(partial), "%s/maps.partial", destination);
-		snprintf(final, sizeof(final), "%s/maps", destination);
-		posix_make_directory(partial);
-		for (index = 0; index < walk.entry_count; index++)
+		*entry_count = walk.entry_count;
+	}
+	result = 1;
+
+done:
+	free(table);
+	return result;
+}
+
+int xiso_probe_maps(const char *image_path, char *error, int error_size)
+{
+	struct xiso_image image;
+	struct xiso_file *entries;
+	int entry_count = 0, result;
+
+	image.error = error;
+	image.error_size = error_size;
+	image.descriptor = open(image_path, O_RDONLY | O_LARGEFILE | O_CLOEXEC | O_BINARY);
+	if (image.descriptor < 0)
+		return fail(&image, "Could not open %s.", image_path);
+	entries = calloc(MAXIMUM_FILES, sizeof(*entries));
+	result = entries ? load_maps_directory(&image, entries, &entry_count) :
+		fail(&image, "Out of memory.%s", NULL);
+	/* Automatic import is narrower than the existing manual extractor: check
+	Halo's original cache header before selecting a file without a picker.
+	NTSC and PAL supported UI builds are both importable; community downloads
+	separately require the NTSC build. */
+	if (result)
+	{
+		int index;
+		for (index = 0; index < entry_count; index++)
 		{
-			snprintf(path, sizeof(path), "%s/%s", partial, entries[index].name);
-			platform_log("extracting maps/%s (%lu bytes)", entries[index].name, entries[index].size);
-			if (!copy_file(&image, &entries[index], path, buffer, &done, total, progress, context))
-				goto done;
+			if (names_match(entries[index].name, "ui.map"))
+			{
+				unsigned char header[SECTOR_SIZE];
+				unsigned long long offset = image.partition + (unsigned long long)entries[index].sector * SECTOR_SIZE;
+				if (entries[index].size < sizeof(header) || !read_at(&image, offset, header, sizeof(header)) ||
+					memcmp(header, "daeh", 4) || read_u32(header + 4) != 5 || memcmp(header + 2044, "toof", 4) ||
+					!memchr(header + 64, '\0', 32) ||
+					(strcmp((const char *)header + 64, "01.10.12.2276") && strcmp((const char *)header + 64, "01.01.14.2342")))
+					result = fail(&image, "The disc image's ui.map is not a supported original Xbox Halo cache. Use an Xbox NTSC or PAL disc image, not a PC or Custom Edition image.%s", NULL);
+				break;
+			}
 		}
-		if (rename(partial, final) != 0)
+	}
+	free(entries);
+	close(image.descriptor);
+	return result;
+}
+
+int xiso_extract_maps(const char *image_path, const char *destination, xiso_progress_proc progress, void *context,
+	char *error, int error_size)
+{
+	struct xiso_image image;
+	struct xiso_file *entries = NULL;
+	unsigned char *buffer = NULL;
+	struct posix_file_information information;
+	unsigned long long total = 0, done = 0;
+	char partial[1024], final[1024], path[1300];
+	int result = 0, entry_count = 0, index;
+
+	image.error = error;
+	image.error_size = error_size;
+	image.descriptor = open(image_path, O_RDONLY | O_LARGEFILE | O_CLOEXEC | O_BINARY);
+	if (image.descriptor < 0)
+		return fail(&image, "Could not open %s.", image_path);
+	entries = calloc(MAXIMUM_FILES, sizeof(*entries));
+	buffer = malloc(COPY_BUFFER_SIZE);
+	if (!entries || !buffer)
+	{
+		fail(&image, "Out of memory.%s", NULL);
+		goto done;
+	}
+	if (!load_maps_directory(&image, entries, &entry_count))
+		goto done;
+	for (index = 0; index < entry_count; index++)
+		total += entries[index].size;
+	if (snprintf(final, sizeof(final), "%s/maps", destination) >= (int)sizeof(final))
+	{
+		fail(&image, "The destination path is too long.%s", NULL);
+		goto done;
+	}
+	if (posix_stat(final, &information) == 0)
+	{
+		fail(&image, "The destination already contains %s. Keep or move that folder before importing; existing files were preserved.", final);
+		goto done;
+	}
+	/* Claim a new staging directory exclusively. An interrupted previous copy
+	and any other user files remain untouched, including when import retries. */
+	for (index = 0; index < 100; index++)
+	{
+		int length = index ? snprintf(partial, sizeof(partial), "%s/maps.partial-%d", destination, index) :
+			snprintf(partial, sizeof(partial), "%s/maps.partial", destination);
+		if (length < 0 || length >= (int)sizeof(partial))
 		{
-			fail(&image, "Could not create %s.", final);
+			fail(&image, "The destination path is too long.%s", NULL);
 			goto done;
 		}
+		if (posix_make_directory(partial) == 0)
+			break;
+		if (errno != EEXIST)
+		{
+			fail(&image, "Could not create %s. Choose a writable folder for Halo OG.", partial);
+			goto done;
+		}
+	}
+	if (index == 100)
+	{
+		fail(&image, "There are too many incomplete imports in %s. Move those folders aside and retry.", destination);
+		goto done;
+	}
+	for (index = 0; index < entry_count; index++)
+	{
+		snprintf(path, sizeof(path), "%s/%s", partial, entries[index].name);
+		platform_log("extracting maps/%s (%lu bytes)", entries[index].name, entries[index].size);
+		if (!copy_file(&image, &entries[index], path, buffer, &done, total, progress, context))
+			goto done;
+	}
+	if (posix_stat(final, &information) == 0 || rename(partial, final) != 0)
+	{
+		fail(&image, "Could not create %s. Existing files and the incomplete import were preserved.", final);
+		goto done;
 	}
 	result = 1;
 
 done:
 	close(image.descriptor);
-	free(table);
 	free(entries);
 	free(buffer);
 	return result;

@@ -3,7 +3,8 @@
 PB Options provides explicitly selected multiplayer practice aids: an
 elapsed match timer, spawn markers, timer announcements, and optional silent
 movement or weapon equip sounds. All modifications are **off by default**.
-The host selects the options for the whole match.
+The host also selects **Input Delay: Off / 33ms** before the match. It is
+independent of the practice aids and applies to every player.
 
 ## Game type editor and pause menu
 
@@ -19,10 +20,12 @@ show **PB options active** whenever the saved variant enables any option.
 | Practice | On | On | On | Normal / Normal |
 | Custom | Individually selected | Individually selected | Individually selected | Individually selected |
 
-The preset is a convenience over the option bits. Reopening the page shows
-Stock when all modifications are off, Practice when just the original three
-aids are on, and Custom for any other selection. There is no separate saved
-preset identifier. Selecting either Silent rule therefore shows Custom.
+The preset is a convenience over the practice-aid bits. Reopening the page shows
+Stock when all aids are off, Practice when just the original three aids are on,
+and Custom for any other aid selection. There is no separate saved preset
+identifier. Selecting either Silent rule therefore shows Custom. Input Delay
+does not change the preset label, and selecting Stock or Practice preserves the
+chosen delay.
 
 Changes on this page are staged. **Accept** puts them into the game type being
 edited; finish the existing **Save Changes** flow to persist that variant.
@@ -36,9 +39,32 @@ see the host's current choices with the controls disabled. Session changes do
 not write the saved game type back to disk; use Edit Gametypes to save a
 preset for later.
 
+Input Delay is available only in Edit Gametypes, before starting a match. The
+pause page omits its control; Apply and either preset preserve the match's
+existing delay. Other practice aids remain adjustable during play.
+
 The editor and pause pages are native game widgets registered in the loaded
 cache's runtime UI table. Retail map files are not rewritten. PB Options uses
 these menu entries; there is no separate overlay or Y-button shortcut.
+
+## Input delay
+
+**Input Delay: Off / 33ms** chooses whether player actions have an additional
+fixed delay. Off is the default. The 33ms choice delays actions by one tick of
+the fixed **30 Hz** simulation, approximately **33.3ms**. The host and joining
+players use the same choice; it does not depend on rendering frame rate.
+
+Save the choice in the game type and select it before starting the match. It
+cannot be changed during a match. This option preserves the simulation rate,
+weapon rules, and the separate local rendering and camera settings. Every
+connected player must support the delay option before the host can start an
+enabled match.
+
+The delay covers the complete simulated action: aim, movement, firing, buttons,
+and weapon/grenade/zoom choices. Direct Camera can still show current local aim
+while shots use delayed actions. Buffered actions are cleared for a new unit,
+pause, teleport, or clock resynchronization; a teleport retains the destination
+facing.
 
 ## Match timer
 
@@ -87,14 +113,21 @@ backfilling. Repeated host ticks do not repeat cues. Turning the option
 off or leaving the map stops an active announcement. Playback uses the existing
 audio mixer, output device, audio-enabled setting and master volume.
 
-The recordings are a separate local pack at `sounds/performance/` beneath the
-existing game data root. They work with stock maps without changing map files
-or checksums. The importer [`import_performance_audio.py`](../tools/import_performance_audio.py)
+The recordings are a separate pack at `sounds/performance/` beneath the
+existing game data root, or beneath the save root for managed optional content
+(Application Support on macOS). A complete user-provided game-data pack takes
+priority. Partial packs from different roots are never combined, and Halo must
+restart after installation to refresh its recording capability. They work with
+stock maps without changing map files or checksums. The importer
+[`import_performance_audio.py`](../tools/import_performance_audio.py)
 converts already extracted, user-owned NHE sound tags into bounded PCM WAVs and
 writes source/output hashes. It preserves existing destination files and does
 not download assets. The recordings themselves are not committed to this repo.
-The local installation includes the pack. A host without the required recordings
-cannot enable Timer Sounds; a peer without them omits timer-audio support while
+Mac downloads the [recording pack](timer-audio.md) automatically in the background
+by default. **Halo OG → Settings** shows progress and allows opting out; restart
+the game after the first installation. Downloading
+it does not enable Timer Sounds. A host without the required recordings cannot
+enable Timer Sounds; a peer without them omits timer-audio support while
 retaining the other capabilities. The debug console reports whether the
 recordings are installed.
 
@@ -118,8 +151,7 @@ Normal restores the original gain, including for a still-playing sound.
 The affected stock weapon inventory is assault rifle, pistol, shotgun, plasma
 rifle, plasma pistol, rocket launcher, sniper rifle, needler, flamethrower,
 oddball and flag. Map-authored ready and put-away sounds on custom weapons use
-the same event policy; absent recordings remain absent. Verification evidence
-and remaining gates are recorded in [the first-three delivery log](pb-first-three.md).
+the same event policy; absent recordings remain absent. Use the event-policy tests and gameplay listening checks to verify both modes.
 
 ## Spawn markers and supported maps
 
@@ -173,10 +205,10 @@ introduced.
 | --- | --- |
 | `pad0`, `pad1`, `pad2` | ASCII `P`, `F`, `O` |
 | `pad4` | Format version `1` |
-| `pad5` | Flags: timer `1`, spawn markers `2`, timer sounds `4`, silent movement `8`, silent weapons `16` |
+| `pad5` | Flags: timer `1`, spawn markers `2`, timer sounds `4`, silent movement `8`, silent weapons `16`, input delay `32` |
 | `pad6` | Flags XOR `0xA5` |
 
-Stock/off writes all six bytes as zero. Old padding, an unknown format version,
+All flags off writes all six bytes as zero. Old padding, an unknown format version,
 unknown flag bits or a damaged check byte decode as all options off. The check
 byte detects malformed extension data; the existing save signature mechanism
 still handles the saved variant. `game_variant.flags` is not repurposed.
@@ -184,8 +216,8 @@ still handles the saved variant. `game_variant.flags` is not repurposed.
 ## Host authority and v11 compatibility
 
 The client's reliable connection announces supported subsets before its normal
-join request: the original timer/marker mask, the timer-audio generation, then
-the complete capability set. Earlier PB hosts retain the newest subset they
+join request: the original timer/marker mask, the timer-audio generation, the
+sound-rule generation (mask 31), then the complete set (mask 63). Earlier PB hosts retain the newest subset they
 understand. An unextended v11 host ignores those unknown data messages.
 The updated host keeps capabilities per connection slot and clears them when
 the slot is removed or reused.
@@ -198,15 +230,26 @@ a stale advertisement or direct join cannot bypass the requirement.
 
 The v11 settings record adds 28 bytes; v10 and PB-v10 (`0x800A`) must update.
 Capability flag `0x02` is now upstream's in-progress flag, so PB uses `0x04`.
-The reliable option messages and saved variants are unchanged. Unsupported active
-PC options and mixed five-plus-player infinite-grenade rules are refused; see the
-[current protocol review](upstream-review-2026-10-03.md). The v10 runtime evidence
-below remains historical evidence, not a v11 cross-platform test.
+The saved variant keeps the same six-byte extension. Delay-aware peers announce
+support for the input-delay flag; older PB peers cannot join an enabled-delay
+match. A shared protocol number does not establish matching behavior for other
+upstream gametype rules; see the
+[protocol compatibility policy](xbox-fidelity.md#protocol-compatibility).
 
 Enabling an option, selecting an enabled saved variant, and starting the match
 check the connected peers. An unsupported existing peer causes the host's
 change to be refused with an explanation. Joining clients cannot change the
 host's option state.
+
+Input Delay is locked at match start. The host refuses a request to change its
+flag during play, including a debug-console request. Clients retain the active
+delay flag while applying other live aid changes. Presets and edits to the other
+aids preserve the current delay flag.
+
+The host confirms its delay capability on the reliable connection before the
+settings record. A client enables the saved delay only after this confirmation.
+If an older host loads a newer saved variant containing an unsupported delay
+flag, the client treats that extension as off, matching the older host.
 
 The normal reliable settings record carries the variant before begin-game,
 both for lobby starts and late joins. Live host changes use a separate reliable
@@ -218,7 +261,8 @@ client session clears the effective options.
 ## Debug controls and device settings
 
 Press **F2** for the existing developer console. `pb` shows settings and help;
-`pb stock` disables all options and `pb practice` enables all three. Use
+`pb stock` disables the practice aids and `pb practice` enables the original
+three aids. Both preserve Input Delay. Use
 `pb timer on`, `pb markers off`, or `pb audio toggle` for individual controls.
 Those accept `on`, `off` or `toggle`. Use `pb movement silent` or
 `pb weapons normal` for sound rules; these accept `normal`, `silent` or `toggle`.
@@ -226,8 +270,9 @@ Tab completion is available. Host authority
 and peer capability checks are identical to the pause menu. These are session
 changes; save a game type in Edit Gametypes for future matches.
 
-The diagnostic `performance_options [0..31]` is available, with flags timer `1`,
-markers `2`, audio `4`, silent movement `8` and silent weapons `16`. Status also
+The diagnostic `performance_options [0..63]` is available, with flags timer `1`,
+markers `2`, audio `4`, silent movement `8`, silent weapons `16` and input delay
+`32`. A request to change the delay during play is refused. Status also
 reports per-map sound provenance, muted dispatch counts, timer cue preferences
 and successful cue dispatch counts; these are diagnostic
 counters and do not by themselves prove the audible output.
@@ -242,58 +287,22 @@ draft; Audio Accept persists them, while parent Cancel discards them. The pages 
 configuration and report save failures. See
 [`native-settings.md`](native-settings.md) for controls and persistence details.
 
-## Validation and limits
-
-Recorded October 2, 2026. The runtime checks used real native Mac processes with
-isolated saves, the opt-in local console, and encrypted invite connections on
-one Mac. Each test kept at most two game instances active; the late-join test
-replaced its temporary second peer after the match started.
-
-| Check | Evidence |
-| --- | --- |
-| Installed native editor: PB row, fitted text, Stock/Practice, Cancel, Accept, Save Changes and reopen; valid flags on disk | [`native-ui-check/validation.json`](../build/performance-options/native-ui-check/validation.json) |
-| Expanded installed UI: both Settings branches, Music Cancel/Accept and config preservation, card status, independent Timer Sounds and saved flags `7` | [`expanded-ui-check/validation.json`](../build/performance-options/expanded-ui-check/validation.json) |
-| Retail Chill Out: all eight option combinations synchronized; 25 Slayer markers on both peers, arrows visually confirmed, client mutation refused; three-minute runtime with audio enabled | [`stock-audio-smoke/validation.json`](../build/performance-options/stock-audio-smoke/validation.json) |
-| Native pause submenu: fitted heading/rows/footer; Apply disabled the timer on both peers (`7 → 6`); F2 `pb timer on` restored the clock and reported installed recordings | [`stock-pause-diagnostic/ui-validation.json`](../build/performance-options/stock-pause-diagnostic/ui-validation.json), [`runtime report`](../build/performance-options/stock-pause-diagnostic/validation.json) |
-| NHE Prisoner: 24 markers on both peers; all timer/marker combinations; client mutation refused | [`prisoner-smoke-2/validation.json`](../build/performance-options/prisoner-smoke-2/validation.json) |
-| Downrush: actual in-progress join at host tick 175; timer sampled at 188 on both peers; 19 markers; live `3 → 1 → 2 → 0 → 3 → 0` updates; client mutation refused | [`downrush-latejoin-3/validation.json`](../build/performance-options/downrush-latejoin-3/validation.json) |
-| Updated host with options off admits stock v10; enabling is refused and the session continues | [`compatibility-v10-1/stock_session/validation.json`](../build/performance-options/compatibility-v10-1/stock_session/validation.json) |
-| Enabled updated host rejects stock v10 with an update explanation; updated client joins a stock v10 host | [`compatibility-v10-2/validation.json`](../build/performance-options/compatibility-v10-2/validation.json) |
-
-The passing reports contain no runtime faults. These are local generated
-artifacts, not files required by a checkout or shipped with the game. They record
-the guest hashes actually tested: Prisoner used `0fa61f1afafb…`; the later
-Downrush and compatibility checks used `dcdb2abc05ce…`. The saved unextended v10
-guest used `6f525b592908…`. Expanded UI and retail Chill Out checks used
-`131ff620b6b8…`. The Chill Out run enabled the mixer with muted master output;
-it verifies runtime behavior but is not an audible listening check.
-The pause/F2 check used `d7d2e98ad8fd…` with a temporary menu-event trace;
-that trace was removed after confirming the native event path. A stale UI
-capture affected an earlier manual attempt, so the successful check used a
-fresh capture session. The final source also hides stock spawn arrows while
-menus are open, covered by the runtime fixture, and preserves the invoking
-controller for split-screen PB menus, covered by the pause fixture.
+## Validation
 
 [`test_performance_variants.py`](../tools/test_performance_variants.py) exercises
-the format, malformed extensions, editor dirty detection and variant save/copy
-flows using production functions with storage/signature fixtures.
-[`performance_network.c`](../port/macos/tests/performance_network.c) covers wire
-validation and admission/version combinations. The runtime runners are
+saved formats, malformed extensions, dirty detection and variant save/copy flows.
+[`performance_network.c`](../port/macos/tests/performance_network.c) checks wire
+validation and admission/version combinations. Runtime probes are
 [`macos_performance_smoke.py`](../tools/macos_performance_smoke.py) and
 [`macos_performance_compatibility.py`](../tools/macos_performance_compatibility.py).
-Run multiplayer runners sequentially because the game uses fixed ports.
+Run probes sequentially with isolated saves because the game uses fixed ports.
 
-Focused production-code fixtures cover native UI construction and tag lifetime,
-all eight saved option combinations, host and audio-pack capability gates,
-the announcement schedule and mixer controls, stock-map spawn filtering and
-geometry, console commands, and TOML write failure/comment preservation.
-The importer tests compare decoding with the game's Xbox ADPCM algorithm and
-reject malformed sound tags and existing output files.
+Check host/client option changes, admission with incompatible peers, late joins,
+marker filtering, timer schedules, audio and persistence. Fixtures and same-Mac
+runs do not establish physical cross-platform networking, controller navigation,
+long-session stability or reference-Xbox fidelity.
 
-These results do not establish Windows-binary interoperability, two physical
-machines or networks, Internet/NAT coverage beyond the same-Mac invite path,
-long-session stability, physical-controller navigation or reference-Xbox
-fidelity. Network runtime reports exercise options through the native diagnostic
-command. The separate editor and pause checks use keyboard navigation in the
-installed app and isolated saves; pause Apply was additionally checked on both
-peers through their read-only diagnostic status.
+The native editor, pause, and mouse fixtures cover Off/33ms selection, Accept
+and Cancel, preset preservation, unchanged pause controls, and all 64 flag
+combinations. Their tag and widget fixtures do not measure real gameplay input
+timing or rendered camera response.

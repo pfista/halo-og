@@ -482,6 +482,25 @@ void draw_string_set_draw_mode(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* A menu footer must not leave its font or layout settings on later draws. */
+void draw_string_render_label(
+	long font_index,
+	rectangle2d const *bounds,
+	real_argb_color const *color,
+	char const *string)
+{
+	struct font_drawing_globals saved = font_drawing_globals;
+
+	draw_string_set_draw_mode(font_index, NONE, _text_justification_left, 0, color);
+	draw_string_set_indents(0, 0);
+	draw_string_set_tab_stops(NULL, 0);
+	draw_string_set_highlight(NONE, NONE);
+	rasterizer_draw_string(bounds, NULL, NULL, 0, string);
+	font_drawing_globals = saved;
+}
+#endif
+
 void draw_string_set_highlight(
 	short start,
 	short end)

@@ -6,6 +6,7 @@ Creates tiny authored XDVDFS/map-header fixtures; contains no game assets.
 import base64
 from contextlib import redirect_stderr, redirect_stdout
 import io
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -135,9 +136,9 @@ def native_menu_loop():
              "-Iport/macos/native", "-Iport/linux/src", "-Iport/android/include",
              "-Ibuild/macos/toolchain/gl", f"-I{SDL / 'include'}", f"-F{sparkle}"]
     sources = ("port/macos/tests/menu_ui.m", "port/macos/tests/menu_support.c",
-               "port/macos/native/host_menu.m", "port/macos/native/HaloPreferences.m", "port/macos/native/HaloMapDownloads.m", "port/macos/native/HaloMapPackages.m",
+               "port/macos/native/host_menu.m", "port/macos/native/HaloPreferences.m", "port/macos/native/HaloMapDownloads.m", "port/macos/native/HaloTimerAudio.m", "port/macos/native/HaloMapPackages.m", "port/macos/native/HaloReleaseUpdates.m",
                "port/macos/host/host_sdl.c", "port/macos/host/host_invite.c",
-               "port/macos/host/posix_files.c", "port/linux/src/xiso.c")
+               "port/macos/host/posix_files.c", "port/linux/src/xiso.c", "port/linux/src/release_discovery.c")
     objects = []
     for source in sources:
         obj = output / (Path(source).name + '.o')
@@ -165,6 +166,12 @@ def native_menu_loop():
         image.write_bytes(disc_image(map_header('ui'), map_header('a10')))
         environment = {k: v for k, v in os.environ.items() if not k.startswith('HALO_')}
         environment['HALO_WINDOWED'] = '1'
+        saves = directory / 'saves'
+        saves.mkdir()
+        (saves / 'macos-settings.json').write_text(json.dumps({
+            'timer_audio_downloads': False, 'community_downloads': False,
+            'release_checks': False,
+        }))
         subprocess.run([executable, directory / 'saves', maps.parent, image],
                        env=environment, check=True, timeout=20)
 

@@ -1,0 +1,12 @@
+{
+  "name": "halo-og-game-directory",
+  "main": "worker.mjs",
+  "account_id": "39353b0c2249998b78adc016897ef725",
+  "compatibility_date": "2026-07-30",
+  "workers_dev": false,
+  "routes": [{"pattern": "games.oghalo.com", "custom_domain": true}],
+  "durable_objects": {
+    "bindings": [{"name": "DIRECTORY", "class_name": "GameDirectory"}]
+  },
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["GameDirectory"]}]
+}

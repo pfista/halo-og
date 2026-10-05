@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'New immutable testing tag, for example test-v0.3.0-net11'
+        description: 'New vMAJOR.MINOR.PATCH tag matching the source version, for example v0.3.1'
         required: true
         type: string
 
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   prepare:
-    if: ${{ github.repository == 'pfista/halo-og' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'pfista/halo-og' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -31,7 +31,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Test artifact selection and publication guards
-        run: python3 -m unittest tools.test_testing_release
+        run: python3 -m unittest tools.test_testing_release tools.test_release_changelog tools.test_release_discovery
       - name: Validate and collect successful main builds
         run: >-
           python3 tools/testing_release.py prepare
@@ -48,6 +48,7 @@ jobs:
 
   publish:
     needs: prepare
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'pfista/halo-og' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

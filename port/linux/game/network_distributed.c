@@ -54,6 +54,7 @@ machine (their datum identifiers need not be).
 #include "cseries.h"
 #include "cseries/errors.h"
 #include "game/game.h"
+#include "game/game_engine.h"
 #include "game/game_globals.h"
 #include "game/players.h"
 #include "game/player_queues_new.h"
@@ -61,6 +62,7 @@ machine (their datum identifiers need not be).
 #include "objects/objects.h"
 #include "objects/damage.h"
 #include "scenario/scenario.h"
+#include "scenario/scenario_definitions.h"
 #include "structures/structure_bsp_definitions.h"
 #include "units/units.h"
 #include "units/biped_definitions.h"
@@ -523,7 +525,9 @@ static struct distributed_own_position
 	long time;
 	long unit_index;
 	real_point3d position;
+	unsigned long teleport_sequence;
 } distributed_own_positions[MAXIMUM_LOCAL_PLAYERS][OWN_POSITION_TICKS];
+static unsigned long distributed_own_teleport_sequences[MAXIMUM_LOCAL_PLAYERS];
 static real distributed_own_round_trip;
 /* the host: the players each machine had when it last told the host that it
 had loaded (a machine new at its index has none of the old one's state) */
@@ -1499,6 +1503,79 @@ static word distributed_unit_state_read(
 	return (word)(cursor - buffer);
 }
 
+/* An actual netgame teleport starts a new prediction segment. The Xbox
+destination latch remains controlled by game_engine_update_teleporter. */
+void network_distributed_player_teleported(
+	long player_index)
+{
+	long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index);
+	struct player_datum *player;
+
+	if (absolute_index < 0 || absolute_index >= MAXIMUM_TRACKED_PLAYERS)
+		return;
+	player = distributed_player((short)absolute_index);
+	if (!player)
+		return;
+	update_queues_reset_local_input_delay(player->local_player_index,
+		player->unit_index != NONE ? &object_get(player->unit_index)->object.forward : NULL);
+	if (game_connection() == _game_connection_network_server)
+	{
+		/* A queued pre-teleport prediction and its echo/height anchor are
+		no longer in the coordinate segment the host occupies. */
+		distributed_predictions[absolute_index].valid = FALSE;
+		distributed_predictions[absolute_index].taken_host_time = NONE;
+		distributed_accepted[absolute_index].valid = FALSE;
+		distributed_host_speeds[absolute_index].unit_index = NONE;
+	}
+	else if (game_connection() == _game_connection_network_client &&
+		player->local_player_index >= 0 && player->local_player_index < MAXIMUM_LOCAL_PLAYERS)
+	{
+		distributed_own_teleport_sequences[player->local_player_index]++;
+	}
+}
+
+/* The host can traverse before this client's copy reaches the trigger.
+Restore the original destination latch only when a correction follows an
+actual scenario source/target pair, never for an unrelated relocation. */
+static void distributed_restore_teleporter_latch(
+	struct distributed_unit_state const *state,
+	long unit_index,
+	real_point3d const *before,
+	real_point3d const *after)
+{
+	struct player_datum *player;
+	struct scenario *scenario;
+	struct scenario_netgame_flag *source;
+	struct scenario_netgame_flag *destination;
+	long source_index;
+	long destination_index;
+
+	if (game_connection() != _game_connection_network_client)
+		return;
+	player = distributed_player(state->player_index);
+	if (!player || player->unit_index != unit_index)
+		return;
+	source_index = find_netgame_flag(before, 0.5f, 0.0f, _netgame_flag_teleporter_source, NONE);
+	if (source_index == NONE)
+		return;
+	scenario = global_scenario_get();
+	source = TAG_BLOCK_GET_ELEMENT(&scenario->netgame_flags, source_index, struct scenario_netgame_flag);
+	destination_index = find_netgame_flag(NULL, 0.0f, 0.0f, _netgame_flag_teleporter_target,
+		source->team_index);
+	if (destination_index == NONE)
+		return;
+	destination = TAG_BLOCK_GET_ELEMENT(&scenario->netgame_flags, destination_index,
+		struct scenario_netgame_flag);
+	if (distance_squared3d(after, &destination->position) <= 1.0f)
+	{
+		player->teleporter_index = find_netgame_flag(after, 1.0f, 0.0f, _netgame_flag_teleporter_source, NONE);
+		/* This client's copy crossed through the host's correction rather
+		than its own trigger update: its old position history also ends. */
+		network_distributed_player_teleported(
+			DATUM_INDEX_NEW(state->player_index, player->identifier));
+	}
+}
+
 /* moves the unit toward the state (at position) if it is further than
 tolerance from it: within blend_distance part of the way, further all of it,
 no faster than maximum_speed across and up and maximum_fall_speed down (0
@@ -1543,8 +1620,17 @@ static boolean distributed_apply_state(
 	error.k = position->z - object->object.position.z;
 	if (error.i * error.i + error.j * error.j + error.k * error.k <= tolerance * tolerance)
 		return TRUE;
-	if (network_objects_reconcile(unit_index, position, &forward, &up, &velocity, NULL, blend_distance))
-		distributed_statistics.corrections++;
+	{
+		real_point3d before = object->object.position;
+
+		if (network_objects_reconcile(unit_index, position, &forward, &up, &velocity, NULL, blend_distance))
+			distributed_statistics.corrections++;
+		if (error.i * error.i + error.j * error.j + error.k * error.k >
+			LOCAL_CORRECTION_TOLERANCE * LOCAL_CORRECTION_TOLERANCE)
+		{
+			distributed_restore_teleporter_latch(state, unit_index, &before, &object->object.position);
+		}
+	}
 	return TRUE;
 }
 
@@ -1567,6 +1653,7 @@ static void distributed_note_own_positions(
 			unit_index = NONE;
 		own->time = game_time_get();
 		own->unit_index = unit_index;
+		own->teleport_sequence = distributed_own_teleport_sequences[local_player_index];
 		if (unit_index != NONE)
 			own->position = object_get(unit_index)->object.position;
 	}
@@ -1599,6 +1686,12 @@ static void distributed_correct_own_unit(
 			real_vector3d error;
 			short index;
 
+			/* A delayed prediction echo describes an earlier teleport
+			segment, even when it differs from that segment's old history.
+			Only a current-segment echo or an authoritative state without
+			the predicted bit can correct this segment. */
+			if (own->teleport_sequence != distributed_own_teleport_sequences[local_player_index])
+				return;
 			/* (how long the host takes to have this machine's players, as
 			the round trip is smoothed on the host) */
 			if (distributed_own_round_trip <= 0.0f)
@@ -1628,7 +1721,8 @@ static void distributed_correct_own_unit(
 				{
 					struct distributed_own_position *noted = &distributed_own_positions[local_player_index][index];
 
-					if (noted->unit_index == unit_index)
+					if (noted->unit_index == unit_index &&
+						noted->teleport_sequence == distributed_own_teleport_sequences[local_player_index])
 					{
 						noted->position.x += error.i;
 						noted->position.y += error.j;
@@ -3116,6 +3210,7 @@ void network_distributed_new_game(
 	}
 	for (sender = 0; sender < MAXIMUM_LOCAL_PLAYERS; sender++)
 	{
+		distributed_own_teleport_sequences[sender] = 0;
 		for (type = 0; type < OWN_POSITION_TICKS; type++)
 		{
 			distributed_own_positions[sender][type].time = NONE;
@@ -3208,7 +3303,6 @@ static boolean distributed_message_stale(
 	case _distributed_message_player_prediction:
 	case _distributed_message_unit_states:
 	case _distributed_message_player_statistics:
-	case _distributed_message_inventories:
 	case _distributed_message_object_states:
 	case _distributed_message_vehicle_prediction:
 	case _distributed_message_player_inputs:
@@ -3744,7 +3838,7 @@ void network_distributed_handle_message(
 		break;
 	}
 	case _distributed_message_inventories:
-		network_objects_handle_inventories(entries, header.count);
+		network_objects_handle_inventories(entries, header.count, header.game_time);
 		break;
 	case _distributed_message_object_changes:
 		network_objects_handle_changes(entries, header.count);

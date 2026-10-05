@@ -591,6 +591,9 @@ boolean network_game_distributed_client(void);
 /* port/linux/game/network_distributed.c's */
 void network_distributed_player_killed(long *killing_player_index, long *killing_object_index,
 	long dead_player_index, boolean *friendly_fire);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+void network_distributed_player_teleported(long player_index);
+#endif
 /* port/linux/game/network_damage.c's */
 boolean network_damage_killer_score(long player_index, long *score);
 
@@ -3632,6 +3635,10 @@ static void game_engine_update_teleporter(
 				0.0f,
 				_netgame_flag_teleporter_source,
 				NONE);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			/* Native prediction history cannot span this discontinuity. */
+			network_distributed_player_teleported(player_index);
+#endif
 		}
 		return;
 	}

@@ -44,6 +44,13 @@ LLVM for Windows supplies this runtime only for x86-64.
 
 Enter `build\windows\halo.exe`.
 
+For a fresh installation, place one complete Halo Xbox `.iso` or `.xiso`
+beside `halo.exe`, then open it. Halo OG imports the original maps
+automatically and leaves the disc image intact. Original NTSC data enables
+the community-map downloader by default. Existing configured or extracted
+game data takes priority; multiple supported images open the usual choice
+dialog instead of selecting one arbitrarily.
+
 The game finds the game data as on Linux. Refer to "Start the game" in
 [port/linux/README.md](../linux/README.md#start-the-game).
 

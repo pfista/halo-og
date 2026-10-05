@@ -2,7 +2,10 @@
 #import <Sparkle/Sparkle.h>
 #import "HaloPreferences.h"
 #import "HaloMapDownloads.h"
-#import "HaloMapPackages.h"
+#import "HaloTimerAudio.h"
+#import "HaloReleaseUpdates.h"
+#include "../../linux/include/halo_og_version.h"
+#include "../../linux/include/halo_contributors.h"
 #include <SDL3/SDL.h>
 #include "host_menu.h"
 #include <stdlib.h>
@@ -17,12 +20,17 @@
 @property(nonatomic, strong) NSTextField *sourceLabel;
 @property(nonatomic, strong) NSButton *fullscreenButton;
 @property(nonatomic, strong) NSButton *automaticUpdatesButton;
+@property(nonatomic, strong) NSTextField *updateStatusLabel;
+@property(nonatomic, strong) NSButton *downloadUpdateButton;
 @property(nonatomic, strong) NSButton *communityDownloadsButton;
 @property(nonatomic, strong) NSTextField *downloadsLabel;
 @property(nonatomic, strong) HaloMapDownloads *mapDownloads;
-@property(nonatomic, strong) NSButton *packageImportButton;
-@property(nonatomic, copy) NSString *packageStatus;
+@property(nonatomic, strong) HaloTimerAudio *timerAudio;
+@property(nonatomic, strong) NSButton *timerDownloadsButton;
+@property(nonatomic, strong) NSButton *timerDownloadButton;
+@property(nonatomic, strong) NSTextField *timerAudioLabel;
 @property(nonatomic, strong) SPUStandardUpdaterController *updater;
+@property(nonatomic, strong) HaloReleaseUpdates *releaseUpdates;
 @property(nonatomic, strong) id previousDelegate;
 @property(nonatomic) BOOL gameRunning;
 @property(nonatomic) BOOL waitingForUpdate;
@@ -225,14 +233,16 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
             entry.title = host_sdl_is_fullscreen() ? @"Exit Full Screen" : @"Enter Full Screen";
         if (entry.action == @selector(checkUpdates:))
             entry.title = self.pendingInstall ? @"Update Ready — Quit to Install" : self.availableVersion
-                ? [NSString stringWithFormat:@"Update to Halo OG %@…", self.availableVersion] : @"Check for Updates…";
+                ? [NSString stringWithFormat:@"Update to Halo OG %@…", self.availableVersion]
+                : self.releaseUpdates.updateAvailable ? @"Halo OG Update Available…" : @"Check for Updates…";
     }
 }
 - (BOOL)validateMenuItem:(NSMenuItem *)entry {
     if (self.importing) return NO;
     if (entry.action == @selector(showGame:)) return self.gameRunning;
     if (entry.action == @selector(toggleFullscreen:)) return self.gameRunning;
-    if (entry.action == @selector(checkUpdates:)) return self.updater.updater.canCheckForUpdates && !self.pendingInstall;
+    if (entry.action == @selector(checkUpdates:)) return self.updater
+        ? self.updater.updater.canCheckForUpdates && !self.pendingInstall : !self.releaseUpdates.checking;
     return YES;
 }
 - (void)refreshFullscreen {
@@ -257,7 +267,32 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
 - (void)about:(id)sender {
     (void)sender;
     host_sdl_release_mouse();
-    [NSApp orderFrontStandardAboutPanelWithOptions:@{NSAboutPanelOptionApplicationName:@"Halo OG"}];
+    NSMutableParagraphStyle *paragraph = [[NSMutableParagraphStyle alloc] init];
+    paragraph.alignment = NSTextAlignmentCenter;
+    NSDictionary *attributes = @{NSFontAttributeName:[NSFont systemFontOfSize:11],
+                                NSForegroundColorAttributeName:NSColor.secondaryLabelColor,
+                                NSParagraphStyleAttributeName:paragraph};
+    NSMutableAttributedString *details = [[NSMutableAttributedString alloc] initWithString:
+        @"Based on Xbox build " HALO_OG_ENGINE_BUILD_NUMBER
+        @"\nOriginal Xbox NTSC gameplay target\n30 Hz simulation\n\n"
+        attributes:attributes];
+    NSMutableDictionary *linkAttributes = [attributes mutableCopy];
+    linkAttributes[NSLinkAttributeName] = [NSURL URLWithString:@HALO_OG_WEBSITE];
+    [details appendAttributedString:[[NSAttributedString alloc]
+        initWithString:@HALO_OG_WEBSITE attributes:linkAttributes]];
+    [details appendAttributedString:[[NSAttributedString alloc]
+        initWithString:@"\n\nContributors\nCommits, then lines added\n" attributes:attributes]];
+    for (unsigned index = 0; index < HALO_OG_CONTRIBUTOR_COUNT; index++) {
+        const struct halo_contributor_credit *credit = &halo_contributor_credits[index];
+        NSString *name = credit->github ? [@"@" stringByAppendingString:@(credit->github)] : @(credit->name);
+        [details appendAttributedString:[[NSAttributedString alloc]
+            initWithString:[NSString stringWithFormat:@"%@ - %u %@, %u LOC added\n", name,
+                credit->commits, credit->commits == 1 ? @"commit" : @"commits", credit->added_lines]
+            attributes:attributes]];
+    }
+    [NSApp orderFrontStandardAboutPanelWithOptions:@{
+        NSAboutPanelOptionApplicationName:@"Halo OG v" HALO_OG_VERSION @" by @pfista",
+        NSAboutPanelOptionCredits:details}];
 }
 - (void)quit:(id)sender {
     (void)sender;
@@ -268,7 +303,7 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     else [NSApp terminate:self];
 }
 - (void)buildSettings {
-    self.settingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 520, 542)
+    self.settingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 520, 685)
         styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     self.settingsWindow.title = @"Halo OG Settings";
     self.settingsWindow.releasedWhenClosed = NO;
@@ -289,9 +324,12 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     self.automaticUpdatesButton = [NSButton checkboxWithTitle:@"Automatically check for updates"
                                                                   target:self action:@selector(automaticUpdates:)];
     self.automaticUpdatesButton.frame = NSMakeRect(24, 78, 472, 24);
-    self.automaticUpdatesButton.enabled = self.updater != nil;
+    self.automaticUpdatesButton.enabled = self.updater != nil || self.releaseUpdates.automaticChecksAvailable;
     [content addSubview:self.automaticUpdatesButton];
-    if (!self.updater) label(content, @"Updates aren’t available for this build.", NSMakeRect(24, 58, 472, 17), YES).font = [NSFont systemFontOfSize:11];
+    self.updateStatusLabel = label(content, @"", NSMakeRect(24, 49, 472, 26), YES);
+    self.updateStatusLabel.font = [NSFont systemFontOfSize:11];
+    self.downloadUpdateButton = button(content, @"Download Update…", @selector(downloadUpdate:), NSMakeRect(211, 14, 185, 32));
+    self.downloadUpdateButton.hidden = self.updater != nil;
     button(content, @"Advanced Settings…", @selector(openConfig:), NSMakeRect(20, 14, 185, 32));
     NSButton *done = button(content, @"Done", @selector(closeSettings:), NSMakeRect(401, 14, 95, 32));
     done.keyEquivalent = @"\r";
@@ -313,26 +351,47 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     button(content, @"Check Maps / Retry", @selector(checkMaps:), NSMakeRect(20, 108, 164, 32));
     button(content, @"Cancel Downloads", @selector(cancelMaps:), NSMakeRect(190, 108, 151, 32));
     button(content, @"Open Library", @selector(openMapLibrary:), NSMakeRect(347, 108, 149, 32));
+    /* Leave the update/footer controls at the bottom and make room for the
+       optional recordings between them and the managed maps controls. */
     for (NSView *view in content.subviews) {
         if (view.frame.origin.y >= 108) {
-            NSRect frame = view.frame; frame.origin.y += 42; view.frame = frame;
+            NSRect frame = view.frame; frame.origin.y += 145; view.frame = frame;
         }
     }
-    self.packageImportButton = button(content, @"Import Community Package…", @selector(importCommunityPackage:), NSMakeRect(20, 108, 250, 32));
-    label(content, @"Uses your original disc data", NSMakeRect(278, 114, 218, 20), YES).font = [NSFont systemFontOfSize:11];
+    label(content, @"Timer Audio Recordings", NSMakeRect(24, 220, 472, 22), NO).font = [NSFont boldSystemFontOfSize:13];
+    self.timerDownloadsButton = [NSButton checkboxWithTitle:@"Download Timer Audio recordings in the background"
+        target:self action:@selector(timerDownloads:)];
+    self.timerDownloadsButton.frame = NSMakeRect(24, 190, 472, 24);
+    [content addSubview:self.timerDownloadsButton];
+    self.timerAudioLabel = label(content, @"", NSMakeRect(24, 147, 472, 40), YES);
+    self.timerAudioLabel.lineBreakMode = NSLineBreakByWordWrapping;
+    self.timerAudioLabel.maximumNumberOfLines = 2;
+    self.timerAudioLabel.font = [NSFont systemFontOfSize:11];
+    self.timerDownloadButton = button(content, @"Check Recordings / Retry", @selector(downloadTimerAudio:), NSMakeRect(20, 108, 205, 32));
+    button(content, @"Cancel Download", @selector(cancelTimerAudio:), NSMakeRect(232, 108, 170, 32));
+    for (NSView *view in content.subviews) {
+        NSRect frame = view.frame; frame.origin.y += 40; view.frame = frame;
+    }
+    done.frame = NSMakeRect(401, 14, 95, 32);
+    button(content, @"About Halo OG…", @selector(about:), NSMakeRect(20, 14, 185, 32));
 }
 - (void)refreshSettings {
     self.dataLabel.stringValue = self.preferences.dataPath ?: self.launchDataPath ?: @"No maps selected";
     self.dataLabel.toolTip = self.dataLabel.stringValue;
     self.sourceLabel.stringValue = self.preferences.isoPath ? [@"Disc image: " stringByAppendingString:self.preferences.isoPath] : @"Using an extracted maps folder";
     self.sourceLabel.toolTip = self.preferences.isoPath;
-    self.automaticUpdatesButton.state = self.updater.updater.automaticallyChecksForUpdates ? NSControlStateValueOn : NSControlStateValueOff;
+    BOOL automatic = self.updater ? self.updater.updater.automaticallyChecksForUpdates : self.preferences.releaseChecksEnabled;
+    self.automaticUpdatesButton.state = automatic ? NSControlStateValueOn : NSControlStateValueOff;
+    self.updateStatusLabel.stringValue = self.updater ? @"Updates install after the game quits." : self.releaseUpdates.statusText ?: @"";
+    self.updateStatusLabel.toolTip = self.updateStatusLabel.stringValue;
+    self.downloadUpdateButton.enabled = self.releaseUpdates.downloadURL != nil && !self.releaseUpdates.checking;
     self.communityDownloadsButton.state = self.preferences.communityDownloadsEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-    self.downloadsLabel.stringValue = self.packageStatus ?: self.mapDownloads.statusText ?: @"Map hosting is not configured for this build.";
+    self.downloadsLabel.stringValue = self.mapDownloads.statusText ?: @"Map hosting is not configured for this build.";
     self.downloadsLabel.toolTip = self.downloadsLabel.stringValue;
-    BOOL packageTools = [NSBundle.mainBundle URLForResource:@"ContentTools" withExtension:@"json"] != nil;
-    self.packageImportButton.enabled = packageTools && self.mapDownloads.compatibleData && !self.importing;
-    self.packageImportButton.toolTip = packageTools ? @"Rebuild a community map using your original Xbox game data." : @"This build does not include community package import.";
+    self.timerAudioLabel.stringValue = self.timerAudio.statusText ?: @"Optional timer recordings are not available in this build.";
+    self.timerAudioLabel.toolTip = self.timerAudioLabel.stringValue;
+    self.timerDownloadsButton.state = self.preferences.timerAudioDownloadsEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    self.timerDownloadButton.enabled = self.preferences.timerAudioDownloadsEnabled && self.timerAudio != nil && !self.timerAudio.downloading && !self.timerAudio.installed;
     [self refreshFullscreen];
 }
 - (void)showSettings:(id)sender {
@@ -356,7 +415,14 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     if (self.gameRunning && !self.quitting) host_sdl_show_game();
 }
 - (void)automaticUpdates:(NSButton *)sender {
-    self.updater.updater.automaticallyChecksForUpdates = sender.state == NSControlStateValueOn;
+    BOOL enabled = sender.state == NSControlStateValueOn;
+    if (self.updater) self.updater.updater.automaticallyChecksForUpdates = enabled;
+    else {
+        NSError *error = nil;
+        if (![self.preferences setReleaseChecksEnabled:enabled error:&error]) showError(error);
+        else if (enabled) [self.releaseUpdates checkForUpdates];
+        [self refreshSettings];
+    }
 }
 - (void)communityDownloads:(NSButton *)sender {
     BOOL enabled = sender.state == NSControlStateValueOn;
@@ -368,7 +434,7 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     }
     NSAlert *alert = [[NSAlert alloc] init];
     alert.messageText = @"Allow community map downloads?";
-    alert.informativeText = @"Halo OG will download approved maps from this build's configured HTTPS catalog into Application Support. Missing maps and the catalog's selected launch maps can download while you play. Your original maps and disc images stay in place.";
+    alert.informativeText = @"Halo OG will download all approved community maps into Application Support in the background while you play. The current collection uses about 863 MiB. Your original maps and disc images stay in place.";
     [alert addButtonWithTitle:@"Allow Downloads"];
     [alert addButtonWithTitle:@"Cancel"];
     [alert beginSheetModalForWindow:self.settingsWindow completionHandler:^(NSModalResponse response) {
@@ -382,44 +448,16 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
 }
 - (void)checkMaps:(id)sender { (void)sender; [self.mapDownloads checkForMaps]; }
 - (void)cancelMaps:(id)sender { (void)sender; [self.mapDownloads cancelDownloads]; }
-- (void)importCommunityPackage:(id)sender {
-    (void)sender;
-    if (self.importing || !self.launchDataPath) return;
-    NSURL *recordURL = [NSBundle.mainBundle URLForResource:@"ContentTools" withExtension:@"json"];
-    NSData *recordBytes = recordURL ? [NSData dataWithContentsOfURL:recordURL] : nil;
-    NSDictionary *record = recordBytes ? [NSJSONSerialization JSONObjectWithData:recordBytes options:0 error:nil] : nil;
-    if (![record isKindOfClass:NSDictionary.class]) return;
-    NSOpenPanel *panel = NSOpenPanel.openPanel;
-    panel.canChooseDirectories = NO; panel.canChooseFiles = YES; panel.allowsMultipleSelection = NO;
-    panel.allowedFileTypes = @[@"hogpkg"]; panel.allowsOtherFileTypes = NO; panel.resolvesAliases = NO;
-    panel.message = @"Choose a Halo OG community package. Halo OG will build its playable map from this package and your original Xbox disc data, then keep it in your map library.";
-    [panel beginSheetModalForWindow:self.settingsWindow completionHandler:^(NSModalResponse response) {
-        if (response != NSModalResponseOK || self.importing) return;
-        self.importing = YES; self.packageStatus = @"Checking community package…"; [self refreshSettings];
-        NSURL *package = panel.URL;
-        NSURL *dataRoot = [NSURL fileURLWithPath:self.launchDataPath isDirectory:YES];
-        NSURL *support = self.preferences.supportDirectory;
-        NSURL *helpers = [NSBundle.mainBundle.bundleURL URLByAppendingPathComponent:@"Contents/Helpers" isDirectory:YES];
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-            NSError *error = nil;
-            NSDictionary *manifest = HaloInspectCommunityPackage(package, &error);
-            NSURL *map = manifest ? HaloAssembleCommunityPackage(package, dataRoot, support, helpers, record, ^(NSString *progress) {
-                dispatch_async(dispatch_get_main_queue(), ^{ self.packageStatus = progress; [self refreshSettings]; });
-            }, &error) : nil;
-            if (map) {
-                [self.mapDownloads registerAssembledMap:map manifest:manifest completion:^(NSError *registrationError) {
-                    self.importing = NO; self.packageStatus = nil; [self refreshSettings];
-                    if (registrationError) showError(registrationError);
-                }];
-            } else {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    self.importing = NO; self.packageStatus = error.localizedDescription ?: @"The community map could not be prepared.";
-                    [self refreshSettings]; if (error) showError(error);
-                });
-            }
-        });
-    }];
+- (void)downloadTimerAudio:(id)sender { (void)sender; if (self.preferences.timerAudioDownloadsEnabled) [self.timerAudio downloadRecordings]; }
+- (void)timerDownloads:(NSButton *)sender {
+    NSError *error = nil;
+    BOOL enabled = sender.state == NSControlStateValueOn;
+    if (![self.preferences setTimerAudioDownloadsEnabled:enabled error:&error]) showError(error);
+    else if (enabled) [self.timerAudio downloadRecordings];
+    else [self.timerAudio cancelDownloads];
+    [self refreshSettings];
 }
+- (void)cancelTimerAudio:(id)sender { (void)sender; [self.timerAudio cancelDownloads]; }
 - (void)openMapLibrary:(id)sender {
     (void)sender;
     NSURL *library = [self.preferences.supportDirectory URLByAppendingPathComponent:@"Community Maps" isDirectory:YES];
@@ -616,7 +654,16 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
 - (void)checkUpdates:(id)sender {
     (void)sender;
     host_sdl_release_mouse();
-    [self.updater checkForUpdates:self];
+    if (self.updater) [self.updater checkForUpdates:self];
+    else {
+        [self showSettings:nil];
+        if (!self.releaseUpdates.updateAvailable) [self.releaseUpdates checkForUpdates];
+    }
+}
+- (void)downloadUpdate:(id)sender {
+    (void)sender;
+    NSURL *download = self.releaseUpdates.downloadURL;
+    if (download && !self.releaseUpdates.checking) [NSWorkspace.sharedWorkspace openURL:download];
 }
 - (BOOL)supportsGentleScheduledUpdateReminders { return YES; }
 - (BOOL)standardUserDriverShouldHandleShowingScheduledUpdate:(SUAppcastItem *)update andInImmediateFocus:(BOOL)focus {
@@ -700,6 +747,16 @@ int host_menu_prepare(const char *support, const char *fallback, char *data, siz
         NSURL *supportDirectory = [NSURL fileURLWithPath:@(support) isDirectory:YES];
         if (![menu migrateSupportIfNeeded:supportDirectory]) return 0;
         menu.preferences = [[HaloPreferences alloc] initWithSupportDirectory:supportDirectory];
+        if (!menu.updater) {
+            NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+            menu.releaseUpdates = [[HaloReleaseUpdates alloc] initWithSourceSHA:info[@"HaloSourceSHA"] sourceDate:info[@"HaloSourceDate"]];
+            __weak HaloMenu *weakMenu = menu;
+            menu.releaseUpdates.statusChanged = ^{
+                [weakMenu refreshSettings];
+                weakMenu.status.button.toolTip = weakMenu.releaseUpdates.updateAvailable
+                    ? @"A Halo OG update is available — open Settings to download" : @"Halo OG";
+            };
+        }
         NSString *selected = menu.preferences.dataPath;
         const char *override = getenv("HALO_DATA_ROOT");
         if (override && *override) selected = @(override);
@@ -709,10 +766,24 @@ int host_menu_prepare(const char *support, const char *fallback, char *data, siz
             NSError *error = nil;
             if (![menu.preferences selectDataRoot:valid iso:nil error:&error]) { showError(error); return 0; }
         }
+        NSError *discoveryError = nil;
+        if (!valid && !(override && *override)) {
+            NSURL *bundle = NSBundle.mainBundle.bundleURL;
+            NSURL *adjacent = [bundle.pathExtension.lowercaseString isEqualToString:@"app"]
+                ? bundle.URLByDeletingLastPathComponent : NSBundle.mainBundle.executableURL.URLByDeletingLastPathComponent;
+            NSURL *image = adjacent ? HaloFindAdjacentDiscImage(adjacent, &discoveryError) : nil;
+            if (image) {
+                __block BOOL finished = NO, imported = NO;
+                [menu importImage:image completion:^(BOOL success) { imported = success; finished = YES; }];
+                while (!finished)
+                    [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+                if (imported) valid = [NSURL fileURLWithPath:menu.preferences.dataPath];
+            }
+        }
         while (!valid) {
             NSAlert *alert = [[NSAlert alloc] init];
             alert.messageText = @"Choose your Halo OG game data";
-            alert.informativeText = @"Use your own original Xbox Halo disc image or extracted maps folder. The app does not include game data.";
+            alert.informativeText = discoveryError.localizedDescription ?: @"Choose your original Xbox Halo ISO/XISO once. Halo OG will copy its maps into Application Support, remember them, and download community maps automatically. You can also place one ISO/XISO beside Halo OG.app before opening it.";
             [alert addButtonWithTitle:@"Choose Disc Image…"];
             [alert addButtonWithTitle:@"Choose Maps Folder…"];
             [alert addButtonWithTitle:@"Quit"];
@@ -734,6 +805,11 @@ int host_menu_prepare(const char *support, const char *fallback, char *data, siz
         __weak HaloMenu *weakMenu = menu;
         menu.mapDownloads.statusChanged = ^{ [weakMenu refreshSettings]; };
         [menu.mapDownloads startEnabled:menu.preferences.communityDownloadsEnabled];
+        menu.timerAudio = [[HaloTimerAudio alloc] initWithSupportDirectory:menu.preferences.supportDirectory sessionConfiguration:nil];
+        menu.timerAudio.statusChanged = ^{ [weakMenu refreshSettings]; };
+        if (menu.preferences.timerAudioDownloadsEnabled) [menu.timerAudio downloadRecordings];
+        if (menu.preferences.releaseChecksEnabled && menu.releaseUpdates.automaticChecksAvailable)
+            [menu.releaseUpdates checkForUpdates];
         if (!getenv("HALO_WINDOWED")) SDL_setenv_unsafe("HALO_WINDOWED", menu.preferences.windowed ? "1" : "0", 1);
         return [valid.path getCString:data maxLength:capacity encoding:NSUTF8StringEncoding] ? 1 : 0;
     }
@@ -744,6 +820,7 @@ void host_menu_finish_game(int exit_code) {
     @autoreleasepool {
         menu.quitting = YES;
         [menu.mapDownloads cancelDownloads];
+        [menu.timerAudio cancelDownloads];
         [menu closeSettings:nil];
         menu.gameRunning = NO;
         if (!exit_code && menu.pendingInstall) {

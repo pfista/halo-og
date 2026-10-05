@@ -223,3 +223,22 @@ Its strict ideal-byte sampler oracle still fails at rounding ties.
 Gameplay, timing, presentation fidelity and performance gates remain open; no
 experimental native app was packaged or installed. See
 [the live adapter ledger](metal-game-adapter.md).
+
+## Integration with the current main branch
+
+After the source-only renderer checkpoint `54c6276b`, the branch integrates
+`main` revision `18f30a0617d9741eecee056328ed8c2d1268d276`. The build-tool merge
+retains both default ANGLE/native Metal selection and the current version,
+release-discovery and CI metadata contracts. The new incomplete-data exit uses
+the native pending-command flush helper. The first-run C fixture includes that
+production helper; its focused 26-test integration run passes. The separate
+build/dependency/version/release/content suite passes 86 tests with one skipped.
+
+The complete native rebuild exits zero in 153.83 seconds. Its new source/object/
+binary freeze is `build/macos-metal/main-integrated-build-proof/result.json`
+(SHA `1e1f4911…`), with 36 primary and 17 evidence bindings and no GL/ANGLE
+imports or linkage. The observer's original execution record is preserved;
+only a copied log-path descriptor is normalized for the existing proof schema.
+This is build/link evidence. The earlier gameplay and GPU results retain their
+own frozen binaries and are not rebound to this integrated build. No new live
+game test, FPS limiter or render-resolution setting is established here.

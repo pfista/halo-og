@@ -11,7 +11,8 @@ competitive/practice features give serious players more ways to play while
 keeping OG rules as the default. This is the target we test against; complete
 retail parity and matching Xbox LAN feel across platforms remain validation work.
 
-**[Get running and join the playtest →](docs/playtesting.md)**
+**Getting started: [Mac](docs/setup-macos.md) · [Windows](docs/setup-windows.md) ·
+[Linux](docs/setup-linux.md) · [Android](docs/setup-android.md)**
 
 ![Original Halo main menu running on Apple Silicon](docs/images/main-menu.png)
 
@@ -31,15 +32,19 @@ practice play. The project's priorities are:
 - **Native Mac support and straightforward installation.** An Apple Silicon app,
   Mac settings, first-launch data import, and a drag-to-Applications DMG accompany
   the Windows, Linux, and Android ports.
-- **A persistent community-map library.** Managed maps, saves, and settings
-  survive app updates. Mac players can opt into verified background map downloads
-  and reuse downloaded maps offline.
+- **A persistent community-map library.** Mac managed maps, saves, and settings
+  survive app updates. Mac, Windows, and Linux download the complete community
+  collection in the background by default and reuse verified maps offline.
 - **Competitive options chosen by the host.** PB Options adds timers, spawn
   markers, announcements, and sound options without enabling them by default.
   Stock remains the original-rule preset.
 - **Selective upstream integration.** Review correctness, performance, platform,
   and networking improvements individually, preserving the Xbox baseline and
   keeping optional modifications explicit.
+- **A shared multiplayer ecosystem.** Aim to find and join cybersecurity games
+  through compatible network and discovery protocols while retaining Halo OG's
+  original presentation and local experience. Shared match rules remain the
+  host's responsibility; mixed-client support needs explicit testing.
 
 The decompilation foundation and protocol-11 networking are shared with our
 upstream projects; they are not exclusive Halo OG features. Our distinction is
@@ -50,35 +55,34 @@ evidence, and the [upstream credits](#build-and-contribute) for the work we buil
 
 ## Download
 
-Use the **[test-v0.3.0-net11-dmg2 testing release](https://github.com/pfista/halo-og/releases/tag/test-v0.3.0-net11-dmg2)**.
-Choose your platform:
+Use the **[test-v0.3.0-net11-setup2 testing release](https://github.com/pfista/halo-og/releases/tag/test-v0.3.0-net11-setup2)**.
+This build adds automatic disc-image setup and Halo OG update notices on Mac,
+Windows, and Linux, with short setup guides for every platform. It also includes
+the prior spawn, teleporter, and projectile-trail fixes. Choose your platform:
 
 | Platform | Testing package | Requirements |
 | --- | --- | --- |
-| Mac | [Halo-OG-macos-arm64.dmg](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-dmg2/Halo-OG-macos-arm64.dmg) | Apple Silicon, macOS 26+ |
-| Windows | [halo-windows-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-dmg2/halo-windows-release.zip) | x86/x86-64 PC, OpenGL 4.5 |
-| Linux | [halo-linux-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-dmg2/halo-linux-release.zip) | x86, OpenGL 4.5, [32-bit runtime libraries](port/linux/README.md#requirements) |
-| Android | [halo-android-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-dmg2/halo-android-release.zip) | ARM64, Android 9+, OpenGL ES 3; controller or keyboard |
+| Mac | [Halo-OG-macos-arm64.dmg](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup2/Halo-OG-macos-arm64.dmg) | Apple Silicon, macOS 26+ |
+| Windows | [halo-windows-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup2/halo-windows-release.zip) | x86/x86-64 PC, OpenGL 4.5 |
+| Linux | [halo-linux-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup2/halo-linux-release.zip) | x86, OpenGL 4.5, [32-bit runtime libraries](port/linux/README.md#requirements) |
+| Android | [halo-android-release.zip](https://github.com/pfista/halo-og/releases/download/test-v0.3.0-net11-setup2/halo-android-release.zip) | ARM64, Android 9+, OpenGL ES 3; controller or keyboard |
 
 All packages in the release come from the **same source commit**. Use the same
 tag when playing together. The release includes `SHA256SUMS`, `provenance.json`,
 and Mac installation notes. These are experimental builds.
-The `dmg2` revision adds a Mac drag-to-Applications install screen; the game app
-and other platform ZIPs are unchanged from `test-v0.3.0-net11`; both releases
-contain identical protocol-11 game builds. The original release remains available.
+The Mac test build is ad-hoc signed and unnotarized, with update notices and manual
+installation; signed automatic installation is not configured. Use [playtesting](docs/playtesting.md) for installation, dependencies,
+CI artifact downloads and updating.
 
-If the release is not available, sign in to GitHub and use successful runs of
-this repository's [macOS DMG workflow](https://github.com/pfista/halo-og/actions/workflows/macos-dmg.yml)
-or [Build workflow](https://github.com/pfista/halo-og/actions/workflows/build.yml).
-Download the platform's `halo-…-release` artifact, or `halo-macos-arm64-dmg`, and
-match the runs' commit SHA. Artifact downloads are ZIPs and expire.
+## Getting started
 
-The Mac test build is ad-hoc signed and unnotarized. Install **Halo OG.app** into
-Applications; no Homebrew or developer tools are needed. Testing packages have
-automatic updates disabled. [Installation steps](docs/playtesting.md) explain
-first launch, platform dependencies, and updating.
+Choose your platform's short guide for installation, importing your disc,
+keyboard controls, settings, and hosting or joining a game:
 
-## Get running
+- [Mac setup](docs/setup-macos.md)
+- [Windows setup](docs/setup-windows.md)
+- [Linux setup](docs/setup-linux.md)
+- [Android setup](docs/setup-android.md)
 
 1. Download and install the package for your platform.
 2. Supply your own original Xbox Halo disc image (`.iso` / `.xiso`) or complete
@@ -94,20 +98,25 @@ Prior `Halo CE Universal` data is copied where needed, preserving the old folder
 and existing files. External map folders can remain selected.
 [Data management details](docs/macos-menu-and-releases.md#independently-supplied-data).
 
+For the simplest Windows/Linux setup, extract the package, put one original
+Xbox `.iso` / `.xiso` beside the executable, then open the game. New setup builds
+import it automatically when no original data is already available; older
+downloads may ask you to choose it. Community maps download in the background.
+Mac also supports an adjacent image in new setup builds, with its usual disc
+chooser available. Keyboard remapping currently uses the commented `[bindings]`
+section in `config.toml`; the platform guides show its location and examples.
+Audio and Video settings are available through in-game **Game Settings**.
+
 ## Community maps and competitive options
 
-Mac Settings can **download 40 approved community maps in the background** after
-you opt in. The Cloudflare R2 collection is about **863 MiB**, built for Xbox v5
-NTSC data. Verified downloads remain usable offline. Windows and Linux on `main`
-download the same collection automatically in the background when original NTSC
-data is available; the published testing release still needs manual installation
-on those platforms. Their simple control is `community_maps.auto_download` in
-`config.toml` beside the executable (default `true`; set `false` before launch to
-disable downloads). Downloader status appears in terminal output; the setup
-guide below includes log capture commands. Downloads go into the active
-data folder's `maps/` directory, preserve existing files, and appear in the map
-selector after a restart. Android still installs matching maps manually;
-[community-map setup](docs/playtesting.md#community-maps) includes the downloads.
+The community collection contains **40 Xbox v5 NTSC maps**, about **863 MiB**.
+Mac, Windows, and Linux download the whole collection automatically in the
+background after compatible game data is selected. Existing saved opt-outs
+remain off: use Mac Settings or `community_maps.auto_download` in Windows/Linux
+`config.toml` to change this. Android installs community maps manually.
+Verified maps remain available offline, and existing files are preserved.
+Use [community-map setup](docs/playtesting.md#community-maps) for your selected
+release and [map guidance](docs/community-maps.md) for storage and controls.
 
 **PB Options** offers a match timer, spawn markers, timer announcements, and
 optional silent movement/weapon-ready sounds. All modifications default **off**;
@@ -178,63 +187,44 @@ verify, not a claim that the networking code is identical. Protocol 11 adds wire
 compatibility and received-input handling; it is not a new Halo OG prediction
 algorithm. Use matching Halo OG builds for playtests. See the
 [networking implementation](port/linux/NETCODE.md),
-[protocol review](docs/upstream-review-2026-10-03.md), and
+[protocol review](docs/xbox-fidelity.md#protocol-compatibility), and
 [fidelity policy](docs/xbox-fidelity.md) for details and current evidence.
+
+Interoperability with cybersecurity clients is a goal. We can share connection
+and discovery protocols while keeping original Xbox graphics and our own menus.
+The host's rules still govern a shared game: changing the HUD or rendering is
+different from changing movement, weapons, damage, or match timing independently.
+Some upstream game options need further compatibility work, and Internet play
+needs mixed-client testing. Desktop source builds on macOS, Windows, and Linux
+now discover public games from **games.oghalo.com** in the original
+**Multiplayer → System Link** menu, alongside LAN games. Hosting is public by
+default; a config option keeps it private. Gameplay uses the existing direct
+P2P connection. Older published builds need an update to gain this discovery.
+See [public games and private hosting](docs/system-link-directory.md).
+See the [interoperability review](docs/network-interoperability.md).
 
 ## Community maps and original assets
 
-We plan to keep maps on **Cloudflare R2, separate from the client**, so map and
-client updates can ship independently and application downloads stay smaller.
-The intended flow is for each platform to download stripped community-map
-packages. After the player supplies their own Xbox Halo XISO, Halo OG will
-extract the required original assets, combine them with each package, and build
-playable maps locally. Verified rebuilt maps will remain available offline;
-client updates will reuse compatible unchanged maps.
+Complete playable community `.map` files stay separate from the client on
+Cloudflare R2 so map updates can ship independently and builds stay small.
+Downloads verify size, SHA-256, and Xbox cache identity before installation.
+These maps include their normal embedded Halo dependencies; they do not require
+local tag extraction or map reconstruction. That experimental work is set aside.
 
-**This is a working local prototype, not a feature of the published testing
-build.** The current Cloudflare collection still serves complete converted
-`.map` files, including their embedded Halo dependencies. It has not been
-replaced with stripped packages, and no community maps are bundled in the DMG.
+Players still supply their own original Xbox disc image or extracted game data.
+The hosted collection excludes disc images and separate stock, campaign, and UI
+map files. Mac community downloads live in the managed map library, separately
+from the application, and survive updates. Windows and Linux put them in the
+active game-data root's `maps` folder; keep that folder when updating a build.
 
-The prototype removes complete assets that exactly match freshly extracted
-original stock tags and stores references in their place. Modified,
-differently serialized, and unknown assets remain in the package for now; this
-does not establish that the remaining content is entirely community-authored.
-Downrush is the first verified package: 700 unchanged-stock references omit about
-10 MiB, and the native Mac reconstruction recreated the approved playable map
-byte-for-byte in about nine seconds. Verified local maps survive restart and
-work with network downloads disabled.
-
-Before this can ship, we still need to prepare and verify packages for the other 39 maps,
-automatically download and rebuild packages after XISO import, make the
-helper toolchain reproducible in CI with public corresponding-source delivery,
-and test the native import UI and gameplay.
-The current package requires exact original NTSC stock-map hashes; it does not
-accept every Xbox disc revision. Optional prototype helpers currently require
-macOS 27. Windows and Linux must rebuild the same packages to the same map hashes
-using native helpers; their helper builds and real-map acceptance remain
-unfinished. Native app package import currently targets Mac, with Android
-integration still future work.
-See the [package format, evidence, and remaining work](docs/community-map-packages.md).
-
-## What has been checked
-
-Native Mac campaign/input/audio smoke checks and protocol-11 stock multiplayer
-have been exercised. A client starting without Downrush downloaded the verified
-map and completed two consecutive Slayer matches with a host on the **same
-physical Mac**; offline reuse also passed. All 40 community caches passed short
-local load/render and public hash checks; the native Mac download service also
-passed automatic download and offline reuse for all 40. Physical cross-platform
-play, Internet/NAT, long sessions, full campaign coverage, and reference-Xbox
-fidelity remain acceptance work. See the [fidelity policy](docs/xbox-fidelity.md),
-[protocol review](docs/upstream-review-2026-10-03.md), and
-[map-delivery evidence](docs/map-publishing.md).
+Physical cross-platform play, Internet/NAT, long sessions, full campaign coverage
+and reference-Xbox fidelity still require acceptance testing. See
+[playtesting](docs/playtesting.md) and the [fidelity policy](docs/xbox-fidelity.md).
 
 ## Build and contribute
 
 [Build from source](docs/building.md) · [Apple setup](docs/apple-build.md) ·
 [Community-map conversion](docs/community-maps.md) ·
-[Community package prototype](docs/community-map-packages.md) ·
 [Report a playtest problem](docs/playtesting.md#report-a-problem)
 
 The experimental [iPhone port](port/ios/README.md) is a developer build with no

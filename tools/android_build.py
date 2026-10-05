@@ -353,9 +353,11 @@ def generate_android_build(n: Writer, sln: Any) -> None:
 
     # ---------- guest compilation: C -> Darwin assembly -> ELF assembly -> object
 
+    # Clang emits intermediate assembly (or IR through the Mac adapter), but
+    # Ninja records included files against the final object, not that output.
     n.rule(
         name="android_guest_cc",
-        command=(f"{compile_launcher(sln)}$android_guest_cc -MMD -MF $out.d $cflags -S $in -o $out.darwin.s && "
+        command=(f"{compile_launcher(sln)}$android_guest_cc -MMD -MF $out.d -MT $out $cflags -S $in -o $out.darwin.s && "
                  f"{python} tools/android_asm_convert.py $out.darwin.s $out.s && "
                  f"$android_guest_cc --target=aarch64-linux-android -c $out.s -o $out"),
         description="ANDROID CC $out",

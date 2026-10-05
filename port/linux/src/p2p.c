@@ -57,12 +57,14 @@ only look up and create stand-ins.
 #include "posix.h"
 #include "port_config.h"
 #include "p2p_internal.h"
+#include "game_directory.h"
 #include "ikcp.h"
 
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <SDL3/SDL.h>
 
 enum
 {
@@ -386,12 +388,17 @@ unsigned long p2p_resolve(const char *host)
 
 void p2p_register_url_scheme(const char *scheme, const char *description)
 {
+	static pthread_mutex_t registration_lock = PTHREAD_MUTEX_INITIALIZER;
+
 	if (config_real("debug.exit_after") > 0.0 || config_boolean("debug.hidden_window") ||
 		config_boolean("debug.null_renderer"))
 		return;
 	/* it may run a program and wait for it */
 	pthread_mutex_unlock(&p2p_lock);
+	/* The Discord and tunnel workers share Linux's mimeapps.list. */
+	pthread_mutex_lock(&registration_lock);
 	posix_register_url_scheme(scheme, description);
+	pthread_mutex_unlock(&registration_lock);
 	pthread_mutex_lock(&p2p_lock);
 }
 
@@ -2316,8 +2323,34 @@ int p2p_join_invite(const char *text)
 	return result > 0;
 }
 
+int p2p_invite_identity(const char *text, unsigned char *out)
+{
+	unsigned char hash[P2P_KEY_HASH_SIZE], token[P2P_TOKEN_SIZE];
+	if (parse_invite(text, hash, token) != 1) return 0;
+	p2p_identifier_from_hash(hash, out);
+	return 1;
+}
+
+int p2p_invite_peer_address(const char *text, unsigned long *address)
+{
+	unsigned char host[P2P_IDENTIFIER_SIZE];
+	struct peer *peer;
+	int found = 0;
+	if (!p2p_invite_identity(text, host)) return 0;
+	pthread_mutex_lock(&p2p_lock);
+	peer = find_peer(host);
+	if (peer && peer->connected && peer->is_host) { *address = peer->virtual_address; found = 1; }
+	pthread_mutex_unlock(&p2p_lock);
+	return found;
+}
+
 void p2p_invite_received(const char *text)
 {
+	if (!p2p.running)
+	{
+		platform_log("Internet play is off (network.online in config.toml): the invite is ignored");
+		return;
+	}
 	/* (an older version's is logged as such) */
 	if (!join_invite(text))
 		platform_log("Internet play: that is not an invite");
@@ -2381,6 +2414,7 @@ static void update_hosting(void)
 			snprintf(p2p.invite, sizeof(p2p.invite), "halo://join/%s", text);
 		}
 		p2p.hosting = 1;
+		game_directory_set_invite(p2p.invite);
 		p2p.stun_started = 1;
 		p2p_signal_start();
 		p2p_signal_host(p2p.token);
@@ -2397,6 +2431,7 @@ static void update_hosting(void)
 	else if (!want && p2p.hosting)
 	{
 		p2p.hosting = 0;
+		game_directory_set_invite(NULL);
 		p2p_signal_stop_hosting();
 		p2p_discord_set_hosting(NULL, 0, 0);
 	}
@@ -2900,13 +2935,29 @@ static void *p2p_thread(void *unused)
 		update_hosting();
 		update_joining();
 		update_upnp();
-		p2p_discord_update();
 #ifdef HALO_ANDROID
 		poll_invite_file();
 #endif
 	}
 	return NULL;
 }
+
+#if (!defined(HALO_ANDROID) || defined(HALO_MACOS)) && !defined(HALO_IOS)
+/* Presence also runs in offline games and when the internet tunnel cannot
+open. The shared lock keeps hosting updates and invite delivery serialized. */
+static void *discord_thread(void *unused)
+{
+	(void)unused;
+	for (;;)
+	{
+		pthread_mutex_lock(&p2p_lock);
+		p2p_discord_update();
+		pthread_mutex_unlock(&p2p_lock);
+		SDL_Delay(50);
+	}
+	return NULL;
+}
+#endif
 
 void p2p_initialize(unsigned long local_address)
 {
@@ -2916,6 +2967,20 @@ void p2p_initialize(unsigned long local_address)
 	int index;
 
 	p2p_identifier();
+#if (!defined(HALO_ANDROID) || defined(HALO_MACOS)) && !defined(HALO_IOS)
+	{
+		static int discord_running;
+
+		pthread_mutex_lock(&p2p_lock);
+		if (!discord_running && *config_string("discord.application_id") &&
+			pthread_create(&thread, NULL, discord_thread, NULL) == 0)
+		{
+			pthread_detach(thread);
+			discord_running = 1;
+		}
+		pthread_mutex_unlock(&p2p_lock);
+	}
+#endif
 	if (p2p.running || !config_boolean("network.online"))
 		return;
 	if (tunnel_port < 0 || tunnel_port > 65535)
@@ -2962,7 +3027,10 @@ void p2p_initialize(unsigned long local_address)
 		return;
 	}
 	pthread_detach(thread);
+	/* The Discord worker can deliver an invite as soon as startup completes. */
+	pthread_mutex_lock(&p2p_lock);
 	p2p.running = 1;
+	pthread_mutex_unlock(&p2p_lock);
 	if (command_line_invite(invite, sizeof(invite)))
 		p2p_join_invite(invite);
 }

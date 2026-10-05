@@ -79,6 +79,11 @@ static void *element(const struct tag_block *b,int i,size_t size) { assert(i>=0 
 static struct weapon_datum *weapon_get(long i) { assert(i>=0 && i<2); return &weapons[i]; }
 static struct weapon_datum *weapon_try_and_get(long i) { return i>=0 && i<2 ? &weapons[i]:NULL; }
 static struct weapon_definition *weapon_definition_get(long i) { assert(i>=0 && i<2); return &weapon_definitions[i]; }
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* Streaming is exercised by test_sniper_trail; this fixture owns the
+   ready effect and sound provenance, which prefetch must leave unchanged. */
+static void weapon_precache_projectile_trails(long definition) { assert(definition>=0 && definition<2); }
+#endif
 static struct unit_datum *unit_get(long i) { assert(i==10); return &unit; }
 static struct unit_definition *unit_definition_get(long i) { assert(i==20); return &unit_definition; }
 static struct animation_graph *animation_graph_definition_get(long i) { assert(i==30); return &graph; }

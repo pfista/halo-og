@@ -49,16 +49,26 @@ sequence:
 4. `assets/` in the current folder, and `assets/` in the repository that
    contains the executable.
 
-If the game finds no data, it asks for an Xbox disc image (`.xiso` or
-`.iso`). This occurs at the first start:
+For the simplest first start, place one complete Halo Xbox disc image
+(`.xiso` or `.iso`) next to `halo`, then open the game. When no original
+game data is already configured or found, Halo OG checks the image's Xbox
+file system and supported `ui.map` header and imports it automatically.
+It copies `maps/` next to the executable, preserves your image, and starts
+the background community-map downloads after original NTSC data is ready.
+
+If no supported adjacent image is found, or more than one supported image
+is present, it asks for an Xbox disc image:
 
 - Select "No" to stop the game.
 - Select "Yes" to open a file picker. Select the disc image. The game copies
   `maps/` next to the executable and shows the progress.
 
-The game writes the copy to `maps.partial`. When the copy is complete, the
-game changes the name to `maps`. If the copy stops before it is complete,
-the game asks for the disc image again at the next start.
+The game writes the copy to a new `maps.partial` staging directory and
+publishes it as `maps` when complete. An interrupted import is preserved;
+the next attempt uses a new numbered staging directory. Existing `maps/`
+files are never replaced. A folder containing only community maps and no
+original `ui.map` produces an explanation to move that folder aside or
+select complete game data with `paths.data`.
 
 ## Files and folders
 
@@ -192,7 +202,7 @@ the setting for one start of the game. It has priority over the file.
 | `network.allow_upnp` | `true` | `HALO_NET_ALLOW_UPNP` | `true`: internet play can ask the router to forward its port (UPnP). `false`: the game does not ask. Refer to "Internet play". |
 | `network.signalling_brokers` | three public brokers | `HALO_NET_BROKERS` | The public MQTT brokers (`host:port`, with commas between them) that let the machines of an invite find each other. |
 | `network.stun_servers` | Google and Cloudflare | `HALO_NET_STUN` | The public STUN servers (`host:port`, with commas between them) that give the internet address of a machine. |
-| `discord.application_id` | the application of the project | `HALO_DISCORD_APPLICATION` | The Discord application for invites. Empty: no Discord. |
+| `discord.application_id` | the application of the project | `HALO_DISCORD_APPLICATION` | The Discord application for game activity and invites, including offline play. Empty: no Discord. |
 | `update.auto` | `true` | `HALO_UPDATE_AUTO` | `true`: at start-up, the game looks for a new version. Refer to "Updates". `false`: the game does not look. |
 | `debug.update_answer` | `""` | `HALO_UPDATE_ANSWER` | The answer to the update question, for automatic tests: `yes`, `no` or `never`. Empty: the game asks. |
 | `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | The game stops after this number of seconds. `0`: never. |
@@ -209,29 +219,32 @@ Mesa. To stop this, set the environment variable `mesa_glthread=false`.
 
 ## Updates
 
-The builds from GitHub Actions (refer to the main [README](../../README.md#download))
-can update themselves. At start-up, the game asks GitHub for the latest
-release. The game does not wait for the answer. If the latest release is not
-newer, the game does nothing.
+New Halo OG main CI builds check GitHub for published Halo OG releases,
+including testing releases, in the background. A newer source commit must
+have an uploaded download for your platform, checksums and provenance. The
+check uses the embedded source identity rather than comparing tag names.
+An unavailable server does not prevent the game from starting.
 
-If the latest release is newer, the game asks: "Do you want to update?"
+The **Halo OG update available** prompt waits for the local main menu. It
+does not interrupt a match or replace the running executable.
 
-- Select "Yes" to update. The game downloads the release for this platform,
-  replaces its files and starts the new version. The old files get the
-  extension `.old`. The new version deletes them.
-- Select "No" to continue. The game asks again at the next start.
-- Select "Do not ask again", then "Yes", to stop the questions. The game
-  writes `auto = false` in the `[update]` section of `config.toml`. To get
-  the questions again, set `auto = true`.
+- **Open download** opens this platform's GitHub download in your browser.
+  Quit the game, then replace the application files. Keep your maps and settings
+  in their current data folders.
+- **Later** continues playing and checks again at the next start.
+- **Stop checking** saves `auto = false` in the `[update]` section of
+  `config.toml`. Set it back to `true` to enable startup checks.
 
-The game downloads through HTTPS. It examines the certificate of the server
-against the certificate authorities of the system: on Linux, the bundle of
-the distribution (`src/posix_update.c`, with Mbed TLS); on Windows, the
-certificate store of Windows (WinHTTP). The folder of the executable must
-let the game write to it.
+The `gameplay1` and `setup1` Windows/Linux downloads lack this notice; install
+a build containing this source change to receive it. Local development builds
+do not check automatically. The inherited cybersecurity self-installer remains
+disabled for Halo OG; these builds never offer to replace themselves with a
+different fork. Signed automatic application installation is separate work.
 
-Builds that you make yourself have no build number. They do not look for
-updates.
+Metadata is limited to 256 KiB over HTTPS. Linux uses the system certificate
+authorities with Mbed TLS; Windows uses WinHTTP and the Windows certificate
+store. Only fresh private temporary metadata files are written. Custom-map
+downloads from `dl.oghalo.com` continue independently of client updates.
 
 ## Frame rate
 
@@ -472,12 +485,20 @@ In the game, each machine has an address in 100.64.0.0/10:
 
 ### Discord
 
-If the Discord desktop client operates, the game of the host shows in
-Discord (through the application of `discord.application_id`). The activity
-has a private party with the invite as its join secret. The host can send
+If the Discord desktop client runs and the player has enabled activity sharing,
+the game publishes a Playing activity while it is open, including menus,
+campaign and local games with `network.online = false`. The game title comes
+from the registered name of `discord.application_id`; see
+[Discord setup](../../docs/discord.md).
+
+While hosting an internet game, the activity has a private party with the
+invite as its join secret. The host can send
 the invite with the invite button of Discord. When a person accepts it, that
 person joins the game. If the game does not operate, Discord starts it.
-The game sends the activity only to a Discord client of the same user.
+Leaving the hosted game removes the party and join secret while keeping the
+Playing activity. The game sends the activity only to a Discord client of the
+same user, reconnects if Discord starts later, and ignores invites when internet
+play is disabled. Set `discord.application_id = ""` to disable the integration.
 
 ## What operates
 

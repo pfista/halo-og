@@ -48,18 +48,32 @@ jobs:
           python3 tools/ios_build.py --plugin-only
       - name: Mac ABI, allocation, networking and audio
         run: python3 tools/test_macos_runtime.py --standalone
+      - name: Guest directory and map service imports
+        run: python3 -m unittest tools.test_macos_service_imports
       - name: Signed iOS instruction image
         run: python3 tools/test_ios_runtime.py
       - name: Controls, rendering and workload verification
         run: python3 -m unittest tools.test_input_bindings tools.test_visibility_queries tools.test_geometry_cache tools.test_presentation tools.test_macos_preflight tools.test_macos_benchmark
       - name: Version 11 network protocol
-        run: python3 -m unittest tools.test_network_pings tools.test_network_v11
+        run: python3 -m unittest tools.test_network_pings tools.test_network_v11 tools.test_game_directory tools.test_game_directory_worker
+      - name: Input timing and fidelity comparison fixtures
+        run: python3 -m unittest tools.test_input_delay tools.test_performance_network tools.test_performance_variants tools.test_halo_fidelity
+      - name: Spawn inventory, teleport prediction and projectile trails
+        run: python3 -m unittest tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail tools.test_weapon_sound_events
       - name: Native data import and packaging rules
         run: python3 tools/test_macos_menu.py
       - name: App installation and desktop data migration
-        run: python3 -m unittest tools.test_macos_installer tools.test_save_migration
+        run: python3 -m unittest tools.test_macos_installer tools.test_save_migration tools.test_desktop_first_run tools.test_release_discovery tools.test_download_transport_limits tools.test_desktop_map_downloads
+      - name: Native Mac release discovery fixtures
+        run: python3 tools/test_macos_release_updates.py
+      - name: Versioned releases and complete commit changelogs
+        run: python3 -m unittest tools.test_testing_release tools.test_release_changelog
       - name: Native community map download fixtures
         run: python3 tools/test_macos_map_downloads.py
+      - name: Optional timer recording packs and native downloads
+        run: |
+          python3 -m unittest tools.test_performance_audio tools.test_timer_audio_pack tools.test_download_timer_audio tools.test_desktop_timer_audio
+          python3 tools/test_macos_timer_audio.py
       - name: Managed map lookup and precache readiness
         run: python3 -m unittest tools.test_custom_maps tools.test_map_download_precache tools.test_map_catalog tools.test_publish_map_catalog
       - name: Native Settings keeps the game loop running

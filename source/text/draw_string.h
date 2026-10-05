@@ -69,6 +69,13 @@ void draw_string_set_draw_mode(
 void draw_string_set_highlight(
 	short start,
 	short end);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+void draw_string_render_label(
+	long font_index,
+	rectangle2d const *bounds,
+	real_argb_color const *color,
+	char const *string);
+#endif
 void draw_string(
 	draw_character_proc draw_character,
 	rectangle2d const *bounds,

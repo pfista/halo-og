@@ -1045,6 +1045,7 @@ void player_control_new_unit(
 		control->desired_grenade_index = unit->unit.desired_grenade_index;
 		control->zoom_level = unit->unit.desired_zoom_level;
 	}
+	update_queues_reset_local_input_delay(local_player_index, NULL);
 	return;
 }
 

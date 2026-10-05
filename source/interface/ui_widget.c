@@ -679,6 +679,7 @@ struct widget_instance;
 #include "ui_widget.h"
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "halo_custom_maps.h"
+#include "halo_og_version.h"
 #include "port_config.h"
 #include "../../port/linux/game/performance_options.h"
 #include "game/game.h"
@@ -6133,6 +6134,26 @@ void render_ui_widgets_postgame(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static void render_home_menu_version(void)
+{
+	long font_index;
+	rectangle2d bounds = { 448, 16, 476, 240 };
+	real_argb_color color = { 0.7f, 0.8f, 0.8f, 0.8f };
+
+	if (!main_menu_screen_is_active() || !widget_globals.active_widgets[0]->visible)
+		return;
+	font_index = tag_loaded(FONT_GROUP_TAG, "ui\\small_ui");
+	if (font_index == NONE)
+		return;
+	color.alpha *= widget_instance_get_cumulative_alpha_modifier(widget_globals.active_widgets[0]);
+	/* Menus occupy centered 640 columns; this footer belongs to the screen edge. */
+	halo_screen_ui_offset(FALSE);
+	draw_string_render_label(font_index, &bounds, &color, "OG v" HALO_OG_VERSION);
+	halo_screen_ui_offset(TRUE);
+}
+#endif
+
 void render_ui_widgets(
 	short local_player_index,
 	rectangle2d const *window_bounds)
@@ -6230,6 +6251,9 @@ void render_ui_widgets(
 				}
 			}
 		}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		render_home_menu_version();
+#endif
 		if (widget_globals.fade_to_black >= 0.0f &&
 			widget_globals.fade_to_black <= 1.0f)
 		{
@@ -6422,6 +6446,20 @@ static void widget_instance_tab_to_previous_valid_widget(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+boolean ui_widget_is_system_link_list(struct ui_widget_definition *definition)
+{
+	long i;
+	for (i = 0; i < definition->game_data_inputs.count; i++)
+	{
+		struct ui_widget_game_data_input_reference *input =
+			(struct ui_widget_game_data_input_reference *)definition->game_data_inputs.address + i;
+		if (ui_widget_game_data_function_is_server_list(input->function)) return TRUE;
+	}
+	return FALSE;
+}
+#endif
+
 static void widget_instance_process_one_event_recursive(
 	struct widget_instance *widget,
 	struct ui_widget_definition *definition,
@@ -6438,6 +6476,14 @@ static void widget_instance_process_one_event_recursive(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
 		3067,
 		widget && definition && event && return_widget_deleted);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (event_for_this_widget && event->type == HALO_DIRECTORY_JOIN_READY_EVENT && ui_widget_is_system_link_list(definition))
+	{
+		ui_widget_directory_join_ready(widget, &widget_deleted);
+		*return_widget_deleted = widget_deleted;
+		return;
+	}
+#endif
 	if (event->type == _event_type_button &&
 		event->data.button.value > 1 &&
 		event->controller_index >= 0 &&

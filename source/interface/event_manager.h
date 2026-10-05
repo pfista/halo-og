@@ -11,6 +11,11 @@ header included in hcex build.
 #include "math/integer_math.h"
 
 /* ---------- constants */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* Internal event; never interpreted as a controller press in another menu. */
+#define HALO_DIRECTORY_JOIN_READY_EVENT 0x7E
+void event_manager_post_directory_join(short controller_index);
+#endif
 
 /* ---------- macros */
 

@@ -1,0 +1,350 @@
+{
+  "source_commit": "c6ef70a56795539e374af8b27531896033e46a37",
+  "ranking": [
+    "commits descending",
+    "added_lines descending",
+    "name ascending"
+  ],
+  "method": {
+    "snapshot": "c6ef70a56795539e374af8b27531896033e46a37",
+    "ranking": "nonmerge_commits descending, first_party_code added descending",
+    "eligibility": "at least one reachable non-merge first-party code-changing commit",
+    "commit_count": "all reachable non-merge authored commits, including docs-only changes",
+    "line_count": "cumulative additions/removals in textual code diffs, rename-aware; not retained LOC",
+    "merge_policy": "merge commits counted separately and excluded from line metrics",
+    "scope": [
+      "source/",
+      "port/",
+      "tools/",
+      "services/",
+      "configure.py"
+    ],
+    "extensions": [
+      ".asm",
+      ".bash",
+      ".bat",
+      ".c",
+      ".cc",
+      ".cjs",
+      ".cmake",
+      ".cmd",
+      ".comp",
+      ".cpp",
+      ".cs",
+      ".cu",
+      ".cuh",
+      ".cxx",
+      ".def",
+      ".frag",
+      ".geom",
+      ".glsl",
+      ".h",
+      ".hh",
+      ".hpp",
+      ".hxx",
+      ".inc",
+      ".java",
+      ".js",
+      ".jsx",
+      ".kt",
+      ".kts",
+      ".ld",
+      ".lua",
+      ".m",
+      ".mak",
+      ".metal",
+      ".mjs",
+      ".mm",
+      ".ninja",
+      ".ps1",
+      ".py",
+      ".rc",
+      ".s",
+      ".sh",
+      ".sql",
+      ".swift",
+      ".ts",
+      ".tsx",
+      ".vert",
+      ".zsh"
+    ],
+    "special_code_files": [
+      "Makefile",
+      "CMakeLists.txt",
+      "*.h.in"
+    ],
+    "vendor_exclusions": [
+      "*/libtiff/*",
+      "*/zlib/*",
+      "port/third_party/*",
+      "tools/ninja_syntax.py"
+    ],
+    "generated_exclusions": [
+      "port/include/xdk/xdk_pdb.h"
+    ],
+    "commands": [
+      "git log <snapshot> --no-merges --numstat -z --find-renames --no-ext-diff --format=<nul fields>",
+      "git log <snapshot> -z --format=<nul fields>"
+    ],
+    "elapsed_seconds": 2.64
+  },
+  "identity_policy": "Only verified GitHub usernames are prefixed with @. Unresolved identities keep their recorded author name. Account aliases are combined; merge commits and automation coauthor trailers are excluded.",
+  "contributors": [
+    {
+      "name": "Jonas Volman",
+      "github": null,
+      "author_names": [
+        "Jonas Volman"
+      ],
+      "commits": 3272,
+      "added_lines": 512035,
+      "removed_lines": 80765,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/7fc08be0ad142df2e43636a3c2c00a9cab45c9cf",
+        "https://github.com/pfista/halo-og/commit/8db3414dcfcd5e90e501fe0135ffe8eaf8aaebcf",
+        "https://github.com/pfista/halo-og/commit/3e44bc7829e7e1107f007a2165418cad58bd0ed9",
+        "https://github.com/pfista/halo-og/commit/03a00956e23ad63673137582199a7b74fddcadb9",
+        "https://github.com/pfista/halo-og/commit/934ae79fdc12514c55d15d7d78d0e52c43e35796"
+      ]
+    },
+    {
+      "name": "cybersecurity",
+      "github": "cybersecurity",
+      "author_names": [
+        "MrBruh"
+      ],
+      "commits": 93,
+      "added_lines": 67386,
+      "removed_lines": 79783,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/c55e4e2b9d90550b0e761eb78dfe9d7c74880cb9"
+      ]
+    },
+    {
+      "name": "punpckhdq",
+      "github": "punpckhdq",
+      "author_names": [
+        "punpckhdq"
+      ],
+      "commits": 90,
+      "added_lines": 56331,
+      "removed_lines": 2608,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/b8ed2d09c9b6d4df1fb7b222087a10ca0170537f"
+      ]
+    },
+    {
+      "name": "pfista",
+      "github": "pfista",
+      "author_names": [
+        "Michael Pfister",
+        "mikey"
+      ],
+      "commits": 80,
+      "added_lines": 51362,
+      "removed_lines": 6416,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/c6ef70a56795539e374af8b27531896033e46a37",
+        "https://github.com/pfista/halo-og/commit/c9cbed95be7dfa9bd43d5db735bf70b2803e041b",
+        "https://github.com/pfista/halo-og/commit/fc63235cc31437455305d8ec2c355ca955051e89"
+      ]
+    },
+    {
+      "name": "bnunu",
+      "github": "bnunu",
+      "author_names": [
+        "bnunu"
+      ],
+      "commits": 44,
+      "added_lines": 4856,
+      "removed_lines": 1778,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/52659b6236260c95694148420c93a750fdd26ca4"
+      ]
+    },
+    {
+      "name": "Berthalamew",
+      "github": "Berthalamew",
+      "author_names": [
+        "Berthalamew"
+      ],
+      "commits": 18,
+      "added_lines": 23245,
+      "removed_lines": 3092,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/37e96a1c2f0d89956f0684fa5ef3a409389c85cf"
+      ]
+    },
+    {
+      "name": "zimm3rmann",
+      "github": "zimm3rmann",
+      "author_names": [
+        "zimm3rmann"
+      ],
+      "commits": 5,
+      "added_lines": 5189,
+      "removed_lines": 42,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/e55684aac9a06d25bcc60f8c7ea63ff9d59687a1"
+      ]
+    },
+    {
+      "name": "HaydnTrigg",
+      "github": "HaydnTrigg",
+      "author_names": [
+        "Haydn Trigg"
+      ],
+      "commits": 5,
+      "added_lines": 369,
+      "removed_lines": 17,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/10bcbbce16f245e23f5b0fc42ec5e02344f7f909"
+      ]
+    },
+    {
+      "name": "LWSS",
+      "github": "LWSS",
+      "author_names": [
+        "LWSS"
+      ],
+      "commits": 4,
+      "added_lines": 2938,
+      "removed_lines": 675,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/a9609f5e23694cead309cfb0401304773568e5d5"
+      ]
+    },
+    {
+      "name": "Englis666",
+      "github": "Englis666",
+      "author_names": [
+        "Englis666"
+      ],
+      "commits": 4,
+      "added_lines": 145,
+      "removed_lines": 26,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/5ac71baf940bf0004a40eceeef23600e4da636ff"
+      ]
+    },
+    {
+      "name": "ficool2",
+      "github": "ficool2",
+      "author_names": [
+        "ficool2"
+      ],
+      "commits": 3,
+      "added_lines": 1846,
+      "removed_lines": 135,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/28e4bc7ea98cc5b5d8fe0a42d59509edc9f859f6"
+      ]
+    },
+    {
+      "name": "bfenty",
+      "github": "bfenty",
+      "author_names": [
+        "Brandon Fenty",
+        "bfenty"
+      ],
+      "commits": 2,
+      "added_lines": 87,
+      "removed_lines": 0,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/114e4a7635e2f4e545cb90d5e3b16189fb28a650",
+        "https://github.com/pfista/halo-og/commit/7cd1724fe5aaccfd15b85b3795e71b4e0fca3f73"
+      ]
+    },
+    {
+      "name": "thelinkin3000",
+      "github": "thelinkin3000",
+      "author_names": [
+        "thelinkin3000"
+      ],
+      "commits": 2,
+      "added_lines": 60,
+      "removed_lines": 12,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/96a48d9daa9b490d07bb6ea7fb2433f17f0fd48c"
+      ]
+    },
+    {
+      "name": "ieee802dot11ac",
+      "github": "ieee802dot11ac",
+      "author_names": [
+        "First Last"
+      ],
+      "commits": 1,
+      "added_lines": 118,
+      "removed_lines": 54,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/18c973a7d7ae48587f2065eb71b5f0d7cdc59b4b"
+      ]
+    },
+    {
+      "name": "MasonLeeBack",
+      "github": "MasonLeeBack",
+      "author_names": [
+        "Mason Back"
+      ],
+      "commits": 1,
+      "added_lines": 45,
+      "removed_lines": 2,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/c030ae7811fa75bd05317e41b41a1501e3844056"
+      ]
+    },
+    {
+      "name": "MrMilenko",
+      "github": "MrMilenko",
+      "author_names": [
+        "Milenko"
+      ],
+      "commits": 1,
+      "added_lines": 25,
+      "removed_lines": 10,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/096b2bd457026c006af250d637fc967f97cc0e1c"
+      ]
+    },
+    {
+      "name": "lantos1618",
+      "github": "lantos1618",
+      "author_names": [
+        "lantos1618"
+      ],
+      "commits": 1,
+      "added_lines": 17,
+      "removed_lines": 8,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/984a522c091a879d06cbfe199101b589dac5e998"
+      ]
+    },
+    {
+      "name": "Eclisse",
+      "github": null,
+      "author_names": [
+        "Eclisse"
+      ],
+      "commits": 1,
+      "added_lines": 5,
+      "removed_lines": 0,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/f3b46607e73445dff34a767876ab0a5d76d7b7d6"
+      ]
+    },
+    {
+      "name": "ShaneParslow",
+      "github": "ShaneParslow",
+      "author_names": [
+        "Shane Parslow"
+      ],
+      "commits": 1,
+      "added_lines": 4,
+      "removed_lines": 1,
+      "evidence": [
+        "https://github.com/pfista/halo-og/commit/164d5aebdc5497b41de18ac4ae4fbf03843752e7"
+      ]
+    }
+  ]
+}

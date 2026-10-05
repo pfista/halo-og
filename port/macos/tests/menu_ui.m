@@ -1,5 +1,6 @@
 /* The real menu/settings and SDL bridge, in a separate bundle with test saves. */
 #import <Cocoa/Cocoa.h>
+#import "HaloTimerAudio.h"
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -37,6 +38,7 @@ static void check_main_loop(const char *image, const char *data) {
     assert(fcntl(receiver, F_SETFL, O_NONBLOCK) == 0);
     __block BOOL imported = NO, copied = NO;
     unsigned step = 0, ticks = 0, received = 0;
+    unsigned settingsPackets = 0, importPackets = 0, copyPackets = 0;
     BOOL quit = NO;
     Uint64 started = SDL_GetTicks();
     while (!quit && SDL_GetTicks() - started < 10000) {
@@ -49,6 +51,15 @@ static void check_main_loop(const char *image, const char *data) {
         } else if (step == 1 && elapsed > 400) {
             assert(window.visible);
             assert([window.title isEqualToString:@"Halo OG Settings"]);
+            NSButton *recordings = [(id)target valueForKey:@"timerDownloadButton"];
+            assert([recordings.title isEqualToString:@"Check Recordings / Retry"] && !recordings.enabled);
+            NSButton *automaticRecordings = [(id)target valueForKey:@"timerDownloadsButton"];
+            assert(automaticRecordings.state == NSControlStateValueOff);
+            HaloTimerAudio *timerAudio = [(id)target valueForKey:@"timerAudio"];
+            assert(!timerAudio.downloading);
+            /* All settings remain reachable after adding the optional pack. */
+            for (NSView *view in window.contentView.subviews)
+                assert(NSContainsRect(window.contentView.bounds, view.frame));
             [target selectFolder:nil];
             assert(window.attachedSheet && !NSApp.modalWindow);
             step++;
@@ -98,6 +109,9 @@ static void check_main_loop(const char *image, const char *data) {
         assert(poll(&ready, 1, 100) == 1);
         unsigned packet;
         if (recv(receiver, &packet, sizeof(packet), 0) == sizeof(packet)) received++;
+        if (window.visible) settingsPackets++;
+        if (step == 6 && !imported) importPackets++;
+        if (step == 7 && !copied) copyPackets++;
         SDL_Event event;
         while (SDL_PollEvent(&event)) quit |= event.type == SDL_EVENT_QUIT;
         /* Match the game: SDL pumps Cocoa, without a nested AppKit loop. */
@@ -106,8 +120,13 @@ static void check_main_loop(const char *image, const char *data) {
     }
     close(sender);
     close(receiver);
-    fprintf(stderr, "Menu loop: quit=%d imported=%d copied=%d step=%u ticks=%u packets=%u\n", quit, imported, copied, step, ticks, received);
-    assert(quit && imported && copied && step == 10 && ticks >= 20 && received == ticks);
+    fprintf(stderr, "Menu loop: quit=%d imported=%d copied=%d step=%u ticks=%u packets=%u settings=%u import=%u copy=%u\n",
+        quit, imported, copied, step, ticks, received, settingsPackets, importPackets, copyPackets);
+    /* Cold Cocoa/Metal setup changes how many iterations fit in wall time on
+       hosted runners. Require actual packet progress through each phase and
+       while both asynchronous transfers are pending, rather than a frame rate. */
+    assert(quit && imported && copied && step == 10 && ticks >= step && received == ticks &&
+        settingsPackets && importPackets && copyPackets);
     printf("Settings, folder/image sheets, disc import, managed copy and quit kept the main loop running (%u packets)\n", received);
 }
 

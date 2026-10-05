@@ -7,6 +7,9 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
+import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlsplit
@@ -382,6 +385,112 @@ class PublisherTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True), patch.object(publisher.sys.stdin, "isatty", return_value=True), patch.object(publisher.getpass, "getpass", return_value=token) as prompt:
             self.assertEqual(publisher.load_token(), token)
             prompt.assert_called_once()
+
+    @unittest.skipUnless(hasattr(os, "mkfifo") and hasattr(os, "getuid"), "POSIX credential FIFO required")
+    def test_owner_only_fifo_handles_a_delayed_writer_without_empty_credential_race(self):
+        path = self.root / "mounted.fifo"
+        os.mkfifo(path, 0o600)
+        token = "example_R2_token_for_offline_test"
+        errors = []
+        def writer():
+            try:
+                time.sleep(0.05)
+                with path.open("wb", buffering=0) as stream:
+                    stream.write(b"IGNORED=unchanged\nexport CFTOKEN='")
+                    time.sleep(0.02)
+                    stream.write(token.encode() + b"'\n")
+            except Exception as error:
+                errors.append(error)
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        self.assertEqual(publisher.load_token(path), token)
+        thread.join(1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo") and hasattr(os, "getuid"), "POSIX credential FIFO required")
+    def test_empty_fifo_and_writer_held_open_are_deadline_bounded(self):
+        path = self.root / "empty.fifo"
+        os.mkfifo(path, 0o600)
+        started = time.monotonic()
+        with self.assertRaisesRegex(publisher.PublishError, "Timed out"):
+            publisher.read_credential_file(path, timeout=0.05)
+        self.assertLess(time.monotonic() - started, 1)
+        finished = threading.Event()
+        def writer():
+            with path.open("wb", buffering=0) as stream:
+                stream.write(b"CFTOKEN=example_R2_token_for_offline_test\n")
+                finished.wait(1)
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        try:
+            with self.assertRaisesRegex(publisher.PublishError, "Timed out"):
+                publisher.read_credential_file(path, timeout=0.05)
+        finally:
+            finished.set()
+            thread.join(1)
+        self.assertFalse(thread.is_alive())
+
+    @unittest.skipUnless(hasattr(os, "mkfifo") and hasattr(os, "getuid"), "POSIX credential FIFO required")
+    def test_foreign_or_group_readable_fifo_rejected_and_assets_still_require_regular_files(self):
+        path = self.root / "restricted.fifo"
+        os.mkfifo(path, 0o600)
+        metadata = path.stat()
+        foreign = SimpleNamespace(st_mode=metadata.st_mode, st_uid=os.getuid() + 1)
+        with patch.object(publisher.os, "fstat", return_value=foreign), self.assertRaisesRegex(publisher.PublishError, "current-user-owned"):
+            publisher.read_credential_file(path, timeout=0.01)
+        path.chmod(0o640)
+        with self.assertRaisesRegex(publisher.PublishError, "mode0600"):
+            publisher.read_credential_file(path, timeout=0.01)
+        path.chmod(0o600)
+        # read_regular opens a FIFO synchronously; keep a writer present solely
+        # to verify the unchanged prepared-input type check rejects it.
+        finished = threading.Event()
+        def writer():
+            with path.open("wb", buffering=0):
+                finished.wait(1)
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        try:
+            with self.assertRaisesRegex(publisher.PublishError, "regular files"):
+                publisher.read_regular(path, 65536)
+        finally:
+            finished.set()
+            thread.join(1)
+        self.assertFalse(thread.is_alive())
+
+    def test_credential_devices_directories_symlinks_and_os_errors_are_safe(self):
+        path = self.root / "literal.env"
+        path.write_text("CFTOKEN=example_R2_token_for_offline_test\n")
+        link = self.root / "symlink.env"
+        link.symlink_to(path)
+        for selected in (self.root, link):
+            with self.subTest(selected=selected.name), self.assertRaises(publisher.PublishError):
+                publisher.read_credential_file(selected)
+        if os.name == "posix":
+            with self.assertRaises(publisher.PublishError):
+                publisher.read_credential_file("/dev/null")
+        with patch.object(publisher.os, "open", side_effect=OSError("private marker")), self.assertRaises(publisher.PublishError) as error:
+            publisher.load_token(path)
+        self.assertNotIn("private", str(error.exception))
+
+    @unittest.skipUnless(hasattr(os, "mkfifo") and hasattr(os, "getuid"), "POSIX credential FIFO required")
+    def test_fifo_byte_limit_and_literal_parser_remain_strict(self):
+        path = self.root / "payload.fifo"
+        os.mkfifo(path, 0o600)
+        for payload in (b"x" * 65537, b"CFTOKEN=$(touch forbidden)\n", b"CFTOKEN=\n"):
+            def writer():
+                try:
+                    with path.open("wb", buffering=0) as stream:
+                        stream.write(payload)
+                except BrokenPipeError:
+                    pass  # Reader intentionally stops once the byte bound fails.
+            thread = threading.Thread(target=writer, daemon=True)
+            thread.start()
+            with self.subTest(size=len(payload)), self.assertRaises(publisher.PublishError):
+                publisher.load_token(path)
+            thread.join(1)
+            self.assertFalse(thread.is_alive())
 
     def test_local_validation_default_reads_no_credentials_and_makes_no_requests(self):
         with patch.object(publisher.sys, "argv", ["publisher", "--prepared", str(self.directory)]), patch.object(publisher, "load_token") as token, patch.object(publisher, "HTTPS") as http, contextlib.redirect_stdout(io.StringIO()) as output:

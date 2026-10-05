@@ -7,15 +7,30 @@
 
 static NSMutableDictionary<NSString *, NSData *> *responses;
 static unsigned requests;
+@class FixtureHTTPS;
+static BOOL holdMapResponses;
+static NSMutableArray<FixtureHTTPS *> *heldMapResponses;
+static NSMutableArray<NSString *> *requestPaths;
 @interface FixtureHTTPS : NSURLProtocol
 @property(nonatomic) BOOL stopped;
+@property(nonatomic, strong) NSData *responseBytes;
+- (void)finishLoading;
 @end
 @implementation FixtureHTTPS
 + (BOOL)canInitWithRequest:(NSURLRequest *)request { return [request.URL.host isEqual:@"maps.test"]; }
 + (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request { return request; }
 - (void)startLoading {
-    NSData *bytes;
-    @synchronized(FixtureHTTPS.class) { bytes = responses[self.request.URL.path]; requests++; }
+    @synchronized(FixtureHTTPS.class) {
+        self.responseBytes = responses[self.request.URL.path]; requests++;
+        [requestPaths addObject:self.request.URL.path];
+        if (holdMapResponses && [self.request.URL.path hasSuffix:@".map"]) {
+            [heldMapResponses addObject:self]; return;
+        }
+    }
+    [self finishLoading];
+}
+- (void)finishLoading {
+    NSData *bytes = self.responseBytes;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_MSEC), dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
         @synchronized(self) {
             if (self.stopped) return;
@@ -29,6 +44,16 @@ static unsigned requests;
 }
 - (void)stopLoading { @synchronized(self) { self.stopped = YES; } }
 @end
+
+static void releaseMapResponse(void) {
+    FixtureHTTPS *response;
+    @synchronized(FixtureHTTPS.class) {
+        assert(heldMapResponses.count == 1);
+        response = heldMapResponses.firstObject;
+        [heldMapResponses removeObjectAtIndex:0];
+    }
+    [response finishLoading];
+}
 
 static NSData *fixtureMap(NSString *name, NSString *build) {
     NSMutableData *bytes = [NSMutableData dataWithLength:4096];
@@ -58,12 +83,19 @@ static NSDictionary *entry(NSString *name, NSData *bytes) {
 static NSData *catalog(NSArray *maps) {
     return [NSJSONSerialization dataWithJSONObject:@{@"schema_version":@1, @"profile":@"stock-xbox-ntsc", @"maps":maps} options:0 error:nil];
 }
-static void waitFor(BOOL (^predicate)(void)) {
+static void waitForAtLine(unsigned line, BOOL (^predicate)(void)) {
     NSDate *until = [NSDate dateWithTimeIntervalSinceNow:5];
     while (!predicate() && until.timeIntervalSinceNow > 0)
         [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
-    assert(predicate());
+    if (!predicate()) {
+        @synchronized(FixtureHTTPS.class) {
+            fprintf(stderr, "Timed out waiting at map_downloads.m:%u after %u fixture requests; last path: %s\n",
+                line, requests, requestPaths.lastObject.UTF8String ?: "(none)");
+        }
+        assert(predicate());
+    }
 }
+#define waitFor(predicate) waitForAtLine(__LINE__, predicate)
 static NSURL *folder(NSURL *root, NSString *name) {
     NSURL *result = [root URLByAppendingPathComponent:name isDirectory:YES];
     assert([NSFileManager.defaultManager createDirectoryAtURL:result withIntermediateDirectories:YES attributes:nil error:nil]);
@@ -134,19 +166,118 @@ int main(int argc, const char **argv) {
         assert([fixtureMap(@"ui", @"01.10.12.2276") writeToURL:[maps URLByAppendingPathComponent:@"ui.map"] atomically:YES]);
         responses = [@{@"/catalog.json":catalog(@[approved]),
             [@"/" stringByAppendingString:approved[@"object_key"]]:map} mutableCopy];
+        requestPaths = [NSMutableArray array];
+        heldMapResponses = [NSMutableArray array];
         HaloMapDownloads *disabled = manager(folder(root, @"disabled"), game, config);
         [disabled startEnabled:NO];
         waitFor(^BOOL{ return [disabled requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_UNAVAILABLE; });
         assert(requests == 0);
 
+        // All forty eligible maps download on launch without a guest/UI map
+        // request, including entries explicitly opting out of legacy prefetch.
+        NSMutableArray *launchEntries = [NSMutableArray array];
+        for (unsigned i = 0; i < 40; i++) {
+            NSString *name = [NSString stringWithFormat:@"fixture%02u", i];
+            NSData *bytes = fixtureMap(name, @"01.10.12.2276");
+            NSMutableDictionary *item = [entry(name, bytes) mutableCopy];
+            if (i % 2 == 0) item[@"prefetch"] = @NO;
+            [launchEntries addObject:item];
+            responses[[@"/" stringByAppendingString:item[@"object_key"]]] = bytes;
+        }
+        responses[@"/catalog.json"] = catalog(launchEntries);
+        HaloMapDownloads *launch = manager(folder(root, @"all-forty-launch"), game, config);
+        [launch startEnabled:YES];
+        waitFor(^BOOL{
+            for (NSDictionary *item in launchEntries) {
+                NSURL *mapFile = [launch.mapsDirectory URLByAppendingPathComponent:[item[@"id"] stringByAppendingPathExtension:@"map"]];
+                if (![NSFileManager.defaultManager fileExistsAtPath:mapFile.path]) return NO;
+            }
+            return YES;
+        });
+        assert(requests == 41);
+        for (NSDictionary *item in launchEntries) {
+            NSURL *mapFile = [launch.mapsDirectory URLByAppendingPathComponent:[item[@"id"] stringByAppendingPathExtension:@"map"]];
+            assert(HaloVerifyDownloadedMap(mapFile, item, config, &error));
+            assert([launch requestMap:item[@"id"]] == HALO_MAP_DOWNLOAD_READY);
+        }
+        [launch setDownloadsEnabled:NO];
+
+        // Hold the active bulk download, then append a newly approved map
+        // behind the remaining queue. Repeated demand must make it next while
+        // preserving the active transfer and downloading every map once.
+        NSMutableArray *queueEntries = [NSMutableArray array];
+        for (NSString *name in @[@"queueone", @"queuetwo", @"queuethree"]) {
+            NSData *bytes = fixtureMap(name, @"01.10.12.2276");
+            NSDictionary *item = entry(name, bytes);
+            [queueEntries addObject:item];
+            responses[[@"/" stringByAppendingString:item[@"object_key"]]] = bytes;
+        }
+        unsigned beforePriority = requests;
+        NSUInteger firstPriorityPath = requestPaths.count;
+        responses[@"/catalog.json"] = catalog(queueEntries);
+        holdMapResponses = YES;
+        HaloMapDownloads *priority = manager(folder(root, @"demand-priority"), game, config);
+        [priority startEnabled:YES];
+        waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
+        NSString *active;
+        @synchronized(FixtureHTTPS.class) { active = heldMapResponses.firstObject.request.URL.lastPathComponent.stringByDeletingPathExtension; }
+        for (unsigned i = 0; i < 3; i++) assert([priority requestMap:active] == HALO_MAP_DOWNLOAD_PENDING);
+        NSData *demandBytes = fixtureMap(@"queuedemand", @"01.10.12.2276");
+        NSDictionary *demandEntry = entry(@"queuedemand", demandBytes);
+        [queueEntries addObject:demandEntry];
+        @synchronized(FixtureHTTPS.class) {
+            responses[@"/catalog.json"] = catalog(queueEntries);
+            responses[[@"/" stringByAppendingString:demandEntry[@"object_key"]]] = demandBytes;
+        }
+        [priority checkForMaps];
+        waitFor(^BOOL{ return [priority requestMap:@"queuedemand"] == HALO_MAP_DOWNLOAD_PENDING &&
+            [priority requestMap:@"unknown"] == HALO_MAP_DOWNLOAD_UNAVAILABLE; });
+        for (unsigned i = 0; i < 3; i++) assert([priority requestMap:@"queuedemand"] == HALO_MAP_DOWNLOAD_PENDING);
+        releaseMapResponse();
+        waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
+        @synchronized(FixtureHTTPS.class) {
+            assert([heldMapResponses.firstObject.request.URL.lastPathComponent isEqual:@"queuedemand.map"]);
+        }
+        assert([priority requestMap:active] == HALO_MAP_DOWNLOAD_READY);
+        releaseMapResponse();
+        for (unsigned i = 0; i < 2; i++) {
+            waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
+            releaseMapResponse();
+        }
+        waitFor(^BOOL{
+            for (NSDictionary *item in queueEntries)
+                if (![NSFileManager.defaultManager fileExistsAtPath:[priority.mapsDirectory URLByAppendingPathComponent:[item[@"id"] stringByAppendingPathExtension:@"map"]].path]) return NO;
+            return YES;
+        });
+        assert(requests - beforePriority == 6); // Two catalogs and four maps.
+        for (NSDictionary *item in queueEntries) {
+            NSURL *mapFile = [priority.mapsDirectory URLByAppendingPathComponent:[item[@"id"] stringByAppendingPathExtension:@"map"]];
+            assert(HaloVerifyDownloadedMap(mapFile, item, config, &error));
+            assert([priority requestMap:item[@"id"]] == HALO_MAP_DOWNLOAD_READY);
+            NSString *path = [@"/" stringByAppendingString:item[@"object_key"]];
+            unsigned count = 0;
+            @synchronized(FixtureHTTPS.class) {
+                for (NSUInteger i = firstPriorityPath; i < requestPaths.count; i++)
+                    if ([requestPaths[i] isEqual:path]) count++;
+            }
+            assert(count == 1);
+        }
+        holdMapResponses = NO;
+        [priority setDownloadsEnabled:NO];
+        responses[@"/catalog.json"] = catalog(@[approved]);
+
         HaloMapDownloads *downloads = manager(folder(root, @"support"), game, config);
         [downloads activateForHost];
+        // Catalog progress is transient when automatic downloads start. Hold
+        // the map itself so PENDING assertions observe a durable transfer.
+        holdMapResponses = YES;
         [downloads startEnabled:YES];
         assert(halo_map_download_request("downrush") == HALO_MAP_DOWNLOAD_PENDING);
-        waitFor(^BOOL{ return [downloads.statusText containsString:@"approved maps available"]; });
+        waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
         assert([downloads requestMap:@"unknown"] == HALO_MAP_DOWNLOAD_UNAVAILABLE);
         assert([downloads requestMap:@"ui"] == HALO_MAP_DOWNLOAD_UNAVAILABLE);
         assert([downloads requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_PENDING);
+        releaseMapResponse();
         waitFor(^BOOL{ return [downloads requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_READY; });
         NSURL *installed = [downloads.mapsDirectory URLByAppendingPathComponent:@"downrush.map"];
         assert([[NSData dataWithContentsOfURL:installed] isEqual:map]);
@@ -163,10 +294,12 @@ int main(int argc, const char **argv) {
         // Revalidation clears stale ready state when installed bytes disappear.
         assert([NSFileManager.defaultManager removeItemAtURL:installed error:nil]);
         [offline setDownloadsEnabled:YES];
-        waitFor(^BOOL{ return [offline.statusText containsString:@"approved maps available"]; });
+        waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
         assert([offline requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_PENDING);
+        releaseMapResponse();
         waitFor(^BOOL{ return [offline requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_READY; });
         [offline setDownloadsEnabled:NO];
+        holdMapResponses = NO;
 
         HaloMapDownloads *collision = manager(folder(root, @"collision"), game, config);
         folder(folder(root, @"collision/Community Maps"), @"maps");
@@ -175,7 +308,6 @@ int main(int argc, const char **argv) {
         assert([personal writeToURL:existing atomically:YES]);
         [collision startEnabled:YES];
         waitFor(^BOOL{ return [collision requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_FAILED; });
-        waitFor(^BOOL{ return [collision.statusText containsString:@"approved maps available"]; });
         assert([collision.statusText containsString:@"conflicts with an existing map"]);
         assert([[NSData dataWithContentsOfURL:existing] isEqual:personal]);
         [collision cancelDownloads];
@@ -194,10 +326,13 @@ int main(int argc, const char **argv) {
             responses[[@"/" stringByAppendingString:wrongEntry[@"object_key"]]] = wrongHeader;
         }
         HaloMapDownloads *invalid = manager(folder(root, @"invalid"), game, config);
+        holdMapResponses = YES;
         [invalid startEnabled:YES];
-        waitFor(^BOOL{ return [invalid.statusText containsString:@"approved maps available"]; });
+        waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
         assert([invalid requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_PENDING);
+        releaseMapResponse();
         waitFor(^BOOL{ return [invalid requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_FAILED; });
+        holdMapResponses = NO;
         assert(![NSFileManager.defaultManager fileExistsAtPath:[invalid.mapsDirectory URLByAppendingPathComponent:@"downrush.map"].path]);
         assert([NSFileManager.defaultManager contentsOfDirectoryAtPath:[invalid.mapsDirectory.URLByDeletingLastPathComponent.path stringByAppendingPathComponent:@"Downloads"] error:nil].count == 0);
         @synchronized(FixtureHTTPS.class) { responses[@"/catalog.json"] = catalog(@[approved]); }
@@ -217,17 +352,21 @@ int main(int argc, const char **argv) {
         assert(uppercase.compatibleData);
 
         HaloMapDownloads *cancelled = manager(folder(root, @"cancelled"), game, config);
+        holdMapResponses = YES;
         [cancelled startEnabled:YES];
-        waitFor(^BOOL{ return [cancelled.statusText containsString:@"approved maps available"]; });
+        waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
         assert([cancelled requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_PENDING);
         [cancelled cancelDownloads];
         waitFor(^BOOL{ return [cancelled.statusText containsString:@"cancelled"]; });
         assert([cancelled requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_UNAVAILABLE);
         assert(![NSFileManager.defaultManager fileExistsAtPath:[cancelled.mapsDirectory URLByAppendingPathComponent:@"downrush.map"].path]);
+        releaseMapResponse();
         [cancelled checkForMaps];
-        waitFor(^BOOL{ return [cancelled.statusText containsString:@"approved maps available"]; });
+        waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
         assert([cancelled requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_PENDING);
+        releaseMapResponse();
         waitFor(^BOOL{ return [cancelled requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_READY; });
+        holdMapResponses = NO;
 
         // Removing catalog authority also removes the exported READY state.
         @synchronized(FixtureHTTPS.class) { responses[@"/catalog.json"] = catalog(@[]); }
@@ -244,20 +383,26 @@ int main(int argc, const char **argv) {
         waitFor(^BOOL{ return [failedCatalog requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_FAILED; });
         assert([failedCatalog.statusText containsString:@"catalog unavailable"]);
         @synchronized(FixtureHTTPS.class) { responses[@"/catalog.json"] = catalog(@[approved]); }
+        holdMapResponses = YES;
         [failedCatalog checkForMaps];
-        waitFor(^BOOL{ return [failedCatalog.statusText containsString:@"approved maps available"]; });
+        waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
         assert(![failedCatalog.statusText containsString:@"catalog unavailable"]);
         assert([failedCatalog requestMap:@"unknown"] == HALO_MAP_DOWNLOAD_UNAVAILABLE);
+        releaseMapResponse();
+        waitFor(^BOOL{ return [failedCatalog requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_READY; });
+        [failedCatalog setDownloadsEnabled:NO];
         // Immediate cancel/retry while catalog completion is still queued must
         // schedule a fresh check rather than losing the retry to pending state.
         HaloMapDownloads *rapidRetry = manager(folder(root, @"rapid-retry"), game, config);
         [rapidRetry startEnabled:YES];
         [rapidRetry cancelDownloads];
         [rapidRetry checkForMaps];
-        waitFor(^BOOL{ return [rapidRetry.statusText containsString:@"approved maps available"]; });
+        waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
         assert([rapidRetry requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_PENDING);
+        releaseMapResponse();
         waitFor(^BOOL{ return [rapidRetry requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_READY; });
-        puts("Native HTTPS fixtures: opt-in, async pending/ready, catalog bounds, SHA/header checks, atomic install, offline reuse, collision preservation, retry and PAL gating passed");
+        holdMapResponses = NO;
+        puts("Native HTTPS fixtures: forty-map launch downloads despite prefetch=false, demand priority without duplicate transfers, disabled-network gating, async pending/ready, catalog bounds, SHA/header checks, atomic install, offline reuse, collision preservation, retry and PAL gating passed");
     }
     return 0;
 }

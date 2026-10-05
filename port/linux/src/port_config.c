@@ -187,6 +187,15 @@ static const struct config_setting config_settings[] =
 		"networks whose NAT stops connections: when a player joins this\n"
 		"machine's game, and when joining a game takes too long. False never\n"
 		"asks." },
+	{ "network.directory_url", _config_string, "\"https://games.oghalo.com\"", NULL,
+		_environment_value, _platform_desktop,
+		"Public System Link directory. HTTPS only; empty disables directory\n"
+		"discovery and advertising. A different compatible service may be used.\n"
+		"Restart after changing the URL. LAN and private invites stay available." },
+	{ "network.public_games", _config_boolean, "true", NULL, _environment_value, _platform_desktop,
+		"Advertise hosted System Link games in the public directory. False\n"
+		"keeps hosting private to the LAN and people with your invite; you can\n"
+		"still browse public games. network.online=false disables Internet play." },
 	{ "network.signalling_brokers", _config_string,
 		"\"broker.emqx.io:1883,broker.hivemq.com:1883,test.mosquitto.org:1883\"",
 		"HALO_NET_BROKERS", _environment_value, _platform_all,
@@ -196,10 +205,11 @@ static const struct config_setting config_settings[] =
 		"HALO_NET_STUN", _environment_value, _platform_all,
 		"Public STUN servers that tell this machine its internet address;\n"
 		"comma-separated host:port." },
-	{ "discord.application_id", _config_string, "\"1553978809840050229\"", "HALO_DISCORD_APPLICATION",
+	{ "discord.application_id", _config_string, "\"1556496882329460736\"", "HALO_DISCORD_APPLICATION",
 		_environment_value, _platform_desktop,
-		"The Discord application internet play invites go through while the\n"
-		"Discord desktop client runs; empty for none." },
+		"The Discord application for game activity and internet play invites\n"
+		"while the Discord desktop client runs, including offline play.\n"
+		"Its registered name is the game title Discord shows; empty disables Discord." },
 
 	{ "update.auto", _config_boolean, "true", "HALO_UPDATE_AUTO", _environment_value, _platform_all,
 		"Look for a new version when the game starts, and offer to update to it;\n"
@@ -211,6 +221,14 @@ static const struct config_setting config_settings[] =
 		"after original NTSC Xbox data is available (about 863 MiB for all maps).\n"
 		"Restart after downloads complete to refresh the map list; false disables\n"
 		"network downloads while preserving already downloaded maps." },
+#endif
+
+	/* Android's Java content backend reads this same saved TOML choice. */
+#if !defined(HALO_MACOS)
+	{ "timer_audio.auto_download", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Download the complete optional timer recording pack in the background.\n"
+		"Restart after installation to refresh Timer Audio support; this does\n"
+		"not enable Timer Sounds. False preserves installed recordings." },
 #endif
 
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
@@ -669,7 +687,18 @@ static void config_set_from_file(struct config_value *value, const struct config
 		if (datum.type == TOML_STRING)
 		{
 			free(value->string);
-			value->string = strdup(datum.u.s);
+			/* Older generated files saved the bundled Halo CE application.
+			Use Halo OG's current application without rewriting the file or
+			changing custom/disabled choices. Environment overrides apply later. */
+			if (!strcmp(setting->name, "discord.application_id") &&
+				!strcmp(datum.u.s, "1553978809840050229"))
+			{
+				value->string = config_copy(setting->default_value + 1,
+					strlen(setting->default_value) - 2);
+				platform_log("settings: using Halo OG's Discord application for the previous bundled ID");
+			}
+			else
+				value->string = strdup(datum.u.s);
 		}
 		else
 		{

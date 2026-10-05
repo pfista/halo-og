@@ -60,7 +60,7 @@ static void receive_frame(int fd, char *json, int maximum) {
 static void live_discord(void) {
     int fd = posix_discord_connect();
     assert(fd >= 0);
-    send_frame(fd, 0, "{\"v\":1,\"client_id\":\"1553978809840050229\"}");
+    send_frame(fd, 0, "{\"v\":1,\"client_id\":\"1556496882329460736\"}");
     char json[16384];
     receive_frame(fd, json, sizeof(json));
     assert(strstr(json, "\"READY\""));

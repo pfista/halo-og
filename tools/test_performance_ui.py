@@ -33,7 +33,7 @@ static boolean editing=TRUE;
 static unsigned mutation_calls,help_calls;
 enum { _performance_option_match_timer=1, _performance_option_spawn_markers=2, _performance_option_timer_audio=4,
        _performance_option_silent_movement=8, _performance_option_silent_weapon_ready=16,
-       PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=31 };
+       _performance_option_input_delay=32, PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=63 };
 static struct game_variant *player_ui_get_edit_playlist_profile(void) { return editing ? &edited : NULL; }
 static unsigned performance_variant_get_flags(const struct game_variant *v) { return v->flags; }
 static void performance_variant_set_flags(struct game_variant *v,unsigned f) { mutation_calls++; v->flags=f; }
@@ -189,8 +189,8 @@ static void shapes_and_preservation(void) {
     for(unsigned i=0;i<5;i++) assert(!memcmp(&pb_editor.list_children[i],&stock.list[i],sizeof(stock.list[0])));
     assert(ui_widget_definition_get(pb_editor.list_children[5].widget_tag.index)==&pb_editor.entry);
     assert(!wcscmp(string_at(&pb_editor.entry,0),L"PB OPTIONS"));
-    assert(unicode_string_list_definition_get(pb_editor.heading.text_label_string_list.index)->strings.count==8);
-    assert(pb_editor.heading.string_list_index==7);
+    assert(unicode_string_list_definition_get(pb_editor.heading.text_label_string_list.index)->strings.count==9);
+    assert(pb_editor.heading.string_list_index==8);
     assert(!wcscmp(string_at(&pb_editor.heading,pb_editor.heading.string_list_index),L"PERFORMANCE OPTIONS"));
     assert(pb_editor.entry.bounds.y0==243 && pb_editor.entry.bounds.y1==275);
     assert(pb_editor.list_children[6].widget_tag.index==stock_id(SAVE_TAG) && pb_editor.list_children[6].vertical_offset==53);
@@ -201,9 +201,9 @@ static void shapes_and_preservation(void) {
     }
     assert(pb_editor.menu_events[0].event_type==24 && pb_editor.menu_events[0].function==_pb_editor_initialize);
     for(unsigned i=1;i<3;i++) assert(pb_editor.menu_events[i].event_type==(i==1 ? 0:12) && pb_editor.menu_events[i].flags==0x280 && pb_editor.menu_events[i].function==_pb_editor_accept);
-    assert(pb_editor.menu.child_widgets.count==6);
+    assert(pb_editor.menu.child_widgets.count==7);
     assert(!performance_editor_is_spinner(NULL));
-    for(unsigned i=0;i<6;i++) {
+    for(unsigned i=0;i<7;i++) {
         struct widget_instance spinner={0}; spinner.definition_tag_index=pb_editor.spinner_tag[i];
         assert(performance_editor_is_spinner(&spinner));
         spinner.definition_tag_index=pb_editor.menu_children[i].widget_tag.index;
@@ -219,7 +219,9 @@ static void shapes_and_preservation(void) {
     assert(!wcscmp(string_at(&pb_editor.spinner[0],0),L"STOCK") && !wcscmp(string_at(&pb_editor.spinner[0],1),L"PRACTICE") && !wcscmp(string_at(&pb_editor.spinner[0],2),L"CUSTOM"));
     assert(!wcscmp(string_at(&pb_editor.spinner[1],0),L"OFF") && !wcscmp(string_at(&pb_editor.spinner[1],1),L"ON"));
     for(unsigned i=4;i<6;i++) assert(!wcscmp(string_at(&pb_editor.spinner[i],0),L"NORMAL") && !wcscmp(string_at(&pb_editor.spinner[i],1),L"SILENT"));
-    assert(pb_editor.menu_children[5].vertical_offset+28<321); /* Clear of stock help. */
+    assert(!wcscmp(string_at(&pb_editor.label[6],7),L"INPUT DELAY:"));
+    assert(!wcscmp(string_at(&pb_editor.spinner[6],0),L"OFF") && !wcscmp(string_at(&pb_editor.spinner[6],1),L"33MS"));
+    assert(pb_editor.menu_children[6].vertical_offset+28<321); /* Clear of stock help. */
     for(unsigned i=0;i<7;i++) {
         if(i==5) assert(!wcscmp(string_at(&pb_editor.preview_text,i),
             L"Performance options like\r\ntimers, spawn markers,\r\nand more.\r\n\r\nThis gametype:"));
@@ -231,12 +233,14 @@ static void selection_and_staging(void) {
     for(unsigned flags=0;flags<=PERFORMANCE_OPTIONS_MASK;flags++) {
         struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL); edited.flags=flags;
         assert(performance_editor_event(menu,_pb_editor_initialize));
-        assert(pb_editor_spinner(menu,0)->parameters.list.selected_index==(flags==0 ? 0:flags==7 ? 1:2));
+        unsigned aids=flags&31;
+        assert(pb_editor_spinner(menu,0)->parameters.list.selected_index==(aids==0 ? 0:aids==7 ? 1:2));
         assert(pb_editor_spinner(menu,1)->parameters.list.selected_index==!!(flags&1));
         assert(pb_editor_spinner(menu,2)->parameters.list.selected_index==!!(flags&2));
         assert(pb_editor_spinner(menu,3)->parameters.list.selected_index==!!(flags&4));
         assert(pb_editor_spinner(menu,4)->parameters.list.selected_index==!!(flags&8));
-        assert(pb_editor_spinner(menu,5)->parameters.list.selected_index==!!(flags&16)); dispose(menu);
+        assert(pb_editor_spinner(menu,5)->parameters.list.selected_index==!!(flags&16));
+        assert(pb_editor_spinner(menu,6)->parameters.list.selected_index==!!(flags&32)); dispose(menu);
     }
     struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL); edited.flags=0;
     assert(performance_editor_event(menu,_pb_editor_initialize));
@@ -304,7 +308,7 @@ static void preview_and_help(void) {
     dispose(list);
     struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL); assert(performance_editor_event(menu,_pb_editor_initialize));
     entry=menu->child;
-    for(short row=0;row<6;row++,entry=entry->next) {
+    for(short row=0;row<7;row++,entry=entry->next) {
         menu->focused_child=entry;
         struct widget_instance *spinner=pb_editor_spinner(menu,row);
         for(short selected=0;selected<(row ? 2:3);selected++) {
@@ -312,7 +316,27 @@ static void preview_and_help(void) {
             assert(menu->parameters.list.extended_description->parameters.text_box.string_list_index==(row==0 ? selected:1+2*row+selected));
         }
     }
-    assert(help_calls==13); menu->focused_child=NULL; performance_editor_input(menu,32001); assert(help_calls==13);
+    assert(help_calls==15); menu->focused_child=NULL; performance_editor_input(menu,32001); assert(help_calls==15);
+    dispose(menu);
+}
+static void independent_match_start_delay(void) {
+    setup(); assert(pb_editor_build()); edited.flags=32|8;
+    struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL);
+    assert(performance_editor_event(menu,_pb_editor_initialize));
+    struct widget_instance *preset=pb_editor_spinner(menu,0),*delay=pb_editor_spinner(menu,6);
+    assert(delay->parameters.list.number_of_items==2 && delay->parameters.list.selected_index==1);
+    preset->parameters.list.selected_index=0; performance_editor_input(menu,32001);
+    assert(pb_editor.last_flags==32 && preset->parameters.list.selected_index==0 && delay->parameters.list.selected_index==1);
+    preset->parameters.list.selected_index=1; performance_editor_input(menu,32001);
+    assert(pb_editor.last_flags==39 && delay->parameters.list.selected_index==1 && edited.flags==40 && !mutation_calls);
+    assert(performance_editor_event(menu,_pb_editor_accept) && edited.flags==39 && mutation_calls==1);
+    delay->parameters.list.selected_index=0; performance_editor_input(menu,32001);
+    assert(pb_editor.last_flags==7 && preset->parameters.list.selected_index==1 && edited.flags==39);
+    dispose(menu); menu=instantiate(pb_editor.menu_tag,NULL);
+    assert(performance_editor_event(menu,_pb_editor_initialize));
+    assert(pb_editor_spinner(menu,6)->parameters.list.selected_index==1 && edited.flags==39); /* Cancel preserves saved timing. */
+    pb_editor_spinner(menu,6)->parameters.list.selected_index=0;
+    assert(performance_editor_event(menu,_pb_editor_accept) && edited.flags==7 && mutation_calls==2);
     dispose(menu);
 }
 static void registration_and_reload(void) {
@@ -338,7 +362,7 @@ static void registration_and_reload(void) {
     assert(performance_editor_remap_tag(stock_id(ROOT_TAG))==stock_id(ROOT_TAG) && !register_calls);
 }
 int main(void) {
-    shapes_and_preservation(); selection_and_staging(); sound_rules_and_presets(); preview_and_help(); registration_and_reload();
+    shapes_and_preservation(); selection_and_staging(); sound_rules_and_presets(); preview_and_help(); independent_match_start_delay(); registration_and_reload();
     puts("native PB editor tests passed"); return 0;
 }
 '''

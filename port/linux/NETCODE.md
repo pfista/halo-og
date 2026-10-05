@@ -57,7 +57,11 @@ with ideas from VALORANT's netcode articles, keeping the 30 Hz tick:
   than the player goes of their own (and up, what its tick added but a
   jump's), so a client that says it goes faster (a copy said to hover and
   fall, gaining the host's gravity each tick) gains nothing by it. A
-  teleporter, which moves the host's own copy too, starts afresh.
+  teleporter, which moves the host's own copy too, starts afresh. Native
+  prediction history is split at the jump so an older correction cannot
+  apply the teleport displacement again. A host-directed correction that
+  follows a scenario teleporter pair restores the original destination
+  latch; the original trigger radius and blocking rules remain unchanged.
 - **Shooter's hits.** A client reports what its own players hit; the host
   checks the report (the player's, a weapon they carry, fired from within
   its reach, the target where the host had it when the shooter saw it, no
@@ -103,7 +107,7 @@ PC settings it does not implement before applying settings or precaching a map.
 It also recognizes upstream's action-only input bit while preserving its local
 controls. PB capability uses advertisement flag `0x04`, distinct from the new
 in-progress flag `0x02`; an enabled PB session advertises version `0x800B`.
-See [the v11 selective review](../../docs/upstream-review-2026-10-03.md) for exact
+See [the v11 selective review](../../docs/xbox-fidelity.md#protocol-compatibility) for exact
 settings, rule and mixed-build compatibility limits.
 
 A client plays by its host's rules: in another's game (searching for it,
@@ -242,10 +246,13 @@ a pregame keep-alive every five seconds from the host
      the host's word finds a client's already there. Past loading, a
      client's own objects (projectiles, effects: what only it sees) take
      indices from the upper half of the object array, clear of the host's.
-   - Ten times a second, what every unit carries (the host's weapons, slot
-     for slot, their ammunition, the weapon in hand, the grenades); a
-     client moves the same weapon objects in and out of its units. A
-     change of weapons or grenades goes to every client at once; one of
+   - Weapon, selected-slot and grenade changes are sent reliably every
+     tick after their reliable object creates. Ammunition changes remain
+     ten times a second, with an unchanged refresh once a second. A client
+     keeps the latest snapshot per unit until its unit and all named
+     weapons exist, then moves those same weapon objects into its units.
+     Older snapshots are rejected per unit, independently of other units.
+     A change of weapons or grenades goes to every client at once; one of
      ammunition only to the unit's player's machine at once, and to the
      others as often as they are sent that player. A client takes its own
      players' ammunition and grenade counts from the host only once a

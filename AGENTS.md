@@ -1,64 +1,78 @@
-# Halo fork: contributor and agent rules
+# Halo OG contributor and agent rules
 
-## Project direction
+Halo OG (`pfista/halo-og`) preserves original Xbox Halo: Combat Evolved NTSC
+rules, presentation and LAN feel across native platforms. Community maps are
+content imports; competitive features are optional and default off.
 
-This is **Halo OG**, `pfista/halo-og`, a cross-platform Xbox-derived port. Preserve original
-Xbox Halo: Combat Evolved NTSC gameplay and presentation while improving native
-performance, portability and online play. Community maps are separate content
-imports. Custom maps and explicitly selected competitive options serve serious
-OG Halo players; they do not authorize adopting another engine's rules as the
-original-game baseline. Keep optional host tools separate and off by default.
+## Fidelity and upstream changes
 
-## Reviewing cybersecurity upstream
+- Preserve the 30 Hz simulation. Assess high-refresh rendering, interpolation
+  and camera/input latency separately; a 30 FPS reference preset does not impose
+  a normal-play cap.
+- Review useful cybersecurity upstream changes individually. Inspect actual
+  diffs, defaults and dependencies; split mixed commits and never merge wholesale.
+- Prioritize matching accuracy, correctness, stability, performance and platform
+  fixes that preserve Xbox behavior. Review netcode timing, authority, fairness,
+  compatibility and service dependencies before adoption.
+- Use original Xbox behavior, including its quirks, as the acceptance criterion.
+  A baseline fidelity correction needs evidence that the port differs from the
+  original; passing regression tests alone does not establish that evidence.
+- Intentional departures from original behavior should generally be explicit
+  configuration options that default to the original behavior. Keep uncertain
+  netcode changes selectable while comparing their timing and feel with OG.
+- Maintain interoperability with cybersecurity games as a goal. Keep Halo OG's
+  original presentation and local feel while respecting shared host-authoritative
+  rules. A shared protocol number alone does not establish gameplay compatibility.
+- Reference upstream discovery, invite and connection protocols independently of
+  its PC-style menus. Check in with the user before implementing game-discovery
+  UI, then map it to original Xbox-style Multiplayer/System Link menus rather
+  than importing upstream UI. OS-native settings windows are not the intended
+  game-discovery UI.
+- Keep original fonts, artwork, HUD, scoreboard, sounds and game rules. Rebranding,
+  overhead labels, balance changes and other modifications require explicit scope.
+- Keep the reviewed-through revision separate from the integrated baseline.
+  Record commit hashes, decisions, reasons, validation and integration status in
+  [the fidelity policy](docs/xbox-fidelity.md). Run checks appropriate to the change.
+- A successful build or smoke test does not prove retail parity. Native ARM/x86
+  binaries are not byte-identical Xbox executables.
 
-Stay current with useful core improvements from `cybersecurity/halo-ce-universal`
-through selective integration. During upstream update work, fetch and review all
-new commits since the last recorded review; inspect the actual diff and its
-dependencies, not just the commit title. Do not merge upstream wholesale.
+## Local Mac installation
 
-- Prioritize verified decompilation/matching accuracy, correctness, stability,
-  performance, renderer correctness and platform compatibility fixes that
-  preserve the original game's behavior and appearance.
-- Consider netcode and matchmaking improvements case by case. Review their
-  effects on simulation timing, input, fairness, session compatibility and
-  service dependencies before adoption. Their category alone is not approval.
-- Exclude renaming/rebranding (including OpenCE), replacement fonts or artwork,
-  new overhead player labels, and changes to sounds, weapons, balance or game
-  rules from the original-game baseline. Timers and other competitive
-  modifications require separate explicit user direction.
-- Split mixed commits or port the relevant fix when possible. Do not take an
-  unwanted modification merely to obtain a performance or matching improvement;
-  defer the change with a reason if it cannot be separated safely.
-- Record each reviewed commit's hash, purpose, decision (adopt, partially adopt,
-  exclude or defer), behavioral effect and relevant validation in
-  [the fidelity policy](docs/xbox-fidelity.md) or a linked review record. Track
-  the last reviewed revision separately from the last integrated baseline so
-  excluded commits are not accidentally reintroduced during later updates.
-- Run checks appropriate to the selected change. Assess performance with
-  comparable settings and workloads; verify gameplay-sensitive changes against
-  the chosen Xbox reference and record any remaining uncertainty.
+After a successful local Mac app build, the default is to install with
+`--install` into `/Applications/Halo OG.app`, unless the user's current
+instructions say otherwise. Preserve the previous app, game data, saves and
+settings; verify the installed signature and `Contents/Resources/BuildInfo.txt`.
 
-## Fidelity and performance are separate checks
+## Documentation entry points
 
-Preserve the original 30 Hz simulation. High-refresh rendering (for example
-120 FPS) can be appropriate without changing the game rules; review interpolation
-and camera/input latency separately. A 30 FPS reference preset is a comparison
-tool, not a requirement for normal play or a reason to reject performance work.
-Do not silently impose a rendering cap as part of a gameplay-fidelity change.
+- [Playtesting](docs/playtesting.md): installation, joining and reporting problems.
+- [Building](docs/building.md): platform toolchains and validation.
+- [Fidelity policy](docs/xbox-fidelity.md): baseline, defaults and upstream decisions.
+- [Community maps](docs/community-maps.md): conversion and managed storage.
+- [Map publishing](docs/map-publishing.md): complete community maps on Cloudflare.
 
-Matching decompilation progress refers to the original executable target and
-build configuration. Do not describe a native ARM Mac executable as byte-identical
-to an Xbox executable, or a successful smoke test as proof of full retail parity.
+## GitHub releases
 
-## Local Mac build installation
+Keep release notes simple: a short description followed by direct download
+links for every included platform. Link to the playtesting guide for setup;
+keep platform requirements and any signing limitations brief. Publish matching
+platform builds from one source commit and include checksums and provenance.
 
-After each successful local macOS app build, install the built app into
-`/Applications/Halo OG.app`. This is the user's default for this
-project. Use the build script's `--install` option or its `install_app` helper
-for an already-built app; the installer verifies the bundle and preserves the
-previous copy. Verify the installed signature and `Contents/Resources/BuildInfo.txt`
-before reporting completion. Preserve user game data, saves and configuration.
-
-Read [docs/xbox-fidelity.md](docs/xbox-fidelity.md) for the recorded baseline,
-excluded upstream changes, current settings and validation limits, and
-[docs/apple-build.md](docs/apple-build.md) for build and contribution workflow.
+- Commit and push requests do not authorize tags or releases. Require the user's
+  explicit instruction for the specified source commit before creating or
+  pushing a tag, dispatching a release workflow, or publishing any GitHub release
+  (including a prerelease). Branch pushes may build, test and upload CI artifacts.
+- New release tags must be `vMAJOR.MINOR.PATCH`, with no suffix, and the title
+  must be `Halo OG vMAJOR.MINOR.PATCH` (for example, `v0.3.1` and `Halo OG v0.3.1`).
+  Testing releases still use GitHub's prerelease flag. Publication workflows are
+  manual-only and may be dispatched only after that user authorization.
+- The tag's version must match `HALO_OG_VERSION` in
+  `port/linux/include/halo_og_version.h`. Bump and commit that header before
+  building the matching platform artifacts. Never rewrite existing tags or
+  replace their published assets.
+- Both the annotated tag message and GitHub release notes must include concise
+  commit subjects with short SHAs since the previous reachable Halo OG release
+  tag, plus a compare link. Keep key highlights and the full commit list in the
+  release notes after the description and platform download links.
+- Preserve the established platform asset filenames and direct download links.
+  Older `test-...` tags remain historical releases; do not rename them.

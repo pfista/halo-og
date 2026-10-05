@@ -254,6 +254,9 @@ symbols in this file:
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/performance_variant.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "performance_audio.h"
+#endif
 #include "game/players.h"
 #include "networking/network_connection.h"
 #include "networking/network_game_globals.h"
@@ -691,6 +694,28 @@ boolean network_game_server_send_message_to_client_machine(
 	return network_game_server_write(connection, buffer, size, NULL, 1);
 }
 
+static boolean network_game_server_send_performance_capability(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *machine)
+{
+	word capability[NETWORK_PERFORMANCE_MESSAGE_SIZE / sizeof(word)];
+	unsigned supported;
+
+	if (!network_game_server_performance_supported(machine, _performance_option_input_delay))
+		return TRUE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	supported = network_performance_runtime_supported_flags(TRUE, halo_performance_audio_available());
+#else
+	supported = network_performance_runtime_supported_flags(FALSE, FALSE);
+#endif
+
+	/* A saved variant may contain flags this host cannot interpret. Confirm
+	 * runtime support before the full record, on the same reliable stream;
+	 * this also covers direct joins and joins to a match already in progress. */
+	network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY, supported);
+	return network_game_server_send_message_to_client_machine(server, machine, capability);
+}
+
 boolean network_game_server_send_game_settings_to_client_machine(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *machine,
@@ -699,6 +724,9 @@ boolean network_game_server_send_game_settings_to_client_machine(
 {
 	struct message_server_game_settings_update message;
 	long offset;
+
+	if (!network_game_server_send_performance_capability(server, machine))
+		return FALSE;
 
 	for (offset = 0; offset < game_size; offset += sizeof(message.data))
 	{
@@ -965,12 +993,26 @@ boolean network_game_server_send_game_settings_to_all_machines(
 {
 	struct message_server_game_settings_update message;
 	long offset;
+	long machine_index;
 	boolean result = TRUE;
 
 	match_assert(
 		"c:\\halo\\SOURCE\\networking\\network_server_message_handler.c",
 		0x1C8,
 		server);
+
+	/* Lobby changes and normal starts use this broadcast serializer, rather
+	 * than the per-client late-join sender. Each receiving stream needs the
+	 * same acknowledgement before the first settings piece. */
+	for (machine_index = 0; machine_index < MAXIMUM_NETWORK_MACHINE_COUNT; ++machine_index)
+	{
+		struct network_game_server_client_machine *machine =
+			network_game_server_get_client_machine_at_index(server, machine_index);
+		if (network_game_server_client_machine_is_joined_to_game(server, machine) &&
+			!network_game_server_machine_is_loading_late(server, machine) &&
+			!network_game_server_send_performance_capability(server, machine))
+			result = FALSE;
+	}
 
 	/* every piece goes out even if one fails for a machine: the others
 	would otherwise keep the old settings (a machine whose connection failed

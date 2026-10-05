@@ -376,6 +376,7 @@ static boolean performance_pause_is_spinner(struct widget_instance *widget)
 
 static short performance_pause_preset(unsigned flags)
 {
+	flags &= ~_performance_option_input_delay;
 	return flags == 0 ? 0 : (flags == PERFORMANCE_PRACTICE_FLAGS ? 1 : 2);
 }
 
@@ -425,13 +426,15 @@ static void performance_pause_update(struct widget_instance *widget)
 	{
 		draft->preset = preset->parameters.list.selected_index;
 		if (draft->preset == 0)
-			draft->flags = 0;
+			draft->flags &= _performance_option_input_delay;
 		else if (draft->preset == 1)
-			draft->flags = PERFORMANCE_PRACTICE_FLAGS;
+			draft->flags = (draft->flags & _performance_option_input_delay) | PERFORMANCE_PRACTICE_FLAGS;
 	}
 	else
 	{
-		flags = (timer->parameters.list.selected_index ? _performance_option_match_timer : 0) |
+		/* Match-start timing has no pause control and cannot be changed here. */
+		flags = (draft->flags & _performance_option_input_delay) |
+			(timer->parameters.list.selected_index ? _performance_option_match_timer : 0) |
 			(markers->parameters.list.selected_index ? _performance_option_spawn_markers : 0) |
 			(audio->parameters.list.selected_index ? _performance_option_timer_audio : 0) |
 			(movement->parameters.list.selected_index ? _performance_option_silent_movement : 0) |

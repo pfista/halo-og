@@ -17,6 +17,10 @@ int native_map_get_path(char const *map, char *path, unsigned int capacity);
 int native_map_download_pending(char const *map);
 #ifdef HALO_MACOS
 /* Host imports; these only inspect/schedule work and never wait for network I/O. */
+#ifdef __ILP32__
+#define halo_map_download_directory host_halo_map_download_directory
+#define halo_map_download_request host_halo_map_download_request
+#endif
 int halo_map_download_directory(char *path, unsigned long capacity);
 int halo_map_download_request(char const *map);
 #endif

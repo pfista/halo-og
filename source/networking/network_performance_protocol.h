@@ -8,11 +8,32 @@
 #define NETWORK_PERFORMANCE_VERSION 1
 #define NETWORK_PERFORMANCE_CAPABILITY 1
 #define NETWORK_PERFORMANCE_SETTINGS 2
-#define NETWORK_PERFORMANCE_SUPPORTED_FLAGS 31
+#define NETWORK_PERFORMANCE_SUPPORTED_FLAGS 63
+#define NETWORK_PERFORMANCE_TIMER_AUDIO_FLAG 4
+#define NETWORK_PERFORMANCE_INPUT_DELAY_FLAG 32
 #define NETWORK_PERFORMANCE_ADVERTISED_FLAG 4
 /* Outside upstream's sequential versions: stock clients show their existing
  * update-required dialog only while practice options are on. */
 #define NETWORK_PERFORMANCE_ADVERTISED_VERSION 0x800B
+
+static inline unsigned network_performance_runtime_supported_flags(
+    int queue_supported, int timer_audio_available)
+{
+    unsigned flags = NETWORK_PERFORMANCE_SUPPORTED_FLAGS &
+        ~(NETWORK_PERFORMANCE_TIMER_AUDIO_FLAG | NETWORK_PERFORMANCE_INPUT_DELAY_FLAG);
+    if (queue_supported) flags |= NETWORK_PERFORMANCE_INPUT_DELAY_FLAG;
+    if (timer_audio_available) flags |= NETWORK_PERFORMANCE_TIMER_AUDIO_FLAG;
+    return flags;
+}
+
+/* An older host preserves unknown saved padding, but decodes that entire
+ * extension as Off. Do not infer host timing support from those raw bytes. */
+static inline unsigned network_performance_host_settings_flags(
+    unsigned flags, unsigned host_supported)
+{
+    return (flags & NETWORK_PERFORMANCE_INPUT_DELAY_FLAG) &&
+        !(host_supported & NETWORK_PERFORMANCE_INPUT_DELAY_FLAG) ? 0 : flags;
+}
 
 static inline int network_performance_can_join(unsigned required, unsigned supported)
 {

@@ -12,9 +12,9 @@ Addresses and ports are in network byte order.
 #ifndef __HALO_LINUX_P2P_H
 #define __HALO_LINUX_P2P_H
 
-/* starts internet play, if network.online is set, when the game starts
-its networking; local_address is the address the game's sockets are
-reached at (network.address, else 127.0.0.1) */
+/* starts Discord presence and internet play (if network.online is set)
+when the game starts its networking; local_address is the address the game's
+sockets are reached at (network.address, else 127.0.0.1) */
 void p2p_initialize(unsigned long local_address);
 
 /* on the desktop, before anything else: if this process was started with
@@ -104,5 +104,9 @@ void p2p_hardware_id_sanitize(char *destination, int size, const char *source);
 virtual address (network byte order): where its packets come from; 0 if
 it is no peer's */
 unsigned long p2p_peer_endpoint_address(unsigned long virtual_address);
+
+/* Directory selection waits for this authenticated P2P peer and its real LAN advertisement. */
+int p2p_invite_identity(const char *invite, unsigned char *identifier);
+int p2p_invite_peer_address(const char *invite, unsigned long *address);
 
 #endif

@@ -1,12 +1,16 @@
 # Playtesting Halo OG
 
-Use the same Halo OG testing package as the other players:
-**[test-v0.3.0-net11-dmg2](https://github.com/pfista/halo-og/releases/tag/test-v0.3.0-net11-dmg2)**.
-If the release is unavailable, the [download table](../README.md#download)
-explains matching-commit CI artifacts.
-You do not need to compile the game.
-This revision adds the Mac installer screen. Its game app and other platform
-ZIPs match `test-v0.3.0-net11`; both contain identical protocol-11 game builds.
+New here? Start with the short installation and controls guide for
+[Mac](setup-macos.md), [Windows](setup-windows.md), [Linux](setup-linux.md), or
+[Android](setup-android.md). This page adds multiplayer tests, map details,
+and reporting instructions.
+
+Use the same Halo OG testing release as the other players. The
+[download table](../README.md#download) links published packages and explains
+matching-commit CI artifacts if a release is unavailable. You do not need to
+compile the game. New source changes appear in downloads only when a matching
+build is published; the older `test-v0.3.0-net11-dmg2` release is distinguished
+below.
 
 Bring your own original Xbox Halo: Combat Evolved disc image (`.iso` / `.xiso`)
 or extracted game data. Use one complete set. **USA NTSC is recommended**;
@@ -42,8 +46,9 @@ remapped; see [Mac controls](../port/macos/README.md#launch).
 
 1. Extract `halo-windows-release.zip` into a writable folder. Keep `halo.exe`
    and `SDL3.dll` together; run the extracted executable, not one inside the ZIP.
-2. Open `halo.exe`. If no maps are found, choose your original Xbox disc image
-   in the game's import prompt. It extracts `maps` beside the executable.
+2. Put one original Xbox `.iso` / `.xiso` beside `halo.exe` and open it.
+   New setup builds import it automatically when no original data is found;
+   older releases use the disc-image chooser. It extracts `maps` beside the executable.
    An existing complete `maps` folder can also go there.
 3. Select/create a profile and try a stock map.
 
@@ -60,8 +65,9 @@ existing data. See [Windows setup](../port/windows/README.md#start-the-game).
    PipeWire or PulseAudio client libraries. The executable is 32-bit x86 and
    requires OpenGL 4.5. See [Linux runtime requirements](../port/linux/README.md#requirements)
    for package names; distribution compatibility still needs testing.
-3. From the extracted folder, run `./halo`. If necessary, first run
-   `chmod +x halo`. Select your original Xbox disc image when prompted, or
+3. Put one original Xbox `.iso` / `.xiso` beside `halo`, then run `./halo` from
+   that folder. If necessary, first run `chmod +x halo`. New setup builds import
+   automatically when no original data is found; select the image if prompted, or
    put a complete `maps` folder beside the executable.
 4. Select/create a profile and try a stock map.
 
@@ -93,7 +99,11 @@ app data. See [Android installation/data](../port/android/README.md#game-data).
 3. On the same LAN, clients open **Multiplayer → System Link** and select the
    host's game. Allow local-network/firewall access if your operating system
    prompts; isolated guest Wi-Fi may prevent discovery.
-4. For an Internet test, the host shares the current `halo://join/…` invite
+4. New desktop builds discover public Internet games from **games.oghalo.com**
+   directly in System Link. Select the host and wait for **Connecting…** to open
+   the normal lobby. [Public discovery and private hosting](system-link-directory.md)
+   explains the two-machine test and settings. Older builds/private games use
+   invites: the host shares the current `halo://join/…` invite
    copied to its clipboard. The client copies the invite and returns to the
    game, or opens the registered invite link. Once the host appears in System
    Link, select it and join. The host app must remain running.
@@ -107,8 +117,30 @@ and [Mac networking](../port/macos/README.md#launch) cover troubleshooting.
 
 PB Options are optional. The host chooses them in the game type editor or
 multiplayer pause menu; all peers need compatible options support. Timer Sounds
-additionally require a separately supplied local audio pack.
+additionally require the separate [timer recording pack](timer-audio.md).
+Mac, Windows, Linux and Android download it automatically in the background.
+Restart Halo OG after its first installation; Mac shows progress in
+**Halo OG → Settings**.
 [PB Options](performance-options.md) explains these settings.
+
+### Spawn, sniper and teleporter regression test
+
+Use the same release on both machines, with stock options. Test stock Derelict
+and custom Downrush, then swap host/client roles between Mac and Windows
+(include Linux when available). Record which player's view shows each symptom.
+
+- Respawn repeatedly and watch for a prolonged bare reticle before weapons
+  appear. Distinguish the brief original ready animation from a delay lasting
+  several ticks; report host and joining-player observations separately.
+- On a freshly loaded map, watch the first sniper shot from both the shooter's
+  view and another player's view, then compare subsequent shots. Repeat after
+  picking up a sniper later in the match.
+- Enter each teleporter once and stop at the destination. It should keep you
+  there; walk away and re-enter to test the normal return trip. Repeat while
+  moving and with ordinary network latency.
+
+The automated fixtures cover packet ordering, prediction and texture readiness.
+These physical checks confirm whether the reported gameplay symptoms are gone.
 
 ## Community maps
 
@@ -117,16 +149,21 @@ community maps** for original Xbox v5 NTSC data, about **863 MiB** in total.
 This includes PB community variants with their normal embedded Halo dependencies;
 original disc images, stock map files, campaign files, and `ui.map` are excluded.
 
-On **Mac**, open **Halo OG → Settings…**, enable **Download approved community
-maps in the background**, and accept the prompt. **Check Maps / Retry** refreshes
-the catalog. Missing maps from the collection are queued on launch while the
-app runs; joining a host whose approved map is missing also requests it. Watch
-the Settings progress/error text. Installed, verified maps work with downloads
-disabled and offline.
-Reopen map selection after completion; restart if the current session still
-holds an older selection. Downloads never replace your original maps.
+The **test-v0.3.0-net11-gameplay1 Mac build** enables **Download approved community maps in the
+background** for fresh settings and queues **all 40** approved maps at launch
+once original NTSC data is available. A saved opt-out stays off. Open
+**Halo OG → Settings…** to disable downloads or use **Check Maps / Retry** when
+enabled. Watch its progress/error text. Files go into
+`~/Library/Application Support/Halo OG/Community Maps/maps/`; originals and
+existing conflicting files are preserved. Installed, verified maps remain
+usable with downloads disabled and offline. Reopen map selection after
+completion; restart if the session still holds an older selection.
 
-New **Windows/Linux builds from main** download approved community maps in the
+The published **test-v0.3.0-net11-dmg2 Mac build** still needs you to enable
+that checkbox and accept its prompt. It can download the existing complete-map
+collection, but it does not have the new fresh-settings default.
+
+The **test-v0.3.0-net11-gameplay1 Windows/Linux builds** download all 40 approved community maps in the
 background once original NTSC game data is available. Downloads are enabled by
 default. To disable them, set `auto_download = false` in the `[community_maps]`
 section of `config.toml` beside the executable. Files go into the active game
@@ -179,11 +216,11 @@ Original stock maps and `ui.map` remain user-imported. A PC/Custom Edition map
 cannot be made compatible by renaming it or changing its version field.
 [Map conversion](community-maps.md) explains the supported pipeline.
 
-Cloudflare currently supplies complete playable `.map` files with embedded
-Halo dependencies. Downloading stripped community packages and rebuilding
-them automatically from your own XISO is a future distribution flow, not a
-feature of these testing packages. The separate
-[local reconstruction prototype](community-map-packages.md) has verified Downrush.
+Cloudflare supplies complete playable `.map` files with their embedded Halo
+dependencies. Downloads are verified and installed directly; players do not
+need a reconstruction toolchain. Original stock maps and disc data still come
+from the player's own copy. The package-reconstruction experiment has been set
+aside for this release path.
 
 ## Report a problem
 
@@ -199,4 +236,4 @@ Open an [issue in Halo OG](https://github.com/pfista/halo-og/issues/new) with:
 
 Do not attach game data, private invite codes, credentials, or personal saves
 to a public issue. Check logs for personal paths before sharing. Keep originals
-and backups while testing. See [current validation limits](../README.md#what-has-been-checked).
+and backups while testing. See [current validation limits](xbox-fidelity.md#reconstruction-target-and-validation).

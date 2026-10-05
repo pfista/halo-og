@@ -66,7 +66,7 @@ static unsigned short performance_audio_u16(const unsigned char *value)
 
 /* The importer writes canonical 44-byte PCM WAV headers. Refuse other WAV
  * layouts rather than introducing runtime compressed-audio parsers. */
-static int performance_audio_load_clip(unsigned long index)
+static int performance_audio_load_clip(unsigned long index, const char *root)
 {
 	struct performance_audio_clip *clip = &performance_audio_clips[index];
 	unsigned char header[44];
@@ -74,7 +74,6 @@ static int performance_audio_load_clip(unsigned long index)
 	char path[4096];
 	FILE *file;
 	int path_length;
-	const char *root = platform_data_root();
 	if (!root || !root[0])
 		return 0;
 	path_length = snprintf(path, sizeof(path), "%s/sounds/performance/%s.wav", root, performance_audio_cues[index]);
@@ -118,18 +117,42 @@ invalid:
 	return 0;
 }
 
-int halo_performance_audio_available(void)
+static void performance_audio_clear_clips(void)
 {
 	unsigned long index;
+	for (index = 0; index < sizeof(performance_audio_cues) / sizeof(performance_audio_cues[0]); index++)
+	{
+		free(performance_audio_clips[index].samples);
+		memset(&performance_audio_clips[index], 0, sizeof(performance_audio_clips[index]));
+	}
+}
+
+static BOOL performance_audio_load_pack(const char *root)
+{
+	unsigned long index;
+	BOOL complete = TRUE;
+	for (index = 0; index < sizeof(performance_audio_cues) / sizeof(performance_audio_cues[0]); index++)
+	{
+		if (!performance_audio_load_clip(index, root) && index < PERFORMANCE_AUDIO_REQUIRED_CLIPS)
+			complete = FALSE;
+	}
+	/* A pack is one complete directory. Never combine user-local recordings
+	with a partial managed pack, or keep samples from a failed first root. */
+	if (!complete)
+		performance_audio_clear_clips();
+	return complete;
+}
+
+int halo_performance_audio_available(void)
+{
 	if (!performance_audio_loaded)
 	{
 		performance_audio_loaded = TRUE;
-		performance_audio_complete = TRUE;
-		for (index = 0; index < sizeof(performance_audio_cues) / sizeof(performance_audio_cues[0]); index++)
-		{
-			if (!performance_audio_load_clip(index) && index < PERFORMANCE_AUDIO_REQUIRED_CLIPS)
-				performance_audio_complete = FALSE;
-		}
+		/* User-local complete packs take priority over managed downloads. Keep
+		the first result for this process so capabilities cannot change midjoin. */
+		performance_audio_complete = performance_audio_load_pack(platform_data_root());
+		if (!performance_audio_complete)
+			performance_audio_complete = performance_audio_load_pack(platform_save_root());
 	}
 	return performance_audio_complete != FALSE;
 }

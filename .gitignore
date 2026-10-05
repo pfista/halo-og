@@ -6,6 +6,7 @@
 __pycache__
 .mypy_cache
 .cache/
+.ccache/
 
 # Build files
 build/

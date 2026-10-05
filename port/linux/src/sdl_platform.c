@@ -18,7 +18,9 @@ and the debug keyboard that the game's console reads.
 #include "input_bindings.h"
 #include "p2p.h"
 #include "xiso.h"
+#include "posix.h"
 #include "community_maps_download.h"
+#include "timer_audio_download.h"
 #include "native_video.h"
 #include "native_input_events.h"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
@@ -111,6 +113,7 @@ BOOL platform_sdl_initialize(void)
 	updater_start();
 #if !defined(HALO_MACOS)
 	community_maps_download_start();
+	timer_audio_download_start();
 #endif
 #endif
 	return TRUE;
@@ -278,6 +281,52 @@ static BOOL data_choose_image(char *path, int size)
 	return TRUE;
 }
 
+/* One supported image beside the executable is enough for an unattended
+first import. Multiple supported images need a deliberate picker choice;
+the directory's enumeration order must never choose the player's data. */
+static int data_find_adjacent_image(const char *directory, char *image, int image_size,
+	char *explanation, int explanation_size)
+{
+	void *entries = posix_directory_open(directory);
+	char name[256], candidate[1024], error[512];
+	int supported = 0, candidates = 0;
+
+	image[0] = '\0';
+	explanation[0] = '\0';
+	if (!entries)
+		return 0;
+	while (posix_directory_next(entries, name, sizeof(name)))
+	{
+		const char *extension = strrchr(name, '.');
+		struct posix_file_information information;
+		int length;
+
+		if (!extension || (SDL_strcasecmp(extension, ".iso") && SDL_strcasecmp(extension, ".xiso")))
+			continue;
+		length = snprintf(candidate, sizeof(candidate), "%s/%s", directory, name);
+		if (length < 0 || length >= (int)sizeof(candidate) ||
+			posix_stat(candidate, &information) != 0 || (information.flags & _posix_file_is_directory))
+			continue;
+		candidates++;
+		if (!xiso_probe_maps(candidate, error, sizeof(error)))
+			continue;
+		if (++supported == 1)
+			snprintf(image, (size_t)image_size, "%s", candidate);
+	}
+	posix_directory_close(entries);
+	if (supported > 1)
+	{
+		image[0] = '\0';
+		snprintf(explanation, (size_t)explanation_size,
+			"More than one Halo Xbox disc image was found beside Halo OG. Choose which one to import.\n\n");
+		return -1;
+	}
+	if (!supported && candidates)
+		snprintf(explanation, (size_t)explanation_size,
+			"The .iso/.xiso files beside Halo OG do not contain a readable Halo Xbox maps folder. Choose a complete Xbox disc image.\n\n");
+	return supported;
+}
+
 BOOL platform_offer_game_data(const char *destination)
 {
 	static const SDL_MessageBoxButtonData buttons[] =
@@ -285,7 +334,8 @@ BOOL platform_offer_game_data(const char *destination)
 		{ SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Yes" },
 		{ SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "No" },
 	};
-	char message[1400];
+	char message[2000], explanation[512], image[1024], error[512], maps[1100], on_disk[256];
+	struct posix_file_information information;
 
 	/* not for runs nobody is watching */
 	if (config_boolean("debug.hidden_window") || config_real("debug.exit_after") > 0.0 ||
@@ -293,17 +343,40 @@ BOOL platform_offer_game_data(const char *destination)
 	{
 		return FALSE;
 	}
+	/* A community-only or incomplete maps directory is not original game
+	data. Never import over it or silently consider it sufficient. */
+	if (posix_find_entry_case_insensitive(destination, "maps", on_disk, sizeof(on_disk)))
+	{
+		snprintf(maps, sizeof(maps), "%s/%s", destination, on_disk);
+		if (posix_stat(maps, &information) == 0)
+		{
+			snprintf(message, sizeof(message),
+				"Halo OG found %s, but it does not contain the original game's ui.map.\n\n"
+				"Your files were preserved. Move or rename that maps folder, place one complete Halo Xbox .iso/.xiso beside Halo OG, and start again. "
+				"You can also set paths.data in config.toml to a folder containing complete original game data.", maps);
+			platform_log("incomplete existing game data: %s", maps);
+			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Halo OG", message, NULL);
+			platform_exit_success();
+		}
+	}
+	if (data_find_adjacent_image(destination, image, sizeof(image), explanation, sizeof(explanation)) == 1)
+	{
+		platform_log("importing adjacent Xbox disc image %s", image);
+		if (data_extract(image, destination, error, sizeof(error)))
+			return TRUE;
+		platform_log("automatic extraction failed: %s", error);
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Halo OG", error, NULL);
+		snprintf(explanation, sizeof(explanation), "Automatic import could not finish. Choose an Xbox disc image to retry.\n\n");
+	}
 	snprintf(message, sizeof(message),
-		"Halo OG's game data (its maps folder) was not found.\n\n"
+		"%sHalo OG's game data (its maps folder) was not found.\n\n"
 		"Extract the maps folder from an Xbox disc image (.iso) of Halo: Combat Evolved? "
 		"It is copied to %s/maps (about 2 GB).\n\n"
 		"(Or put the maps folder there yourself, or set paths.data in config.toml.)",
-		destination);
+		explanation, destination);
 	for (;;)
 	{
 		SDL_MessageBoxData question = { SDL_MESSAGEBOX_INFORMATION, NULL, "Halo OG", message, 2, buttons, NULL };
-		char image[1024];
-		char error[512];
 		int answer = 0;
 
 		if (!SDL_ShowMessageBox(&question, &answer) || answer != 1)

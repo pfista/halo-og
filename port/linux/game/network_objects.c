@@ -30,9 +30,12 @@ same datum index (identifier and all), so that any message can name one:
   takes within what the vehicle can have moved at its next tick, and tells
   the client which of its ticks it has it at; the client moves it by how far
   that is from where it had it at that tick, only when far off.
-- Ten times a second, the host sends what a unit carries when that has
-  changed (and once a second whatever it is): which weapons, slot for slot,
-  their ammunition, the weapon in hand and the grenades; a client moves its
+- The host sends weapon and grenade changes reliably as they happen.
+  Ten times a second it sends ammunition changes, and once a second an
+  unchanged inventory. A client retains inventories that arrive before the
+  objects they name and applies them once those objects exist: which
+  weapons, slot for slot, their ammunition, the weapon in hand and the
+  grenades. A client moves its
   copies of those weapons in and out of its copies of the units to match (it
   decides no pickups, swaps or drops itself). A change of weapons or
   grenades goes to every client at once, one of ammunition alone to the
@@ -384,6 +387,17 @@ static struct
 } objects_host_vehicle_predictions[MAXIMUM_TRACKED_PLAYERS];
 /* a client: the host's objects it has, by absolute index */
 static long objects_client_has[MAXIMUM_TRACKED_OBJECTS];
+/* An inventory can overtake the reliable creates for its unit or weapons.
+Keep its latest snapshot until all of those full datum indices exist. Each
+unit has its own host time: another unit's newer message must not discard a
+spawn snapshot, and an older reliable snapshot must not undo a newer one. */
+static struct
+{
+	long time;
+	boolean pending;
+	struct distributed_inventory inventory;
+} objects_client_inventories[MAXIMUM_TRACKED_OBJECTS];
+static void distributed_client_retry_inventories(void);
 /* ... the bipeds, no player's, the host said were dead while they lived
 here, and when it first did (DEAD_BIPED_FALLBACK_TICKS) */
 static struct
@@ -1197,8 +1211,10 @@ static unsigned long distributed_checksum(
 /* the kinds of inventories sent this time */
 enum
 {
-	/* its weapons or grenades changed, or not sent for a while: to every
-	client */
+	/* its weapons, the one in hand, or grenades changed: reliably, after
+	their object creates, without waiting for the ammunition interval */
+	_host_inventory_changed,
+	/* not sent for a while: an unchanged refresh to every client */
 	_host_inventory_to_all,
 	/* its ammunition alone changed: to its own client, and to the others as
 	often as they are sent where it is */
@@ -1222,6 +1238,7 @@ static void distributed_host_send_inventories(
 	short limit = MIN(MAXIMUM_ENTRIES_PER_MESSAGE, DATAGRAM_ENTRIES(struct distributed_inventory));
 	long inventory_count = 0;
 	long round = game_time_get() / INVENTORY_INTERVAL_TICKS;
+	boolean periodic = game_time_get() % INVENTORY_INTERVAL_TICKS == 0;
 	struct object_iterator iterator;
 	short machine_number;
 
@@ -1255,19 +1272,24 @@ static void distributed_host_send_inventories(
 		/* (its weapons, the one in hand and its grenades: the bytes up to the
 		ammunition) */
 		weapons_checksum = distributed_checksum(inventory, (long)offsetof(struct distributed_inventory, rounds_total));
-		if (objects_host_inventories[absolute_index].weapons_checksum != weapons_checksum ||
-			game_time_get() - objects_host_inventories[absolute_index].time >= INVENTORY_REFRESH_TICKS)
+		if (objects_host_inventories[absolute_index].weapons_checksum != weapons_checksum)
+		{
+			kind = _host_inventory_changed;
+			objects_host_inventories[absolute_index].time = game_time_get();
+			objects_host_inventories[absolute_index].ammunition_time = NONE;
+		}
+		else if (periodic && game_time_get() - objects_host_inventories[absolute_index].time >= INVENTORY_REFRESH_TICKS)
 		{
 			kind = _host_inventory_to_all;
 			objects_host_inventories[absolute_index].time = game_time_get();
 			objects_host_inventories[absolute_index].ammunition_time = NONE;
 		}
-		else if (objects_host_inventories[absolute_index].checksum != checksum)
+		else if (periodic && objects_host_inventories[absolute_index].checksum != checksum)
 		{
 			kind = _host_inventory_ammunition;
 			objects_host_inventories[absolute_index].ammunition_time = game_time_get();
 		}
-		else if (objects_host_inventories[absolute_index].ammunition_time != NONE &&
+		else if (periodic && objects_host_inventories[absolute_index].ammunition_time != NONE &&
 			game_time_get() - objects_host_inventories[absolute_index].ammunition_time <
 				MAXIMUM_OBJECT_PERIOD_TICKS * INVENTORY_INTERVAL_TICKS)
 		{
@@ -1291,6 +1313,22 @@ static void distributed_host_send_inventories(
 
 		for (index = 0; index < inventory_count; index++)
 		{
+			if (kinds[index] == _host_inventory_changed)
+			{
+				/* The reliable object creates were sent earlier this tick.
+				Send only structural changes on that ordered stream; ammunition
+				and unchanged refreshes keep their existing datagram cadence. */
+				struct
+				{
+					struct distributed_message_header header;
+					struct distributed_inventory inventories[1];
+				} changed;
+
+				changed.inventories[0] = inventories[index];
+				distributed_send_to_machine_reliably(machine_index, &changed, _distributed_message_inventories, 1,
+					(word)(sizeof(changed.header) + sizeof(struct distributed_inventory)));
+				continue;
+			}
 			if (kinds[index] != _host_inventory_to_all)
 			{
 				long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(inventories[index].unit_index);
@@ -1631,8 +1669,7 @@ void network_objects_host_tick(
 	distributed_host_update_objects();
 	distributed_host_find_viewers();
 	distributed_host_send_states();
-	if (game_time_get() % INVENTORY_INTERVAL_TICKS == 0)
-		distributed_host_send_inventories();
+	distributed_host_send_inventories();
 }
 
 /* ---------- a client */
@@ -1970,11 +2007,15 @@ void network_objects_handle_changes(
 		else if (change->change == _object_change_delete &&
 			objects_client_has[absolute_index] == change->object_index)
 		{
+			if (objects_client_inventories[absolute_index].inventory.unit_index == change->object_index)
+				objects_client_inventories[absolute_index].pending = FALSE;
 			objects_statistics.deletes++;
 			distributed_client_delete(change->object_index);
 			objects_client_has[absolute_index] = NONE;
 		}
 	}
+	/* The inventory datagram may have arrived before this reliable batch. */
+	distributed_client_retry_inventories();
 }
 
 void network_objects_handle_synchronized(
@@ -2377,15 +2418,73 @@ static void distributed_client_apply_inventory(
 		distributed_client_note_own_inventory(own, inventory->unit_index, FALSE);
 }
 
+/* Whether all objects named by a snapshot exist. Applying part of it and
+forgetting the rest leaves a newly spawned unit unarmed until the host's
+one-second refresh, so the snapshot stays pending as a whole. */
+static boolean distributed_client_inventory_ready(
+	struct distributed_inventory const *inventory)
+{
+	short weapon_slot;
+
+	if (!network_objects_client_has(inventory->unit_index) ||
+		!object_try_and_get_and_verify_type(inventory->unit_index, _object_mask_unit))
+	{
+		return FALSE;
+	}
+	for (weapon_slot = 0; weapon_slot < MAXIMUM_WEAPONS_PER_UNIT; weapon_slot++)
+	{
+		long weapon_index = inventory->weapon_indices[weapon_slot];
+
+		if (weapon_index != NONE && (!network_objects_client_has(weapon_index) ||
+			!object_try_and_get_and_verify_type(weapon_index, _object_mask_weapon)))
+		{
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+static void distributed_client_retry_inventories(
+	void)
+{
+	long absolute_index;
+
+	for (absolute_index = 0; absolute_index < MAXIMUM_TRACKED_OBJECTS; absolute_index++)
+	{
+		struct distributed_inventory const *inventory = &objects_client_inventories[absolute_index].inventory;
+
+		if (!objects_client_inventories[absolute_index].pending || !distributed_client_inventory_ready(inventory))
+			continue;
+		objects_client_inventories[absolute_index].pending = FALSE;
+		distributed_client_apply_inventory(inventory);
+	}
+}
+
 void network_objects_handle_inventories(
 	void const *entries,
-	short count)
+	short count,
+	long time)
 {
 	struct distributed_inventory const *inventories = (struct distributed_inventory const *)entries;
 	short index;
 
 	for (index = 0; index < count; index++)
-		distributed_client_apply_inventory(&inventories[index]);
+	{
+		struct distributed_inventory const *inventory = &inventories[index];
+		long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(inventory->unit_index);
+
+		if (!distributed_object_index_valid(inventory->unit_index) ||
+			absolute_index < 0 || absolute_index >= MAXIMUM_TRACKED_OBJECTS ||
+			(objects_client_inventories[absolute_index].time != NONE &&
+				time < objects_client_inventories[absolute_index].time))
+		{
+			continue;
+		}
+		objects_client_inventories[absolute_index].time = time;
+		objects_client_inventories[absolute_index].inventory = *inventory;
+		objects_client_inventories[absolute_index].pending = TRUE;
+	}
+	distributed_client_retry_inventories();
 }
 
 void network_objects_set_seat(
@@ -2528,6 +2627,7 @@ static void distributed_client_remove_own_objects(
 void network_objects_client_tick(
 	void)
 {
+	distributed_client_retry_inventories();
 	/* (loaded: the host's objects, please; flagged when one of them failed
 	since it last asked) */
 	if (!objects_client_synchronized &&
@@ -2575,6 +2675,8 @@ void network_objects_new_game(
 		objects_host_inventories[absolute_index].carried_time = NONE;
 		objects_host_inventories[absolute_index].ammunition_time = NONE;
 		objects_client_has[absolute_index] = NONE;
+		objects_client_inventories[absolute_index].time = NONE;
+		objects_client_inventories[absolute_index].pending = FALSE;
 		objects_client_dead[absolute_index].object_index = NONE;
 	}
 	objects_host_told_count = 0;

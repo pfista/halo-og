@@ -657,6 +657,12 @@ typedef char screenshot_and_framerate_globals_size_assert[
 
 void network_test_update(boolean main_menu_loaded, real seconds);
 
+#if defined(HALO_PORT_MAXIMUM_NETWORK_PLAYERS) && !defined(HALO_MACOS) && !defined(HALO_IOS) && !defined(HALO_ANDROID)
+/* The native desktop update notice may prompt only at the local main menu.
+   Retail, Mac and mobile builds do not acquire a new platform import. */
+void halo_release_discovery_set_main_menu(int safe);
+#endif
+
 /* ---------- prototypes */
 
 static long sort_desired_local_player_controllers(
@@ -3181,6 +3187,10 @@ void main_loop(
 		}
 
 		profile_frame_start();
+#if defined(HALO_PORT_MAXIMUM_NETWORK_PLAYERS) && !defined(HALO_MACOS) && !defined(HALO_IOS) && !defined(HALO_ANDROID)
+		halo_release_discovery_set_main_menu(main_globals.main_menu_scenario_loaded &&
+			main_globals.connection == _game_connection_local);
+#endif
 		input_frame_begin();
 		input_update();
 		input_abstraction_update();

@@ -56,11 +56,24 @@ POSIX = r'''
 #define UPDATE_USER_AGENT "fixture"
 #define MAXIMUM_HEADER_SIZE 16384
 #define MAXIMUM_REDIRECTS 8
-typedef int pthread_once_t;
+/* glibc's stdlib headers already declare pthread types. Keep fixture stubs
+   distinct, then alias only the production function names being exercised. */
+typedef int fixture_pthread_once_t;
+#define pthread_once_t fixture_pthread_once_t
 #define PTHREAD_ONCE_INIT 0
-static int pthread_once(pthread_once_t *state, void (*callback)(void))
+#define pthread_once fixture_pthread_once
+static int fixture_pthread_once(fixture_pthread_once_t *state, void (*callback)(void))
 { if (!*state) { callback(); *state = 1; } return 0; }
 static pthread_once_t certificates_once = PTHREAD_ONCE_INIT;
+typedef int fixture_pthread_mutex_t;
+#define pthread_mutex_t fixture_pthread_mutex_t
+#define PTHREAD_MUTEX_INITIALIZER 0
+#define pthread_mutex_lock fixture_pthread_mutex_lock
+#define pthread_mutex_unlock fixture_pthread_mutex_unlock
+static pthread_mutex_t download_lock = PTHREAD_MUTEX_INITIALIZER;
+static int pthread_mutex_lock(pthread_mutex_t *lock) { assert(!*lock); *lock=1; return 0; }
+static int pthread_mutex_unlock(pthread_mutex_t *lock) { assert(*lock); *lock=0; return 0; }
+static int fixture_transfer_locked(void) { return download_lock != 0; }
 static int crypto_ready = 1, certificates_loaded = 1;
 static void load_certificates(void) {}
 static const char *fixture_strcasestr(const char *text, const char *part)
@@ -75,11 +88,12 @@ static const char *response;
 static int opens, body_reads, redirect_first;
 static int connection_open(struct connection *c, const char *host, const char *port, char *error, int error_size)
 {
+    assert(fixture_transfer_locked());
     (void)host; (void)port; (void)error; (void)error_size;
     c->text = redirect_first && !opens ? "HTTP/1.1 302 Found\r\nLocation: https://example.test/final\r\n\r\n" : response;
     c->at = 0; ++opens; return 1;
 }
-static void connection_free(struct connection *c) { (void)c; }
+static void connection_free(struct connection *c) { assert(fixture_transfer_locked()); (void)c; }
 static int connection_write(struct connection *c, const char *data, size_t size)
 { (void)c; assert(size && !strncmp(data, "GET ", 4)); return 1; }
 static int connection_read_line(struct connection *c, char *line, size_t size)
@@ -94,6 +108,7 @@ static int connection_read_line(struct connection *c, char *line, size_t size)
 }
 static int connection_read(struct connection *c, unsigned char *buffer, size_t size)
 {
+    assert(fixture_transfer_locked());
     ++body_reads;
     size_t left = strlen(c->text + c->at);
     if (size > left) size = left;
@@ -134,6 +149,60 @@ int main(int argc, char **argv)
     assert(body_write(&d, (const unsigned char *)"ab", 2)); assert(d.received == ULLONG_MAX && ftell(d.file) == 2);
     fclose(d.file);
     puts("PASS POSIX production cap/length/chunk/truncation/redirect/wrapper/overflow fixture");
+    return 0;
+}
+'''
+
+POSIX_CONCURRENT_CASES = r'''
+static pthread_mutex_t start_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t start_changed = PTHREAD_COND_INITIALIZER;
+static int ready, go;
+struct transfer_fixture { char path[1280]; int index, result; };
+static void *transfer_thread(void *context)
+{
+    struct transfer_fixture *t = context;
+    char error[512] = {0};
+    pthread_mutex_lock(&start_lock);
+    ready++; pthread_cond_broadcast(&start_changed);
+    while (!go) pthread_cond_wait(&start_changed, &start_lock);
+    pthread_mutex_unlock(&start_lock);
+    t->result = update_download_limited(t->index == 7 ? "https://fail.test/map" : "https://example.test/map",
+        t->path, 6, progress, NULL, error, sizeof(error));
+    return NULL;
+}
+int main(int argc, char **argv)
+{
+    pthread_t threads[8];
+    struct transfer_fixture transfers[8];
+    assert(argc == 2);
+    response = "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nHELLO!";
+    for (int i = 0; i < 8; i++) {
+        transfers[i].index = i;
+        snprintf(transfers[i].path, sizeof(transfers[i].path), "%s.%d", argv[1], i);
+        assert(!pthread_create(&threads[i], NULL, transfer_thread, &transfers[i]));
+    }
+    pthread_mutex_lock(&start_lock);
+    while (ready < 8) pthread_cond_wait(&start_changed, &start_lock);
+    go = 1; pthread_cond_broadcast(&start_changed);
+    pthread_mutex_unlock(&start_lock);
+    for (int i = 0; i < 8; i++) {
+        assert(!pthread_join(threads[i], NULL));
+        assert(transfers[i].result == (i != 7));
+        if (i != 7) {
+            char bytes[8] = {0}; FILE *file = fopen(transfers[i].path, "rb"); assert(file);
+            assert(fread(bytes, 1, 7, file) == 6 && !strcmp(bytes, "HELLO!")); fclose(file); unlink(transfers[i].path);
+        }
+        else assert(access(transfers[i].path, F_OK) != 0);
+    }
+    assert(active_transfers == 0 && !overlapping_crypto && opens == 8);
+    /* A failed transfer must release the lock for the next independent GET. */
+    char error[512] = {0};
+    assert(update_download_limited("https://example.test/map", argv[1], 6, progress, NULL, error, sizeof(error)));
+    /* Seven worker successes plus the retry must each read one complete body
+       and publish its full byte count; the failed connection reads none. */
+    assert(body_reads == 8 && progressed == 6);
+    unlink(argv[1]);
+    puts("PASS simultaneous metadata/map transfers preserve responses, serialize shared PSA, and release failure locks");
     return 0;
 }
 '''
@@ -316,32 +385,85 @@ int main(int argc, char **argv)
 
 @unittest.skipUnless(shutil.which("clang"), "clang is required for the production C fixtures")
 class DownloadTransportLimitTests(unittest.TestCase):
-    def compile_and_run(self, name, fixture):
+    def compile_and_run(self, name, fixture, extra_flags=()):
         with tempfile.TemporaryDirectory(prefix="halo-download-transport-test-") as directory:
             root = Path(directory).resolve()
             source = root / (name + ".c")
             binary = root / (name + (".exe" if sys.platform == "win32" else ""))
             source.write_text(COMMON + fixture, encoding="utf-8")
-            command = ["clang", "-std=gnu11", "-Wall", "-Wextra", "-Werror"]
+            command = ["clang", "-std=gnu11", "-Wall", "-Wextra", "-Werror", *extra_flags]
             if sys.platform == "win32":
                 command += ["-D_CRT_SECURE_NO_WARNINGS"]
             else:
                 command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-            subprocess.run(command + [str(source), "-o", str(binary)], check=True, capture_output=True,
-                           text=True, encoding="utf-8", errors="replace", timeout=60)
-            result = subprocess.run([str(binary), str(root / "download.tmp")], check=True, capture_output=True,
+            compiled = subprocess.run(command + [str(source), "-o", str(binary)], capture_output=True,
+                                      text=True, encoding="utf-8", errors="replace", timeout=60)
+            self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+            result = subprocess.run([str(binary), str(root / "download.tmp")], capture_output=True,
                                     text=True, encoding="utf-8", errors="replace", timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("PASS", result.stdout)
             self.assertFalse((root / "download.tmp").exists())
 
     def test_posix_production_response_limits_and_legacy_wrapper(self):
         source = (ROOT / "port/linux/src/posix_update.c").read_text(encoding="utf-8")
         signatures = ("static int parse_url(", "struct download\n{", "static int body_write(",
-                      "static int read_body(", "static int https_get(", "int update_download_limited(",
+                      "static int read_body(", "static int https_request(", "static int update_download_serialized(", "int update_download_limited(",
                       "int update_download(")
         pieces = [function(source, signature) + (";" if signature.startswith("struct") else "")
                   for signature in signatures]
         self.compile_and_run("posix", POSIX + "\n".join(pieces) + POSIX_CASES)
+
+    def test_directory_requests_keep_leases_out_of_urls_and_bound_memory_without_redirects(self):
+        source = (ROOT / "port/linux/src/posix_update.c").read_text(encoding="utf-8")
+        signatures = ("static int parse_url(", "struct download\n{", "static int body_write(",
+                      "static int read_body(", "static int https_request(", "int halo_directory_http(")
+        pieces = [function(source, signature) + (";" if signature.startswith("struct") else "")
+                  for signature in signatures]
+        stub = function(POSIX, "static int connection_write(")
+        transport = POSIX.replace(stub, r'''
+static char sent_headers[4096];
+static int connection_write(struct connection *c, const char *data, size_t size)
+{
+    (void)c; assert(size);
+    if (!strncmp(data,"POST ",5) || !strncmp(data,"PUT ",4) || !strncmp(data,"DELETE ",7) || !strncmp(data,"GET ",4))
+        snprintf(sent_headers,sizeof(sent_headers),"%s",data);
+    else assert(!strcmp(data,"{}"));
+    return 1;
+}
+''')
+        cases = r'''
+int main(int argc,char **argv) {
+    (void)argc;(void)argv;(void)progress; char buffer[32],token[65]; int status;
+    memset(token,'a',64);token[64]=0;
+    response="HTTP/1.1 201 Created\r\nContent-Length: 2\r\n\r\n{}";
+    assert(halo_directory_http("POST","https://example.test/v1/games",NULL,"{}",buffer,sizeof(buffer),&status)==2);
+    assert(status==201 && !strcmp(buffer,"{}") && strstr(sent_headers,"Content-Length: 2\r\n"));
+    response="HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\n\r\n{}";
+    assert(halo_directory_http("PUT","https://example.test/v1/games/id",token,"{}",buffer,sizeof(buffer),&status)==2);
+    assert(status==403 && strstr(sent_headers,"Authorization: Bearer aaaa"));
+    assert(!strstr(sent_headers,"/id?"));
+    response="HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n";
+    assert(halo_directory_http("DELETE","https://example.test/v1/games/id",token,NULL,buffer,sizeof(buffer),&status)==0 && status==204);
+    response="HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n";
+    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,7,&status)==6 && !strcmp(buffer,"abcdef"));
+    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,6,&status)==-1);
+    response="HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n";
+    assert(halo_directory_http("GET","https://example.test/v1/games",NULL,NULL,buffer,sizeof(buffer),&status)==-1);
+    response="HTTP/1.1 302 Found\r\nLocation: https://elsewhere.test/\r\nContent-Length: 0\r\n\r\n";opens=0;
+    assert(halo_directory_http("PUT","https://example.test/v1/games/id",token,"{}",buffer,sizeof(buffer),&status)==0 && status==302 && opens==1);
+    opens=0;
+    assert(halo_directory_http("GET","https://example.test/\r\nInjected: yes",NULL,NULL,buffer,sizeof(buffer),&status)==-1 && !opens);
+    assert(halo_directory_http("PUT","https://example.test/id","bad\r\nheader","{}",buffer,sizeof(buffer),&status)==-1 && !opens);
+    crypto_ready=0;
+    assert(halo_directory_http("GET","https://example.test/id",NULL,NULL,buffer,sizeof(buffer),&status)==-1 && !opens);
+    crypto_ready=1;certificates_loaded=0;
+    assert(halo_directory_http("GET","https://example.test/id",NULL,NULL,buffer,sizeof(buffer),&status)==-1 && !opens);
+    assert(progressed==0 && body_reads>0); /* Directory transfers never invoke file progress. */
+    puts("PASS directory JSON methods, lease headers, status bodies, bounds, no redirects");
+}
+'''
+        self.compile_and_run("directory", "#define HALO_DIRECTORY_BODY_LIMIT (256*1024)\n" + transport + "\n".join(pieces) + cases)
 
     def test_windows_production_header_limits_and_request_flags(self):
         source = (ROOT / "port/windows/src/win32_update.c").read_text(encoding="utf-8")
@@ -349,6 +471,31 @@ class DownloadTransportLimitTests(unittest.TestCase):
                       "int update_download_limited(", "int update_download(")
         pieces = [function(source, signature) for signature in signatures]
         self.compile_and_run("windows", WINDOWS + "\n".join(pieces) + WINDOWS_CASES)
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX concurrency uses the native pthread backend")
+    def test_simultaneous_map_and_release_transfers_serialize_psa_and_keep_individual_responses(self):
+        source = (ROOT / "port/linux/src/posix_update.c").read_text(encoding="utf-8")
+        signatures = ("static int parse_url(", "struct download\n{", "static int body_write(",
+                      "static int read_body(", "static int https_request(", "static int update_download_serialized(",
+                      "int update_download_limited(", "int update_download(")
+        pieces = [function(source, signature) + (";" if signature.startswith("struct") else "") for signature in signatures]
+        start = POSIX.index("/* glibc's stdlib headers")
+        end = POSIX.index("static int crypto_ready")
+        native = (POSIX[:start] + "#include <pthread.h>\n#include <time.h>\n"
+                  "static pthread_once_t certificates_once = PTHREAD_ONCE_INIT;\n"
+                  "static pthread_mutex_t download_lock = PTHREAD_MUTEX_INITIALIZER;\n"
+                  "static int fixture_transfer_locked(void) { int result=pthread_mutex_trylock(&download_lock); "
+                  "if (!result) pthread_mutex_unlock(&download_lock); return result == EBUSY; }\n"
+                  "static int active_transfers, overlapping_crypto;\n" + POSIX[end:])
+        native = native.replace("c->text = redirect_first", """
+    if (__atomic_add_fetch(&active_transfers, 1, __ATOMIC_SEQ_CST) > 1)
+        __atomic_store_n(&overlapping_crypto, 1, __ATOMIC_SEQ_CST);
+    struct timespec pause = {0, 10000000}; nanosleep(&pause, NULL);
+    c->text = redirect_first""")
+        native = native.replace("c->at = 0; ++opens; return 1;", "c->at = 0; ++opens; return !strstr(host, \"fail.test\");")
+        native = native.replace("static void connection_free(struct connection *c) { assert(fixture_transfer_locked()); (void)c; }",
+                                "static void connection_free(struct connection *c) { assert(fixture_transfer_locked()); (void)c; __atomic_sub_fetch(&active_transfers, 1, __ATOMIC_SEQ_CST); }")
+        self.compile_and_run("concurrent", native + "\n".join(pieces) + POSIX_CONCURRENT_CASES, extra_flags=("-pthread",))
 
 
 if __name__ == "__main__":

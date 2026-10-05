@@ -1,9 +1,12 @@
 """Tests for explicit reviewed-helper staging; no Invader programs execute."""
 import hashlib
 import json
+import ntpath
+import os
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -20,6 +23,11 @@ class ContentToolsTests(unittest.TestCase):
         self.toolchain = self.root / "toolchain"
         (self.toolchain / "build").mkdir(parents=True)
         self.pins = json.loads(tools.PINS.read_text())
+        self.pins.pop("license_manifest_sha256", None)
+        self.pins["compatible_package_producers"] = [{"invader_commit": self.pins["invader_commit"],
+                                                       "tool_sha256": {"extract": "a" * 64, "build": "b" * 64}}]
+        source_bytes = b"fixture corresponding source archive"
+        self.pins["corresponding_source_sha256"] = hashlib.sha256(source_bytes).hexdigest()
         self.pins["binaries"] = {}
         for name in ("extract", "build"):
             data = ("reviewed fixture " + name).encode()
@@ -42,6 +50,10 @@ class ContentToolsTests(unittest.TestCase):
         self.manifest = {key: self.pins[key] for key in (
             "invader_repository", "invader_commit", "riat_commit", "architecture")}
         self.manifest["rust_toolchain"] = str(rust / "bin")
+        self.manifest["compatible_package_producers"] = self.pins["compatible_package_producers"]
+        (self.toolchain / "halo-content-tools-source.tar.gz").write_bytes(source_bytes)
+        self.manifest["corresponding_source"] = {"file": "halo-content-tools-source.tar.gz",
+                                                "sha256": self.pins["corresponding_source_sha256"], "size": len(source_bytes)}
         self.manifest["binaries"] = {name: {"sha256": digest, "path": "/untrusted/never-executed"}
                                      for name, digest in self.pins["binaries"].items()}
         self.write_manifest()
@@ -81,7 +93,8 @@ class ContentToolsTests(unittest.TestCase):
     def test_two_helpers_sign_and_provenance_omit_machine_paths(self):
         binaries = self.stage()
         self.assertEqual([path.name for path in binaries], ["invader-extract", "invader-build"])
-        self.assertTrue(all(path.stat().st_mode & 0o111 for path in binaries))
+        if os.name != "nt":  # Windows stat does not report POSIX chmod execute bits.
+            self.assertTrue(all(path.stat().st_mode & 0o111 for path in binaries))
         provenance = (self.app / "Contents/Resources/ContentTools.json").read_text()
         self.assertNotIn(str(self.root), provenance)
         self.assertNotIn("/untrusted", provenance)
@@ -116,11 +129,43 @@ class ContentToolsTests(unittest.TestCase):
             self.stage()
         self.assertFalse(self.commands)
 
+    def test_corresponding_source_is_copied_and_audited_against_independent_pin(self):
+        self.stage()
+        archive = self.app / "Contents/Resources/halo-content-tools-source.tar.gz"
+        self.assertEqual(archive.read_bytes(), (self.toolchain / archive.name).read_bytes())
+        self.assertTrue(tools.audit_content_tools(self.app))
+        archive.write_bytes(archive.read_bytes() + b"changed")
+        with self.assertRaisesRegex(RuntimeError, "corresponding source"):
+            tools.audit_content_tools(self.app)
+
+    def test_manifest_cannot_self_authorize_different_source_or_producer(self):
+        for field, replacement in (("corresponding_source", {"file": "halo-content-tools-source.tar.gz", "size": 0, "sha256": "0" * 64}),
+                                   ("compatible_package_producers", [])):
+            with self.subTest(field=field):
+                original = self.manifest[field]
+                self.manifest[field] = replacement; self.write_manifest()
+                with self.assertRaises(RuntimeError):
+                    self.stage()
+                self.manifest[field] = original
+        self.assertFalse(self.commands)
+
+    def test_prepared_notices_require_independent_license_manifest_pin(self):
+        self.manifest["notices_sha256"] = {"GPL-3.0.txt": "0" * 64}
+        self.write_manifest()
+        with self.assertRaisesRegex(RuntimeError, "independently reviewed"):
+            self.stage()
+        self.run.assert_not_called()
+
     def test_non_arm64_refused_before_signing(self):
         self.capture.side_effect = lambda *command: "x86_64"
         with self.assertRaisesRegex(RuntimeError, "arm64"):
             self.stage()
         self.run.assert_not_called()
+
+    def test_mac_library_paths_do_not_depend_on_test_host_path_separator(self):
+        with patch.object(tools, "os", SimpleNamespace(path=ntpath)):
+            self.assertEqual(tools._inspect(self.toolchain / "build/invader-extract"),
+                             ["/usr/lib/libSystem.B.dylib"])
 
     def test_non_system_library_and_system_path_traversal_refused(self):
         for library in ("@rpath/unreviewed.dylib", "/opt/homebrew/lib/libz.dylib", "/usr/lib/../../tmp/tool.dylib"):

@@ -347,6 +347,10 @@ symbols in this file:
 #include "game/players.h"
 #include "main/main.h"
 #include "networking/network_client_manager.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "../../port/linux/src/game_directory.h"
+#include "interface/event_manager.h"
+#endif
 #include "networking/network_game_globals.h"
 #include "networking/network_game_manager.h"
 #include "networking/network_messages.h"
@@ -725,6 +729,14 @@ void ui_widget_game_data_function_invoke(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+boolean ui_widget_game_data_function_is_server_list(word function)
+{
+	return function < NUMBEROF(game_data_input_function_list) &&
+		game_data_input_function_list[function] == server_list_menu_update;
+}
+#endif
+
 static void widget_function_null(
 	struct widget_instance *widget)
 {
@@ -966,20 +978,28 @@ static void server_list_menu_update(
 	   local of server_list_menu_update; their element type is named advertised_game_data). Neither
 	   PDB records the block: placing it at the top of the function is unattested. January
 	   corroborates: .bss +0, referenced only by this function. */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	static struct network_advertised_game *displayed_servers[MAXIMUM_NETWORK_ADVERTISED_GAMES + HALO_DIRECTORY_MAX_GAMES];
+#else
 	static struct network_advertised_game *displayed_servers[MAXIMUM_NETWORK_ADVERTISED_GAMES];
+#endif
 	struct network_game_client *client = global_network_game_client_get();
 	long displayed_server_count = 0;
 
 	csmemset(
 		displayed_servers,
 		0,
-		MAXIMUM_NETWORK_ADVERTISED_GAMES * sizeof(*displayed_servers));
+		sizeof(displayed_servers));
 	if (client)
 	{
 		struct ui_widget_definition *definition = ui_widget_definition_get(
 			widget->definition_tag_index);
 		struct network_advertised_game *available_games =
 			network_game_client_get_available_games(client);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		long directory_count;
+		struct network_advertised_game *directory_servers = network_game_client_get_directory_games(client, &directory_count);
+#endif
 		struct widget_instance *item;
 		unsigned long milliseconds_since_creation;
 		long game_index;
@@ -1019,6 +1039,16 @@ static void server_list_menu_update(
 		}
 
 		widget->parameters.list.list_items = displayed_servers;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		for (game_index = 0; game_index < directory_count; game_index++)
+			if (directory_servers[game_index].open) displayed_servers[displayed_server_count++] = &directory_servers[game_index];
+		for (game_index = 0; game_index < directory_count; game_index++)
+			if (!directory_servers[game_index].open) displayed_servers[displayed_server_count++] = &directory_servers[game_index];
+		/* The distinct event changes screens during event processing, never
+		   while traversing the render tree. It is inert after cancelling. */
+		if (network_game_client_directory_should_post_join(client))
+			event_manager_post_directory_join(widget->local_player_index >= 0 ? widget->local_player_index : 0);
+#endif
 		widget->parameters.list.number_of_items = (word)displayed_server_count;
 		widget->parameters.list.selected_list_item_index = (short)CEILING(
 			widget->parameters.list.selected_list_item_index,
@@ -1266,15 +1296,27 @@ static void server_list_menu_update(
 					0x369);
 				if (score_limit_text->parameters.text_box.text)
 				{
-					usnprintf(
-						score_limit_text->parameters.text_box.text,
-						3,
-						L"%d",
-						server->score_limit);
-					score_limit_text->parameters.text_box.text[3] = 0;
+					if (server->score_limit < 0)
+					{
+						/* Legacy directory records have no score metadata. */
+						score_limit_text->parameters.text_box.text[0] = 0;
+					}
+					else
+					{
+						usnprintf(
+							score_limit_text->parameters.text_box.text,
+							3,
+							L"%d",
+							server->score_limit);
+						score_limit_text->parameters.text_box.text[3] = 0;
+					}
 				}
 
-				switch (server->engine_type)
+				if (server->score_limit < 0)
+				{
+					score_limit_type_text->parameters.text_box.string_list_index = 1;
+				}
+				else switch (server->engine_type)
 				{
 				case game_engine_ctf:
 					score_limit_type_text->parameters.text_box.string_list_index =
@@ -2052,6 +2094,10 @@ static void netgame_prejoin_players(
 static void set_textbox_to_build_number(
 	struct widget_instance *widget)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Native builds show the historical engine identifier in About. */
+	widget->visible = FALSE;
+#else
 	/* Name, type and function scope from the 2003 PC demo PDB and the HCEX PDB (static local
 	   wchar_t build_number_string[0x40]). Neither PDB records the block: placing it at the top of
 	   the function is unattested. January corroborates: .bss +0x28, referenced only here. */
@@ -2089,6 +2135,7 @@ static void set_textbox_to_build_number(
 			NUMBEROF(build_number_string) - 1);
 		widget->parameters.text_box.text[NUMBEROF(build_number_string) - 1] = 0;
 	}
+#endif
 	return;
 }
 

@@ -75,6 +75,10 @@ jobs:
           python -m unittest tools.test_device_settings tools.test_windows_shared_headers
           tools.test_game_settings.NativeGameSettingsTests.test_native_menu
           tools.test_performance_mouse tools.test_save_migration
+          tools.test_desktop_first_run tools.test_release_discovery
+          tools.test_download_transport_limits tools.test_desktop_map_downloads tools.test_desktop_timer_audio tools.test_game_directory tools.test_game_directory_worker
+          tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail
+          tools.test_input_delay
 
       - name: Compile cache
         run: ccache --show-stats
@@ -152,6 +156,9 @@ jobs:
           HALO_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: python3 tools/ci_build.py android release
 
+      - name: Timer Audio download fixtures
+        run: python3 tools/test_android_timer_audio.py --require-jdk --fetch-json
+
       - name: Compile cache
         run: ccache --show-stats
 
@@ -212,6 +219,10 @@ jobs:
           python -m unittest tools.test_device_settings tools.test_windows_shared_headers
           tools.test_game_settings.NativeGameSettingsTests.test_native_menu
           tools.test_performance_mouse tools.test_save_migration
+          tools.test_desktop_first_run tools.test_release_discovery
+          tools.test_download_transport_limits tools.test_desktop_map_downloads tools.test_desktop_timer_audio tools.test_game_directory tools.test_game_directory_worker
+          tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail
+          tools.test_input_delay
 
       - name: Compile cache
         run: ccache --show-stats

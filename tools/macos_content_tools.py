@@ -1,14 +1,15 @@
-"""Stage two explicitly supplied, reviewed Invader helpers for a local prototype.
+"""Stage two explicitly supplied, independently reviewed Invader helpers.
 
 No downloads, compilation, shell commands or execution of supplied helpers occur.
 The source manifest supplies provenance, never executable paths or new trust
-anchors. Pins come from checked-in configuration. This is not a fresh-CI build
-recipe or a completed public corresponding-source distribution.
+anchors. Pins come from checked-in configuration. The separate source builder
+emits review candidates; this module never trusts their hashes automatically.
 """
 import hashlib
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import shutil
 import stat
@@ -56,7 +57,7 @@ def _inspect(binary):
             raise RuntimeError("Could not validate content tool runtime libraries")
         library = match[1]
         if (not library.startswith(("/usr/lib/", "/System/Library/"))
-                or os.path.normpath(library) != library):
+                or posixpath.normpath(library) != library):
             raise RuntimeError("Content tools may link only macOS system libraries")
         libraries.append(library)
     if not libraries:
@@ -65,6 +66,24 @@ def _inspect(binary):
 
 
 def _notices(directory, manifest, pins):
+    if "notices_sha256" in manifest:
+        records = manifest["notices_sha256"]
+        canonical = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
+        if (not isinstance(records, dict) or hashlib.sha256(canonical).hexdigest() !=
+                pins.get("license_manifest_sha256")):
+            raise RuntimeError("Content tool notices are not independently reviewed")
+        licenses = directory / "Licenses"
+        if licenses.is_symlink() or {path.name for path in licenses.iterdir()} != set(records):
+            raise RuntimeError("Content tool notices are incomplete")
+        notices = {}
+        for name, digest in records.items():
+            if not isinstance(name, str) or Path(name).name != name:
+                raise RuntimeError("Invalid content tool notice name")
+            data = _read_regular(licenses / name, MAX_NOTICE_BYTES)
+            if hashlib.sha256(data).hexdigest() != digest:
+                raise RuntimeError("Content tool notice differs from reviewed provenance")
+            notices[name] = data
+        return notices
     notices = {}
     for name, relative in pins["notices"].items():
         notices[name] = _read_regular(_inside(directory, relative), MAX_NOTICE_BYTES)
@@ -133,6 +152,21 @@ def stage_content_tools(app, toolchain_directory, sign_identity="-", release=Fal
             or not contents.is_dir() or not resources.is_dir()):
         raise RuntimeError("Stage content tools only into a prepared private app bundle")
     targets = (contents / "Helpers", resources / "Licenses/Invader", resources / "ContentTools.json")
+    archive_data = None
+    source_record = manifest.get("corresponding_source")
+    if pins.get("corresponding_source_sha256"):
+        if (not isinstance(source_record, dict) or source_record.get("file") != "halo-content-tools-source.tar.gz"
+                or source_record.get("sha256") != pins["corresponding_source_sha256"]
+                or isinstance(source_record.get("size"), bool) or not isinstance(source_record.get("size"), int)):
+            raise RuntimeError("Content tools require independently reviewed corresponding source")
+        archive_data = _read_regular(directory / source_record["file"], 128 * 1024 * 1024)
+        if (len(archive_data) != source_record["size"]
+                or hashlib.sha256(archive_data).hexdigest() != source_record["sha256"]):
+            raise RuntimeError("Content tool corresponding source differs from reviewed provenance")
+        targets += (resources / source_record["file"],)
+    producers = pins.get("compatible_package_producers")
+    if producers is not None and manifest.get("compatible_package_producers") != producers:
+        raise RuntimeError("Content tool producer compatibility is not independently reviewed")
     if any(os.path.lexists(path) for path in targets):
         raise FileExistsError("Content tools or their provenance already exist in this app")
     inputs = {}
@@ -172,14 +206,24 @@ def stage_content_tools(app, toolchain_directory, sign_identity="-", release=Fal
                 "schema", "architecture", "invader_repository", "invader_commit",
                 "riat_repository", "riat_commit", "rust_version", "fresh_ci_ready")}
             provenance["binaries"] = binary_records
+            if producers is not None:
+                provenance["consumer_platform"] = "macos"
+                provenance["compatible_package_producers"] = producers
+            if archive_data is not None:
+                provenance["corresponding_source"] = source_record
             provenance["notices_sha256"] = {name: hashlib.sha256(data).hexdigest()
                                            for name, data in sorted(notices.items())}
             record = staging / "ContentTools.json"
             record.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n")
+            publication_sources = (helpers, licenses, record)
+            if archive_data is not None:
+                archive = staging / source_record["file"]
+                archive.write_bytes(archive_data)
+                publication_sources += (archive,)
             targets[1].parent.mkdir(exist_ok=True)
             if targets[1].parent.is_symlink():
                 raise RuntimeError("Content tool license destination must be a real directory")
-            for source, target in zip((helpers, licenses, record), targets):
+            for source, target in zip(publication_sources, targets):
                 if source.is_dir():
                     # mkdir and each link are exclusive, including raced targets.
                     # This caller-owned app remains private until fully signed.
@@ -211,6 +255,16 @@ def audit_content_tools(app):
             or not isinstance(record.get("binaries"), dict)
             or set(record["binaries"]) != set(pins["binaries"])):
         raise RuntimeError("Bundled community tool provenance does not match reviewed pins")
+    if pins.get("compatible_package_producers") is not None and (
+            record.get("consumer_platform") != "macos" or record.get("compatible_package_producers") != pins["compatible_package_producers"]):
+        raise RuntimeError("Bundled producer compatibility differs from reviewed pins")
+    if pins.get("corresponding_source_sha256"):
+        source = record.get("corresponding_source", {})
+        if source.get("file") != "halo-content-tools-source.tar.gz" or source.get("sha256") != pins["corresponding_source_sha256"]:
+            raise RuntimeError("Bundled corresponding source differs from reviewed pins")
+        data = _read_regular(contents / "Resources" / source["file"], 128 * 1024 * 1024)
+        if len(data) != source.get("size") or hashlib.sha256(data).hexdigest() != source["sha256"]:
+            raise RuntimeError("Bundled corresponding source differs from provenance")
     for name, expected in pins["binaries"].items():
         item = record["binaries"][name]
         binary = contents / "Helpers" / ("invader-" + name)
@@ -220,6 +274,10 @@ def audit_content_tools(app):
                 or _inspect(binary) != item.get("system_libraries")):
             raise RuntimeError("Bundled community helper differs from its provenance: " + name)
     notices = record.get("notices_sha256")
+    if pins.get("license_manifest_sha256"):
+        canonical = json.dumps(notices, sort_keys=True, separators=(",", ":")).encode()
+        if hashlib.sha256(canonical).hexdigest() != pins["license_manifest_sha256"]:
+            raise RuntimeError("Bundled licenses differ from reviewed pins")
     required = set(pins["notices"]) | set(pins["header_notices"]) | {
         "Rust-" + name for name in pins["rust_notices"]} | {
         "Rust-COPYRIGHT-library.html", "README.txt", "invader-dependencies.cmake"}

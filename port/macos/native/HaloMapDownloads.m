@@ -293,8 +293,12 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
     });
 }
 - (int)requestMap:(NSString *)name {
+    return [self requestMap:name prioritize:YES];
+}
+- (int)requestMap:(NSString *)name prioritize:(BOOL)prioritize {
     if (!mapNameIsValid(name) || !self.compatibleData) return HALO_MAP_DOWNLOAD_UNAVAILABLE;
     NSString *key = name.lowercaseString;
+    BOOL enqueue = NO;
     @synchronized(self) {
         NSNumber *state = _states[key];
         if (state.intValue == HALO_MAP_DOWNLOAD_READY) return HALO_MAP_DOWNLOAD_READY;
@@ -302,12 +306,24 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
         if (_cancelled) return HALO_MAP_DOWNLOAD_UNAVAILABLE;
         if (_localEntries[key]) return state ? state.intValue : HALO_MAP_DOWNLOAD_FAILED;
         if (!_enabled || !_configured || _cancelled) return HALO_MAP_DOWNLOAD_UNAVAILABLE;
-        if (state) return state.intValue;
-        if (!_entries[key]) return _catalogPending || _initializing ? HALO_MAP_DOWNLOAD_PENDING :
-            _catalogFailed ? HALO_MAP_DOWNLOAD_FAILED : HALO_MAP_DOWNLOAD_UNAVAILABLE;
-        _states[key] = @(HALO_MAP_DOWNLOAD_PENDING);
+        if (state && (state.intValue != HALO_MAP_DOWNLOAD_PENDING || !prioritize)) return state.intValue;
+        if (!state) {
+            if (!_entries[key]) return _catalogPending || _initializing ? HALO_MAP_DOWNLOAD_PENDING :
+                _catalogFailed ? HALO_MAP_DOWNLOAD_FAILED : HALO_MAP_DOWNLOAD_UNAVAILABLE;
+            _states[key] = @(HALO_MAP_DOWNLOAD_PENDING);
+            enqueue = YES;
+        }
     }
-    dispatch_async(_work, ^{ [self->_requests addObject:key]; [self nextMap]; });
+    dispatch_async(_work, ^{
+        if (enqueue) [self->_requests addObject:key];
+        // A join request moves ahead of bulk downloads without restarting the
+        // active transfer (which is no longer in the pending ordered set).
+        if (prioritize && [self->_requests containsObject:key]) {
+            [self->_requests removeObject:key];
+            [self->_requests insertObject:key atIndex:0];
+        }
+        [self nextMap];
+    });
     return HALO_MAP_DOWNLOAD_PENDING;
 }
 - (void)acceptCatalog:(NSDictionary *)entries {
@@ -340,7 +356,9 @@ BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *con
             @synchronized(self) { _states[name] = @(HALO_MAP_DOWNLOAD_FAILED); _failures[name] = message; }
             [self status:message];
         }
-        if (self.enabled && [entry[@"prefetch"] boolValue]) [self requestMap:name];
+        // Enabled launches fetch the whole approved collection. READY maps
+        // and conflicts above still preserve existing bytes.
+        if (self.enabled) [self requestMap:name prioritize:NO];
     }
 }
 - (NSDictionary *)localEntry:(NSDictionary *)manifest {
