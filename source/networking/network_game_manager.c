@@ -704,7 +704,9 @@ boolean network_game_create_game_objects(
 	game_precache_new_map(options.map_name, TRUE);
 	main_menu_unload();
 
-	if (game_in_progress())
+	/* A client's menu map can still own textures after its clock ends.
+	Dispose it before opening the next map's texture cache. */
+	if (game_in_progress() || game_map_loaded())
 	{
 		game_dispose_from_old_map();
 		game_unload();
