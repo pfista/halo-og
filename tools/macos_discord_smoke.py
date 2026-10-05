@@ -15,7 +15,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build/macos"
-APPLICATION = "1553978809840050229"
+APPLICATION = "1556496882329460736"
 SECRET = "0123456789abcdef0123456789abcdeffedcba9876543210fedcba9876543210"
 
 
@@ -23,11 +23,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--executable", type=Path, default=BUILD / "halo")
     parser.add_argument("--guest", type=Path, default=BUILD / "halo_guest.elf")
+    parser.add_argument("--offline", action="store_true", help="Verify presence with internet play disabled")
     args = parser.parse_args()
     (BUILD / "tests").mkdir(parents=True, exist_ok=True)
     out = Path(tempfile.mkdtemp(prefix="discord-game-", dir=BUILD / "tests"))
     (out / "config.toml").write_text(f'''[network]
-online = true
+online = {str(not args.offline).lower()}
 address = "127.0.0.1"
 join_from_clipboard = false
 allow_upnp = false
@@ -90,6 +91,10 @@ exit_after = 10.0
                         opcode, activity = receive()
                         assert opcode == 1 and activity.get("cmd") == "SET_ACTIVITY"
                         assert activity["args"]["pid"] == process.pid
+                        presence = activity["args"]["activity"]
+                        assert presence["type"] == 0 and presence["details"] == "Halo OG"
+                        assert presence["assets"]["large_text"] == "Halo OG"
+                        assert "party" not in presence and "secrets" not in presence
                         assert process.wait(timeout=20) == 0
                 finally:
                     if process.poll() is None:
@@ -98,13 +103,18 @@ exit_after = 10.0
     log_text = (out / "game.log").read_text(errors="replace")
     assert "Internet play: connected to Discord" in log_text
     assert "Internet play: accepted a Discord invite" in log_text
-    # The longer key hash maps to a locally administered unicast identifier.
-    assert "joining 0223456789ab's game" in log_text
+    if args.offline:
+        assert "the invite is ignored" in log_text
+        assert "joining 0223456789ab's game" not in log_text
+    else:
+        # The longer key hash maps to a locally administered unicast identifier.
+        assert "joining 0223456789ab's game" in log_text
     report = {"discord_launch_argument": True, "game_handshake": True,
               "invite_subscription": True, "native_pid": True,
-              "invite_dispatched_to_game": True, "clean_exit": True}
+              "playing_presence": True, "internet_play_enabled": not args.offline,
+              "invite_dispatched_to_game": not args.offline, "clean_exit": True}
     (out / "result.json").write_text(json.dumps(report, indent=2) + "\n")
-    print("Real Halo: Discord launch, handshake, subscription and invite delivery passed")
+    print("Real Halo: Discord launch, handshake, Playing presence and invite handling passed")
     print("Evidence:", out)
 
 

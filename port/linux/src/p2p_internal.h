@@ -47,7 +47,7 @@ while it waits; the p2p thread's */
 unsigned long p2p_resolve(const char *host);
 /* registers this executable for links of scheme (posix_register_url_scheme),
 unless it is an automated run (debug.exit_after, a hidden window, no
-renderer), which must not take the links over. The p2p thread's: it lets
+renderer), which must not take the links over. Under p2p_lock: it lets
 go of the p2p lock while it may wait for a program */
 void p2p_register_url_scheme(const char *scheme, const char *description);
 /* formats bytes as lower-case hexadecimal (text holds 2 * size + 1) */
@@ -84,8 +84,8 @@ none does (a session that has ended is never taken up again: its keys'
 packet numbers would start again) */
 int p2p_peer_reoffered(const unsigned char *identifier, const unsigned char *secret,
 	const struct p2p_candidate *candidates, int count);
-/* an invite that arrived on the p2p thread (from Discord, or another copy
-of the game) */
+/* an invite that arrived under p2p_lock (from Discord, or another copy
+of the game); ignored when internet play is off */
 void p2p_invite_received(const char *text);
 
 /* ---------- p2p_signal.c: signalling through public MQTT brokers */
@@ -146,7 +146,7 @@ void p2p_x25519(unsigned char *result, const unsigned char *scalar, const unsign
 /* ---------- p2p_discord.c: rich presence and invites through the Discord
 desktop client */
 
-/* called from the p2p thread each pass */
+/* called from the Discord thread each pass, under p2p_lock */
 void p2p_discord_update(void);
 /* the Discord user signed in, as told (empty if none): under p2p_lock */
 void p2p_discord_user(char *id, int id_size, char *name, int name_size);

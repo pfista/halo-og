@@ -64,6 +64,7 @@ only look up and create stand-ins.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <SDL3/SDL.h>
 
 enum
 {
@@ -387,12 +388,17 @@ unsigned long p2p_resolve(const char *host)
 
 void p2p_register_url_scheme(const char *scheme, const char *description)
 {
+	static pthread_mutex_t registration_lock = PTHREAD_MUTEX_INITIALIZER;
+
 	if (config_real("debug.exit_after") > 0.0 || config_boolean("debug.hidden_window") ||
 		config_boolean("debug.null_renderer"))
 		return;
 	/* it may run a program and wait for it */
 	pthread_mutex_unlock(&p2p_lock);
+	/* The Discord and tunnel workers share Linux's mimeapps.list. */
+	pthread_mutex_lock(&registration_lock);
 	posix_register_url_scheme(scheme, description);
+	pthread_mutex_unlock(&registration_lock);
 	pthread_mutex_lock(&p2p_lock);
 }
 
@@ -2340,6 +2346,11 @@ int p2p_invite_peer_address(const char *text, unsigned long *address)
 
 void p2p_invite_received(const char *text)
 {
+	if (!p2p.running)
+	{
+		platform_log("Internet play is off (network.online in config.toml): the invite is ignored");
+		return;
+	}
 	/* (an older version's is logged as such) */
 	if (!join_invite(text))
 		platform_log("Internet play: that is not an invite");
@@ -2924,13 +2935,29 @@ static void *p2p_thread(void *unused)
 		update_hosting();
 		update_joining();
 		update_upnp();
-		p2p_discord_update();
 #ifdef HALO_ANDROID
 		poll_invite_file();
 #endif
 	}
 	return NULL;
 }
+
+#if (!defined(HALO_ANDROID) || defined(HALO_MACOS)) && !defined(HALO_IOS)
+/* Presence also runs in offline games and when the internet tunnel cannot
+open. The shared lock keeps hosting updates and invite delivery serialized. */
+static void *discord_thread(void *unused)
+{
+	(void)unused;
+	for (;;)
+	{
+		pthread_mutex_lock(&p2p_lock);
+		p2p_discord_update();
+		pthread_mutex_unlock(&p2p_lock);
+		SDL_Delay(50);
+	}
+	return NULL;
+}
+#endif
 
 void p2p_initialize(unsigned long local_address)
 {
@@ -2940,6 +2967,20 @@ void p2p_initialize(unsigned long local_address)
 	int index;
 
 	p2p_identifier();
+#if (!defined(HALO_ANDROID) || defined(HALO_MACOS)) && !defined(HALO_IOS)
+	{
+		static int discord_running;
+
+		pthread_mutex_lock(&p2p_lock);
+		if (!discord_running && *config_string("discord.application_id") &&
+			pthread_create(&thread, NULL, discord_thread, NULL) == 0)
+		{
+			pthread_detach(thread);
+			discord_running = 1;
+		}
+		pthread_mutex_unlock(&p2p_lock);
+	}
+#endif
 	if (p2p.running || !config_boolean("network.online"))
 		return;
 	if (tunnel_port < 0 || tunnel_port > 65535)
@@ -2986,7 +3027,10 @@ void p2p_initialize(unsigned long local_address)
 		return;
 	}
 	pthread_detach(thread);
+	/* The Discord worker can deliver an invite as soon as startup completes. */
+	pthread_mutex_lock(&p2p_lock);
 	p2p.running = 1;
+	pthread_mutex_unlock(&p2p_lock);
 	if (command_line_invite(invite, sizeof(invite)))
 		p2p_join_invite(invite);
 }

@@ -202,7 +202,7 @@ the setting for one start of the game. It has priority over the file.
 | `network.allow_upnp` | `true` | `HALO_NET_ALLOW_UPNP` | `true`: internet play can ask the router to forward its port (UPnP). `false`: the game does not ask. Refer to "Internet play". |
 | `network.signalling_brokers` | three public brokers | `HALO_NET_BROKERS` | The public MQTT brokers (`host:port`, with commas between them) that let the machines of an invite find each other. |
 | `network.stun_servers` | Google and Cloudflare | `HALO_NET_STUN` | The public STUN servers (`host:port`, with commas between them) that give the internet address of a machine. |
-| `discord.application_id` | the application of the project | `HALO_DISCORD_APPLICATION` | The Discord application for invites. Empty: no Discord. |
+| `discord.application_id` | the application of the project | `HALO_DISCORD_APPLICATION` | The Discord application for game activity and invites, including offline play. Empty: no Discord. |
 | `update.auto` | `true` | `HALO_UPDATE_AUTO` | `true`: at start-up, the game looks for a new version. Refer to "Updates". `false`: the game does not look. |
 | `debug.update_answer` | `""` | `HALO_UPDATE_ANSWER` | The answer to the update question, for automatic tests: `yes`, `no` or `never`. Empty: the game asks. |
 | `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | The game stops after this number of seconds. `0`: never. |
@@ -485,12 +485,20 @@ In the game, each machine has an address in 100.64.0.0/10:
 
 ### Discord
 
-If the Discord desktop client operates, the game of the host shows in
-Discord (through the application of `discord.application_id`). The activity
-has a private party with the invite as its join secret. The host can send
+If the Discord desktop client runs and the player has enabled activity sharing,
+the game publishes a Playing activity while it is open, including menus,
+campaign and local games with `network.online = false`. The game title comes
+from the registered name of `discord.application_id`; see
+[Discord setup](../../docs/discord.md).
+
+While hosting an internet game, the activity has a private party with the
+invite as its join secret. The host can send
 the invite with the invite button of Discord. When a person accepts it, that
 person joins the game. If the game does not operate, Discord starts it.
-The game sends the activity only to a Discord client of the same user.
+Leaving the hosted game removes the party and join secret while keeping the
+Playing activity. The game sends the activity only to a Discord client of the
+same user, reconnects if Discord starts later, and ignores invites when internet
+play is disabled. Set `discord.application_id = ""` to disable the integration.
 
 ## What operates
 

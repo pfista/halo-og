@@ -164,4 +164,9 @@ For a private Discord RPC smoke check without changing Discord activity:
 
 ```sh
 python3 tools/macos_discord_smoke.py
+python3 tools/macos_discord_smoke.py --offline
 ```
+
+These verify Playing presence in the real game with internet play enabled and
+disabled. See [Discord setup](discord.md) for the application and activity-sharing
+settings needed to display Halo OG in the desktop client.

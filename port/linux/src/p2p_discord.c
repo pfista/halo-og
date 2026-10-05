@@ -1,9 +1,10 @@
 /*
 P2P_DISCORD.C
 
-Discord invites for internet play (p2p.c), through the Discord desktop
-client's local RPC socket (a Unix socket, or a named pipe on Windows):
-while hosting, the game's activity carries a private party whose join
+Discord rich presence and invites for internet play (p2p.c), through the
+Discord desktop client's local RPC socket (a Unix socket, or a named pipe
+on Windows). The game publishes a Playing activity throughout its lifetime;
+while hosting, that activity carries a private party whose join
 secret is the invite, so the host can send it with Discord's "Invite to
 Join" and whoever accepts it joins. Discord only hands the secret to people
 the host invited (asking to join goes unanswered).
@@ -16,9 +17,9 @@ links (p2p.c).
 The protocol: frames of a little-endian opcode and length, then JSON. The
 handshake (opcode 0) names the application; commands and events are opcode
 1; 2 closes; 3 and 4 are ping and pong. Nothing here waits for Discord (the
-p2p thread holds its lock, which the game's threads take): what it does not
-take at once waits in a buffer, and a client that lets that fill up is
-disconnected.
+Discord thread holds the p2p lock, which the game's threads take): what it
+does not take at once waits in a buffer, and a client that lets that fill
+up is disconnected.
 */
 
 #include "platform.h"
@@ -156,15 +157,15 @@ static void send_activity(void)
 	char party[2 * P2P_IDENTIFIER_SIZE + 1];
 	int size;
 
-	p2p_hex(p2p_identifier(), P2P_IDENTIFIER_SIZE, party);
 	if (discord.hosting)
 	{
+		p2p_hex(p2p_identifier(), P2P_IDENTIFIER_SIZE, party);
 		size = snprintf(json, sizeof(json),
 			"{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%lu\",\"args\":{\"pid\":%lu,\"activity\":{"
-			"\"details\":\"Hosting a game\",\"state\":\"Invite only\","
+			"\"type\":0,\"details\":\"Hosting a game\",\"state\":\"Invite only\","
 			/* the image uploaded as "logo" under the application's Rich
 			Presence art assets */
-			"\"assets\":{\"large_image\":\"logo\",\"large_text\":\"Halo: Combat Evolved\"},"
+			"\"assets\":{\"large_image\":\"logo\",\"large_text\":\"Halo OG\"},"
 			"\"party\":{\"id\":\"%s\",\"size\":[%d,%d]},"
 			"\"secrets\":{\"join\":\"%s\"},\"instance\":false}}}",
 			++discord.nonce, (unsigned long)posix_process_id(), party, discord.player_count,
@@ -173,7 +174,9 @@ static void send_activity(void)
 	else
 	{
 		size = snprintf(json, sizeof(json),
-			"{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%lu\",\"args\":{\"pid\":%lu}}",
+			"{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%lu\",\"args\":{\"pid\":%lu,\"activity\":{"
+			"\"type\":0,\"details\":\"Halo OG\","
+			"\"assets\":{\"large_image\":\"logo\",\"large_text\":\"Halo OG\"},\"instance\":false}}}",
 			++discord.nonce, (unsigned long)posix_process_id());
 	}
 	discord_send(_opcode_frame, json, size);

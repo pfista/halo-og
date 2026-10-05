@@ -12,9 +12,9 @@ Addresses and ports are in network byte order.
 #ifndef __HALO_LINUX_P2P_H
 #define __HALO_LINUX_P2P_H
 
-/* starts internet play, if network.online is set, when the game starts
-its networking; local_address is the address the game's sockets are
-reached at (network.address, else 127.0.0.1) */
+/* starts Discord presence and internet play (if network.online is set)
+when the game starts its networking; local_address is the address the game's
+sockets are reached at (network.address, else 127.0.0.1) */
 void p2p_initialize(unsigned long local_address);
 
 /* on the desktop, before anything else: if this process was started with

@@ -240,7 +240,7 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
             executable, sdl, frameworks / "libEGL.dylib", frameworks / "libGLESv2.dylib", sparkle / "Sparkle", *content_binaries]),
         "CFBundleURLTypes": [{"CFBundleURLName": "Halo multiplayer invite",
                               # Match the shared discord.application_id default.
-                              "CFBundleURLSchemes": ["halo", "discord-1553978809840050229"],
+                              "CFBundleURLSchemes": ["halo", "discord-1556496882329460736"],
                               "CFBundleTypeRole": "Viewer"}],
         "NSLocalNetworkUsageDescription": "Connect to players hosting Halo multiplayer games.",
         "NSHighResolutionCapable": True,

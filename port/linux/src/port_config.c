@@ -205,10 +205,11 @@ static const struct config_setting config_settings[] =
 		"HALO_NET_STUN", _environment_value, _platform_all,
 		"Public STUN servers that tell this machine its internet address;\n"
 		"comma-separated host:port." },
-	{ "discord.application_id", _config_string, "\"1553978809840050229\"", "HALO_DISCORD_APPLICATION",
+	{ "discord.application_id", _config_string, "\"1556496882329460736\"", "HALO_DISCORD_APPLICATION",
 		_environment_value, _platform_desktop,
-		"The Discord application internet play invites go through while the\n"
-		"Discord desktop client runs; empty for none." },
+		"The Discord application for game activity and internet play invites\n"
+		"while the Discord desktop client runs, including offline play.\n"
+		"Its registered name is the game title Discord shows; empty disables Discord." },
 
 	{ "update.auto", _config_boolean, "true", "HALO_UPDATE_AUTO", _environment_value, _platform_all,
 		"Look for a new version when the game starts, and offer to update to it;\n"
@@ -686,7 +687,18 @@ static void config_set_from_file(struct config_value *value, const struct config
 		if (datum.type == TOML_STRING)
 		{
 			free(value->string);
-			value->string = strdup(datum.u.s);
+			/* Older generated files saved the bundled Halo CE application.
+			Use Halo OG's current application without rewriting the file or
+			changing custom/disabled choices. Environment overrides apply later. */
+			if (!strcmp(setting->name, "discord.application_id") &&
+				!strcmp(datum.u.s, "1553978809840050229"))
+			{
+				value->string = config_copy(setting->default_value + 1,
+					strlen(setting->default_value) - 2);
+				platform_log("settings: using Halo OG's Discord application for the previous bundled ID");
+			}
+			else
+				value->string = strdup(datum.u.s);
 		}
 		else
 		{
