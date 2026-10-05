@@ -18,6 +18,26 @@ long config_integer(const char *name);
 double config_real(const char *name);
 /* never NULL; "" when unset */
 const char *config_string(const char *name);
+enum config_update_type
+{
+    _config_update_number,
+    _config_update_string
+};
+struct config_update
+{
+    const char *name;
+    enum config_update_type type;
+    double number;
+    const char *string;
+};
+/* Atomically save a mixed batch of registered numeric/string settings, then
+ * apply the cached values only after persistence succeeds. Numeric types follow
+ * the registration; strings must be non-NULL and valid TOML string contents.
+ * Previously returned string pointers remain valid for this process lifetime. */
+int config_write_values(const struct config_update *updates, unsigned count);
+/* Refresh one registered, file-only string after another application surface
+ * saves it. Does not write defaults or refresh any other cached setting. */
+int config_refresh_string(const char *name);
 /* saves a boolean token into config.toml, preserving other text, and applies
 it to this session only after a successful write; 1 on success */
 int config_write_boolean(const char *name, int value);

@@ -19,10 +19,18 @@ enum
     _device_setting_timer_items,
     _device_setting_timer_position,
     _device_setting_timer_scale,
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+    _device_setting_renderer,
+    _device_setting_render_height,
+    _device_setting_frame_limit,
+    _device_setting_anti_aliasing,
+#endif
     NUMBER_OF_DEVICE_SETTINGS
 };
 
-/* Volumes are 0..1; switches are 0/1. Timer position is 0..2 and scale .5..1. */
+/* Volumes are 0..1; switches are 0/1. Timer position is 0..2 and scale .5..1.
+ * Mac renderer/AA choices are 0/1; height/cap are their config pixel/FPS values.
+ * Renderer, render height and AA describe saved choices for the next launch. */
 double device_settings_get(short setting);
 /* Save only changed rows, then apply to the current session. Returns 1 on
  * success, 0 on failure with prior settings restored, or -1 when a backend

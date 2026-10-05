@@ -1,5 +1,6 @@
 /* Native macOS entry point. SDL video remains on the real main thread. */
 #include "host.h"
+#include "host_renderer.h"
 #include "../native/host_menu.h"
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
@@ -88,11 +89,16 @@ static uint32_t make_boot(void) {
 extern void macos_enter_guest_stack(void *top, uint32_t boot) __attribute__((noreturn));
 int main(int argc, char **argv) {
     const char *image_argument = NULL;
+    int force_angle = 0;
     for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--renderer-angle")) {
+            force_angle = 1;
+            continue;
+        }
         if (!strncmp(argv[i], "halo://join/", 12) || host_is_discord_launch_url(argv[i]))
             continue;
         if (image_argument) {
-            fprintf(stderr, "Usage: %s [halo_guest.elf] [halo://join/invite]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [--renderer-angle] [halo_guest.elf] [halo://join/invite]\n", argv[0]);
             return 2;
         }
         image_argument = argv[i];
@@ -110,7 +116,9 @@ int main(int argc, char **argv) {
         host_fatal("Cannot locate application resources");
     *slash = 0;
     snprintf(resources, sizeof(resources), "%s/../Resources", executable);
-    snprintf(default_image, sizeof(default_image), "%s/halo_guest.elf", resources);
+    host_renderer_set_paths(full_executable, resources);
+    if (!host_renderer_default_guest(default_image, sizeof(default_image)))
+        host_fatal("Guest image path is too long");
     snprintf(default_data, sizeof(default_data), "%s/GameData", resources);
     if (!image_argument && access(default_data, F_OK)) {
         char config[4096];
@@ -132,6 +140,21 @@ int main(int argc, char **argv) {
         saves = !image_argument ? default_saves : "build/macos/saves";
     if (create_directories(saves) || !realpath(saves, save_root))
         host_fatal("Cannot open saves folder: %s", saves);
+    char renderer_note[256] = "";
+#if !defined(HALO_MACOS_NATIVE_METAL)
+    if (!image_argument) {
+        int saved_renderer = host_renderer_read(save_root, renderer_note, sizeof(renderer_note));
+        if (force_angle)
+            snprintf(renderer_note, sizeof(renderer_note), "One-launch ANGLE recovery override; the saved renderer was not changed.");
+        else if (saved_renderer == HOST_RENDERER_METAL)
+            host_renderer_dispatch_native(argc, argv, renderer_note, sizeof(renderer_note));
+    }
+#else
+    if (force_angle) {
+        fprintf(stderr, "Use the normal app executable (Contents/MacOS/halo) with --renderer-angle for recovery.\n");
+        return 2;
+    }
+#endif
     if (!image_argument) host_menu_initialize_application();
     SDL_SetMainReady();
     SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0");
@@ -156,6 +179,9 @@ int main(int argc, char **argv) {
         setbuf(stderr, NULL);
     }
     host_logf(HOST_LOG_INFO, "App executable: %s", full_executable);
+    host_logf(HOST_LOG_INFO, "Renderer active: %s; changes apply on next launch",
+        host_renderer_active() == HOST_RENDERER_METAL ? "Native Metal" : "ANGLE");
+    if (*renderer_note) host_logf(HOST_LOG_WARN, "%s", renderer_note);
     char build_info_path[4096], build_info_line[256];
     snprintf(build_info_path, sizeof(build_info_path), "%s/BuildInfo.txt", resources);
     FILE *build_info = fopen(build_info_path, "r");

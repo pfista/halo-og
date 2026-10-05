@@ -78,6 +78,7 @@ def build_host():
     flags = ["-arch", "arm64", "-mmacosx-version-min=14.0", "-O2", "-g", "-DHALO_MACOS=1", "-D_DARWIN_C_SOURCE",
              "-Wall", "-Wextra", "-Wno-unused-function", "-Wno-unused-parameter",
              "-I.", "-Iport/macos/host", "-Iport/macos/native", "-Iport/android/include", "-Iport/linux/src",
+             "-Iport/third_party/tomlc17",
              f"-I{SDL / 'include'}", *(["-DHALO_MACOS_NATIVE_METAL=1"] if native_metal else [f"-I{GL}"]),
              f"-I{MINIUPNPC_DIR / 'include'}", f"-I{MINIUPNPC_DIR / 'src'}", *MINIUPNPC_DEFINES]
     sources = sorted((ROOT / "port/macos/host").glob("*.c"))
@@ -87,6 +88,7 @@ def build_host():
     sources += sorted((ROOT / "port/macos/host").glob("*.mm"))
     sources += sorted((ROOT / "port/macos/native").glob("*.m"))
     sources += [ROOT / "port/linux/src/xiso.c", ROOT / "port/linux/src/release_discovery.c"]
+    sources += [ROOT / "port/third_party/tomlc17/tomlc17.c"]
     sources += miniupnpc_sources()
     sources += [BUILD / "host/host_import_table.c", ROOT / "port/macos/host/entry.s"]
     objects = []
@@ -197,6 +199,11 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
         executable.unlink()
     shutil.copy2(BUILD / "halo", executable)
     shutil.copy2(BUILD / "halo_guest.elf", resources / "halo_guest.elf")
+    native_executable = None
+    if RENDERER == "dual":
+        native_executable = macos / "halo-metal"
+        shutil.copy2(ROOT / "build/macos-metal/halo", native_executable)
+        shutil.copy2(ROOT / "build/macos-metal/halo_guest.elf", resources / "halo_guest-metal.elf")
     shutil.copy2(ROOT / "port/macos/map-downloads.json", resources / "map-downloads.json")
     sdl = frameworks / "libSDL3.0.dylib"
     if sdl.exists():
@@ -204,6 +211,9 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
     shutil.copy2(require(SDL / "lib/libSDL3.0.dylib"), sdl)
     run("install_name_tool", "-change", str(SDL / "lib/libSDL3.0.dylib"),
         "@rpath/libSDL3.0.dylib", executable)
+    if native_executable:
+        run("install_name_tool", "-change", str(SDL / "lib/libSDL3.0.dylib"),
+            "@rpath/libSDL3.0.dylib", native_executable)
     run("install_name_tool", "-id", "@rpath/libSDL3.0.dylib", sdl)
     for name in (() if RENDERER == "metal" else ("EGL", "GLESv2")):
         directory = ANGLE / f"{name}.xcframework/macos-arm64"
@@ -221,12 +231,16 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
         run("install_name_tool", "-id", f"@rpath/lib{name}.dylib", target)
         run("install_name_tool", "-delete_rpath", str(directory), executable)
     run("install_name_tool", "-add_rpath", "@executable_path/../Frameworks", executable)
+    if native_executable:
+        run("install_name_tool", "-add_rpath", "@executable_path/../Frameworks", native_executable)
     sparkle_source = setup_sparkle()
     sparkle = frameworks / "Sparkle.framework"
     if sparkle.exists():
         shutil.rmtree(sparkle)
     shutil.copytree(sparkle_source, sparkle, symlinks=True)
     run("install_name_tool", "-delete_rpath", str(sparkle_source.parent), executable)
+    if native_executable:
+        run("install_name_tool", "-delete_rpath", str(sparkle_source.parent), native_executable)
     # Store the independently supplied data location as a configuration file;
     # external symlinks would invalidate a strictly signed app bundle.
     data_link = resources / "GameData"
@@ -247,7 +261,8 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
         "CFBundleIconFile": APP_ICON,
         "CFBundlePackageType": "APPL", "CFBundleShortVersionString": version,
         "CFBundleVersion": build, "LSMinimumSystemVersion": minimum_macos_version([
-            executable, sdl, *renderer_binaries, sparkle / "Sparkle", *content_binaries]),
+            executable, *([native_executable] if native_executable else []),
+            sdl, *renderer_binaries, sparkle / "Sparkle", *content_binaries]),
         "CFBundleURLTypes": [{"CFBundleURLName": "Halo multiplayer invite",
                               # Match the shared discord.application_id default.
                               "CFBundleURLSchemes": ["halo", "discord-1556496882329460736"],
@@ -283,7 +298,10 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
     (resources / "BuildInfo.txt").write_text(
         f"{APP_NAME} {version} (build {build})\n"
         f"Source: {revision}\nGuest SHA-256: {guest_hash}\n"
-        + ("Renderer: native Metal\n" if RENDERER == "metal" else ""))
+        + ("Renderer: native Metal\n" if RENDERER == "metal" else "")
+        + ("Renderers: ANGLE (default), Native Metal (optional)\nNative Metal Guest SHA-256: "
+           + hashlib.sha256((resources / "halo_guest-metal.elf").read_bytes()).hexdigest() + "\n"
+           if native_executable else ""))
     licenses = resources / "Licenses"
     licenses.mkdir(exist_ok=True)
     for source, name in (
@@ -316,6 +334,8 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
     app_signing = [*signing]
     if release:
         app_signing += ["--entitlements", ROOT / "port/macos/host.entitlements"]
+    if native_executable:
+        run("codesign", *app_signing, native_executable)
     run("codesign", *app_signing, app)
     run("codesign", "--verify", "--deep", "--strict", app)
 
@@ -434,13 +454,33 @@ def install_app(app, applications):
     return destination
 
 
+def build_renderer(renderer, args):
+    """Keep each guest paired with its own host and import table."""
+    global BUILD, RENDERER
+    RENDERER = renderer
+    BUILD = ROOT / ("build/macos-metal" if renderer == "metal" else "build/macos")
+    if not args.host_only:
+        llvm_bin = DEFAULT_BUILD / "toolchain/bin"
+        require(llvm_bin / "llvm-ar")
+        require(llvm_bin / "ld.lld")
+        configure_args = ["--macos", "--macos-renderer", renderer, "--android-guest-llvm-bin", llvm_bin,
+                          "--pgo", "off"]
+        if renderer == "angle":
+            require(GL / "GLES3/gl32.h")
+            configure_args += ["--android-guest-gl-include", GL]
+        run(sys.executable, "configure.py", *configure_args)
+        ninja = shutil.which("ninja") or str(DEFAULT_BUILD / "toolchain/venv/bin/ninja")
+        run(ninja, "-j", args.jobs, "macos_guest")
+    build_host()
+
+
 def main():
     global BUILD, RENDERER
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plugin-only", action="store_true")
     parser.add_argument("--host-only", action="store_true")
-    parser.add_argument("--renderer", choices=("angle", "metal"), default="angle",
-                        help="Renderer fixed in the guest/host binaries (default: angle)")
+    parser.add_argument("--renderer", choices=("dual", "angle", "metal"), default="dual",
+                        help="Bundle both Mac renderers (default), or build an isolated angle/metal pair")
     parser.add_argument("--build-only", action="store_true", help="Compile without packaging or installing an app")
     parser.add_argument("--data-root", type=Path, default=ROOT / "assets")
     parser.add_argument("--no-data-path", action="store_true", help="First launch asks for independently supplied game data")
@@ -469,19 +509,10 @@ def main():
     if args.plugin_only:
         build_plugin()
         return
-    if not args.host_only:
-        llvm_bin = DEFAULT_BUILD / "toolchain/bin"
-        require(llvm_bin / "llvm-ar")
-        require(llvm_bin / "ld.lld")
-        configure_args = ["--macos", "--macos-renderer", RENDERER, "--android-guest-llvm-bin", llvm_bin,
-                          "--pgo", "off"]
-        if RENDERER == "angle":
-            require(GL / "GLES3/gl32.h")
-            configure_args += ["--android-guest-gl-include", GL]
-        run(sys.executable, "configure.py", *configure_args)
-        ninja = shutil.which("ninja") or str(DEFAULT_BUILD / "toolchain/venv/bin/ninja")
-        run(ninja, "-j", args.jobs, "macos_guest")
-    build_host()
+    for renderer in (("angle", "metal") if args.renderer == "dual" else (args.renderer,)):
+        build_renderer(renderer, args)
+    RENDERER = args.renderer
+    BUILD = ROOT / ("build/macos-metal" if RENDERER == "metal" else "build/macos")
     if args.build_only:
         return
     package(None if args.no_data_path or args.release else args.data_root,

@@ -169,6 +169,14 @@ copy. Quit an older running copy before launching its replacement.
 `--no-data-path` omits the development data path; first launch then asks for data.
 `--data-root /path/to/game` selects another local data root.
 
+The normal app bundles ANGLE (the default) and optional Native Metal. Choose
+the engine in the game's Settings → Game Settings → Video or Halo OG → Settings…
+in the macOS menu bar, then quit and reopen Halo. Native Metal exposes its
+resolution, frame limit and anti-aliasing controls in Video. See
+[native renderer settings](../../docs/metal-native-build.md) for restart behavior
+and the one-launch ANGLE recovery command. `--renderer angle` or
+`--renderer metal` builds an isolated renderer pair for diagnostics.
+
 After configuration, `ninja macos_guest` rebuilds game code;
 `macos_build.py --host-only` rebuilds/packages the host. Compiler adapters and
 wrappers are tracked build dependencies. `HALO_MACOS_SDL_PREFIX` and

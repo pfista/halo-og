@@ -170,6 +170,7 @@ struct native_device {
     unsigned long immediate_count, immediate_capacity, frame, draws;
     uint64_t resource_serial;
     uint64_t antialias_passes;
+    BOOL antialiasing_enabled;
     struct halo_metal_ref query_scratch, query_slots[VISIBILITY_TEST_SLOTS];
     UINT query_results[VISIBILITY_TEST_SLOTS];
     BOOL query_pending[VISIBILITY_TEST_SLOTS];
@@ -485,6 +486,7 @@ static void native_initialize(void) {
     native_storage_initialize();
     for (unsigned i=0;i<16;i++) device.attributes[i][3]=1.0f;
     memory_watch_initialize();
+    device.antialiasing_enabled=fxaa;
     device.ready=TRUE;
 }
 void WINAPI Direct3D_SetPushBufferSize(DWORD size,DWORD segments) { (void)size; (void)segments; }
@@ -1075,7 +1077,7 @@ static uint64_t rendered_serial_next(void) {
    results, depth and stencil. The host filters an immutable copy of this
    player's world viewport; subsequent original HUD draws remain unfiltered. */
 void halo_metal_antialias_before_hud(long left,long top,long right,long bottom) {
-    if (strcmp(config_string("display.anti_aliasing"),"fxaa") || !device.ready) return;
+    if (!device.antialiasing_enabled || !device.ready) return;
     if (!(transport.reply.capabilities&HALO_METAL_CAP_FXAA))
         native_fail("pre-HUD anti-aliasing capability",HALO_METAL_UNSUPPORTED);
     if (device.visibility_test_active || !device.render_target)
@@ -1779,7 +1781,7 @@ static void native_frame_statistics(void) {
             back->storage_width,back->storage_height,back->description.width,back->description.height,
             config_integer("display.frame_limit"),halo_interpolation_enabled(),previous_tick,tick);
         platform_log("Native anti-aliasing: requested %s, applied %llu, stage pre-HUD",
-            !strcmp(config_string("display.anti_aliasing"),"fxaa") ? "fxaa":"off",
+            device.antialiasing_enabled ? "fxaa":"off",
             (unsigned long long)device.antialias_passes);
     }
     previous_ns=ns;previous_frame=device.frame;previous_tick=tick;previous_initialized=initialized;

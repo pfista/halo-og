@@ -34,7 +34,7 @@ struct native_resource {
     uint64_t last_rendered;
 };
 struct mock_device {
-    int ready,visibility_test_active;
+    int ready,visibility_test_active,antialiasing_enabled;
     void *render_target,*depth_stencil;
     float viewport[6],constants[192][4],transforms[3][16];
     uint32_t render_state[144],texture_state[4][32];
@@ -43,15 +43,16 @@ struct mock_device {
 static struct mock_device device;
 static struct { struct halo_metal_reply reply; } transport;
 static struct native_resource target;
-static const char *setting;
+static const char *pending_setting;
+static unsigned config_reads;
 static unsigned target_reads,begins,appends,finishes;
 static struct halo_metal_fxaa command;
 static uint32_t reserved_size;
 static jmp_buf failure;
 static int failed_status;
 static const char *failed_operation;
-static const char *config_string(const char *name) {
-    assert(!strcmp(name,"display.anti_aliasing"));return setting;
+const char *config_string(const char *name) {
+    assert(!strcmp(name,"display.anti_aliasing"));config_reads++;return pending_setting;
 }
 static void native_fail(const char *operation,int status) {
     failed_operation=operation;failed_status=status;longjmp(failure,1);
@@ -77,7 +78,9 @@ static void packet_finish(void) { assert(appends==begins);finishes++; }
 static void reset(void) {
     memset(&device,0,sizeof(device));memset(&transport,0,sizeof(transport));memset(&target,0,sizeof(target));
     memset(&command,0,sizeof(command));target_reads=begins=appends=finishes=0;
-    failed_status=0;failed_operation=NULL;setting="fxaa";
+    failed_status=0;failed_operation=NULL;
+    config_reads=0;pending_setting="fxaa";
+    device.antialiasing_enabled=1;
     device.ready=1;device.render_target=&target;device.depth_stencil=(void *)(uintptr_t)16;
     device.antialias_passes=7;device.resource_serial=40;
     memset(device.viewport,0x29,sizeof(device.viewport));memset(device.constants,0x37,sizeof(device.constants));
@@ -136,13 +139,18 @@ int main(int argc,char **argv) {
         target.description.width=640;target.storage_width=1;target.storage_height=1;
         assert(!invoke(0,0,1,1));unchanged_queue();
     } else if(!strcmp(argv[1],"off")) {
-        const char *settings[]={"off","invalid"};
-        for(unsigned i=0;i<2;i++) {
-            reset();setting=settings[i];device.render_target=NULL;device.visibility_test_active=1;
-            transport.reply.capabilities=0;assert(!invoke(-1,-2,9999,9999));unchanged_queue();assert(!target_reads);
-        }
+        device.antialiasing_enabled=0;device.render_target=NULL;device.visibility_test_active=1;
+        transport.reply.capabilities=0;assert(!invoke(-1,-2,9999,9999));unchanged_queue();assert(!target_reads);
         reset();device.ready=0;transport.reply.capabilities=0;assert(!invoke(0,0,738,480));
         unchanged_queue();assert(!target_reads);
+    } else if(!strcmp(argv[1],"pending")) {
+        /* Saving Off keeps this launch's initialized FXAA mode active. */
+        pending_setting="off";
+        assert(!invoke(0,0,738,480));expected(0,0,3600,2338);
+        assert(!config_reads && device.antialiasing_enabled);
+        /* Saving FXAA on an Off host cannot request its absent capability. */
+        reset();device.antialiasing_enabled=0;transport.reply.capabilities=0;
+        assert(!invoke(0,0,738,480));unchanged_queue();assert(!config_reads);
     } else if(!strcmp(argv[1],"empty")) {
         assert(!invoke(50,20,50,200));unchanged_queue();
         assert(!invoke(738,480,738,480));unchanged_queue();
@@ -241,6 +249,9 @@ class WorldAntialiasHookTests(unittest.TestCase):
 
     def test_empty_valid_viewports_skip_commands(self):
         self.run_case("empty")
+
+    def test_pending_saved_mode_never_changes_startup_capability_or_filter(self):
+        self.run_case("pending")
 
     def test_invalid_bounds_and_format_fail_before_commands(self):
         self.run_case("invalid")

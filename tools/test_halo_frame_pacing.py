@@ -267,8 +267,13 @@ void platform_log(const char *format, ...) { (void)format; }
 int main(void) {
     unsigned found = 0;
     unsigned aa_found = 0;
+    unsigned renderer_found = 0;
     for (unsigned i = 0; i < NUMBER_OF_CONFIG_SETTINGS; i++) {
         const struct config_setting *s = &config_settings[i];
+        if (!strcmp(s->name,"display.renderer")) {
+            if(s->type!=_config_string || s->environment || strcmp(s->default_value,"\"angle\"")) return 5;
+            renderer_found++;continue;
+        }
         if (!strcmp(s->name, "display.anti_aliasing")) {
             if (s->type != _config_string || s->environment || s->platforms != _platform_all ||
                 strcmp(s->default_value, "\"off\"")) return 3;
@@ -280,13 +285,13 @@ int main(void) {
         if (strcmp(s->default_value, !strcmp(s->name, "display.frame_limit") ? "0" : "480")) return 2;
         found++;
     }
-#if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL
-    if (aa_found != 1) return 4;
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+    if (aa_found != 1 || renderer_found != 1) return 4;
 #else
-    if (aa_found) return 4;
+    if (aa_found || renderer_found) return 4;
 #endif
-    printf("%u %ld %ld %s\n", found, config_integer("display.frame_limit"), config_integer("display.render_height"),
-        config_string("display.anti_aliasing"));
+    printf("%u %ld %ld %s %s\n", found, config_integer("display.frame_limit"), config_integer("display.render_height"),
+        config_string("display.anti_aliasing"),config_string("display.renderer"));
     return 0;
 }
 '''
@@ -341,7 +346,7 @@ class NativeConfigTests(unittest.TestCase):
         cls.executables = {}
         for name, defines in (("native", ["HALO_MACOS=1", "HALO_MACOS_NATIVE_METAL=1"]),
                               ("angle", ["HALO_MACOS=1"]), ("disabled", ["HALO_MACOS=1", "HALO_MACOS_NATIVE_METAL=0"]),
-                              ("android", [])):
+                              ("android", []), ("ios", ["HALO_MACOS=1", "HALO_IOS=1"])):
             executable = cls.folder / name
             run("clang", "-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror", "-pthread",
                 "-DHALO_ANDROID=1", *("-D" + define for define in defines), "-include", cls.folder / "prefix.h",
@@ -364,25 +369,31 @@ class NativeConfigTests(unittest.TestCase):
             result = subprocess.run([str(self.executables[target])], env=environment, capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             values = result.stdout.split()
-            self.anti_aliasing = values[3] if len(values) == 4 else ''
+            self.anti_aliasing = values[3] if len(values) >= 4 else ''
+            self.renderer = values[4] if len(values) == 5 else ''
             return tuple(map(int, values[:3])), path.read_text()
 
     def test_native_defaults_registered_as_integer_config_only(self):
-        values, text = self.config("native")
-        self.assertEqual(values, (2, 0, 480))
-        self.assertIn("frame_limit = 0", text)
-        self.assertIn("render_height = 480", text)
-        self.assertEqual(self.anti_aliasing, 'off')
-        self.assertIn('anti_aliasing = "off"', text)
+        for target in ('native','angle','disabled'):
+            with self.subTest(target=target):
+                values, text = self.config(target)
+                self.assertEqual(values, (2, 0, 480))
+                self.assertIn("frame_limit = 0", text)
+                self.assertIn("render_height = 480", text)
+                self.assertEqual(self.anti_aliasing, 'off')
+                self.assertEqual(self.renderer, 'angle')
+                self.assertIn('anti_aliasing = "off"', text)
+                self.assertIn('renderer = "angle"', text)
 
     def test_other_renderers_do_not_register_or_write_native_options(self):
-        for target in ("angle", "disabled", "android"):
+        for target in ("android", "ios"):
             with self.subTest(target=target):
                 values, text = self.config(target)
                 self.assertEqual(values, (0, 0, 0))
                 self.assertNotIn("frame_limit", text)
                 self.assertNotIn("render_height", text)
                 self.assertNotIn("anti_aliasing", text)
+                self.assertNotIn("\nrenderer =", text)
                 self.assertEqual(self.anti_aliasing, '')
 
     def test_native_aa_string_is_preserved_and_wrong_type_defaults_off(self):

@@ -305,14 +305,14 @@ class DisplayConfigurationTests(unittest.TestCase):
 
     def test_actual_config_has_integer_compatibility_defaults_and_no_environment(self):
         self.assertEqual(proof.display_configuration_checks(self.text), {
-            'display.frame_limit': {'type':'integer','default':0,'environment':None,'native_metal_only':True},
-            'display.render_height': {'type':'integer','default':480,'environment':None,'native_metal_only':True},
+            'display.frame_limit': {'type':'integer','default':0,'environment':None,'native_metal_only':False},
+            'display.render_height': {'type':'integer','default':480,'environment':None,'native_metal_only':False},
         })
 
     def test_aa_requires_native_string_off_no_environment_and_original_integer_defaults(self):
         result = proof.display_configuration_checks(self.text, True)
         self.assertEqual(result['display.anti_aliasing'],
-            {'type':'string','default':'off','environment':None,'native_metal_only':True})
+            {'type':'string','default':'off','environment':None,'native_metal_only':False})
         self.assertEqual({k:v for k,v in result.items() if k != 'display.anti_aliasing'}, proof.display_configuration_checks(self.text))
         original = r'"display.anti_aliasing", _config_string, "\"off\"", NULL, _environment_value, _platform_all'
         self.assertIn(original, self.text)
@@ -333,10 +333,10 @@ class DisplayConfigurationTests(unittest.TestCase):
                     proof.display_configuration_checks(self.text.replace(original,replacement))
 
     def test_guard_missing_negative_and_else_branch_reject(self):
-        native = '#if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL'
-        for replacement in ('#if 1','#if !defined(HALO_MACOS_NATIVE_METAL)',
-                            '#if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL\n#else'):
-            with self.assertRaisesRegex(ValueError, 'not native Metal guarded'):
+        native = '#if defined(HALO_MACOS) && !defined(HALO_IOS)'
+        for replacement in ('#if 1','#if !defined(HALO_MACOS)',
+                            native + '\n#else', '#if defined(HALO_MACOS)'):
+            with self.assertRaisesRegex(ValueError, 'not Mac renderer guarded'):
                 proof.display_configuration_checks(self.text.replace(native,replacement))
 
     def test_commented_entries_are_ignored_and_duplicate_real_entry_rejects(self):

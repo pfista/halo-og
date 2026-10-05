@@ -56,7 +56,7 @@ def audit_bundle(app):
     if {path.name for path in contents.iterdir()} - allowed:
         raise RuntimeError("Unexpected top-level content in the app")
     resources = contents / "Resources"
-    if {path.name for path in resources.iterdir()} - {"AppIcon.icns", "Helmet.pdf", "halo_guest.elf", "BuildInfo.txt", "Licenses", "map-downloads.json", "ContentTools.json"}:
+    if {path.name for path in resources.iterdir()} - {"AppIcon.icns", "Helmet.pdf", "halo_guest.elf", "halo_guest-metal.elf", "BuildInfo.txt", "Licenses", "map-downloads.json", "ContentTools.json"}:
         raise RuntimeError("Release resources must contain only the compiled engine, icons, build record and licenses")
     helpers = contents / "Helpers"
     provenance = resources / "ContentTools.json"
@@ -68,8 +68,16 @@ def audit_bundle(app):
         raise RuntimeError("Unexpected community package helper")
     if helpers.exists():
         audit_content_tools(app)
-    if {path.name for path in (contents / "MacOS").iterdir()} != {"halo"}:
-        raise RuntimeError("Release executables must contain only the native host")
+    native_guest = resources / "halo_guest-metal.elf"
+    native_host = contents / "MacOS/halo-metal"
+    if native_guest.exists() != native_host.exists():
+        raise RuntimeError("Native Metal requires its paired host and guest")
+    expected_hosts = {"halo", "halo-metal"} if native_host.exists() else {"halo"}
+    if {path.name for path in (contents / "MacOS").iterdir()} != expected_hosts:
+        raise RuntimeError("Release executables must contain only the paired renderer hosts")
+    for path in (native_host, native_guest):
+        if path.exists() and (path.is_symlink() or not path.is_file()):
+            raise RuntimeError("Native Metal payload must be a regular bundled file")
     if {path.name for path in (contents / "Frameworks").iterdir()} != {"Sparkle.framework", "libSDL3.0.dylib", "libEGL.dylib", "libGLESv2.dylib"}:
         raise RuntimeError("Unexpected bundled runtime dependency")
     for path in app.rglob("*"):

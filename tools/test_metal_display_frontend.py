@@ -205,9 +205,12 @@ static void test_antialias_startup(void) {
         native_storage_width=native_storage_height=0;
         available_capabilities=base_capabilities | HALO_METAL_CAP_FXAA;
         native_initialize();assert(device.ready && drawable_queries==i+1);
+        assert(device.antialiasing_enabled==(i!=0));
         assert(native_initialize_flags==(i ? HALO_METAL_ENABLE_FXAA:0));
         assert(native_initialize_capabilities==(base_capabilities | (i ? HALO_METAL_CAP_FXAA:0)));
         assert(native_storage_width==3600 && native_storage_height==2338);
+        anti_aliasing=i ? "off":"fxaa";
+        assert(device.antialiasing_enabled==(i!=0));
         free(native_packet_storage);native_packet_storage=NULL;
     }
     /* The option must fail before drawable/storage setup when the host cannot
@@ -262,7 +265,7 @@ class DisplayFrontendTests(unittest.TestCase):
                                 ' assert(!strcmp(key,"debug.screenshot_directory")); return screenshot_directory;\n'
                                 '}')
         prefix = prefix.replace('D3DMATRIX transforms[D3DTS_MAX]; BOOL ready,created;',
-                                'D3DMATRIX transforms[D3DTS_MAX]; float attributes[16][4]; BOOL ready,created;')
+                                'D3DMATRIX transforms[D3DTS_MAX]; float attributes[16][4]; BOOL ready,created,antialiasing_enabled;')
         # Existing history harness has stubs; this harness executes their real functions.
         for name in ('native_frame_wait', 'native_frame_statistics'):
             if ('static void ' + name + '(') in prefix:

@@ -231,16 +231,18 @@ def display_configuration_checks(text, anti_aliasing=False):
                                      text[:entries[0].start()], re.M):
             keyword, condition = directive.groups()
             if keyword in ('if', 'ifdef', 'ifndef'):
-                guards.append(keyword == 'if' and re.sub(r'\s+', '', condition) ==
-                              'defined(HALO_MACOS_NATIVE_METAL)&&HALO_MACOS_NATIVE_METAL')
+                condition = re.sub(r'\s+', '', condition)
+                guards.append(condition if keyword == 'if' and condition in (
+                    'defined(HALO_MACOS_NATIVE_METAL)&&HALO_MACOS_NATIVE_METAL',
+                    'defined(HALO_MACOS)&&!defined(HALO_IOS)') else False)
             elif keyword in ('elif', 'else') and guards:
                 guards[-1] = False
             elif keyword == 'endif' and guards:
                 guards.pop()
         if not any(guards):
-            raise ValueError('Display config entry is not native Metal guarded: ' + name)
+            raise ValueError('Display config entry is not Mac renderer guarded: ' + name)
         result[name] = {'type': kind, 'default': default, 'environment': None,
-                        'native_metal_only': True}
+                        'native_metal_only': 'defined(HALO_MACOS)&&!defined(HALO_IOS)' not in guards}
     return result
 
 
