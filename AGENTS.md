@@ -30,6 +30,12 @@ content imports; competitive features are optional and default off.
   game-discovery UI.
 - Keep original fonts, artwork, HUD, scoreboard, sounds and game rules. Rebranding,
   overhead labels, balance changes and other modifications require explicit scope.
+- Identify community additions and compatibility changes in code comments and
+  asset provenance. Distinguish stock Xbox content, imported authored content and
+  conversion changes so later weapon sets can select them deliberately.
+- Move repeatable map conversion steps into development tools with documented,
+  reviewed profiles. Preserve source assets and record changes and validation;
+  do not apply one map's HUD sizing or script policy blindly to another map.
 - Keep the reviewed-through revision separate from the integrated baseline.
   Record commit hashes, decisions, reasons, validation and integration status in
   [the fidelity policy](docs/xbox-fidelity.md). Run checks appropriate to the change.
@@ -49,6 +55,8 @@ settings; verify the installed signature and `Contents/Resources/BuildInfo.txt`.
 - [Building](docs/building.md): platform toolchains and validation.
 - [Fidelity policy](docs/xbox-fidelity.md): baseline, defaults and upstream decisions.
 - [Community maps](docs/community-maps.md): conversion and managed storage.
+- [Community conversion](docs/community-map-conversion.md): authoring tools,
+  stock/community provenance and repeatable map-specific conversion profiles.
 - [Map publishing](docs/map-publishing.md): complete community maps on Cloudflare.
 
 ## Commits and changelog
