@@ -52,6 +52,11 @@ jobs:
         run: python3 -m unittest tools.test_macos_service_imports
       - name: Signed iOS instruction image
         run: python3 tools/test_ios_runtime.py
+      - name: Invite URI registration and delivery
+        run: >-
+          python3 -m unittest tools.test_p2p_invites tools.test_p2p_handoff
+          tools.test_url_scheme_registration tools.test_invite_layout tools.test_discord_presence
+          tools.test_mobile_invites.MobileInviteRegistrationTests tools.test_guest_build_dependencies
       - name: Controls, rendering and workload verification
         run: python3 -m unittest tools.test_input_bindings tools.test_direct_camera tools.test_controller_settings tools.test_menu_repeat tools.test_visibility_queries tools.test_geometry_cache tools.test_presentation tools.test_macos_preflight tools.test_macos_benchmark
       - name: Version 11 network protocol

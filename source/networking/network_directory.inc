@@ -6,7 +6,7 @@
 static struct network_advertised_game directory_games[HALO_DIRECTORY_MAX_GAMES];
 static struct halo_directory_game directory_metadata[HALO_DIRECTORY_MAX_GAMES];
 static long directory_game_count;
-static char directory_join_invite[77];
+static char directory_join_invite[P2P_LINK_SIZE];
 static unsigned long directory_join_started;
 static boolean directory_join_event_posted;
 static unsigned long directory_join_event_time;

@@ -124,10 +124,17 @@ shows a notice.
 
 To join a game, do one of these steps:
 
-- Open the link. The app is the handler of `halo://join/...` links. If the
+- Open the link. The app is the handler of `halo-og://join/...` links. If the
   game does not operate, the app starts it. The app writes the link to
-  `files/join_link.txt`, and the game reads it.
+  `files/join_link.txt`, and the game reads it. Links also reach a reused
+  launcher while the game-data setup screen is open; the whole 79-byte invite
+  is retained until the game starts. Later links bring the running game forward.
 - Copy the link and go to the game.
+
+The app claims only `halo-og`, so it does not take over the inherited `halo`
+handler. Its existing Android package remains `com.halo.decomp` to preserve
+updates and saved data. An upstream APK with the same package cannot be installed
+alongside it; changing the package would create a separate data container.
 
 On the local network:
 

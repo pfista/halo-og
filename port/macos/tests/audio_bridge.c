@@ -66,7 +66,7 @@ int main(void) {
     char directory[] = "/tmp/halo-invite-event.XXXXXX";
     assert(mkdtemp(directory));
     assert(setenv("HALO_SAVE_ROOT", directory, 1) == 0);
-    const char *invite = "halo://join/0123456789abcdef0123456789abcdeffedcba9876543210fedcba9876543210";
+    const char *invite = "halo-og://join/0123456789abcdef0123456789abcdeffedcba9876543210fedcba9876543210";
     SDL_Event drop = {.type = SDL_EVENT_DROP_FILE};
     drop.drop.data = invite;
     assert(SDL_PushEvent(&drop));

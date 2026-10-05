@@ -11,14 +11,17 @@ from unittest.mock import patch
 from tools import macos_build
 
 
-BUNDLE_ID = "local.halo.ce-universal"
+BUNDLE_ID = macos_build.BUNDLE_ID
 
 
-def make_app(path, identifier=BUNDLE_ID, marker=b"fixture"):
+def make_app(path, identifier=BUNDLE_ID, marker=b"fixture", build_info=None):
     contents = path / "Contents"
     contents.mkdir(parents=True)
     (contents / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": identifier}))
     (contents / "payload").write_bytes(marker)
+    if build_info is not None:
+        (contents / "Resources").mkdir()
+        (contents / "Resources/BuildInfo.txt").write_text(build_info)
     return path
 
 
@@ -115,7 +118,9 @@ class MacOSInstallerTests(unittest.TestCase):
 
     def test_rename_archives_legacy_app_and_preserves_independent_data(self):
         source = make_app(self.macos / "Halo OG.app", marker=b"renamed")
-        old = make_app(self.applications / "Halo CE Universal.app", marker=b"previous")
+        old = make_app(self.applications / "Halo CE Universal.app",
+                       identifier=macos_build.LEGACY_BUNDLE_ID, marker=b"previous",
+                       build_info="Halo OG 0.3.0 (build 16)\n")
         data = self.root / "Library/Application Support/Halo OG"
         data.mkdir(parents=True)
         (data / "config.toml").write_bytes(b"custom settings")
@@ -128,7 +133,7 @@ class MacOSInstallerTests(unittest.TestCase):
         self.assertEqual((data / "config.toml").read_bytes(), b"custom settings")
 
     def test_rename_preserves_unrelated_and_malformed_legacy_apps(self):
-        for identity in ("local.unrelated.game", "malformed", "array"):
+        for identity in ("local.unrelated.game", macos_build.LEGACY_BUNDLE_ID, "malformed", "array"):
             with self.subTest(identity=identity):
                 source = make_app(self.macos / "Halo OG.app")
                 old = make_app(self.applications / "Halo CE Universal.app", identifier=identity)
@@ -139,6 +144,33 @@ class MacOSInstallerTests(unittest.TestCase):
                 self.install(source)
                 self.assertTrue(old.is_dir())
                 shutil.rmtree(old)
+
+    def test_upgrades_halo_og_with_legacy_bundle_id(self):
+        source = make_app(self.macos / "Halo OG.app", marker=b"new identity")
+        old = make_app(self.applications / "Halo OG.app",
+                       identifier=macos_build.LEGACY_BUNDLE_ID, marker=b"previous")
+        installed = self.install(source)
+        self.assertEqual((installed / "Contents/payload").read_bytes(), b"new identity")
+        with (installed / "Contents/Info.plist").open("rb") as stream:
+            self.assertEqual(plistlib.load(stream)["CFBundleIdentifier"], BUNDLE_ID)
+        previous = list(self.applications.glob(".halo-previous-*/Halo OG.app.backup"))
+        self.assertEqual(len(previous), 1)
+        self.assertEqual((previous[0] / "Contents/payload").read_bytes(), b"previous")
+
+    def test_archives_legacy_id_pilots_only_with_halo_og_build_record(self):
+        source = make_app(self.macos / "Halo OG.app")
+        pilot = make_app(self.build / "pilot/Pilot.app", identifier=macos_build.LEGACY_BUNDLE_ID,
+                         build_info="Halo OG 0.3.0 (build 16)\n")
+        upstream = make_app(self.build / "upstream/Halo CE Universal.app",
+                            identifier=macos_build.LEGACY_BUNDLE_ID,
+                            build_info="Halo CE Universal 0.3.0 (build 16)\n")
+        unproven = make_app(self.build / "unknown/Pilot.app", identifier=macos_build.LEGACY_BUNDLE_ID)
+        self.install(source)
+        self.assertFalse(pilot.exists())
+        self.assertTrue(upstream.is_dir())
+        self.assertTrue(unproven.is_dir())
+        self.assertEqual({Path(call.args[0][2]) for call in self.unregister.call_args_list},
+                         {source, pilot})
 
 
 if __name__ == "__main__":

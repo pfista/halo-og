@@ -51,7 +51,7 @@ jobs:
         run: |
           printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
           pacman -Syu --noconfirm --needed git zstd python python-pytest ninja ccache \
-            clang lld gcc lib32-glibc lib32-gcc-libs lib32-sdl3
+            clang lld gcc glib2 lib32-glibc lib32-gcc-libs lib32-sdl3
 
       - uses: actions/checkout@v4
 
@@ -69,6 +69,11 @@ jobs:
 
       - name: Test
         run: python -m pytest -q tools/test_linux_port.py
+
+      - name: Invite URI registration and forwarding
+        run: >-
+          python -m unittest tools.test_p2p_invites tools.test_p2p_handoff
+          tools.test_url_scheme_registration tools.test_invite_layout tools.test_discord_presence
 
       - name: Native settings and shared interfaces
         run: >-
@@ -160,6 +165,11 @@ jobs:
       - name: Timer Audio download fixtures
         run: python3 tools/test_android_timer_audio.py --require-jdk --fetch-json
 
+      - name: Mobile invite registration and delivery
+        run: >-
+          python3 -m unittest tools.test_p2p_invites tools.test_invite_layout
+          tools.test_mobile_invites tools.test_guest_build_dependencies.AppleServiceImportDependencyTests
+
       - name: Compile cache
         run: ccache --show-stats
 
@@ -214,6 +224,11 @@ jobs:
 
       - name: Release
         run: python tools/ci_build.py windows release
+
+      - name: Invite URI registration and forwarding
+        run: >-
+          python -m unittest tools.test_p2p_invites tools.test_p2p_handoff
+          tools.test_url_scheme_registration tools.test_invite_layout tools.test_discord_presence
 
       - name: Native settings and shared interfaces
         run: >-

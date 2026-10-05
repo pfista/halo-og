@@ -154,8 +154,8 @@ appears in the System Link browser.
 With the Discord desktop client running, Halo connects to its local RPC socket
 and accepts Discord game invitations. Hosting a System Link game publishes
 "Hosting a game" with an invite in Discord. Enable activity sharing in Discord
-to make it visible. The installed app handles both `halo://` links and the
-upstream Discord application's launch scheme, so an invite can start Halo
+to make it visible. The installed app handles both `halo-og://` links and the
+Halo OG Discord application's launch scheme, so an invite can start Halo
 when it is closed. Ordinary campaign/client gameplay does not publish activity.
 This branch uses multiplayer protocol 11 and 64-digit invite codes; all players
 need matching builds. Command-W is ignored while playing, and Command-Q or

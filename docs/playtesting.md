@@ -104,7 +104,7 @@ app data. See [Android installation/data](../port/android/README.md#game-data).
    directly in System Link. Select the host and wait for **Connecting…** to open
    the normal lobby. [Public discovery and private hosting](system-link-directory.md)
    explains the two-machine test and settings. Older builds/private games use
-   invites: the host shares the current `halo://join/…` invite
+   invites: the host shares the current `halo-og://join/…` invite
    copied to its clipboard. The client copies the invite and returns to the
    game, or opens the registered invite link. Once the host appears in System
    Link, select it and join. The host app must remain running.

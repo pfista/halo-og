@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url';
 
 const listing = {
   name: 'Directory test', map: 'downrush', gametype: 'Slayer',
-  invite: 'halo://join/' + 'a'.repeat(64),
+  invite: 'halo-og://join/' + 'a'.repeat(64),
   player_count: 1, max_players: 16, network_version: 11,
   platform: 'macos', build: 'directory-test',
 };
@@ -70,9 +70,10 @@ test('register, list, update, remove; leases and addresses never appear in listi
   assert.equal(created.status, 201);
   const lease = await created.json();
   assert.match(lease.lease_token, /^[a-f0-9]{64}$/);
-  const listed = await (await request('/v1/games?network_version=11')).json();
+  const listed = await (await request('/v1/games?network_version=11&invite_scheme=halo-og')).json();
   assert.equal(listed.games.length, 1);
   assert.equal(listed.games[0].map, 'downrush');
+  assert.equal(listed.games[0].invite, listing.invite);
   const responseText = JSON.stringify(listed);
   assert.ok(!responseText.includes(lease.lease_token));
   assert.ok(!responseText.includes('lease_hash'));
@@ -85,6 +86,27 @@ test('register, list, update, remove; leases and addresses never appear in listi
   assert.equal((await (await request('/v1/games')).json()).games.length, 0);
 });
 
+test('legacy Halo OG hosts can keep their listings while clients upgrade', async (t) => {
+  const {request} = await setup(t);
+  const legacy = {...listing, invite: 'halo://join/' + 'b'.repeat(64)};
+  const created = await request('/v1/games', 'POST', legacy);
+  assert.equal(created.status, 201);
+  const lease = await created.json();
+  assert.equal((await request(`/v1/games/${lease.id}`, 'PUT', legacy, lease.lease_token)).status, 200);
+  assert.equal((await (await request('/v1/games')).json()).games[0].invite, legacy.invite);
+  assert.equal((await (await request('/v1/games?invite_scheme=halo-og')).json()).games[0].invite,
+    'halo-og://join/' + 'b'.repeat(64));
+  const modern = await request('/v1/games', 'POST', listing);
+  assert.equal(modern.status, 201);
+  const modernLease = await modern.json();
+  const originalFormat = (await (await request('/v1/games')).json()).games;
+  assert.equal(originalFormat.find((game) => game.id === modernLease.id).invite,
+    'halo://join/' + 'a'.repeat(64));
+  const modernFormat = (await (await request('/v1/games?invite_scheme=halo-og')).json()).games;
+  assert.equal(modernFormat.find((game) => game.id === modernLease.id).invite, listing.invite);
+  assert.equal((await request('/v1/games?invite_scheme=unrelated')).status, 400);
+});
+
 test('a different host cannot edit or delete a listing; invites are immutable', async (t) => {
   const {request} = await setup(t);
   const lease = await (await request('/v1/games', 'POST', listing)).json();
@@ -92,7 +114,7 @@ test('a different host cannot edit or delete a listing; invites are immutable', 
   assert.equal((await request(path, 'PUT', listing)).status, 401);
   assert.equal((await request(path, 'PUT', listing, 'b'.repeat(64))).status, 403);
   assert.equal((await request(path, 'DELETE', undefined, 'b'.repeat(64))).status, 403);
-  assert.equal((await request(path, 'PUT', {...listing, invite: 'halo://join/' + 'c'.repeat(64)}, lease.lease_token)).status, 409);
+  assert.equal((await request(path, 'PUT', {...listing, invite: 'halo-og://join/' + 'c'.repeat(64)}, lease.lease_token)).status, 409);
   assert.equal((await (await request('/v1/games')).json()).games.length, 1);
 });
 
@@ -171,6 +193,9 @@ test('invalid listings and oversized bodies are rejected', async (t) => {
   const {request} = await setup(t);
   for (const change of [
     {invite: 'https://unrelated.example/'}, {map: '../stock'}, {name: '<script>\n'},
+    {invite: 'halo-og://join/' + 'a'.repeat(63)},
+    {invite: 'halo-og://join/' + 'a'.repeat(65)},
+    {invite: 'halo-og://join/' + 'a'.repeat(63) + 'g'},
     {player_count: 17}, {network_version: 0}, {open: 'true'},
     {map_sha256: 'bad'}, {platform: 'unknown'},
   ]) assert.equal((await request('/v1/games', 'POST', {...listing, ...change})).status, 400);

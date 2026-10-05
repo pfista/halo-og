@@ -60,8 +60,10 @@ function boolean(value, name, fallback) {
 
 function validateListing(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ApiError(400, 'invalid_listing');
-  const invite = text(body.invite, 'invite', 76).toLowerCase();
-  if (!/^halo:\/\/join\/[0-9a-f]{64}$/.test(invite)) throw new ApiError(400, 'invalid_invite');
+  // Older Halo OG clients publish halo:// until they upgrade. New clients
+  // publish halo-og://; keep both listings usable during that transition.
+  const invite = text(body.invite, 'invite', 79).toLowerCase();
+  if (!/^halo(?:-og)?:\/\/join\/[0-9a-f]{64}$/.test(invite)) throw new ApiError(400, 'invalid_invite');
   const map = text(body.map, 'map', 32);
   if (map.length > 31 || !/^[a-zA-Z0-9_-][a-zA-Z0-9_ -]*$/.test(map) || map.endsWith(' ')) {
     throw new ApiError(400, 'invalid_map');
@@ -196,13 +198,21 @@ export class GameDirectory {
       }
       if (request.method === 'GET' && url.pathname === '/v1/games') {
         const version = url.searchParams.get('network_version');
+        const inviteScheme = url.searchParams.get('invite_scheme') || 'halo';
+        if (!['halo', 'halo-og'].includes(inviteScheme)) throw new ApiError(400, 'invalid_invite_scheme');
         if (version !== null && !/^[1-9][0-9]{0,4}$/.test(version)) throw new ApiError(400, 'invalid_network_version');
         if (version !== null && Number(version) > 65535) throw new ApiError(400, 'invalid_network_version');
         // Reads must remain fresh even if an expiry alarm is delayed, without
         // performing cleanup writes for every browser refresh.
         const games = this.sql.exec('SELECT id, listing, expires_at, updated_at FROM games WHERE expires_at > ?', now).toArray()
-          .map((row) => ({id: row.id, ...JSON.parse(row.listing),
-            expires_at: Math.floor(row.expires_at / 1000), updated_at: Math.floor(row.updated_at / 1000)}))
+          .map((row) => {
+            const listing = JSON.parse(row.listing);
+            // Existing clients cannot parse the longer scheme. Serve their
+            // original format unless a new client requests Halo OG links.
+            return {id: row.id, ...listing,
+              invite: listing.invite.replace(/^halo(?:-og)?:/, inviteScheme + ':'),
+              expires_at: Math.floor(row.expires_at / 1000), updated_at: Math.floor(row.updated_at / 1000)};
+          })
           .filter((game) => version === null || game.network_version === Number(version))
           .sort((a, b) => b.player_count - a.player_count || a.name.localeCompare(b.name));
         return json({api_version: 1, server_time: Math.floor(now / 1000), games}, 200,

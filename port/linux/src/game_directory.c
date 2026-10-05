@@ -19,7 +19,7 @@ int game_directory_snapshot(struct halo_directory_game *games, int capacity) { r
 extern void platform_log(const char *format, ...);
 static pthread_mutex_t directory_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct halo_directory_game hosted, cached[HALO_DIRECTORY_MAX_GAMES];
-static char host_invite[77], directory_url[256];
+static char host_invite[P2P_LINK_SIZE], directory_url[256];
 static unsigned long fetched_time;
 static unsigned long browse_visible_time;
 static int running, browsing, publishing, cached_count;
@@ -42,8 +42,9 @@ static unsigned retry_delay(unsigned *backoff, unsigned maximum, int retry_after
 static int request(const char *method, const char *id, const char *lease, const char *body,
     char *response, int capacity, int *status, int *retry_after_seconds)
 {
-    char url[320];
-    snprintf(url, sizeof(url), "%s/v1/games%s%s", directory_url, id && *id ? "/" : "", id ? id : "");
+    char url[352];
+    snprintf(url, sizeof(url), "%s/v1/games%s%s%s", directory_url, id && *id ? "/" : "", id ? id : "",
+        !strcmp(method, "GET") ? "?invite_scheme=" P2P_INVITE_SCHEME : "");
     return halo_directory_http(method, url, lease, body, response, capacity, status, retry_after_seconds);
 }
 static void *directory_worker(void *unused)

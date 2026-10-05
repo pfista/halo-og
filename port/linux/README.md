@@ -364,14 +364,14 @@ Machines with an invite link can play system link on the internet. This
 project has no server.
 
 When a copy of the game starts to host a system link game, it makes an
-invite link: `halo://join/<64 hexadecimal digits>`. The game writes the link
+invite link: `halo-og://join/<64 hexadecimal digits>`. The game writes the link
 to the standard error and puts it on the clipboard. The links of older
 versions of the game (44 digits) do not operate. The game writes a message
 when it gets one.
 
 To join a game, do one of these steps:
 
-- Open the link. The game is the handler of `halo://` links. If the game
+- Open the link. The game is the handler of `halo-og://` links. If the game
   already operates, the new copy gives the link to it and stops. A key in a
   file that only the user can read (`halo-ce-universal.key` in
   `$XDG_RUNTIME_DIR`, else `~/.halo-ce-universal.key`; on Windows in

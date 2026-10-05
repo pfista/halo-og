@@ -65,7 +65,7 @@ xcrun devicectl device process launch \
 
 Replace `DEVICE_ID` with your phone's identifier and use the bundle ID passed
 at build time. Alternatively, use Xcode's Run button. The default bundle ID is
-`local.halo.ce-universal.ios`; choose your own for device provisioning to avoid
+`local.halo.og.ios`; choose your own for device provisioning to avoid
 registration conflicts.
 
 The default local build includes `assets/maps` (roughly 1.8 GB). Use
@@ -76,6 +76,22 @@ bundled maps. Saves, `config.toml` and `halo.log` are in `Library/Application Su
 inside the app container. Do not publish the app bundle or local signing logs.
 
 For multiplayer on a physical phone, see [Mac and iPhone System Link](../../docs/apple-multiplayer.md).
+
+## Invite links
+
+The app registers `halo-og://join/...` invite links. Opening one starts Halo OG
+or delivers it to the running game. SDL's UIKit scene delegate retains links
+during startup and sends later links through the same native event bridge; the
+complete invite is written atomically to this app's save folder for the game's
+next network poll. Internet play must be enabled in `config.toml`.
+
+The app does not register the inherited `halo://` scheme. Earlier invitations
+can still be copied into the game through its existing clipboard join setting.
+iOS does not use the desktop Discord RPC integration.
+
+The default development bundle identifier is now `local.halo.og.ios`. Continue
+passing an existing signed build's `--bundle-id` when updating that app to retain
+its container and saved data; a different identifier installs a separate app.
 
 ## Simulator
 
@@ -94,7 +110,7 @@ open -a Simulator
 xcrun simctl bootstatus SIMULATOR_ID -b
 xcrun simctl install SIMULATOR_ID build/ios/simulator/Release-iphonesimulator/Halo.app
 SIMCTL_CHILD_HALO_TOUCH_CONTROLS=1 xcrun simctl launch \
-  SIMULATOR_ID local.halo.ce-universal.ios
+  SIMULATOR_ID local.halo.og.ios
 ```
 
 Use your selected `--bundle-id` in the launch command if you overrode the default.
@@ -161,12 +177,22 @@ image with the Mac or Android loaders.
 ## Verification
 
 ```sh
+python3 -m unittest tools.test_mobile_invites
+python3 tools/ios_invite_smoke.py
 python3 tools/test_ios_runtime.py
 python3 tools/ios_mac_runtime_check.py
 python3 tools/macos_benchmark.py \
   --host build/ios/mac-runtime-check/halo --guest build/ios/halo_guest.elf \
   --output build/ios/mac-runtime-check/campaign --effects --seconds 45
 ```
+
+The invite smoke creates and removes a separate simulator. It uses SDL's UIKit
+delegate, the production native invite/event bridge and the iOS bundle template
+to check cold and warm URL opens with complete 79-byte links. It requires the
+existing simulator SDL build and an installed simulator runtime. It neither
+installs on a phone nor joins a network game.
+Show the **Halo OG URI probe** device in Simulator or Xcode's Device Hub, then
+tap **Open** when iOS asks **Open in Halo OG?** for either URI.
 
 The standalone signed-image test covers globals, indirect calls, stack pointers,
 unaligned accesses, atomics, varargs and Xbox memory addresses. The Mac diagnostic

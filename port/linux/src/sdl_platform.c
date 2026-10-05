@@ -765,18 +765,9 @@ bool SDL_ShowAndroidToast(const char *message, int duration, int gravity, int xo
 /* whether the text has an invite link in it (its prefix, in any case) */
 static BOOL platform_text_has_invite_link(const char *text)
 {
-	static const char prefix[] = "halo://join/";
-	size_t length = sizeof(prefix) - 1;
-
 	for (; *text; text++)
 	{
-		size_t index;
-
-		for (index = 0; index < length && text[index] &&
-			(text[index] | 0x20) == prefix[index]; index++)
-		{
-		}
-		if (index == length)
+		if (p2p_invite_prefix_length(text))
 			return TRUE;
 	}
 	return FALSE;

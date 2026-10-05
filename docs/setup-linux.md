@@ -93,7 +93,7 @@ Slayer, and **Performance Options → Stock**, with Input Delay and Hardcore Off
    **games.oghalo.com** in System Link. Select a game and wait for **Connecting…**.
    See [public discovery/private hosting](system-link-directory.md). For older
    builds or private games, the host pastes the invite copied to the clipboard into a
-   message. Joining players **copy the complete `halo://join/…` link and return
+   message. Joining players **copy the complete `halo-og://join/…` link and return
    to Halo**, then select the host in **System Link** and join.
 4. The host starts the match when everyone is in the lobby and keeps Halo running.
 

@@ -35,7 +35,7 @@ static int fixture_create(fixture_thread *thread, void *attributes, void *(*star
 static int fixture_detach(fixture_thread thread) { (void)thread; return 0; }
 static unsigned long ticks;
 static const char *mode;
-static char invite_a[77], invite_b[77];
+static char invite_a[80], invite_b[80];
 static jmp_buf finished;
 static unsigned event_count, posts;
 struct event { unsigned long at; const char *method; int status, size; };
@@ -101,6 +101,7 @@ int halo_directory_http(const char *method, const char *url, const char *lease,
         return size;
     }
     if (!strcmp(method, "GET")) {
+        assert(!strcmp(url, "https://directory.invalid/v1/games?invite_scheme=halo-og"));
         const char *empty = "{\"api_version\":1,\"server_time\":0,\"games\":[]}";
         strcpy(response, empty); return (int)strlen(empty);
     }
@@ -142,8 +143,8 @@ int main(int count, char **arguments)
     else if (!strcmp(mode, "changed")) { events = changed; expected_count = sizeof(changed)/sizeof(*changed); }
     else if (!strcmp(mode, "absent")) { events = absent; expected_count = sizeof(absent)/sizeof(*absent); }
     else assert(!strcmp(mode, "expired") || !strcmp(mode, "renewed"));
-    strcpy(invite_a, "halo://join/"); memset(invite_a+12, 'a', 64); invite_a[76] = 0;
-    strcpy(invite_b, "halo://join/"); memset(invite_b+12, 'b', 64); invite_b[76] = 0;
+    strcpy(invite_a, "halo-og://join/"); memset(invite_a+15, 'a', 64); invite_a[79] = 0;
+    strcpy(invite_b, "halo-og://join/"); memset(invite_b+15, 'b', 64); invite_b[79] = 0;
     running = 1; /* The fixture invokes the worker itself, without a real thread. */
     strcpy(directory_url, config_string("network.directory_url"));
     game_directory_set_invite(invite_a); publish(1);
@@ -194,6 +195,7 @@ int halo_directory_http(const char *method, const char *url, const char *lease,
             "{\"id\":\"12345678-1234-1234-1234-123456789abc\",\"lease_token\":\"%064d\"}", 0);
     }
     if (!strcmp(method, "GET")) {
+        assert(!strcmp(url, "https://directory.invalid/v1/games?invite_scheme=halo-og"));
         strcpy(response, "{\"api_version\":1,\"server_time\":0,\"games\":[]}");
         return (int)strlen(response);
     }
@@ -234,7 +236,7 @@ int main(int argc, char **argv)
     if (!strcmp(mode, "stale")) cached_count = 7;
     if (!strcmp(mode, "host_background") || !strcmp(mode, "slow_publish") ||
         !strcmp(mode, "host_throttle") || !strcmp(mode, "host_renew_failure")) {
-        strcpy(invite_a, "halo://join/"); memset(invite_a + 12, 'a', 64); invite_a[76] = 0;
+        strcpy(invite_a, "halo-og://join/"); memset(invite_a + 15, 'a', 64); invite_a[79] = 0;
         game_directory_set_invite(invite_a);
         host_publish(1);
         if (strcmp(mode, "slow_publish")) game_directory_set_foreground(0);

@@ -21,7 +21,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from tools.macos_build import update_configuration, minimum_macos_version, SDL
+from tools.macos_build import update_configuration, minimum_macos_version, BUNDLE_ID, SDL
 from tools.macos_release import audit_adhoc_signing, audit_bundle, appcast, NAMESPACE
 from tools.macos_sparkle import setup_sparkle
 
@@ -177,7 +177,7 @@ def native_menu_loop():
 
 
 class ReleaseBoundary(unittest.TestCase):
-    def signing_fixture(self, directory, identifier="local.halo.ce-universal"):
+    def signing_fixture(self, directory, identifier=BUNDLE_ID):
         app = Path(directory) / "Halo.app"
         contents = app / "Contents"
         (contents / "MacOS").mkdir(parents=True)

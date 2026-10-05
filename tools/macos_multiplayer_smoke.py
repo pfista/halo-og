@@ -166,7 +166,7 @@ def main():
                 deadline = time.monotonic() + 40
                 invite = None
                 while time.monotonic() < deadline:
-                    match = re.search(r"halo://join/[0-9a-fA-F]{64}(?![0-9a-fA-F])", read_log(folders["host"]))
+                    match = re.search(r"halo-og://join/[0-9a-fA-F]{64}(?![0-9a-fA-F])", read_log(folders["host"]))
                     if match:
                         invite = match[0]
                         break

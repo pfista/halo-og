@@ -42,7 +42,7 @@ def main():
             return status.value, buffer.raw[:count]
 
         game = Game(name=b"Native directory smoke", map=b"custom map", gametype=b"Slayer",
-                    invite=("halo://join/" + secrets.token_hex(32)).encode(), player_count=1,
+                    invite=("halo-og://join/" + secrets.token_hex(32)).encode(), player_count=1,
                     max_players=16, network_version=11, open=1, score_limit=50)
         encoded = ctypes.create_string_buffer(1024)
         assert lib.halo_directory_encode(ctypes.byref(game), encoded, len(encoded))

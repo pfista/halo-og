@@ -48,7 +48,7 @@ Example listing:
   "has_teams": false,
   "score_limit": 50,
   "oddball_variant": false,
-  "invite": "halo://join/<64 hexadecimal characters>"
+  "invite": "halo-og://join/<64 hexadecimal characters>"
 }
 ```
 
@@ -87,6 +87,14 @@ treat listings as untrusted and retain the existing P2P host authentication.
 This v1 HTTPS API does not implement upstream's signed MQTT listing format or
 automatically see games advertised only on MQTT. Those require client adapters.
 The existing MQTT invite signalling is separate from this directory.
+
+New hosts publish `halo-og://join/` invites. The service also accepts legacy
+`halo://join/` listings while older Halo OG clients upgrade; new clients convert
+those directory invites to `halo-og://join/` internally. Deploy the updated
+service validator before distributing clients that publish the longer scheme.
+Clients request `GET /v1/games?invite_scheme=halo-og` for Halo OG links. Requests
+without that parameter keep receiving the legacy format so existing clients can
+browse both old and new hosts during the upgrade.
 
 Listings expire after 90 seconds, including after host crashes. List and health
 reads filter expired entries without cleanup writes, even when an alarm is

@@ -1,12 +1,14 @@
 #ifndef HALO_GAME_DIRECTORY_H
 #define HALO_GAME_DIRECTORY_H
 
+#include "p2p_invite.h"
+
 /* Shared desktop directory. Fixed-width character buffers and ints keep the
    same layout in the Apple ILP32 guest and native host. No Cloudflare token. */
 #define HALO_DIRECTORY_MAX_GAMES 64
 #define HALO_DIRECTORY_BODY_LIMIT (256 * 1024)
 struct halo_directory_game {
-    char id[37], name[33], map[33], gametype[25], invite[77];
+    char id[37], name[33], map[33], gametype[25], invite[P2P_LINK_SIZE];
     int player_count, max_players, network_version, open, in_progress, has_teams;
     int lifetime_seconds;
     /* Older hosts omit the score; -1 means unavailable, while 0 is real. */

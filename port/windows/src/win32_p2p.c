@@ -3,7 +3,7 @@ WIN32_P2P.C
 
 The process and desktop half of port/linux/src/posix.h for Windows, which
 internet play uses (p2p.c; the Linux versions are in posix_net.c): the
-command line, the registry entry that makes this executable open halo://
+command line, the registry entry that makes this executable open halo-og://
 links, the user's secret, and Discord's local pipe.
 */
 

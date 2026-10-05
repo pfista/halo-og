@@ -4,7 +4,7 @@ P2P.C
 Internet play: machines that shared an invite reach each other's system
 link games as if they were on one LAN, without a server of this project's.
 
-- An invite is a link, halo://join/<host><token>: the hash of the X25519
+- An invite is a link, halo-og://join/<host><token>: the hash of the X25519
   public key the hosting machine makes each run (16 bytes of it, which no
   other key can be found to have; the first 6 are the machine's identifier,
   which its XNADDR also carries) and a random 16-byte token. A machine
@@ -135,8 +135,9 @@ enum
 	UPNP_RELEASE_WAIT = 3000,
 
 	/* where a running copy of the game takes invites from another one
-	started to open a link (127.0.0.1), sealed with a key of the user's */
-	HANDOFF_PORT = 47315,
+	started to open a link (127.0.0.1), sealed with a key of the user's;
+	keep Halo OG separate from upstream's 47315 listener */
+	HANDOFF_PORT = 47316,
 };
 
 enum
@@ -2242,13 +2243,8 @@ static int parse_invite(const char *text, unsigned char *host_hash, unsigned cha
 
 	for (search = text; *search && !start; search++)
 	{
-		static const char prefix[] = "halo://join/";
-		int length;
-
-		for (length = 0; prefix[length] && search[length] &&
-			(search[length] | 0x20) == prefix[length]; length++)
-			;
-		if (!prefix[length])
+		unsigned length = p2p_invite_prefix_length(search);
+		if (length)
 			start = search + length;
 	}
 	if (!start)
@@ -2411,7 +2407,7 @@ static void update_hosting(void)
 			p2p_key_hash(p2p_public_key(), bytes);
 			memcpy(bytes + P2P_KEY_HASH_SIZE, p2p.token, P2P_TOKEN_SIZE);
 			p2p_hex(bytes, sizeof(bytes), text);
-			snprintf(p2p.invite, sizeof(p2p.invite), "halo://join/%s", text);
+			snprintf(p2p.invite, sizeof(p2p.invite), P2P_INVITE_PREFIX "%s", text);
 		}
 		p2p.hosting = 1;
 		game_directory_set_invite(p2p.invite);
@@ -2446,7 +2442,7 @@ static void update_hosting(void)
 		{
 			p2p.reported_player_count = count;
 			p2p.reported_player_maximum = maximum;
-			p2p_discord_set_hosting(p2p.invite + strlen("halo://join/"), count, maximum);
+			p2p_discord_set_hosting(p2p.invite + sizeof(P2P_INVITE_PREFIX) - 1, count, maximum);
 		}
 	}
 }
@@ -2636,10 +2632,13 @@ invites nor pass its own */
 static int handoff_key(unsigned char *key)
 {
 	unsigned char secret[P2P_SHA256_SIZE];
+	static const char label[] = P2P_INVITE_SCHEME " handoff";
 
 	if (!posix_user_secret(secret, sizeof(secret)))
 		return 0;
-	p2p_hmac_sha256(secret, sizeof(secret), "halo handoff", 12, key);
+	/* The existing private secret stays in place; derive a fork-specific key
+	so another Halo app cannot acknowledge or consume this fork's invites. */
+	p2p_hmac_sha256(secret, sizeof(secret), label, sizeof(label) - 1, key);
 	return 1;
 }
 
@@ -2784,7 +2783,7 @@ static void *p2p_thread(void *unused)
 	pthread_mutex_lock(&p2p_lock);
 #ifndef HALO_ANDROID
 	/* (here: it may wait for a program) */
-	p2p_register_url_scheme("halo", "Halo OG invite");
+	p2p_register_url_scheme(P2P_INVITE_SCHEME, "Halo OG invite");
 #endif
 	for (;;)
 	{
