@@ -221,7 +221,8 @@ no unrelated multiplayer process was stopped. These functionality checks do not
 establish full gameplay coverage, retail fidelity or sustained 60/120 FPS.
 The prior AA GPU/replay proof remains a separate historical checkpoint.
 
-Integration decision: user-approved for main through [PR #4](https://github.com/pfista/halo-og/pull/4).
+Integration status: merged into main through [PR #4](https://github.com/pfista/halo-og/pull/4)
+at commit `4dab1a0f6028e3ecd139d5a9be67c269011b7c65`, following user approval.
 ANGLE remains the default; Native Metal remains selectable and experimental.
 Release publication is pending separate authorization.
 
@@ -233,6 +234,13 @@ imports alongside Mac renderer controls. Integration merge `b9ef6717` passes
 `24d3131f` removes the duplicate cursor enum that failed the previous Linux and
 Windows jobs after their builds succeeded. These checks cover merge compatibility;
 they do not resolve the newly reported tearing or establish new performance results.
+
+After the merge, the delayed Windows CI build exposed a header omission already
+present on main: shared input/menu sources could not find `controller_settings.h`.
+Follow-up fix `4507185a` adds the existing-style Windows forwarding header and
+extends the generated-search-path probe to every affected consumer. Both Windows
+header tests pass, producing a real i686 MSVC COFF object and preserving Windows
+CRT isolation. This build correction changes no gameplay or rendering behavior.
 
 Use [xbox-ntsc.toml](../port/macos/profiles/xbox-ntsc.toml) with the existing
 `HALO_SCREEN_WIDTH=640` override for an isolated 4:3 comparison. This 30 FPS
