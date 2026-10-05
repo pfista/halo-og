@@ -668,7 +668,9 @@ static struct observer_result const *render_interpolation_direct_camera(
 	short local_player_index,
 	struct observer_result const *observer)
 {
-#ifdef HALO_ANDROID
+/* The Mac guest shares HALO_ANDROID for its ABI, but uses desktop camera
+ * settings. Android and iOS retain the tick-based/interpolated view. */
+#if defined(HALO_IOS) || (defined(HALO_ANDROID) && !defined(HALO_MACOS))
 	(void)local_player_index;
 	return observer;
 #else

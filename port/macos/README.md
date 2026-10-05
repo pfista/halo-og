@@ -53,6 +53,13 @@ Text glyphs keep the fonts in the game data and have clear borders to
 prevent neighboring characters from bleeding into their edges, and widescreen
 menu dimming and flat backgrounds cover the whole display.
 
+For current controller or mouse aim while keeping Smooth Motion, quit Halo and
+set `direct_camera = true` in the existing `[display]` section of
+`~/Library/Application Support/Halo OG/config.toml`, then restart. Direct Camera
+is off by default. It uses current aim for the first-person view on foot;
+world movement, vehicles and cinematics retain their existing presentation.
+VSync and the 30 Hz simulation are unchanged.
+
 Saves, cache files, `config.toml`, and `halo.log` are under:
 
 ```text
