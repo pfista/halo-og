@@ -14,6 +14,7 @@ HARNESS = r'''
 #include <stdio.h>
 #include <string.h>
 #include "device_settings.h"
+#include "controller_settings.h"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define MAC_FULLSCREEN 1
 #define MOBILE_FULLSCREEN 0
@@ -32,7 +33,8 @@ static const char *names[] = {"audio.volume", "audio.music_volume", "audio.effec
     "audio.timer_countdown", "audio.timer_beeps", "audio.timer_minutes", "audio.timer_items",
     "display.timer_position", "display.timer_scale", "display.fullscreen",
     "maps.show_og", "maps.show_community", "network.join_in_progress",
-    "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration"};
+    "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration",
+    "input.fast_menu_repeat"};
 #define TEST_SETTING_COUNT (sizeof(names)/sizeof(names[0]))
 static double saved[TEST_SETTING_COUNT];
 static int fullscreen, native_fullscreen, write_ok, switch_ok, apply_ok, writes, audio_applies, video_applies, switches, starts, stops;
@@ -70,6 +72,7 @@ void ui_apply_main_menu_music_setting(void) { if (saved[5]) starts++; else stops
 static void reset(double values[NUMBER_OF_DEVICE_SETTINGS]) {
     for (unsigned i=0;i<TEST_SETTING_COUNT;i++) saved[i]=(i==7 || i==11 || i==12) ? 0.0 : 1.0;
     saved[18]=saved[19]=9000;
+    saved[21]=0;
     saved[0]=0.15; fullscreen=native_fullscreen=1; write_ok=switch_ok=apply_ok=1;
     writes=audio_applies=video_applies=switches=starts=stops=0;
     write_fail_on=switch_fail_on=apply_fail_on=0;
@@ -110,9 +113,43 @@ static void check_controller_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) 
     assert(!device_settings_apply((1UL<<_device_setting_look_acceleration)|(1UL<<_device_setting_left_stick_deadzone),values));
     assert(saved[20]==0 && saved[18]==9000 && !audio_applies && !video_applies && !switches);
 }
+static void check_menu_repeat_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) {
+    unsigned long menu_repeat = 1UL << _device_setting_fast_menu_repeat;
+    const double bad[] = {-1, 2, 0.5, NAN, INFINITY, -INFINITY};
+    reset(values);
+    assert(values[_device_setting_fast_menu_repeat]==0 && halo_menu_repeat_milliseconds()==250);
+    assert(device_settings_apply(menu_repeat,values) && !writes);
+    for(unsigned i=0;i<sizeof(bad)/sizeof(bad[0]);i++) {
+        values[_device_setting_fast_menu_repeat]=bad[i];
+        assert(!device_settings_apply(menu_repeat,values));
+    }
+    assert(!writes && !audio_applies && !video_applies && !switches);
+    values[_device_setting_fast_menu_repeat]=1;
+    write_ok=0;
+    assert(!device_settings_apply(menu_repeat,values));
+    assert(saved[21]==0 && device_settings_get(_device_setting_fast_menu_repeat)==0 &&
+        halo_menu_repeat_milliseconds()==250 && writes==1);
+    write_ok=1;
+    assert(device_settings_apply(menu_repeat,values));
+    assert(saved[21]==1 && device_settings_get(_device_setting_fast_menu_repeat)==1 &&
+        halo_menu_repeat_milliseconds()==100 && writes==2);
+    assert(!audio_applies && !video_applies && !switches && !starts && !stops);
+    assert(device_settings_apply(menu_repeat,values) && writes==2);
+    values[_device_setting_fast_menu_repeat]=0;
+    assert(device_settings_apply(menu_repeat,values));
+    assert(saved[21]==0 && halo_menu_repeat_milliseconds()==250 && writes==3);
+    /* A mixed draft remains atomic when another backend rejects it. */
+    reset(values);
+    values[_device_setting_fast_menu_repeat]=1;
+    values[_device_setting_vsync]=0;
+    apply_fail_on=1;
+    assert(!device_settings_apply(menu_repeat | (1UL<<_device_setting_vsync),values));
+    assert(saved[21]==0 && saved[6]==1 && halo_menu_repeat_milliseconds()==250 && writes==2);
+}
 int main(void) {
     double values[NUMBER_OF_DEVICE_SETTINGS];
     check_controller_settings(values);
+    check_menu_repeat_settings(values);
     if (MOBILE_FULLSCREEN) {
         /* Android/iOS remain fullscreen and never read or persist the
          * desktop-only preference, even in a mixed settings draft. */
@@ -302,6 +339,7 @@ class DeviceSettingsTests(unittest.TestCase):
             executable = path / ("test.exe" if sys.platform == "win32" else "test")
             subprocess.run(["clang", "-std=c99", *platform_flags, "-Wall", "-Wextra", "-Werror",
                             "-I", str(path), "-I", str(ROOT / "port/linux/game"),
+                            "-iquote", str(ROOT / "port/linux/include"),
                             str(path / "test.c"), str(production),
                             "-o", str(executable)], check=True)
             subprocess.run([str(executable)], check=True)

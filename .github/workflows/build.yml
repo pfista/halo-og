@@ -72,7 +72,7 @@ jobs:
 
       - name: Native settings and shared interfaces
         run: >-
-          python -m unittest tools.test_device_settings tools.test_controller_settings tools.test_windows_shared_headers
+          python -m unittest tools.test_device_settings tools.test_controller_settings tools.test_menu_repeat tools.test_windows_shared_headers
           tools.test_game_settings.NativeGameSettingsTests.test_native_menu
           tools.test_performance_mouse tools.test_save_migration
           tools.test_desktop_first_run tools.test_release_discovery
@@ -216,7 +216,7 @@ jobs:
 
       - name: Native settings and shared interfaces
         run: >-
-          python -m unittest tools.test_device_settings tools.test_controller_settings tools.test_windows_shared_headers
+          python -m unittest tools.test_device_settings tools.test_controller_settings tools.test_menu_repeat tools.test_windows_shared_headers
           tools.test_game_settings.NativeGameSettingsTests.test_native_menu
           tools.test_performance_mouse tools.test_save_migration
           tools.test_desktop_first_run tools.test_release_discovery

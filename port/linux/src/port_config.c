@@ -144,6 +144,10 @@ static const struct config_setting config_settings[] =
 		"Keep the original map-authored held-stick horizontal turning boost.\n"
 		"Controller settings call this Xbox; Off removes only this timed boost.\n"
 		"Sensitivity, pitch response and direct mouse aiming stay separate." },
+	{ "input.fast_menu_repeat", _config_boolean, "false", NULL, _environment_value, _platform_all,
+		"Repeat held menu directions every 100 ms instead of the original 250 ms.\n"
+		"Controller settings call this Menu Repeat: Original or Faster. Applies\n"
+		"to arrows, D-pad and sticks in menus and the on-screen keyboard only." },
 
 	/* Bindings are config-only: they do not need application environment variables. */
 #if defined(HALO_MACOS) && !defined(HALO_IOS)

@@ -11,6 +11,13 @@
 #define HALO_CONTROLLER_AXIS_RIGHT_X 4u
 #define HALO_CONTROLLER_AXIS_RIGHT_Y 8u
 
+/* Local menu-only opt-in; the original quarter-second cadence remains default.
+ * Read live so accepting Controller settings takes effect without a restart. */
+static __inline unsigned long halo_menu_repeat_milliseconds(void)
+{
+	return config_boolean("input.fast_menu_repeat") ? 100UL : 250UL;
+}
+
 static __inline short halo_controller_deadzone(long value)
 {
 	return value >= 0 && value <= HALO_CONTROLLER_DEADZONE_MAX ?

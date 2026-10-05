@@ -50,7 +50,8 @@ def compile_and_run(source, *, flags=(), inputs=(), sdl=False):
     with tempfile.TemporaryDirectory(prefix="halo-controller-settings-") as temporary:
         directory = Path(temporary)
         # The helper must also work with consumers' small port_config stubs.
-        (directory / "port_config.h").write_text("long config_integer(const char *name);\n")
+        (directory / "port_config.h").write_text(
+            "long config_integer(const char *name); int config_boolean(const char *name);\n")
         path = directory / "fixture.c"
         path.write_text(source)
         executable = directory / ("fixture.exe" if sys.platform == "win32" else "fixture")

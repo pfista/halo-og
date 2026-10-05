@@ -24,7 +24,8 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
     "audio.timer_countdown", "audio.timer_beeps", "audio.timer_minutes", "audio.timer_items",
     "display.timer_position", "display.timer_scale",
     "maps.show_og", "maps.show_community", "network.join_in_progress",
-    "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration"
+    "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration",
+    "input.fast_menu_repeat"
 };
 
 static int device_setting_is_finite(double value)

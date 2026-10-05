@@ -110,6 +110,14 @@ a different tick rate. Original PC v7 caches remain unsupported.
 
 ## Defaults and comparison profile
 
+Controller settings offer **Menu Repeat: Original / Faster** as an intentional
+local UI preference. Original retains the reconstructed 250 ms cadence; Faster
+opts into 100 ms held navigation for arrows, D-pad directions and sticks in
+menus and the on-screen keyboard. It defaults Original and applies only after
+Accept, with no simulation, gameplay-button or network-rule change. This does
+not alter the original event-queue or stick-edge behavior. See
+[menu repeat](menu-repeat.md) for the option and validation boundaries.
+
 New configurations set `display.high_res_hud`, `display.interpolation` and
 `display.direct_camera` to `false`. Existing choices are preserved. Simulation
 stays at 30 Hz; high-refresh rendering can be appropriate, with interpolation

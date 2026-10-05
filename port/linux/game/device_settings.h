@@ -25,6 +25,7 @@ enum
     _device_setting_left_stick_deadzone,
     _device_setting_right_stick_deadzone,
     _device_setting_look_acceleration,
+    _device_setting_fast_menu_repeat,
     NUMBER_OF_DEVICE_SETTINGS
 };
 
