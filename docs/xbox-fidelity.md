@@ -100,6 +100,28 @@ New configurations set `display.high_res_hud`, `display.interpolation` and
 stays at 30 Hz; high-refresh rendering can be appropriate, with interpolation
 and input response assessed separately.
 
+### Native Metal presentation experiment
+
+Local commit `1dc7043f58b6a1d9a2be3fb02ae9bb7e66db88de` adds optional pre-HUD world
+anti-aliasing. Decision: adopt for testing on `codex/metal-renderer-poc`, with
+`display.anti_aliasing="off"` as the native default. The opt-in `"fxaa"` mode
+intentionally changes world edge pixels and subsequent frame-history colors.
+It preserves the authored textures, geometry, shaders and HUD assets, and the
+original 30 Hz simulation. This permits a native-resolution smoothing comparison
+without replacing original artwork.
+
+Validation: 185 targeted CPU tests, 103 isolated GPU readbacks and 15 atomic
+rejections pass. Off preserves all 378 ordered original replay checkpoints.
+Eight bounded fullscreen profiles pass API validation and full-size captures;
+timing observations range from 52.06 to 63.86 render FPS at 3600x2338, with
+approximately 30 simulation Hz. The observations do not establish retail pixel
+parity, a reliable isolated AA cost or sustained 120 FPS. See
+[the experiment and evidence](metal-anti-aliasing.md).
+
+Integration status: experimental branch and draft PR #4, pending review; the
+installed ANGLE app retains its existing build. The upstream reviewed-through
+and integrated baseline above are tracked separately.
+
 Use [xbox-ntsc.toml](../port/macos/profiles/xbox-ntsc.toml) with the existing
 `HALO_SCREEN_WIDTH=640` override for an isolated 4:3 comparison. This 30 FPS
 reference is separate from normal-play performance choices. Native maps can use
