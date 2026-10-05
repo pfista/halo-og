@@ -125,6 +125,7 @@ symbols in this file:
 #include "effects/contrail_definitions.h"
 #include "effects/contrails.h"
 #include "effects/effects.h"
+#include "effects/effect_definitions.h"
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/game_globals.h"
@@ -338,6 +339,10 @@ static char const *effect_marker_names[NUMBER_OF_EFFECT_MARKERS] =
 
 /* ---------- public code */
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "refined_tag_effects.inc"
+#endif
+
 void projectiles_initialize(
 	void)
 {
@@ -347,6 +352,9 @@ void projectiles_initialize(
 void projectiles_initialize_for_new_map(
 	void)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	refined_tag_effects_initialize_for_new_map();
+#endif
 	return;
 }
 
