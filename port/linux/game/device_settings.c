@@ -21,7 +21,8 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
 #endif
     "display.vsync", "display.interpolation",
     "audio.timer_countdown", "audio.timer_beeps", "audio.timer_minutes", "audio.timer_items",
-    "display.timer_position", "display.timer_scale"
+    "display.timer_position", "display.timer_scale",
+    "maps.show_og", "maps.show_community"
 };
 
 static int device_setting_is_finite(double value)
@@ -65,6 +66,16 @@ int device_settings_apply(unsigned long changed_mask,
     if (changed_mask & ~((1UL << NUMBER_OF_DEVICE_SETTINGS) - 1)) return 0;
     if (!changed_mask) return 1;
     if (!values) return 0;
+    /* A local map-selection preference must retain at least one enabled set.
+     * Unchanged rows come from the current config, not the caller's draft. */
+    if (changed_mask & ((1UL << _device_setting_show_og_maps) | (1UL << _device_setting_show_community_maps)))
+    {
+        double og = changed_mask & (1UL << _device_setting_show_og_maps) ?
+            values[_device_setting_show_og_maps] : device_settings_get(_device_setting_show_og_maps);
+        double community = changed_mask & (1UL << _device_setting_show_community_maps) ?
+            values[_device_setting_show_community_maps] : device_settings_get(_device_setting_show_community_maps);
+        if (og == 0.0 && community == 0.0) return 0;
+    }
     for (setting = 0; setting < NUMBER_OF_DEVICE_SETTINGS; setting++)
     {
         double old;

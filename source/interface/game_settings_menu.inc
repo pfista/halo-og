@@ -1,4 +1,4 @@
-/* Local Audio/Video preferences, staged until Accept. Main-menu pages clone
+/* Local device preferences, staged until Accept. Main-menu pages clone
  * retail widgets; gameplay uses the smaller, resident pause-menu assets. */
 #include "../../port/linux/include/halo_contributors.h"
 #define DEVICE_SETTINGS_ENTRY "ui\\shell\\main_menu\\main_menu_item_settings"
@@ -10,27 +10,30 @@ enum { _device_settings_initialize = 31990, _device_settings_accept,
     _device_settings_next, _device_settings_previous, _device_settings_enter_timer, _device_settings_cancel,
     _device_settings_about_next, _device_settings_about_previous, _device_settings_about_initialize };
 enum { _device_settings_chooser_preview = 31980, _device_settings_option_help };
-enum { _ds_game, _ds_audio, _ds_video, _ds_timer, _ds_page_count };
+enum { _ds_game, _ds_audio, _ds_video, _ds_timer, _ds_multiplayer, _ds_page_count };
 enum { _ds_main, _ds_pause_1p, _ds_pause_2p, _ds_pause_4p, _ds_solo, _ds_coop, _ds_layout_count };
 enum { _ds_settings_label, _ds_profile_label, _ds_game_label, _ds_about_label, _ds_audio_label,
     _ds_video_label, _ds_accept_label, _ds_back_help, _ds_audio_help,
     _ds_video_help, _ds_failure_help, _ds_partial_failure_help,
     _ds_timer_label, _ds_timer_help, _ds_timer_link_label, _ds_timer_link_help,
     _ds_select_key_label, _ds_accept_key_label, _ds_failure_brief, _ds_partial_failure_brief,
-    _ds_about_heading, _ds_about_info, _ds_row_label_start,
+    _ds_about_heading, _ds_about_info, _ds_multiplayer_label, _ds_multiplayer_help, _ds_row_label_start,
     _ds_help_start = _ds_row_label_start + NUMBER_OF_DEVICE_SETTINGS,
     _ds_value_start = _ds_help_start + NUMBER_OF_DEVICE_SETTINGS };
-static short const device_settings_page_counts[_ds_page_count] = {2, 6, 5, 5};
+static short const device_settings_choices[] = {_ds_audio, _ds_video, _ds_multiplayer};
+#define DEVICE_SETTINGS_CHOICE_COUNT NUMBEROF(device_settings_choices)
+static short const device_settings_page_counts[_ds_page_count] = {3, 6, 5, 5, 2};
 static short const device_settings_page_rows[_ds_page_count][6] = {
-    {NONE, NONE},
+    {NONE, NONE, NONE},
     {_device_setting_master_volume, _device_setting_music_volume, _device_setting_effects_volume,
      _device_setting_dialogue_volume, NONE, _device_setting_menu_music},
     {_device_setting_fullscreen, _device_setting_vsync, _device_setting_interpolation,
      _device_setting_timer_position, _device_setting_timer_scale},
     {_device_setting_timer_volume, _device_setting_timer_countdown, _device_setting_timer_beeps,
-     _device_setting_timer_minutes, _device_setting_timer_items}};
-static short const device_settings_page_titles[_ds_page_count] = {_ds_game_label, _ds_audio_label, _ds_video_label, _ds_timer_label};
-static short const device_settings_page_help[_ds_page_count] = {_ds_back_help, _ds_audio_help, _ds_video_help, _ds_timer_help};
+     _device_setting_timer_minutes, _device_setting_timer_items},
+    {_device_setting_show_og_maps, _device_setting_show_community_maps}};
+static short const device_settings_page_titles[_ds_page_count] = {_ds_game_label, _ds_audio_label, _ds_video_label, _ds_timer_label, _ds_multiplayer_label};
+static short const device_settings_page_help[_ds_page_count] = {_ds_back_help, _ds_audio_help, _ds_video_help, _ds_timer_help, _ds_multiplayer_help};
 #define DEVICE_SETTINGS_STRING_COUNT (_ds_value_start + MAXIMUM_NUMBER_OF_LOCAL_PLAYERS * NUMBER_OF_DEVICE_SETTINGS)
 static struct
 {
@@ -38,7 +41,7 @@ static struct
     struct ui_widget_definition settings_preview, settings_picture, settings_description;
     struct ui_widget_definition settings_choice[3], screen[_ds_layout_count][_ds_page_count];
     struct ui_widget_definition about_screen, about_title, about_body;
-    struct ui_widget_definition column[_ds_layout_count][_ds_page_count], choice[_ds_layout_count][2];
+    struct ui_widget_definition column[_ds_layout_count][_ds_page_count], choice[_ds_layout_count][DEVICE_SETTINGS_CHOICE_COUNT];
     struct ui_widget_definition timer_link[_ds_layout_count];
     struct ui_widget_definition heading[_ds_page_count], footer[_ds_page_count], row[NUMBER_OF_DEVICE_SETTINGS], accept;
     struct ui_widget_child_reference settings_children[4], settings_menu_children[3], settings_preview_children[2];
@@ -47,7 +50,7 @@ static struct
     struct ui_widget_child_reference screen_children[_ds_layout_count][_ds_page_count][5];
     struct ui_widget_child_reference column_children[_ds_layout_count][_ds_page_count][7];
     struct ui_widget_event_handler_reference entry_events[2], settings_events[3][2], about_events[7];
-    struct ui_widget_event_handler_reference choice_events[_ds_layout_count][2][2];
+    struct ui_widget_event_handler_reference choice_events[_ds_layout_count][DEVICE_SETTINGS_CHOICE_COUNT][2];
     struct ui_widget_event_handler_reference timer_events[_ds_layout_count][2];
     struct ui_widget_event_handler_reference root_events[3], accept_events[2], row_events[5];
     struct string_list strings;
@@ -60,7 +63,7 @@ static struct
     char timer_names[_ds_layout_count][64];
     long row_tags[NUMBER_OF_DEVICE_SETTINGS], heading_tags[_ds_page_count], footer_tags[_ds_page_count], accept_tag;
     char screen_names[_ds_layout_count][_ds_page_count][64], column_names[_ds_layout_count][_ds_page_count][64];
-    char choice_names[_ds_layout_count][2][64], row_names[NUMBER_OF_DEVICE_SETTINGS][64];
+    char choice_names[_ds_layout_count][DEVICE_SETTINGS_CHOICE_COUNT][64], row_names[NUMBER_OF_DEVICE_SETTINGS][64];
     unsigned about_page;
     wchar_t about_text[1024];
     boolean ready, native_pages;
@@ -77,7 +80,7 @@ static struct
     struct ui_widget_game_data_input_reference game_input, option_input;
     struct ui_widget_event_handler_reference detail_events[5], spinner_events[4];
     struct string_list game_descriptions;
-    struct string_list_entry game_description_entries[2];
+    struct string_list_entry game_description_entries[DEVICE_SETTINGS_CHOICE_COUNT];
     long game_menu_tag, spinner_tags[NUMBER_OF_DEVICE_SETTINGS];
     char label_names[NUMBER_OF_DEVICE_SETTINGS][64], value_names[NUMBER_OF_DEVICE_SETTINGS][64];
 } device_settings_native;
@@ -246,7 +249,7 @@ static boolean device_settings_build_chooser(long strings, long profile_tag)
     static char const *const choices[] = {"ui\\native_settings\\profile", "ui\\native_settings\\game", "ui\\native_settings\\about_choice"};
     static wchar_t descriptions[3][96] = {
         L"Choose a player profile to\r\nchange its name, controls\r\nand multiplayer color.",
-        L"Adjust audio and video\r\nsettings for this device.",
+        L"Adjust audio, video and\r\nmultiplayer settings\r\nfor this device.",
         L"Version and historical\r\nengine origin for Halo OG."};
     struct ui_widget_definition *base[NUMBEROF(templates)];
     long i, event, tag;
@@ -335,9 +338,10 @@ static boolean device_settings_build_native_pages(long strings, long const *head
         DEVICE_CONTROLS_PREFIX "controller_sensitivity_label",
         DEVICE_CONTROLS_PREFIX "controller_sensitivity_spinner",
         DEVICE_CHOOSER_PREFIX "multiplayer_options_pic"};
-    static wchar_t descriptions[2][96] = {
+    static wchar_t descriptions[DEVICE_SETTINGS_CHOICE_COUNT][96] = {
         L"Adjust music, sound effects,\r\ndialogue and overall volume.",
-        L"Choose fullscreen, VSync\r\nand smooth motion settings."};
+        L"Choose fullscreen, VSync\r\nand smooth motion settings.",
+        L"Choose which map sets\r\nappear when selecting\r\na map to host."};
     struct ui_widget_definition *base[NUMBEROF(templates)];
     long i, tag, page, row;
     for (i = 0; i < (long)NUMBEROF(templates); i++)
@@ -354,25 +358,24 @@ static boolean device_settings_build_native_pages(long strings, long const *head
     device_settings.heading[_ds_game].string_list_index = _ds_game_label;
     csmemcpy(device_settings.screen_children[_ds_main][_ds_game], device_settings.settings_children,
         sizeof(device_settings.settings_children));
-    /* Audio and Video retain their existing two-row chooser. */
-    device_settings.screen_children[_ds_main][_ds_game][3].vertical_offset -= 33;
+    /* Reuse all three retail chooser rows and the original separator. */
     device_settings.screen_children[_ds_main][_ds_game][0].widget_tag.index = heading_tags[_ds_game];
     device_settings.screen_children[_ds_main][_ds_game][1].widget_tag.index = column_tags[_ds_game];
     performance_pause_block(&device_settings.screen[_ds_main][_ds_game].child_widgets, 4,
         device_settings.screen_children[_ds_main][_ds_game]);
-    for (i = 0; i < 2; i++)
+    for (i = 0; i < (long)DEVICE_SETTINGS_CHOICE_COUNT; i++)
     {
         tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, device_settings.choice_names[_ds_main][i]);
         if (tag == NONE) return FALSE;
         device_settings.choice[_ds_main][i] = device_settings.settings_choice[i];
-        device_settings.choice[_ds_main][i].string_list_index = (short)(_ds_audio_label + i);
+        device_settings.choice[_ds_main][i].string_list_index = device_settings_page_titles[device_settings_choices[i]];
         performance_pause_block(&device_settings.choice[_ds_main][i].event_handlers, 2, device_settings.choice_events[_ds_main][i]);
         device_settings.column_children[_ds_main][_ds_game][i] = device_settings.settings_menu_children[i];
         device_settings.column_children[_ds_main][_ds_game][i].widget_tag.index = tag;
         device_settings_native.game_description_entries[i].string.address = descriptions[i];
         device_settings_native.game_description_entries[i].string.size = (ustrlen(descriptions[i]) + 1) * sizeof(wchar_t);
     }
-    performance_pause_block(&device_settings_native.game_descriptions.strings, 2, device_settings_native.game_description_entries);
+    performance_pause_block(&device_settings_native.game_descriptions.strings, DEVICE_SETTINGS_CHOICE_COUNT, device_settings_native.game_description_entries);
     tag = cache_files_register_runtime_ui_tag(UNICODE_STRING_LIST_TAG, "ui\\native_settings\\game_descriptions", &device_settings_native.game_descriptions);
     if (tag == NONE) return FALSE;
     device_settings_native.game_description = device_settings.settings_description;
@@ -399,7 +402,7 @@ static boolean device_settings_build_native_pages(long strings, long const *head
     device_settings_native.game_input.function = _device_settings_chooser_preview;
     device_settings_native.game_menu_tag = column_tags[_ds_game];
     performance_pause_block(&device_settings.column[_ds_main][_ds_game].game_data_inputs, 1, &device_settings_native.game_input);
-    performance_pause_block(&device_settings.column[_ds_main][_ds_game].child_widgets, 2,
+    performance_pause_block(&device_settings.column[_ds_main][_ds_game].child_widgets, DEVICE_SETTINGS_CHOICE_COUNT,
         device_settings.column_children[_ds_main][_ds_game]);
     csmemcpy(device_settings_native.detail_events, device_settings.root_events, sizeof(device_settings.root_events));
     csmemcpy(&device_settings_native.detail_events[3], device_settings.accept_events, sizeof(device_settings.accept_events));
@@ -504,11 +507,13 @@ static boolean device_settings_build(void)
         "Could not restore all settings.\r\nReview values and try again.",
         "TIMER AUDIO", "Host Timer Sounds must be on.\r\nAccept keeps changes. B: Cancel",
         "TIMER AUDIO...", "Choose timer volume and cues.\r\nHost Timer Sounds must be on.",
-        "=SELECT", "=ACCEPT", "COULD NOT SAVE", "REVIEW SETTINGS", "", ""};
+        "=SELECT", "=ACCEPT", "COULD NOT SAVE", "REVIEW SETTINGS", "", "",
+        "MULTIPLAYER", "Left/Right: Adjust\r\nAccept saves. B: Cancel"};
     static char const *const row_labels[] = {
         "MASTER VOLUME:", "MUSIC VOLUME:", "EFFECTS VOLUME:", "DIALOGUE VOLUME:", "TIMER VOLUME:",
         "MENU MUSIC:", "FULLSCREEN:", "VSYNC:", "SMOOTH MOTION:",
-        "COUNTDOWN:", "BEEPS:", "MINUTE ANNOUNCEMENTS:", "ITEM CUES:", "TIMER POSITION:", "TIMER SIZE:"};
+        "COUNTDOWN:", "BEEPS:", "MINUTE ANNOUNCEMENTS:", "ITEM CUES:", "TIMER POSITION:", "TIMER SIZE:",
+        "OG MAPS:", "COMMUNITY MAPS:"};
     static char const *const help[] = {
         "Adjust the volume of all game audio.",
         "Adjust the volume of music.",
@@ -524,15 +529,17 @@ static boolean device_settings_build(void)
         "Announce elapsed minutes.\r\nHost Timer Sounds must be on.",
         "Play scheduled rocket and powerup cues\r\nwhen supported by this map.\r\nHost Timer Sounds must be on.",
         "Choose where the match timer appears.\r\nThe host must enable the timer.",
-        "Adjust timer size from 50% to 100%.\r\nThe host must enable the timer."};
-    static char const *const heading_names[] = {"ui\\native_settings\\game_title", "ui\\native_settings\\audio_title", "ui\\native_settings\\video_title", "ui\\native_settings\\timer_title"};
-    static char const *const footer_names[] = {"ui\\native_settings\\game_help", "ui\\native_settings\\audio_help", "ui\\native_settings\\video_help", "ui\\native_settings\\timer_help"};
+        "Adjust timer size from 50% to 100%.\r\nThe host must enable the timer.",
+        "Show original Xbox maps when hosting.\r\nKeep at least one map set enabled.\r\nJoining hidden maps stays available.",
+        "Show installed community maps.\r\nAn empty list shows OG maps.\r\nJoining hidden maps stays available."};
+    static char const *const heading_names[] = {"ui\\native_settings\\game_title", "ui\\native_settings\\audio_title", "ui\\native_settings\\video_title", "ui\\native_settings\\timer_title", "ui\\native_settings\\multiplayer_title"};
+    static char const *const footer_names[] = {"ui\\native_settings\\game_help", "ui\\native_settings\\audio_help", "ui\\native_settings\\video_help", "ui\\native_settings\\timer_help", "ui\\native_settings\\multiplayer_help"};
     struct ui_widget_definition *bases[_ds_layout_count] = {0};
     struct ui_widget_definition *style;
     long tag, strings, font, layout, page, row, i, profile_tag = NONE;
     long *heading_tags = device_settings.heading_tags;
     long column_tags[_ds_layout_count][_ds_page_count];
-    long choice_tags[_ds_layout_count][2];
+    long choice_tags[_ds_layout_count][DEVICE_SETTINGS_CHOICE_COUNT];
     void (*text_definition)(struct ui_widget_definition *, struct ui_widget_definition const *, long, short, boolean);
     boolean main_menu;
     device_settings.ready = FALSE;
@@ -622,7 +629,8 @@ static boolean device_settings_build(void)
     for (row = 0; row < NUMBER_OF_DEVICE_SETTINGS; row++)
     {
         text_definition(&device_settings.row[row], style, strings, (short)(_ds_value_start + row), TRUE);
-        if (main_menu || row == _device_setting_interpolation || row == _device_setting_timer_position)
+        if (main_menu || row == _device_setting_interpolation || row == _device_setting_timer_position ||
+            row >= _device_setting_show_og_maps)
             device_settings.row[row].text_font.index = font;
         performance_pause_block(&device_settings.row[row].event_handlers, NUMBEROF(device_settings.row_events), device_settings.row_events);
         snprintf(device_settings.row_names[row], sizeof(device_settings.row_names[row]), "ui\\native_settings\\row_%ld", row);
@@ -656,13 +664,13 @@ static boolean device_settings_build(void)
         snprintf(device_settings.timer_names[layout], sizeof(device_settings.timer_names[layout]), "ui\\native_settings\\timer_link_%ld", layout);
         device_settings.timer_tags[layout] = device_settings_register(device_settings.timer_names[layout], &device_settings.timer_link[layout]);
         if (device_settings.timer_tags[layout] == NONE) return FALSE;
-        for (i = 0; i < 2; i++)
+        for (i = 0; i < (long)DEVICE_SETTINGS_CHOICE_COUNT; i++)
         {
-            text_definition(&device_settings.choice[layout][i], style, strings, (short)(_ds_audio_label + i), TRUE);
+            text_definition(&device_settings.choice[layout][i], style, strings, device_settings_page_titles[device_settings_choices[i]], TRUE);
             if (main_menu) device_settings.choice[layout][i].text_font.index = font;
             for (row = 0; row < 2; row++)
                 performance_pause_event_definition(&device_settings.choice_events[layout][i][row], row ? _gamepad_binary_button_start : _gamepad_analog_button_a,
-                    0, FLAG(_event_handler_open_widget_bit), device_settings.screen_tags[layout][i + 1]);
+                    0, FLAG(_event_handler_open_widget_bit), device_settings.screen_tags[layout][device_settings_choices[i]]);
             performance_pause_block(&device_settings.choice[layout][i].event_handlers, 2, device_settings.choice_events[layout][i]);
             snprintf(device_settings.choice_names[layout][i], sizeof(device_settings.choice_names[layout][i]), "ui\\native_settings\\choice_%ld_%ld", layout, i);
             choice_tags[layout][i] = device_settings_register(device_settings.choice_names[layout][i], &device_settings.choice[layout][i]);
@@ -676,7 +684,7 @@ static boolean device_settings_build(void)
             short rows = count + (page != _ds_game);
             short pitch = main_menu ? 24 : 27;
             short width = main_menu ? 284 : 202;
-            short height = main_menu ? 28 + rows * pitch + 40 : page == _ds_game ? 159 : 27 + rows * pitch + 24;
+            short height = main_menu ? 28 + rows * pitch + 40 : page == _ds_game || page == _ds_multiplayer ? 159 : 27 + rows * pitch + 24;
             short x = (bases[layout]->bounds.x1 - bases[layout]->bounds.x0 - width) / 2;
             short y = (bases[layout]->bounds.y1 - bases[layout]->bounds.y0 - height) / 2;
             short column_y = main_menu ? 28 : 22;
@@ -872,7 +880,8 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
     static char const *const names[NUMBER_OF_DEVICE_SETTINGS] = {
         "Master", "Music", "Effects", "Dialogue", "Volume",
         "Menu Music", "Fullscreen", "VSync", "Smooth Motion",
-        "Countdown", "Beeps", "Minutes", "Item Cues", "Position", "Timer Size"};
+        "Countdown", "Beeps", "Minutes", "Item Cues", "Position", "Timer Size",
+        "OG Maps", "Community Maps"};
     short row, local = (short)(draft - device_settings_drafts);
     for (row = 0; row < NUMBER_OF_DEVICE_SETTINGS; row++)
     {
@@ -1078,9 +1087,9 @@ static void game_settings_input(struct widget_instance *widget, short function)
         {
             preview->child->visible = index == 0;
             preview->child->animation.current_frame_index = 2;
-            preview->child->next->visible = index == 1;
+            preview->child->next->visible = index == 1 || index == 2;
             preview->child->next->animation.current_frame_index = 0;
-            preview->child->next->next->parameters.text_box.string_list_index = index == 1 ? 1 : 0;
+            preview->child->next->next->parameters.text_box.string_list_index = index >= 0 && index < (short)DEVICE_SETTINGS_CHOICE_COUNT ? index : 0;
         }
     }
     else if (function == _device_settings_option_help)
@@ -1108,6 +1117,7 @@ static void game_settings_input(struct widget_instance *widget, short function)
     }
 }
 #undef DEVICE_SETTINGS_STRING_COUNT
+#undef DEVICE_SETTINGS_CHOICE_COUNT
 #undef DEVICE_SETTINGS_ENTRY
 #undef DEVICE_PROFILE_PICKER
 #undef DEVICE_OPTIONS_PREFIX

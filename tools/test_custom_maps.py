@@ -51,6 +51,13 @@ HARNESS = r'''
 static char directory[256];
 static char overlay[256];
 static int download_status;
+static int show_og = 1, show_community = 1;
+void set_map_sets(int og, int community) { show_og = og; show_community = community; }
+int config_boolean(const char *name) {
+    if (!strcmp(name, "maps.show_og")) return show_og;
+    if (!strcmp(name, "maps.show_community")) return show_community;
+    abort();
+}
 void set_directory(const char *p) { snprintf(directory, sizeof(directory), "%s/", p); }
 void set_overlay(const char *p) { snprintf(overlay, sizeof(overlay), "%s/", p); }
 void set_download_status(int status) { download_status = status; }
@@ -118,6 +125,7 @@ class NativeMapTests(unittest.TestCase):
 ''')
         (cls.folder / "cache/cache_files.h").write_text("const char *cache_files_map_directory(void);\nconst char *cache_files_build_region(const char *);\n")
         (cls.folder / "xtl.h").write_text(XTL)
+        (cls.folder / "port_config.h").write_text("int config_boolean(const char *);\n")
         (cls.folder / "harness.c").write_text(HARNESS)
         library = cls.folder / "maps.dylib"
         subprocess.run(["clang", "-shared", "-fPIC", "-Wall", "-Wextra", "-Wno-unused-parameter", "-DHALO_MACOS=1",
@@ -133,6 +141,7 @@ class NativeMapTests(unittest.TestCase):
         cls.lib.set_directory.argtypes = [ctypes.c_char_p]
         cls.lib.set_overlay.argtypes = [ctypes.c_char_p]
         cls.lib.set_download_status.argtypes = [ctypes.c_int]
+        cls.lib.set_map_sets.argtypes = [ctypes.c_int, ctypes.c_int]
         cls.lib.native_map_get_path.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.c_uint]
         cls.lib.native_map_download_pending.argtypes = [ctypes.c_char_p]
 
@@ -144,6 +153,7 @@ class NativeMapTests(unittest.TestCase):
         return bool(self.lib.native_map_header_valid(ctypes.create_string_buffer(bytes(data)), filename.encode()))
 
     def setUp(self):
+        self.lib.set_map_sets(1, 1)
         self.lib.set_overlay(b"")
         self.lib.set_download_status(0)
 
@@ -237,6 +247,38 @@ class NativeMapTests(unittest.TestCase):
         self.assertEqual(count.value, 16)
         self.assertEqual([result[i] for i in range(13)], list(stock))
         self.assertEqual([result[i] for i in range(13, count.value)], [b"atlas", b"downrush", b"h1pb_chillout"])
+
+    def test_map_sets_filter_only_selection_and_never_leave_an_empty_spinner(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary, "base"); base.mkdir()
+            overlay = Path(temporary, "managed"); overlay.mkdir()
+            (base / "bloodgulch.map").write_bytes(header("bloodgulch"))
+            (base / "downrush.map").write_bytes(header())
+            (base / "h1pb_chillout.map").write_bytes(header("h1pb_chillout"))
+            (overlay / "atlas.map").write_bytes(header("atlas"))
+            self.lib.set_directory(str(base).encode())
+            self.lib.set_overlay(str(overlay).encode())
+            self.lib.set_download_status(1)
+            stock = [value.encode() for value in STOCK]
+            self.assertEqual(self.map_list(), stock + [b"atlas", b"downrush", b"h1pb_chillout"])
+            self.lib.set_map_sets(0, 1)
+            self.assertEqual(self.map_list(), [b"atlas", b"downrush", b"h1pb_chillout"])
+            self.lib.set_map_sets(1, 0)
+            self.assertEqual(self.map_list(), stock)
+            path = ctypes.create_string_buffer(256)
+            self.assertTrue(self.lib.native_map_get_path(b"downrush", path, len(path)))
+            self.assertEqual(path.value, str(base / "downrush.map").encode())
+            self.assertTrue(self.lib.native_map_get_path(b"atlas", path, len(path)))
+            self.assertEqual(path.value, b"m:\\atlas.map")
+            (overlay / "atlas.map").unlink()
+            self.lib.set_download_status(2)
+            self.assertEqual(self.lib.native_map_download_pending(b"atlas"), 2)
+            self.lib.set_map_sets(0, 0)
+            self.assertEqual(self.map_list(), stock)
+            (base / "downrush.map").unlink()
+            (base / "h1pb_chillout.map").unlink()
+            self.lib.set_map_sets(0, 1)
+            self.assertEqual(self.map_list(), stock)
 
 
 class ImportBoundaryTests(unittest.TestCase):

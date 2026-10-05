@@ -153,6 +153,15 @@ static const struct config_setting config_settings[] =
 		"The language the game asks the Xbox for: \"ja\", \"de\", \"fr\", \"es\" or \"it\";\n"
 		"empty for English. The game data decides what is translated." },
 
+	{ "maps.show_og", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Show original Xbox maps in the host map-selection menu. Keep at least\n"
+		"one set enabled; an empty selection falls back to original maps.\n"
+		"Map visibility does not prevent joining a host using a hidden map." },
+	{ "maps.show_community", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Show installed community maps in the host map-selection menu.\n"
+		"Includes alternate and refined imports; their caches remain available\n"
+		"for joining games and automatic map downloads when this is false." },
+
 	{ "paths.data", _config_string, "\"\"", "HALO_DATA_ROOT", _environment_value, _platform_desktop,
 		"The folder holding the game data's maps folder; empty looks in the\n"
 		"working directory and its assets folder. Windows paths are easiest in\n"

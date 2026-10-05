@@ -242,7 +242,8 @@ static char const *data_00316820[] =
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 enum
 {
-	RUNTIME_UI_TAG_INDEX_BITS = 7,
+	RUNTIME_UI_TAG_INDEX_BITS = 8,
+	/* Device Multiplayer settings need more than the former 128 UI slots. */
 	MAXIMUM_RUNTIME_UI_TAGS = 1 << RUNTIME_UI_TAG_INDEX_BITS,
 	RUNTIME_UI_TAG_MAGIC = 0x50420000,
 	RUNTIME_UI_TAG_INDEX_BIT = 0x8000,

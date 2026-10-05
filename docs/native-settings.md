@@ -1,4 +1,4 @@
-# Native audio, video and Mac window controls
+# Native game settings and Mac window controls
 
 Open **Settings → Game Settings** from the main menu, or **Game Settings**
 from Pause in multiplayer, campaign or cooperative play. **Profile Settings**
@@ -11,7 +11,7 @@ Spartan artwork; Game Settings shows the controller artwork. Moving between
 the rows updates the preview, with the original fonts, blue highlights and
 button legend retained.
 
-Game Settings uses the same two-column chooser for Audio and Video, with the
+Game Settings uses the same two-column chooser for Audio, Video and Multiplayer, with the
 original controller-calibration and TV/Xbox illustrations. Its Audio and Video
 pages clone the original Advanced Controls editor: blue option rows, separate
 labels and values, the original arrow graphics, contextual help, and the native
@@ -24,11 +24,23 @@ Select/Back legend. Taller option pages extend the middle of the frame while
 preserving its corners and footer divider. Split-screen pages fit within their
 local viewport; focused help appears beneath the frame in full-screen layouts.
 
-Audio and Video preferences belong to the local installation. They are not
+Audio, Video and Multiplayer preferences belong to the local installation. They are not
 part of a player profile, map or network gametype. Performance Options remain saved
 gametype options with host authority. Timer cue groups, volume, position and
 size are local preferences; the host still controls whether the timer and
 timer audio are enabled.
+
+## Multiplayer
+
+| Menu control | Config key | Default | Meaning |
+| --- | --- | --- | --- |
+| OG Maps | `maps.show_og` | On | Show the original Xbox maps when hosting |
+| Community Maps | `maps.show_community` | On | Show installed community maps, including alternate/refined imports |
+
+Map visibility affects the host's map-selection list. Hidden maps remain
+available for joining and approved downloads. At least one set must remain
+On; if no visible community map is installed, the list falls back to OG maps.
+Separate alternate/refined categories require reviewed catalog metadata.
 
 ## Audio
 

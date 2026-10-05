@@ -39,7 +39,8 @@ void SDL_free(void *data) { free(data); }
 #endif
 int main(int argc,char **argv) {
     assert(argc==5);
-    int original=config_boolean("audio.menu_music");
+    const char *read_setting=!strcmp(argv[3],"maps.show_og") || !strcmp(argv[3],"maps.show_community") ? argv[3]:"audio.menu_music";
+    int original=config_boolean(read_setting);
     if(!strcmp(argv[1],"read")) { printf("%d\n",original); return 0; }
     char path[1024]; snprintf(path,sizeof(path),"%s/config.toml",getenv("HALO_SAVE_ROOT"));
     FILE *input=fopen(argv[1],"rb"),*output=fopen(path,"wb"); assert(input && output);
@@ -47,7 +48,7 @@ int main(int argc,char **argv) {
     assert(!fclose(input) && !fclose(output));
     if(!strcmp(argv[2],"failure")) assert(!chmod(path,0400));
     int result=config_write_boolean(argv[3],atoi(argv[4]));
-    printf("%d %d %d\n",original,result,config_boolean("audio.menu_music"));
+    printf("%d %d %d\n",original,result,config_boolean(read_setting));
     assert(!chmod(path,0600)); return 0;
 }
 '''
@@ -411,10 +412,11 @@ static struct widget_instance *setting_control(struct widget_instance *root,shor
 static void settings_structure(void) {
     settings_setup(0); assert(game_settings_remap_tag(entry_id)!=entry_id);
     assert(device_settings.settings_menu.child_widgets.count==3);
-    assert(device_settings.column[0][_ds_game].child_widgets.count==2);
+    assert(device_settings.column[0][_ds_game].child_widgets.count==3);
     assert(device_settings.column[0][_ds_audio].child_widgets.count==6);
     assert(device_settings.column[0][_ds_video].child_widgets.count==5);
     assert(device_settings.column[0][_ds_timer].child_widgets.count==5);
+    assert(device_settings.column[0][_ds_multiplayer].child_widgets.count==2);
     assert(!game_settings_is_adjustable(NULL));
     struct widget_instance item={0};
     for(unsigned i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) {
@@ -437,7 +439,7 @@ static void settings_structure(void) {
     assert(!memcmp(originals,originals_before,sizeof(originals)));
     assert(!memcmp(&chooser,&chooser_before,sizeof(chooser)));
     assert(!memcmp(&advanced,&advanced_before,sizeof(advanced)));
-    assert(pb_editor_build()); assert(register_calls==125); /* Settings, About and PB fit the real 128-tag registry. */
+    assert(pb_editor_build()); assert(register_calls==136 && register_calls<MAXIMUM_RUNTIME_UI_TAGS);
     long old=device_settings.entry_tag; scenario_tags_unload();
     cache_file_globals.tags_loaded=TRUE; global_tag_instances=settings_map;
     assert(!tag_index_is_group(old,'DeLa'));
@@ -628,13 +630,14 @@ static void settings_native_options(void) {
     static const wchar_t *labels[NUMBER_OF_DEVICE_SETTINGS]={
         L"MASTER VOLUME:",L"MUSIC VOLUME:",L"EFFECTS VOLUME:",L"DIALOGUE VOLUME:",L"TIMER VOLUME:",
         L"MENU MUSIC:",L"FULLSCREEN:",L"VSYNC:",L"SMOOTH MOTION:",L"COUNTDOWN:",L"BEEPS:",
-        L"MINUTE ANNOUNCEMENTS:",L"ITEM CUES:",L"TIMER POSITION:",L"TIMER SIZE:"};
-    static const short rows_by_page[3][6]={
-        {0,1,2,3,NONE,5}, {6,7,8,13,14}, {4,9,10,11,12}};
-    static const short counts[3]={6,5,5};
+        L"MINUTE ANNOUNCEMENTS:",L"ITEM CUES:",L"TIMER POSITION:",L"TIMER SIZE:",
+        L"OG MAPS:",L"COMMUNITY MAPS:"};
+    static const short rows_by_page[4][6]={
+        {0,1,2,3,NONE,5}, {6,7,8,13,14}, {4,9,10,11,12}, {15,16}};
+    static const short counts[4]={6,5,5,2};
     settings_setup(0); assert(device_settings_build());
     assert(device_settings.native_pages && !game_settings_is_native_spinner(NULL));
-    for(short page=_ds_audio;page<=_ds_timer;page++) {
+    for(short page=_ds_audio;page<=_ds_multiplayer;page++) {
         struct ui_widget_definition *screen=&device_settings.screen[_ds_main][page];
         struct ui_widget_definition *column=&device_settings.column[_ds_main][page];
         struct ui_widget_definition *footer=&device_settings.footer[page];
@@ -759,22 +762,24 @@ static void settings_game_chooser(void) {
     settings_setup(0); assert(device_settings_build());
     struct ui_widget_definition *screen=&device_settings.screen[_ds_main][_ds_game];
     struct ui_widget_definition *column=&device_settings.column[_ds_main][_ds_game];
-    assert(screen->child_widgets.count==4 && column->child_widgets.count==2);
+    assert(screen->child_widgets.count==4 && column->child_widgets.count==3);
     assert(!memcmp(&screen->bounds,&chooser.defs[CHOOSER_ROOT].bounds,sizeof(screen->bounds)));
     struct ui_widget_child_reference *children=screen->child_widgets.address,*rows=column->child_widgets.address;
     assert(!memcmp(&children[2],&chooser.root[2],sizeof(children[2])));
-    assert(children[3].vertical_offset==chooser.root[3].vertical_offset-33);
+    assert(children[3].vertical_offset==chooser.root[3].vertical_offset);
     assert(column->game_data_inputs.count==1);
     assert(((struct ui_widget_game_data_input_reference *)column->game_data_inputs.address)->function==31980);
-    for(unsigned i=0;i<2;i++) {
+    static const wchar_t *names[]={L"AUDIO",L"VIDEO",L"MULTIPLAYER"};
+    static const short pages[]={_ds_audio,_ds_video,_ds_multiplayer};
+    for(unsigned i=0;i<3;i++) {
         struct ui_widget_definition *row=ui_widget_definition_get(rows[i].widget_tag.index);
         assert(row->background_bitmap.index==chooser.defs[CHOOSER_COOP+i].background_bitmap.index);
         assert(row->text_font.index==chooser.defs[CHOOSER_COOP+i].text_font.index);
         assert(row->horizontal_offset==13 && row->vertical_offset==5);
-        assert(!wcscmp(string_at(row,row->string_list_index),i ? L"VIDEO":L"AUDIO"));
+        assert(!wcscmp(string_at(row,row->string_list_index),names[i]));
         assert(row->event_handlers.count==2);
         struct ui_widget_event_handler_reference *events=row->event_handlers.address;
-        for(unsigned j=0;j<2;j++) assert(events[j].widget_tag.index==device_settings.screen_tags[_ds_main][i+1]);
+        for(unsigned j=0;j<2;j++) assert(events[j].widget_tag.index==device_settings.screen_tags[_ds_main][pages[i]]);
     }
     struct ui_widget_definition *preview=ui_widget_definition_get(column->extended_description_widget.index);
     assert(preview->child_widgets.count==3);
@@ -784,17 +789,18 @@ static void settings_game_chooser(void) {
     struct ui_widget_definition *description=ui_widget_definition_get(parts[2].widget_tag.index);
     assert(audio->background_bitmap.index==chooser.defs[CHOOSER_PROFILE_PICTURE].background_bitmap.index);
     assert(video->background_bitmap.index==chooser.defs[CHOOSER_MP_PICTURE].background_bitmap.index);
-    assert(unicode_string_list_definition_get(description->text_label_string_list.index)->strings.count==2);
+    assert(unicode_string_list_definition_get(description->text_label_string_list.index)->strings.count==3);
     struct widget_instance *root=open_settings(_ds_main,_ds_game,0);
     struct widget_instance *list=widget_instance_find_by_tag_index_recursive(root,children[1].widget_tag.index);
     struct widget_instance *extended=list->parameters.list.extended_description;
     assert(extended && extended->child && extended->child->next && extended->child->next->next);
-    for(unsigned turn=0;turn<3;turn++) {
-        short selected=turn==1 ? 1:0;
-        list->focused_child=selected ? list->child->next:list->child;
+    for(unsigned turn=0;turn<4;turn++) {
+        short selected=turn==3 ? 0:turn;
+        list->focused_child=list->child;
+        for(short i=0;i<selected;i++) list->focused_child=list->focused_child->next;
         list->parameters.list.selected_index=(short)selected;
         settings_render_inputs(list);
-        assert(extended->child->visible==!selected && extended->child->next->visible==selected);
+        assert(extended->child->visible==!selected && extended->child->next->visible==(selected!=0));
         assert(extended->child->animation.current_frame_index==2);
         assert(extended->child->next->animation.current_frame_index==0);
         assert(extended->child->next->next->parameters.text_box.string_list_index==(short)selected);
@@ -845,6 +851,32 @@ static void settings_staging(void) {
     assert(widget_instance_find_by_tag_index_recursive(root,device_settings.footer_tags[_ds_video])->parameters.text_box.string_list_index==_ds_partial_failure_help);
     rollback_incomplete=FALSE;
     assert(!game_settings_event(root,17)); dispose(root);
+}
+static void settings_multiplayer_staging(void) {
+    const short layouts[]={_ds_main,_ds_pause_1p,_ds_pause_4p,_ds_solo,_ds_coop};
+    for(unsigned i=0;i<NUMBEROF(layouts);i++) {
+        short layout=layouts[i],local=layout==_ds_pause_4p ? 3:0;
+        settings_setup(layout==_ds_main ? 0:layout<=_ds_pause_4p ? 1:2);
+        assert(device_settings_build());
+        struct widget_instance *root=open_settings(layout,_ds_multiplayer,local);
+        assert(device_settings_drafts[local].values[_device_setting_show_og_maps]==1 &&
+            device_settings_drafts[local].values[_device_setting_show_community_maps]==1);
+        assert(game_settings_event(setting_control(root,_device_setting_show_community_maps),_device_settings_next));
+        assert(!writes && settings_values[_device_setting_show_community_maps]==1);
+        assert(game_settings_event(root,_device_settings_cancel)); dispose(root);
+        root=open_settings(layout,_ds_multiplayer,local);
+        assert(device_settings_drafts[local].values[_device_setting_show_community_maps]==1);
+        assert(game_settings_event(setting_control(root,_device_setting_show_community_maps),_device_settings_next));
+        save_succeeds=FALSE;
+        assert(!game_settings_event(root,_device_settings_accept));
+        assert(settings_values[_device_setting_show_community_maps]==1);
+        save_succeeds=TRUE; assert(game_settings_event(root,_device_settings_accept));
+        assert(writes==2 && applied_mask==(1UL<<_device_setting_show_community_maps));
+        assert(settings_values[_device_setting_show_og_maps]==1 && settings_values[_device_setting_show_community_maps]==0 &&
+            settings_values[_device_setting_master_volume]==0.125);
+        assert(game_settings_event(root,_device_settings_accept) && writes==2);
+        dispose(root);
+    }
 }
 static struct widget_instance *enter_timer(struct widget_instance *audio,short layout,short local) {
     struct widget_instance *link=widget_instance_find_by_tag_index_recursive(audio,device_settings.timer_tags[layout]);
@@ -963,7 +995,7 @@ static void settings_pause_and_campaign(void) {
     settings_setup(1); assert(performance_pause_remap_tag(original_root_ids[0])!=original_root_ids[0]);
     assert(!device_settings.native_pages);
     for(unsigned i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) assert(device_settings_native.spinner_tags[i]==NONE);
-    assert(register_calls==93 && !memcmp(originals,originals_before,sizeof(originals)));
+    assert(register_calls==106 && !memcmp(originals,originals_before,sizeof(originals)));
     for(unsigned i=0;i<3;i++) {
         assert(performance_pause_list_children[i][0].widget_tag.index==resume_id);
         assert(performance_pause_list_children[i][3].widget_tag.index==quit_id);
@@ -974,7 +1006,7 @@ static void settings_pause_and_campaign(void) {
             assert(!TEST_FLAG(device_settings.screen[i+1][page].flags,_widget_pause_game_time_bit));
             struct ui_widget_child_reference *children=device_settings.screen_children[i+1][page];
             struct ui_widget_definition *frame=ui_widget_definition_get(children[0].widget_tag.index);
-            short height=page==_ds_game ? 159:page==_ds_audio ? 240:213;
+            short height=page==_ds_game || page==_ds_multiplayer ? 159:page==_ds_audio ? 240:213;
             assert(frame->bounds.y1==height && frame->bounds.x0==-4 && frame->bounds.x1==222);
             assert(children[0].horizontal_offset==children[1].horizontal_offset-8);
             assert(children[0].vertical_offset>=0 && children[0].vertical_offset+height<=originals[i].bounds.y1);
@@ -996,7 +1028,7 @@ static void settings_pause_and_campaign(void) {
         assert(!memcmp(&device_settings.row[row].bounds,&originals[6].bounds,sizeof(rectangle2d)));
         assert(device_settings.row[row].background_bitmap.index==originals[6].background_bitmap.index);
         assert(device_settings.row[row].vertical_offset==3);
-        long font=tag_loaded(FONT_GROUP_TAG,row==_device_setting_interpolation || row==_device_setting_timer_position ? "ui\\small_ui":"ui\\large_ui");
+        long font=tag_loaded(FONT_GROUP_TAG,row==_device_setting_interpolation || row==_device_setting_timer_position || row>=_device_setting_show_og_maps ? "ui\\small_ui":"ui\\large_ui");
         assert(device_settings.row[row].text_font.index==font);
     }
     assert(device_settings.accept.text_font.index==originals[6].text_font.index && device_settings.accept.vertical_offset==3);
@@ -1053,7 +1085,7 @@ static void settings_pause_and_campaign(void) {
         assert(!memcmp(originals,originals_before,sizeof(originals)));
         one=open_settings(_ds_solo+i,_ds_audio,i); dispose(one);
     }
-    assert(register_calls==56);
+    assert(register_calls==66);
 }
 static void settings_registration_failure(void) {
     settings_setup(0); assert(device_settings_build()); unsigned count=register_calls;
@@ -1122,7 +1154,7 @@ static void settings_about_metrics(void) {
 int main(int argc,char **argv) {
     if(argc==2 && !strcmp(argv[1],"--about-metrics")) { settings_about_metrics(); return 0; }
     settings_structure(); settings_native_chooser(); settings_about(); settings_native_options(); settings_game_chooser(); settings_staging();
-    settings_timer_staging(); settings_timer_video();
+    settings_timer_staging(); settings_timer_video(); settings_multiplayer_staging();
     settings_pause_and_campaign(); settings_registration_failure(); settings_cross_map_rebuild();
     puts("native game settings tests passed"); return 0;
 }
@@ -1301,7 +1333,7 @@ class ConfigBooleanPersistenceTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(result.stdout.strip(), f"1 {int(success)} {value if success else 1}")
                 self.assertEqual((directory / "config.toml").read_bytes(), expected.encode())
-                if success and setting == "audio.menu_music" and "[audio]" in expected:
+                if success:
                     reload = subprocess.run([str(executable), "read", mode, setting, str(value)],
                                             env=environment, text=True, capture_output=True)
                     self.assertEqual(reload.returncode, 0, reload.stderr)
@@ -1339,6 +1371,12 @@ class ConfigBooleanPersistenceTests(unittest.TestCase):
         original = '[audio]\nmenu_music = true\n'
         for setting in ('audio.unknown', 'audio.volume'):
             self.run_save(original, original, setting=setting, success=False)
+
+    def test_multiplayer_preferences_save_and_reload_with_existing_comments(self):
+        for setting in ("maps.show_og", "maps.show_community"):
+            table, key = setting.split(".")
+            original = f'# player preferences\n[{table}]\n{key} = true # retain\n'
+            self.run_save(original, original.replace('= true # retain', '= false # retain'), setting=setting)
 
 
 if __name__ == "__main__":

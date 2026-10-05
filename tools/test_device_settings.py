@@ -30,12 +30,13 @@ HARNESS = r'''
 static const char *names[] = {"audio.volume", "audio.music_volume", "audio.effects_volume",
     "audio.dialogue_volume", "audio.timer_volume", "audio.menu_music", "display.vsync", "display.interpolation",
     "audio.timer_countdown", "audio.timer_beeps", "audio.timer_minutes", "audio.timer_items",
-    "display.timer_position", "display.timer_scale", "display.fullscreen"};
-static double saved[15];
+    "display.timer_position", "display.timer_scale", "display.fullscreen",
+    "maps.show_og", "maps.show_community"};
+static double saved[17];
 static int fullscreen, native_fullscreen, write_ok, switch_ok, apply_ok, writes, audio_applies, video_applies, switches, starts, stops;
 static int write_fail_on, switch_fail_on, apply_fail_on;
 static int index_of(const char *name) {
-    for (int i=0;i<15;i++) if (!strcmp(names[i],name)) return i;
+    for (int i=0;i<17;i++) if (!strcmp(names[i],name)) return i;
     assert(!"unknown preference"); return -1;
 }
 int config_boolean(const char *name) {
@@ -65,7 +66,7 @@ int halo_video_apply_settings(void) { video_applies++; return apply_ok && video_
 void halo_audio_apply_settings(void) { audio_applies++; }
 void ui_apply_main_menu_music_setting(void) { if (saved[5]) starts++; else stops++; }
 static void reset(double values[NUMBER_OF_DEVICE_SETTINGS]) {
-    for (int i=0;i<15;i++) saved[i]=(i==7 || i==11 || i==12) ? 0.0 : 1.0;
+    for (int i=0;i<17;i++) saved[i]=(i==7 || i==11 || i==12) ? 0.0 : 1.0;
     saved[0]=0.15; fullscreen=native_fullscreen=1; write_ok=switch_ok=apply_ok=1;
     writes=audio_applies=video_applies=switches=starts=stops=0;
     write_fail_on=switch_fail_on=apply_fail_on=0;
@@ -207,6 +208,29 @@ int main(void) {
     saved[13]=-DBL_MAX; assert(device_settings_get(_device_setting_timer_scale)==0.5);
     saved[13]=DBL_MAX; assert(device_settings_get(_device_setting_timer_scale)==1.0);
     saved[13]=0.625; assert(device_settings_get(_device_setting_timer_scale)==0.625);
+    /* Map filters are local preferences with original
+     * defaults. They do not reconfigure audio/video or change match rules. */
+    reset(values);
+    assert(values[_device_setting_show_og_maps]==1 && values[_device_setting_show_community_maps]==1);
+    values[_device_setting_show_community_maps]=0;
+    unsigned long multiplayer=1UL<<_device_setting_show_community_maps;
+    assert(device_settings_apply(multiplayer,values));
+    assert(writes==1 && saved[15]==1 && saved[16]==0);
+    assert(!audio_applies && !video_applies && !switches && !starts && !stops);
+    values[_device_setting_show_og_maps]=0;
+    assert(!device_settings_apply(1UL<<_device_setting_show_og_maps,values) && writes==1);
+    assert(saved[15]==1);
+    reset(values); values[_device_setting_show_og_maps]=0; values[_device_setting_show_community_maps]=0;
+    values[0]=0.2;
+    assert(!device_settings_apply(1UL|(1UL<<_device_setting_show_og_maps)|(1UL<<_device_setting_show_community_maps),values));
+    assert(!writes && saved[0]==0.15 && saved[15]==1 && saved[16]==1);
+    reset(values); values[_device_setting_show_og_maps]=0; write_ok=0;
+    assert(!device_settings_apply(1UL<<_device_setting_show_og_maps,values));
+    assert(saved[15]==1 && saved[16]==1 && writes==1);
+    reset(values); values[_device_setting_show_og_maps]=0;
+    values[_device_setting_vsync]=0; apply_fail_on=1;
+    assert(!device_settings_apply((1UL<<_device_setting_vsync)|(1UL<<_device_setting_show_og_maps),values));
+    assert(writes==2 && saved[6]==1 && saved[15]==1 && saved[16]==1);
     puts("device settings save/apply tests passed");
 }
 '''

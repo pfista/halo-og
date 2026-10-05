@@ -19,6 +19,8 @@ enum
     _device_setting_timer_items,
     _device_setting_timer_position,
     _device_setting_timer_scale,
+    _device_setting_show_og_maps,
+    _device_setting_show_community_maps,
     NUMBER_OF_DEVICE_SETTINGS
 };
 

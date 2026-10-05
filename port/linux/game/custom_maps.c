@@ -4,6 +4,7 @@
 #include "cseries.h"
 #include "cache/cache_files.h"
 #include "halo_custom_maps.h"
+#include "port_config.h"
 #include <xtl.h>
 
 static char *map_list[HALO_CUSTOM_MAP_LIMIT];
@@ -174,6 +175,9 @@ static void discover_maps(char const *directory, int managed)
             if (!ReadFile(file, header, sizeof(header), &read, NULL)) read = 0;
             CloseHandle(file);
             if (read != sizeof(header) || !native_map_header_valid(header, entry.cFileName)) continue;
+            /* Stock caches are represented by the retail list. Do not let a
+               hidden stock set reappear through directory discovery. */
+            if (!native_map_is_custom((char *)header + 0x20)) continue;
 #ifdef HALO_MACOS
             /* Only names whose complete bytes the host has verified against
                the approved catalog can enter the managed-map namespace. */
@@ -202,20 +206,33 @@ static void discover_maps(char const *directory, int managed)
 
 char **native_multiplayer_map_list(char **stock, short stock_count, short *count)
 {
-    short i;
+    short i, visible_stock_count;
     /* The menu calls this on reopening. Only complete, atomically published
        files are visible; no worker thread mutates these guest-side arrays. */
-    map_count = stock_count;
-    for (i = 0; i < stock_count; i++) map_list[i] = stock[i];
-    discover_maps(cache_files_map_directory(), FALSE);
-#ifdef HALO_MACOS
+    map_count = config_boolean("maps.show_og") ? stock_count : 0;
+    visible_stock_count = map_count;
+    for (i = 0; i < map_count; i++) map_list[i] = stock[i];
+    /* These preferences affect this host selection menu only. The load/join
+       and approved download paths above never consult map visibility. */
+    if (config_boolean("maps.show_community"))
     {
-        char directory[1024];
-        if (halo_map_download_directory(directory, sizeof(directory)))
-            discover_maps("m:\\", TRUE);
-    }
+        discover_maps(cache_files_map_directory(), FALSE);
+#ifdef HALO_MACOS
+        {
+            char directory[1024];
+            if (halo_map_download_directory(directory, sizeof(directory)))
+                discover_maps("m:\\", TRUE);
+        }
 #endif
-    qsort(map_list + stock_count, map_count - stock_count, sizeof(map_list[0]), map_compare);
+    }
+    qsort(map_list + visible_stock_count, map_count - visible_stock_count, sizeof(map_list[0]), map_compare);
+    /* An edited config or an absent community set must never leave the stock
+       spinner with zero entries. This does not replace or unload any cache. */
+    if (!map_count)
+    {
+        map_count = stock_count;
+        for (i = 0; i < stock_count; i++) map_list[i] = stock[i];
+    }
     *count = map_count;
     return map_list;
 }
