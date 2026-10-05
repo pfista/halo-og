@@ -161,3 +161,10 @@ python3 tools/macos_multiplayer_smoke.py \
 
 Same-machine probes do not establish physical cross-platform or Internet/NAT
 play. Keep generated maps, logs, saves and private invites out of Git.
+
+For a custom weapon set or objective-mode acceptance, use the separate
+[community multiplayer harness](community-multiplayer-testing.md). The older
+smoke above uses synthetic damage/kill diagnostics by default; it establishes
+connection and lifecycle evidence, not actual projectile damage or objective
+scoring. Bind the reviewed map and frozen runtime by hash, exercise ordinary
+inputs, and assert the relevant state on both peers.
