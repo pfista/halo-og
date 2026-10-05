@@ -325,7 +325,9 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     imports_s = gen_dir / "imports.s"
     host_table_c = build_root / "host" / "host_import_table.c"
     host_imports_list = PORT_DIR / "host_imports.list"
-    platform_imports = [Path("port/macos/host_imports.list")] if macos else []
+    # Both Apple hosts compile host_services.c. iOS supplies unavailable-service
+    # stubs there, but the shared guest still needs their import ABI to link.
+    platform_imports = [Path("port/macos/host_imports.list")] if macos or ios else []
     n.rule(
         name="android_imports",
         command=f"{python} tools/android_imports.py {'--ios ' if ios else ''}--host-table {host_table_c} {imports_s} $in",
