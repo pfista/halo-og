@@ -220,7 +220,7 @@ class PerformanceMouse(unittest.TestCase):
 #define csmemmove memmove
 typedef struct {short x,y;} point2d;
 enum {_gamepad_analog_button_x=2,_gamepad_analog_button_y,_gamepad_analog_button_black,
-      _gamepad_analog_button_white,_ui_audio_feedback_cursor=1,_error_silent=0};
+      _gamepad_analog_button_white,_error_silent=0};
 """ + stubs
         source += "\n".join(c_block(ui, signature) for signature in (
             "struct widget_instance *widget_instance_get_topmost_parent(\n",
