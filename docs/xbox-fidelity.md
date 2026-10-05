@@ -118,9 +118,40 @@ approximately 30 simulation Hz. The observations do not establish retail pixel
 parity, a reliable isolated AA cost or sustained 120 FPS. See
 [the experiment and evidence](metal-anti-aliasing.md).
 
-Integration status: experimental branch and draft PR #4, pending review; the
-installed ANGLE app retains its existing build. The upstream reviewed-through
-and integrated baseline above are tracked separately.
+Historical status at the AA checkpoint: experimental branch and draft PR #4,
+pending review; the installed ANGLE app then retained its existing build. The
+normal Mac app integration below supersedes that installation status. The
+upstream reviewed-through and integrated baseline above remain separate.
+
+### Native Metal in the normal Mac app
+
+Integration commit `b4f6ee72b85edaa11afb17647ce40b56398610be` bundles both Mac renderer pairs, with
+ANGLE as the default and Native Metal as an experimental option. The original
+**Settings → Game Settings → Video** menu and macOS **Settings…** share
+`display.renderer` in the saves folder's `config.toml`. Native Metal reveals
+resolution, FPS limit and anti-aliasing controls; VSync and Smooth Motion remain
+available for both renderers. Renderer, resolution and anti-aliasing choices
+apply on the next launch. Original assets, HUD and 30 Hz simulation remain
+intact. See [renderer settings and ANGLE recovery](metal-native-build.md).
+
+Validation: 124 focused CPU tests pass (the final run is recorded in
+`build/macos/dual-renderer-tests-attempt1/execution.json`). Local dual build
+`build/macos/dual-renderer-build-attempt1` and installation
+`build/macos/dual-renderer-install-attempt1` both exited 0; strict codesign
+verification passed. Native startup at 3600x2338, the four-row ANGLE and seven-row
+Native Metal Video layouts, Cancel/Accept staging and saved choices, and macOS
+pending-renderer status were visually checked. A focused isolated-copy check
+confirmed macOS changes appear on reopening Video and restart switches in both
+directions; the final native launch used a 3600x2338 drawable and exited 0.
+`build/macos/dual-renderer-runtime-attempt1/result.json` binds those observations
+and logs (SHA-256 `64d08cd250a28f3dab0b45a26839c4b366b77a66206096d2f0d0ffa4bace23cb`).
+The test copy has its own app identity, isolated saves and no game URL handlers;
+no unrelated multiplayer process was stopped. These functionality checks do not
+establish full gameplay coverage, retail fidelity or sustained 60/120 FPS.
+The prior AA GPU/replay proof remains a separate historical checkpoint.
+
+Status: installed locally, experimental branch and draft PR #4 pending review;
+not merged or released.
 
 Use [xbox-ntsc.toml](../port/macos/profiles/xbox-ntsc.toml) with the existing
 `HALO_SCREEN_WIDTH=640` override for an isolated 4:3 comparison. This 30 FPS
