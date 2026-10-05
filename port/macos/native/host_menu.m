@@ -5,6 +5,7 @@
 #import "HaloTimerAudio.h"
 #import "HaloReleaseUpdates.h"
 #include "../../linux/include/halo_og_version.h"
+#include "../../linux/include/halo_contributors.h"
 #include <SDL3/SDL.h>
 #include "host_menu.h"
 #include <stdlib.h>
@@ -268,14 +269,29 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
     host_sdl_release_mouse();
     NSMutableParagraphStyle *paragraph = [[NSMutableParagraphStyle alloc] init];
     paragraph.alignment = NSTextAlignmentCenter;
-    NSAttributedString *details = [[NSAttributedString alloc] initWithString:
+    NSDictionary *attributes = @{NSFontAttributeName:[NSFont systemFontOfSize:11],
+                                NSForegroundColorAttributeName:NSColor.secondaryLabelColor,
+                                NSParagraphStyleAttributeName:paragraph};
+    NSMutableAttributedString *details = [[NSMutableAttributedString alloc] initWithString:
         @"Based on Xbox build " HALO_OG_ENGINE_BUILD_NUMBER
-        @"\nOriginal Xbox NTSC gameplay target\n30 Hz simulation"
-        attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11],
-                     NSForegroundColorAttributeName:NSColor.secondaryLabelColor,
-                     NSParagraphStyleAttributeName:paragraph}];
+        @"\nOriginal Xbox NTSC gameplay target\n30 Hz simulation\n\n"
+        attributes:attributes];
+    NSMutableDictionary *linkAttributes = [attributes mutableCopy];
+    linkAttributes[NSLinkAttributeName] = [NSURL URLWithString:@HALO_OG_WEBSITE];
+    [details appendAttributedString:[[NSAttributedString alloc]
+        initWithString:@HALO_OG_WEBSITE attributes:linkAttributes]];
+    [details appendAttributedString:[[NSAttributedString alloc]
+        initWithString:@"\n\nContributors\nCommits, then lines added\n" attributes:attributes]];
+    for (unsigned index = 0; index < HALO_OG_CONTRIBUTOR_COUNT; index++) {
+        const struct halo_contributor_credit *credit = &halo_contributor_credits[index];
+        NSString *name = credit->github ? [@"@" stringByAppendingString:@(credit->github)] : @(credit->name);
+        [details appendAttributedString:[[NSAttributedString alloc]
+            initWithString:[NSString stringWithFormat:@"%@ - %u %@, %u LOC added\n", name,
+                credit->commits, credit->commits == 1 ? @"commit" : @"commits", credit->added_lines]
+            attributes:attributes]];
+    }
     [NSApp orderFrontStandardAboutPanelWithOptions:@{
-        NSAboutPanelOptionApplicationName:@"Halo OG",
+        NSAboutPanelOptionApplicationName:@"Halo OG v" HALO_OG_VERSION @" by @pfista",
         NSAboutPanelOptionCredits:details}];
 }
 - (void)quit:(id)sender {

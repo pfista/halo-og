@@ -437,7 +437,7 @@ static void settings_structure(void) {
     assert(!memcmp(originals,originals_before,sizeof(originals)));
     assert(!memcmp(&chooser,&chooser_before,sizeof(chooser)));
     assert(!memcmp(&advanced,&advanced_before,sizeof(advanced)));
-    assert(pb_editor_build()); assert(register_calls==127); /* Settings, About and PB fit the real 128-tag registry. */
+    assert(pb_editor_build()); assert(register_calls==125); /* Settings, About and PB fit the real 128-tag registry. */
     long old=device_settings.entry_tag; scenario_tags_unload();
     cache_file_globals.tags_loaded=TRUE; global_tag_instances=settings_map;
     assert(!tag_index_is_group(old,'DeLa'));
@@ -543,7 +543,7 @@ static boolean settings_about_send(struct widget_instance *widget,short event_ty
             enum { _ui_audio_feedback_none, _ui_audio_feedback_back };
             long audio_feedback=_ui_audio_feedback_none; boolean widget_deleted=FALSE;
             /* PRODUCTION ABOUT BACK DISPATCH */
-            return widget_deleted && audio_feedback==_ui_audio_feedback_back;
+            return widget_deleted ? audio_feedback==_ui_audio_feedback_back : TEST_FLAG(handler->flags,_event_handler_run_function_bit);
         }
         widget=widget->focused_child;
     }
@@ -551,30 +551,75 @@ static boolean settings_about_send(struct widget_instance *widget,short event_ty
 }
 #define SETTINGS_WIDE_(value) L##value
 #define SETTINGS_WIDE(value) SETTINGS_WIDE_(value)
+static rectangle2d settings_rendered_text_bounds(struct widget_instance *widget) {
+    struct ui_widget_definition *definition=ui_widget_definition_get(widget->definition_tag_index);
+    rectangle2d bounds=definition->bounds;
+    struct { short x,y; } offset={0};
+    for(struct widget_instance *parent=widget;parent;parent=parent->parent) {
+        struct widget_instance *widget=parent;
+        /* PRODUCTION RENDER OFFSET */
+    }
+    /* PRODUCTION TEXT BOUNDS */
+    return bounds;
+}
 static void settings_about(void) {
     settings_setup(0); assert(device_settings_build());
     struct device_settings_draft before[4]; memcpy(before,device_settings_drafts,sizeof(before));
     double values[NUMBER_OF_DEVICE_SETTINGS]; memcpy(values,settings_values,sizeof(values));
     struct widget_instance *root=instantiate(device_settings.about_tag,NULL);
-    struct widget_instance *menu=root->child->next->next;
-    assert(root->focused_child==menu && menu->focused_child==menu->child);
+    struct widget_instance *legend=root->child->next->next;
     assert(!widget_instance_can_handle_events(root->child));
     assert(!widget_instance_can_handle_events(root->child->next));
     assert(root->definition_tag_index==device_settings.about_tag && root->type==_ui_widget_type_container);
-    assert(device_settings.about_screen.event_handlers.count==2 && !device_settings.about_screen.game_data_inputs.count);
+    assert(device_settings.about_screen.event_handlers.count==7 && !device_settings.about_screen.game_data_inputs.count);
     assert(device_settings.about_body.text_font.index==tag_loaded(FONT_GROUP_TAG,"ui\\small_ui"));
     assert(device_settings.about_title.text_font.index==device_settings.settings_title.text_font.index);
+    wchar_t *title=string_at(&device_settings.about_title,_ds_about_heading);
+    assert(!wcscmp(title,L"Halo OG v" SETTINGS_WIDE(HALO_OG_VERSION) L" by @pfista"));
+    assert(!memcmp(&device_settings.about_children[2],&chooser.root[2],sizeof(chooser.root[2])));
+    assert(legend->definition_tag_index==chooser_ids[CHOOSER_BUTTON_KEY] && !legend->next);
+    rectangle2d legend_bounds=settings_rendered_text_bounds(legend);
+    assert(legend_bounds.y0==414 && legend_bounds.y1==440 && legend_bounds.x0==371 && legend_bounds.x1==577);
+    rectangle2d body_bounds=settings_rendered_text_bounds(root->child->next);
+    assert(body_bounds.y0==90 && body_bounds.y1==400 && body_bounds.x0==64 && body_bounds.x1==595);
+    assert(settings_about_send(root,_widget_event_created) && !device_settings.about_page);
     wchar_t *body=string_at(&device_settings.about_body,_ds_about_info);
-    assert(wcsstr(body,L"Halo OG v") && wcsstr(body,SETTINGS_WIDE(HALO_OG_VERSION)));
     assert(wcsstr(body,L"Based on Xbox build ") && wcsstr(body,SETTINGS_WIDE(HALO_OG_ENGINE_BUILD_NUMBER)));
     assert(wcsstr(body,L"Original Xbox NTSC gameplay target") && wcsstr(body,L"30 Hz simulation"));
-    assert(device_settings.about_back.bounds.y0+device_settings.about_back.vertical_offset>=0);
-    assert(device_settings.about_back.bounds.y1+device_settings.about_back.vertical_offset<=device_settings.about_menu.bounds.y1-device_settings.about_menu.bounds.y0);
-    assert(device_settings.about_back.bounds.x1+device_settings.about_back.horizontal_offset<=device_settings.about_menu.bounds.x1-device_settings.about_menu.bounds.x0);
-    short events[]={_gamepad_analog_button_a,_gamepad_binary_button_start,_widget_event_b_button,_widget_event_back_button};
+    assert(wcsstr(body,L"https://oghalo.com") && wcsstr(body,L"Contributors (1/"));
+    assert(wcsstr(body,L"Select: Next page") && wcsstr(body,L"Left/Right: Page"));
     about_back_calls=0;
-    for(unsigned i=0;i<NUMBEROF(events);i++) assert(settings_about_send(root,events[i]));
-    assert(about_back_calls==4 && !writes && !errors);
+    unsigned seen[HALO_OG_CONTRIBUTOR_COUNT]={0},pages=device_settings_about_page_count();
+    for(unsigned page=0;page<pages;page++) {
+        assert(device_settings.about_page==page);
+        body=string_at(&device_settings.about_body,_ds_about_info);
+        const wchar_t *cursor=body;
+        unsigned first=page*DEVICE_ABOUT_CREDITS_PER_PAGE,last=first+DEVICE_ABOUT_CREDITS_PER_PAGE;
+        if(last>HALO_OG_CONTRIBUTOR_COUNT) last=HALO_OG_CONTRIBUTOR_COUNT;
+        for(unsigned i=first;i<last;i++) {
+            const struct halo_contributor_credit *credit=&halo_contributor_credits[i];
+            char entry[256]; wchar_t wide[256];
+            int length=snprintf(entry,sizeof(entry),"\r\n%s%s - %u %s, %u LOC added",
+                credit->github ? "@":"",credit->github ? credit->github:credit->name,
+                credit->commits,credit->commits==1 ? "commit":"commits",credit->added_lines);
+            assert(length>=0 && length<(int)NUMBEROF(wide));
+            for(int j=0;j<=length;j++) wide[j]=(unsigned char)entry[j];
+            cursor=wcsstr(cursor,wide); assert(cursor); cursor+=wcslen(wide); seen[i]++;
+        }
+        assert(settings_about_send(root,_gamepad_analog_button_a));
+        assert(!about_back_calls);
+    }
+    for(unsigned i=0;i<HALO_OG_CONTRIBUTOR_COUNT;i++) assert(seen[i]==1);
+    assert(!device_settings.about_page); /* Select wraps after the last page. */
+    assert(settings_about_send(root,_gamepad_binary_button_dpad_left) && device_settings.about_page==pages-1);
+    assert(settings_about_send(root,_gamepad_binary_button_dpad_right) && !device_settings.about_page);
+    assert(settings_about_send(root,_gamepad_binary_button_start) && device_settings.about_page==1%pages);
+    assert(settings_about_send(root,_widget_event_created) && !device_settings.about_page); /* Reopening resets the cursor. */
+    assert(!settings_about_send(root,_gamepad_binary_button_dpad_up));
+    assert(!game_settings_event(root,_device_settings_accept));
+    assert(settings_about_send(root,_widget_event_b_button) && about_back_calls==1);
+    assert(settings_about_send(root,_widget_event_back_button) && about_back_calls==2);
+    assert(!writes && !errors);
     assert(!memcmp(before,device_settings_drafts,sizeof(before)) && !memcmp(values,settings_values,sizeof(values)));
     assert(!settings_game_paused && !settings_sound_paused && !widget_globals.pause_game_time_count);
     dispose(root);
@@ -1058,7 +1103,24 @@ static void settings_cross_map_rebuild(void) {
         dispose(audio);
     }
 }
-int main(void) {
+static void settings_about_metrics(void) {
+    settings_setup(0); assert(device_settings_build());
+    struct ui_widget_definition *definitions[]={&device_settings.about_title,&device_settings.about_body};
+    for(unsigned part=0;part<NUMBEROF(definitions);part++) {
+        unsigned pages=part ? device_settings_about_page_count():1;
+        for(unsigned page=0;page<pages;page++) {
+            device_settings.about_page=page; device_settings_refresh_about();
+            struct ui_widget_definition *definition=definitions[part];
+            wchar_t *text=string_at(definition,definition->string_list_index);
+            printf("%s %d %d",part ? "BODY":"TITLE",definition->bounds.x1-definition->bounds.x0,
+                definition->bounds.y1-definition->bounds.y0);
+            for(unsigned i=0;text[i];i++) printf(" %u",(unsigned)text[i]);
+            puts("");
+        }
+    }
+}
+int main(int argc,char **argv) {
+    if(argc==2 && !strcmp(argv[1],"--about-metrics")) { settings_about_metrics(); return 0; }
     settings_structure(); settings_native_chooser(); settings_about(); settings_native_options(); settings_game_chooser(); settings_staging();
     settings_timer_staging(); settings_timer_video();
     settings_pause_and_campaign(); settings_registration_failure(); settings_cross_map_rebuild();
@@ -1086,6 +1148,9 @@ def game_settings_fixture_source():
         "static void settings_widget_focus_initialize(struct widget_instance *,struct ui_widget_definition *);\n"
         "static struct widget_instance *instantiate(", 1)
     source = source.replace("w->focused_child=w->child;", "settings_widget_focus_initialize(w,d);", 1)
+    child_offsets = re.search(r"child->horizontal_offset = reference->horizontal_offset \+ widget->horizontal_offset;\s*child->vertical_offset = reference->vertical_offset \+ widget->vertical_offset;", ui)[0]
+    child_offsets = child_offsets.replace("reference->", "c->").replace("widget->", "w->")
+    source = source.replace("child->previous=last; last=child;", "child->previous=last; last=child;\n" + child_offsets, 1)
     source = source.replace("    return w;\n}", "    settings_widget_pause_initialize(w,d);\n    return w;\n}", 1)
     source = source.replace("static void dispose(struct widget_instance *w) {",
                             "static void dispose(struct widget_instance *w) {\n    settings_widget_pause_delete(w);", 1)
@@ -1105,10 +1170,49 @@ def game_settings_fixture_source():
     long input_index;
 """ + dispatch + "\n}\n"
     back_dispatch = c_block(ui, "if (TEST_FLAG(handler->flags, _event_handler_go_back_to_previous_widget_bit))")
-    return source + UI_HARNESS.replace("/* PRODUCTION ABOUT BACK DISPATCH */", back_dispatch)
+    render_offsets = re.search(r"offset.x \+= widget->horizontal_offset;\s*offset.y \+= widget->vertical_offset;", renderer)[0]
+    text_bounds = re.search(r"bounds.x1 \+= offset.x;\s*bounds.y1 \+= offset.y;\s*bounds.x0 \+= offset.x;\s*bounds.y0 \+= offset.y;\s*bounds.x0 \+= definition->horizontal_offset;\s*bounds.y0 \+= definition->vertical_offset;", ui)[0]
+    return source + UI_HARNESS.replace("/* PRODUCTION ABOUT BACK DISPATCH */", back_dispatch).replace(
+        "/* PRODUCTION RENDER OFFSET */", render_offsets).replace("/* PRODUCTION TEXT BOUNDS */", text_bounds)
 
 
 class NativeGameSettingsTests(unittest.TestCase):
+    def verify_about_font_metrics(self, binary):
+        """Measure every production page with the owned UI font, including long names/counts."""
+        from tools.verify_performance_sound_samples import Cache
+        path = ROOT / "assets/maps/ui.map"
+        if not path.exists():
+            return
+        cache = Cache(path)
+        fonts = {}
+        for part, font_path in (("TITLE", r"ui\large_ui"), ("BODY", r"ui\small_ui")):
+            font = cache.by_path[font_path]
+            ascending, descending, leading, inset = cache.unpack("<4h", font["address"] + 4)
+            count, address, _ = cache.unpack("<3I", font["address"] + 0x7C)
+            glyphs = {}
+            for index in range(count):
+                code, advance, width, _, origin_x = cache.unpack("<H4h", address + index * 0x14)
+                glyphs[chr(code)] = (advance, width, origin_x)
+            fonts[part] = (ascending + descending + leading, inset, glyphs)
+        output = subprocess.run([str(binary), "--about-metrics"], check=True, text=True, capture_output=True).stdout
+        pages = output.splitlines()
+        self.assertEqual(pages[0].split()[0], "TITLE")
+        self.assertGreater(len(pages), 1)
+        for page, value in enumerate(pages):
+            part, width, height, *codes = value.split()
+            line_height, inset, glyphs = fonts[part]
+            lines = "".join(chr(int(code)) for code in codes).splitlines()
+            self.assertLessEqual(len(lines) * line_height, int(height), f"About {part} page {page} clips vertically")
+            for line in lines:
+                with self.subTest(part=part, page=page, line=line):
+                    cursor = ink_right = inset
+                    for character in line:
+                        self.assertIn(character, glyphs)
+                        advance, ink_width, origin_x = glyphs[character]
+                        ink_right = max(ink_right, cursor + origin_x + ink_width)
+                        cursor += advance
+                    self.assertLessEqual(max(cursor, ink_right), int(width))
+
     def test_resident_help_widths(self):
         """Use the shipped font advances to catch clipping that C layout mocks cannot."""
         from tools.verify_performance_sound_samples import Cache
@@ -1157,6 +1261,8 @@ class NativeGameSettingsTests(unittest.TestCase):
                     result = subprocess.run([str(binary)], text=True, capture_output=True)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(result.stdout.strip(), "native game settings tests passed")
+                    if platform == "HALO_MACOS":
+                        self.verify_about_font_metrics(binary)
 
 
 @unittest.skipUnless(shutil.which("clang") and (SDL / "include/SDL3/SDL.h").exists(), "clang and SDL3 headers required")
