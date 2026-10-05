@@ -41,6 +41,7 @@ int main(int argc,char **argv) {
     assert(argc==5);
     int numeric=!strcmp(argv[2],"number") || !strcmp(argv[2],"number_failure");
     const char *read_setting=numeric || !strcmp(argv[3],"maps.show_og") || !strcmp(argv[3],"maps.show_community") ||
+        !strcmp(argv[3],"maps.show_digsite") ||
         !strcmp(argv[3],"network.join_in_progress") || !strcmp(argv[3],"input.look_acceleration") ||
         !strcmp(argv[3],"input.fast_menu_repeat") ? argv[3]:"audio.menu_music";
     int original=numeric ? (int)config_integer(read_setting):config_boolean(read_setting);
@@ -424,7 +425,7 @@ static void settings_structure(void) {
     assert(device_settings.column[0][_ds_video].child_widgets.count==5);
     assert(device_settings.column[0][_ds_timer].child_widgets.count==5);
     assert(device_settings.column[0][_ds_controller].child_widgets.count==4);
-    assert(device_settings.column[0][_ds_multiplayer].child_widgets.count==3);
+    assert(device_settings.column[0][_ds_multiplayer].child_widgets.count==4);
     assert(!game_settings_is_adjustable(NULL));
     struct widget_instance item={0};
     for(unsigned i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) {
@@ -447,7 +448,7 @@ static void settings_structure(void) {
     assert(!memcmp(originals,originals_before,sizeof(originals)));
     assert(!memcmp(&chooser,&chooser_before,sizeof(chooser)));
     assert(!memcmp(&advanced,&advanced_before,sizeof(advanced)));
-    assert(pb_editor_build()); assert(register_calls==159 && register_calls<MAXIMUM_RUNTIME_UI_TAGS);
+    assert(pb_editor_build()); assert(register_calls==162 && register_calls<MAXIMUM_RUNTIME_UI_TAGS);
     long old=device_settings.entry_tag; scenario_tags_unload();
     cache_file_globals.tags_loaded=TRUE; global_tag_instances=settings_map;
     assert(!tag_index_is_group(old,'DeLa'));
@@ -639,10 +640,10 @@ static void settings_native_options(void) {
         L"MASTER VOLUME:",L"MUSIC VOLUME:",L"EFFECTS VOLUME:",L"DIALOGUE VOLUME:",L"TIMER VOLUME:",
         L"MENU MUSIC:",L"FULLSCREEN:",L"VSYNC:",L"SMOOTH MOTION:",L"COUNTDOWN:",L"BEEPS:",
         L"MINUTE ANNOUNCEMENTS:",L"ITEM CUES:",L"TIMER POSITION:",L"TIMER SIZE:",
-        L"OG MAPS:",L"COMMUNITY MAPS:",L"JOIN IN PROGRESS:",L"LEFT STICK DEADZONE:",L"RIGHT STICK DEADZONE:",L"LOOK ACCELERATION:",L"MENU REPEAT:"};
+        L"OG MAPS:",L"COMMUNITY MAPS:",L"DIGSITE MAPS:",L"JOIN IN PROGRESS:",L"LEFT STICK DEADZONE:",L"RIGHT STICK DEADZONE:",L"LOOK ACCELERATION:",L"MENU REPEAT:"};
     static const short rows_by_page[5][6]={
-        {0,1,2,3,NONE,5}, {6,7,8,13,14}, {4,9,10,11,12}, {18,19,20,21}, {15,16,17}};
-    static const short counts[5]={6,5,5,4,3};
+        {0,1,2,3,NONE,5}, {6,7,8,13,14}, {4,9,10,11,12}, {19,20,21,22}, {15,16,17,18}};
+    static const short counts[5]={6,5,5,4,4};
     settings_setup(0); assert(device_settings_build());
     assert(device_settings.native_pages && !game_settings_is_native_spinner(NULL));
     for(short page=_ds_audio;page<=_ds_multiplayer;page++) {
@@ -864,7 +865,12 @@ static void settings_staging(void) {
     assert(!game_settings_event(root,17)); dispose(root);
 }
 static void settings_multiplayer_staging(void) {
-    const short layouts[]={_ds_main,_ds_pause_1p,_ds_pause_4p,_ds_solo,_ds_coop};
+    const short layouts[]={_ds_main,_ds_pause_1p,_ds_pause_2p,_ds_pause_4p,_ds_solo,_ds_coop};
+    const short map_settings[]={_device_setting_show_og_maps,_device_setting_show_community_maps,
+        _device_setting_show_digsite_maps};
+    const unsigned long multiplayer_mask=(1UL<<_device_setting_show_og_maps)|
+        (1UL<<_device_setting_show_community_maps)|(1UL<<_device_setting_show_digsite_maps)|
+        (1UL<<_device_setting_join_in_progress);
     for(unsigned i=0;i<NUMBEROF(layouts);i++) {
         short layout=layouts[i],local=layout==_ds_pause_4p ? 3:0;
         settings_setup(layout==_ds_main ? 0:layout<=_ds_pause_4p ? 1:2);
@@ -872,25 +878,47 @@ static void settings_multiplayer_staging(void) {
         struct widget_instance *root=open_settings(layout,_ds_multiplayer,local);
         assert(device_settings_drafts[local].values[_device_setting_show_og_maps]==1 &&
             device_settings_drafts[local].values[_device_setting_show_community_maps]==1 &&
+            device_settings_drafts[local].values[_device_setting_show_digsite_maps]==1 &&
             device_settings_drafts[local].values[_device_setting_join_in_progress]==1);
-        assert(game_settings_event(setting_control(root,_device_setting_show_community_maps),_device_settings_next));
+        for(unsigned row=0;row<NUMBEROF(map_settings);row++) {
+            short setting=map_settings[row];
+            assert(game_settings_event(setting_control(root,setting),_device_settings_next));
+            assert(device_settings_drafts[local].values[setting]==0 && settings_values[setting]==1);
+        }
+        short digsite_value=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_show_digsite_maps;
+        assert(!wcscmp(device_settings.text[digsite_value],device_settings.native_pages ? L"OFF":L"Digsite Maps: < OFF >"));
         assert(game_settings_event(setting_control(root,_device_setting_join_in_progress),_device_settings_previous));
-        assert(!writes && settings_values[_device_setting_show_community_maps]==1 &&
-            settings_values[_device_setting_join_in_progress]==1);
+        assert(!writes && settings_values[_device_setting_join_in_progress]==1);
         assert(game_settings_event(root,_device_settings_cancel)); dispose(root);
         root=open_settings(layout,_ds_multiplayer,local);
-        assert(device_settings_drafts[local].values[_device_setting_show_community_maps]==1 &&
-            device_settings_drafts[local].values[_device_setting_join_in_progress]==1);
-        assert(game_settings_event(setting_control(root,_device_setting_show_community_maps),_device_settings_next));
+        for(unsigned row=0;row<NUMBEROF(map_settings);row++) {
+            short setting=map_settings[row];
+            assert(device_settings_drafts[local].values[setting]==1);
+            assert(game_settings_event(setting_control(root,setting),_device_settings_next));
+        }
+        assert(device_settings_drafts[local].values[_device_setting_join_in_progress]==1);
         assert(game_settings_event(setting_control(root,_device_setting_join_in_progress),_device_settings_next));
         save_succeeds=FALSE;
         assert(!game_settings_event(root,_device_settings_accept));
-        assert(settings_values[_device_setting_show_community_maps]==1 && settings_values[_device_setting_join_in_progress]==1);
+        for(unsigned row=0;row<NUMBEROF(map_settings);row++) assert(settings_values[map_settings[row]]==1);
+        assert(settings_values[_device_setting_join_in_progress]==1);
         save_succeeds=TRUE; assert(game_settings_event(root,_device_settings_accept));
-        assert(writes==2 && applied_mask==((1UL<<_device_setting_show_community_maps)|(1UL<<_device_setting_join_in_progress)));
-        assert(settings_values[_device_setting_show_og_maps]==1 && settings_values[_device_setting_show_community_maps]==0 &&
+        assert(writes==2 && applied_mask==multiplayer_mask);
+        assert(settings_values[_device_setting_show_og_maps]==0 && settings_values[_device_setting_show_community_maps]==0 &&
+            settings_values[_device_setting_show_digsite_maps]==0 &&
             settings_values[_device_setting_join_in_progress]==0 && settings_values[_device_setting_master_volume]==0.125);
         assert(game_settings_event(root,_device_settings_accept) && writes==2);
+        dispose(root);
+        /* Accepted all-off preferences survive reopening. Digsite can then be
+         * enabled independently of OG and the other community maps. */
+        root=open_settings(layout,_ds_multiplayer,local);
+        for(unsigned row=0;row<NUMBEROF(map_settings);row++)
+            assert(device_settings_drafts[local].values[map_settings[row]]==0);
+        assert(game_settings_event(setting_control(root,_device_setting_show_digsite_maps),_device_settings_previous));
+        assert(game_settings_event(root,_device_settings_accept));
+        assert(writes==3 && applied_mask==(1UL<<_device_setting_show_digsite_maps));
+        assert(settings_values[_device_setting_show_og_maps]==0 && settings_values[_device_setting_show_community_maps]==0 &&
+            settings_values[_device_setting_show_digsite_maps]==1 && settings_values[_device_setting_join_in_progress]==0);
         dispose(root);
     }
 }
@@ -1161,7 +1189,7 @@ static void settings_pause_and_campaign(void) {
     settings_setup(1); assert(performance_pause_remap_tag(original_root_ids[0])!=original_root_ids[0]);
     assert(!device_settings.native_pages);
     for(unsigned i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) assert(device_settings_native.spinner_tags[i]==NONE);
-    assert(register_calls==122 && !memcmp(originals,originals_before,sizeof(originals)));
+    assert(register_calls==123 && !memcmp(originals,originals_before,sizeof(originals)));
     for(unsigned i=0;i<3;i++) {
         assert(performance_pause_list_children[i][0].widget_tag.index==resume_id);
         assert(performance_pause_list_children[i][3].widget_tag.index==quit_id);
@@ -1172,7 +1200,7 @@ static void settings_pause_and_campaign(void) {
             assert(!TEST_FLAG(device_settings.screen[i+1][page].flags,_widget_pause_game_time_bit));
             struct ui_widget_child_reference *children=device_settings.screen_children[i+1][page];
             struct ui_widget_definition *frame=ui_widget_definition_get(children[0].widget_tag.index);
-            short height=page==_ds_game || page==_ds_multiplayer ? 159:page==_ds_audio ? 240:213;
+            short height=page==_ds_game ? 159:page==_ds_audio ? 240:213;
             assert(frame->bounds.y1==height && frame->bounds.x0==-4 && frame->bounds.x1==222);
             assert(children[0].horizontal_offset==children[1].horizontal_offset-8);
             assert(children[0].vertical_offset>=0 && children[0].vertical_offset+height<=originals[i].bounds.y1);
@@ -1252,7 +1280,7 @@ static void settings_pause_and_campaign(void) {
         assert(!memcmp(originals,originals_before,sizeof(originals)));
         one=open_settings(_ds_solo+i,_ds_audio,i); dispose(one);
     }
-    assert(register_calls==79);
+    assert(register_calls==80);
 }
 static void settings_registration_failure(void) {
     settings_setup(0); assert(device_settings_build()); unsigned count=register_calls;
@@ -1367,6 +1395,23 @@ static void settings_controller_metrics(void) {
             settings_text_metrics(definition,device_settings.text[_ds_value_start+_device_setting_fast_menu_repeat]);
         }
         dispose(root);
+        /* The new Multiplayer row uses the same authored fonts in main and
+         * pause menus. Check both visible values through production text. */
+        root=open_settings(mode ? _ds_pause_4p:_ds_main,_ds_multiplayer,0);
+        for(short setting=_device_setting_show_og_maps;setting<=_device_setting_show_digsite_maps;setting++) {
+            struct ui_widget_definition *definition;
+            if(!mode) {
+                definition=&device_settings_native.row_labels[setting];
+                settings_text_metrics(definition,string_at(definition,definition->string_list_index));
+            }
+            definition=!mode ? &device_settings_native.spinners[setting]:&device_settings.row[setting];
+            for(short state=0;state<=1;state++) {
+                device_settings_drafts[0].values[setting]=state;
+                device_settings_render_draft(&device_settings_drafts[0]);
+                settings_text_metrics(definition,device_settings.text[_ds_value_start+setting]);
+            }
+        }
+        dispose(root);
     }
 }
 int main(int argc,char **argv) {
@@ -1396,7 +1441,7 @@ static unsigned mac_visible_rows(struct widget_instance *column) {
 }
 static void mac_settings_video(void) {
     settings_setup(0); assert(device_settings_build());
-    assert(NUMBER_OF_DEVICE_SETTINGS==26 && device_settings_page_counts[_ds_video]==7 && device_settings_page_counts[_ds_timer]==7);
+    assert(NUMBER_OF_DEVICE_SETTINGS==27 && device_settings_page_counts[_ds_video]==7 && device_settings_page_counts[_ds_timer]==7);
     for(unsigned i=0;i<7;i++) assert(device_settings.column_children[_ds_main][_ds_video][i].vertical_offset+28<321);
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_renderer],L"experimental"));
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_renderer],L"next launch"));
@@ -1597,7 +1642,7 @@ int main(int argc,char **argv) {
 
 class NativeGameSettingsTests(unittest.TestCase):
     def verify_controller_font_metrics(self, binary):
-        """Measure deadzones and Controller choices with owned Xbox fonts."""
+        """Measure Controller and map-set choices with owned Xbox fonts."""
         from tools.verify_performance_sound_samples import Cache
         paths = [next((root / f"assets/maps/{name}.map" for root in (ROOT, ROOT.parent / "pfista-halo-macos")
                        if (root / f"assets/maps/{name}.map").exists()), None) for name in ("ui", "bloodgulch")]
@@ -1810,10 +1855,21 @@ class ConfigBooleanPersistenceTests(unittest.TestCase):
             self.run_save(original, original, setting=setting, success=False)
 
     def test_multiplayer_preferences_save_and_reload_with_existing_comments(self):
-        for setting in ("maps.show_og", "maps.show_community", "network.join_in_progress"):
+        for setting in ("maps.show_og", "maps.show_community", "maps.show_digsite", "network.join_in_progress"):
             table, key = setting.split(".")
             original = f'# player preferences\n[{table}]\n{key} = true # retain\n'
             self.run_save(original, original.replace('= true # retain', '= false # retain'), setting=setting)
+
+    def test_digsite_preference_default_enable_disable_and_failed_save(self):
+        setting = "maps.show_digsite"
+        missing = '[maps]\nshow_og = false\nshow_community = false\n'
+        disabled = missing.replace('[maps]\n', '[maps]\nshow_digsite = false\n')
+        self.run_save(missing, disabled, setting=setting)
+        enabled = '# map preferences\n[maps]\nshow_og = false\nshow_community = false\nshow_digsite = true # independent\n'
+        all_off = enabled.replace('= true # independent', '= false # independent')
+        self.run_save(enabled, all_off, setting=setting)
+        self.run_save(all_off, enabled, setting=setting, value=1)
+        self.run_save(enabled, enabled, setting=setting, mode="failure", success=False)
 
     def test_deadzone_raw_integers_save_reload_and_failure(self):
         for setting in ("input.left_stick_deadzone", "input.right_stick_deadzone"):

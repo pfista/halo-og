@@ -33,6 +33,7 @@ enum { LIST, ITEM, NAME, BITMAP, DESCRIPTION, DEFINITION_COUNT };
 struct ui_widget_definition { int type, child_count; };
 struct widget_instance {
     long definition_tag_index;
+    int visible;
     struct widget_instance *child, *next;
     struct {
         struct { wchar_t *text; short string_list_index; } text_box;
@@ -102,6 +103,7 @@ static void render(char **maps, short count, short selected, long a, long b, lon
     assert(!memcmp(before,maps,count*sizeof(*maps)));
 }
 static void stock_row(unsigned row, short index) {
+    assert(rows[row].visible && bitmaps[row].visible);
     assert(names[row].parameters.text_box.string_list_index==index);
     assert(descriptions[row].parameters.text_box.string_list_index==index);
     assert(bitmaps[row].animation.current_frame_index==index);
@@ -112,6 +114,7 @@ static int caption_equals(const wchar_t *actual, const char *expected) {
     return !*actual && !*expected;
 }
 static void custom_row(unsigned row, const char *caption) {
+    assert(rows[row].visible && bitmaps[row].visible);
     assert(names[row].parameters.text_box.string_list_index==HALO_CUSTOM_MAP_TEXT);
     assert(caption_equals(names[row].parameters.text_box.text,caption));
     assert(descriptions[row].parameters.text_box.string_list_index==HALO_CUSTOM_MAP_TEXT);
@@ -139,6 +142,7 @@ static void mixed_captions(void) {
     char *maps[14]; for(unsigned i=0;i<NUMBEROF(stock_names);i++) maps[i]=(char *)stock_names[i];
     maps[13]="chillout_digsite";
     render(maps,14,13,12,13,NONE); stock_row(0,12); custom_row(1,"Chillout Digsite");
+    assert(!rows[2].visible);
     assert(names[2].parameters.text_box.string_list_index==-99 && bitmaps[2].animation.current_frame_index==-99);
 }
 static void reused_rows(void) {
@@ -164,8 +168,9 @@ def fixture_source():
     widgets = (ROOT / "source/interface/ui_widget_game_data_input_functions.c").read_text()
     maps = (ROOT / "port/linux/game/custom_maps.c").read_text()
     # Include the exact retail name table and both production identity helpers.
-    identities = maps[maps.index("static char const *stock_names[]"):
-                      maps.index("static unsigned long little_u32")]
+    identities = "\n".join((c_block(maps, "static char const *stock_names[]") + ";",
+                             c_block(maps, "char const *native_map_basename("),
+                             c_block(maps, "int native_map_is_custom(")))
     callback = "static void mp_level_select_list_update_displayed_items("
     production = "\n".join((identities,
                             c_block(widgets, "static void custom_map_text("),

@@ -3009,7 +3009,11 @@ static boolean multiplayer_level_list_initialize(
 	widget->generated_list = event_handler_functions.multiplayer_levels;
 #endif
 	widget->generated_count = level_count;
-	if (saved_game_file_retrieve_last_used_multiplayer_map(map_name))
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* A filtered list must never inherit a selection from a previous list. */
+	widget->data3C.selected_index = level_count ? 0 : NONE;
+#endif
+	if (level_count && saved_game_file_retrieve_last_used_multiplayer_map(map_name))
 	{
 		widget->data3C.selected_index = 0;
 		while (widget->data3C.selected_index < level_count &&
@@ -5599,6 +5603,16 @@ static boolean multiplayer_level_select(
 		definition->child_count == 3,
 		"expected 3 list items for 'multiplayer level list' widget");
 	level_list = widget->child->child;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* An empty list or a stale row cannot commit a map or close the picker. */
+	if (!level_list->generated_list || level_list->generated_count <= 0 ||
+		level_list->data3C.selected_index < 0 ||
+		level_list->data3C.selected_index >= level_list->generated_count)
+	{
+		ui_play_audio_feedback_sound(4);
+		return FALSE;
+	}
+#endif
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1298,
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		level_list->data3C.selected_index >= 0 && level_list->data3C.selected_index < level_list->generated_count,

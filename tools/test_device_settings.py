@@ -35,7 +35,7 @@ static const char *names[] = {"audio.volume", "audio.music_volume", "audio.effec
     "display.timer_position", "display.timer_scale", "display.fullscreen",
     "maps.show_og", "maps.show_community", "network.join_in_progress",
     "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration",
-    "input.fast_menu_repeat"};
+    "input.fast_menu_repeat", "maps.show_digsite"};
 #define TEST_SETTING_COUNT (sizeof(names)/sizeof(names[0]))
 static double saved[TEST_SETTING_COUNT];
 static const char *renderer="angle",*antialiasing="off";
@@ -309,29 +309,41 @@ int main(void) {
      * defaults. They do not reconfigure audio/video or change match rules. */
     reset(values);
     assert(values[_device_setting_show_og_maps]==1 && values[_device_setting_show_community_maps]==1 &&
+        values[_device_setting_show_digsite_maps]==1 &&
         values[_device_setting_join_in_progress]==1);
-    values[_device_setting_show_community_maps]=0; values[_device_setting_join_in_progress]=0;
-    unsigned long multiplayer=(1UL<<_device_setting_show_community_maps)|(1UL<<_device_setting_join_in_progress);
+    values[_device_setting_show_community_maps]=0; values[_device_setting_show_digsite_maps]=0;
+    values[_device_setting_join_in_progress]=0;
+    unsigned long map_sets=(1UL<<_device_setting_show_og_maps)|(1UL<<_device_setting_show_community_maps)|
+        (1UL<<_device_setting_show_digsite_maps);
+    unsigned long multiplayer=(1UL<<_device_setting_show_community_maps)|(1UL<<_device_setting_show_digsite_maps)|
+        (1UL<<_device_setting_join_in_progress);
     assert(device_settings_apply(multiplayer,values));
-    assert(writes==1 && saved[15]==1 && saved[16]==0 && saved[17]==0);
+    assert(writes==1 && saved[15]==1 && saved[16]==0 && saved[17]==0 && saved[index_of("maps.show_digsite")]==0);
     assert(!audio_applies && !video_applies && !switches && !starts && !stops);
+    /* The final visible set can be disabled; no setting is forced back on. */
     values[_device_setting_show_og_maps]=0;
-    assert(!device_settings_apply(1UL<<_device_setting_show_og_maps,values) && writes==1);
-    assert(saved[15]==1);
+    assert(device_settings_apply(1UL<<_device_setting_show_og_maps,values) && writes==2);
+    assert(saved[15]==0 && saved[16]==0 && saved[index_of("maps.show_digsite")]==0);
+    values[_device_setting_show_digsite_maps]=1;
+    assert(device_settings_apply(1UL<<_device_setting_show_digsite_maps,values) && writes==3);
+    assert(saved[15]==0 && saved[16]==0 && saved[index_of("maps.show_digsite")]==1);
     reset(values); values[_device_setting_show_og_maps]=0; values[_device_setting_show_community_maps]=0;
+    values[_device_setting_show_digsite_maps]=0;
     values[0]=0.2;
-    assert(!device_settings_apply(1UL|(1UL<<_device_setting_show_og_maps)|(1UL<<_device_setting_show_community_maps),values));
-    assert(!writes && saved[0]==0.15 && saved[15]==1 && saved[16]==1);
-    reset(values); values[_device_setting_show_og_maps]=0; write_ok=0;
-    assert(!device_settings_apply(1UL<<_device_setting_show_og_maps,values));
-    assert(saved[15]==1 && saved[16]==1 && writes==1);
-    reset(values); values[_device_setting_show_og_maps]=0; values[_device_setting_join_in_progress]=0;
+    assert(device_settings_apply(1UL|map_sets,values));
+    assert(writes==1 && saved[0]==0.2 && saved[15]==0 && saved[16]==0 && saved[index_of("maps.show_digsite")]==0);
+    reset(values); values[_device_setting_show_og_maps]=0; values[_device_setting_show_digsite_maps]=0; write_ok=0;
+    assert(!device_settings_apply((1UL<<_device_setting_show_og_maps)|(1UL<<_device_setting_show_digsite_maps),values));
+    assert(saved[15]==1 && saved[16]==1 && saved[index_of("maps.show_digsite")]==1 && writes==1);
+    reset(values); values[_device_setting_show_og_maps]=0; values[_device_setting_show_digsite_maps]=0;
+    values[_device_setting_join_in_progress]=0;
     values[_device_setting_vsync]=0; apply_fail_on=1;
     assert(!device_settings_apply((1UL<<_device_setting_vsync)|(1UL<<_device_setting_show_og_maps)|
-        (1UL<<_device_setting_join_in_progress),values));
-    assert(writes==2 && saved[6]==1 && saved[15]==1 && saved[16]==1 && saved[17]==1);
+        (1UL<<_device_setting_show_digsite_maps)|(1UL<<_device_setting_join_in_progress),values));
+    assert(writes==2 && saved[6]==1 && saved[15]==1 && saved[16]==1 && saved[17]==1 &&
+        saved[index_of("maps.show_digsite")]==1);
 #if MAC_FULLSCREEN
-    assert(NUMBER_OF_DEVICE_SETTINGS==26);
+    assert(NUMBER_OF_DEVICE_SETTINGS==27);
     reset(values);values[_device_setting_renderer]=1;values[_device_setting_render_height]=0;
     values[_device_setting_frame_limit]=120;values[_device_setting_anti_aliasing]=1;
     assert(device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_render_height)|
@@ -369,7 +381,7 @@ int main(void) {
     assert(values[_device_setting_render_height]==720);
     assert(device_settings_apply(1UL<<_device_setting_render_height,values) && !writes);
 #else
-    assert(NUMBER_OF_DEVICE_SETTINGS==22);
+    assert(NUMBER_OF_DEVICE_SETTINGS==23);
 #endif
     puts("device settings save/apply tests passed");
 }

@@ -35,6 +35,19 @@ int native_map_is_custom(char const *map)
     return name[0] != 0;
 }
 
+static int map_is_digsite(char const *map)
+{
+    /* Reviewed Digsite conversions use these distinct cache identities. The
+       earlier POC remains separate from the multiplayer candidate. Do not
+       classify unrelated authored maps by a filename substring. */
+    static char const *names[] = { "chillout_dig", "chillout_digsite" };
+    char const *name = native_map_basename(map);
+    unsigned int i;
+    for (i = 0; i < NUMBEROF(names); i++)
+        if (!_stricmp(name, names[i])) return TRUE;
+    return FALSE;
+}
+
 static unsigned long little_u32(unsigned char const *p)
 {
     return (unsigned long)p[0] | (unsigned long)p[1] << 8 |
@@ -147,7 +160,7 @@ int native_map_download_pending(char const *map)
 #endif
 }
 
-static void discover_maps(char const *directory, int managed)
+static void discover_maps(char const *directory, int managed, int show_community, int show_digsite)
 {
     WIN32_FIND_DATAA entry;
     HANDLE search;
@@ -178,6 +191,7 @@ static void discover_maps(char const *directory, int managed)
             /* Stock caches are represented by the retail list. Do not let a
                hidden stock set reappear through directory discovery. */
             if (!native_map_is_custom((char *)header + 0x20)) continue;
+            if (map_is_digsite((char *)header + 0x20) ? !show_digsite : !show_community) continue;
 #ifdef HALO_MACOS
             /* Only names whose complete bytes the host has verified against
                the approved catalog can enter the managed-map namespace. */
@@ -207,6 +221,8 @@ static void discover_maps(char const *directory, int managed)
 char **native_multiplayer_map_list(char **stock, short stock_count, short *count)
 {
     short i, visible_stock_count;
+    int show_community = config_boolean("maps.show_community");
+    int show_digsite = config_boolean("maps.show_digsite");
     /* The menu calls this on reopening. Only complete, atomically published
        files are visible; no worker thread mutates these guest-side arrays. */
     map_count = config_boolean("maps.show_og") ? stock_count : 0;
@@ -214,25 +230,20 @@ char **native_multiplayer_map_list(char **stock, short stock_count, short *count
     for (i = 0; i < map_count; i++) map_list[i] = stock[i];
     /* These preferences affect this host selection menu only. The load/join
        and approved download paths above never consult map visibility. */
-    if (config_boolean("maps.show_community"))
+    if (show_community || show_digsite)
     {
-        discover_maps(cache_files_map_directory(), FALSE);
+        discover_maps(cache_files_map_directory(), FALSE, show_community, show_digsite);
 #ifdef HALO_MACOS
         {
             char directory[1024];
             if (halo_map_download_directory(directory, sizeof(directory)))
-                discover_maps("m:\\", TRUE);
+                discover_maps("m:\\", TRUE, show_community, show_digsite);
         }
 #endif
     }
     qsort(map_list + visible_stock_count, map_count - visible_stock_count, sizeof(map_list[0]), map_compare);
-    /* An edited config or an absent community set must never leave the stock
-       spinner with zero entries. This does not replace or unload any cache. */
-    if (!map_count)
-    {
-        map_count = stock_count;
-        for (i = 0; i < stock_count; i++) map_list[i] = stock[i];
-    }
+    /* An empty selection is intentional when every eligible set is hidden or
+       absent. The menu handles it without restoring disabled maps. */
     *count = map_count;
     return map_list;
 }

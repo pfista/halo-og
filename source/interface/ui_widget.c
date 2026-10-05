@@ -2618,6 +2618,12 @@ boolean widget_event_function_list_widget_goto_next_item(
 		1233,
 		widget->type == _ui_widget_type_spinner_list || widget->type == _ui_widget_type_column_list,
 		"calling a list widget function on a non-list widget");
+	/* Native map filters can leave a generated spinner with no entries.
+	   Its authored children describe visible rows, not selectable maps. */
+	if (widget->type == _ui_widget_type_spinner_list &&
+		TEST_FLAG(definition->list_flags, _list_items_generated_in_code) &&
+		!widget->parameters.list.number_of_items)
+		return TRUE;
 	if (widget->parameters.list.list_items && widget->parameters.list.number_of_items > 0)
 	{
 		item_index = widget->parameters.list.selected_index + 1;
@@ -2737,6 +2743,12 @@ boolean widget_event_function_list_widget_goto_previous_item(
 		1362,
 		widget->type == _ui_widget_type_spinner_list || widget->type == _ui_widget_type_column_list,
 		"calling a list widget function on a non-list widget");
+	/* Native map filters can leave a generated spinner with no entries.
+	   Its authored children describe visible rows, not selectable maps. */
+	if (widget->type == _ui_widget_type_spinner_list &&
+		TEST_FLAG(definition->list_flags, _list_items_generated_in_code) &&
+		!widget->parameters.list.number_of_items)
+		return TRUE;
 	if (widget->parameters.list.list_items && widget->parameters.list.number_of_items > 0)
 	{
 		item_index = widget->parameters.list.selected_index - 1;

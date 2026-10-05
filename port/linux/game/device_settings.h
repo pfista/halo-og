@@ -21,6 +21,7 @@ enum
     _device_setting_timer_scale,
     _device_setting_show_og_maps,
     _device_setting_show_community_maps,
+    _device_setting_show_digsite_maps,
     _device_setting_join_in_progress,
     _device_setting_left_stick_deadzone,
     _device_setting_right_stick_deadzone,

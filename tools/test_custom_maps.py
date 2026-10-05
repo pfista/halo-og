@@ -1,5 +1,6 @@
 """Exercise production discovery with synthetic caches and a minimal file API."""
 import ctypes
+from itertools import product
 import json
 from pathlib import Path
 import struct
@@ -51,11 +52,14 @@ HARNESS = r'''
 static char directory[256];
 static char overlay[256];
 static int download_status;
-static int show_og = 1, show_community = 1;
-void set_map_sets(int og, int community) { show_og = og; show_community = community; }
+static int show_og = 1, show_community = 1, show_digsite = 1;
+void set_map_sets(int og, int community, int digsite) {
+    show_og = og; show_community = community; show_digsite = digsite;
+}
 int config_boolean(const char *name) {
     if (!strcmp(name, "maps.show_og")) return show_og;
     if (!strcmp(name, "maps.show_community")) return show_community;
+    if (!strcmp(name, "maps.show_digsite")) return show_digsite;
     abort();
 }
 void set_directory(const char *p) { snprintf(directory, sizeof(directory), "%s/", p); }
@@ -141,7 +145,7 @@ class NativeMapTests(unittest.TestCase):
         cls.lib.set_directory.argtypes = [ctypes.c_char_p]
         cls.lib.set_overlay.argtypes = [ctypes.c_char_p]
         cls.lib.set_download_status.argtypes = [ctypes.c_int]
-        cls.lib.set_map_sets.argtypes = [ctypes.c_int, ctypes.c_int]
+        cls.lib.set_map_sets.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
         cls.lib.native_map_get_path.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.c_uint]
         cls.lib.native_map_download_pending.argtypes = [ctypes.c_char_p]
 
@@ -153,7 +157,7 @@ class NativeMapTests(unittest.TestCase):
         return bool(self.lib.native_map_header_valid(ctypes.create_string_buffer(bytes(data)), filename.encode()))
 
     def setUp(self):
-        self.lib.set_map_sets(1, 1)
+        self.lib.set_map_sets(1, 1, 1)
         self.lib.set_overlay(b"")
         self.lib.set_download_status(0)
 
@@ -248,37 +252,106 @@ class NativeMapTests(unittest.TestCase):
         self.assertEqual([result[i] for i in range(13)], list(stock))
         self.assertEqual([result[i] for i in range(13, count.value)], [b"atlas", b"downrush", b"h1pb_chillout"])
 
-    def test_map_sets_filter_only_selection_and_never_leave_an_empty_spinner(self):
+    def test_all_map_set_combinations_filter_local_and_managed_maps(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary, "base"); base.mkdir()
             overlay = Path(temporary, "managed"); overlay.mkdir()
-            (base / "bloodgulch.map").write_bytes(header("bloodgulch"))
-            (base / "downrush.map").write_bytes(header())
-            (base / "h1pb_chillout.map").write_bytes(header("h1pb_chillout"))
-            (overlay / "atlas.map").write_bytes(header("atlas"))
+            community = [b"atlas", b"chillout_digsite_remix", b"digsite_arena", b"downrush", b"h1pb_chillout"]
+            digsite = [b"chillout_dig", b"chillout_digsite"]
+            for name in ("bloodgulch", "downrush", "h1pb_chillout", "digsite_arena", "chillout_digsite"):
+                (base / (name + ".map")).write_bytes(header(name))
+            for name in ("bloodgulch", "atlas", "chillout_digsite_remix", "chillout_dig", "chillout_digsite"):
+                (overlay / (name + ".map")).write_bytes(header(name))
+            (overlay / "Unverified.map").write_bytes(header("unverified"))
+            (overlay / "pending.partial").write_bytes(header("pending"))
             self.lib.set_directory(str(base).encode())
             self.lib.set_overlay(str(overlay).encode())
             self.lib.set_download_status(1)
             stock = [value.encode() for value in STOCK]
-            self.assertEqual(self.map_list(), stock + [b"atlas", b"downrush", b"h1pb_chillout"])
-            self.lib.set_map_sets(0, 1)
-            self.assertEqual(self.map_list(), [b"atlas", b"downrush", b"h1pb_chillout"])
-            self.lib.set_map_sets(1, 0)
-            self.assertEqual(self.map_list(), stock)
-            path = ctypes.create_string_buffer(256)
-            self.assertTrue(self.lib.native_map_get_path(b"downrush", path, len(path)))
-            self.assertEqual(path.value, str(base / "downrush.map").encode())
-            self.assertTrue(self.lib.native_map_get_path(b"atlas", path, len(path)))
-            self.assertEqual(path.value, b"m:\\atlas.map")
-            (overlay / "atlas.map").unlink()
+            for og, show_community, show_digsite in product((0, 1), repeat=3):
+                with self.subTest(og=og, community=show_community, digsite=show_digsite):
+                    self.lib.set_map_sets(og, show_community, show_digsite)
+                    selected = (community if show_community else []) + (digsite if show_digsite else [])
+                    self.assertEqual(self.map_list(), (stock if og else []) + sorted(selected))
+
+            # Pending managed downloads never appear, even when their group is
+            # enabled. Local files remain selectable under their own setting.
             self.lib.set_download_status(2)
-            self.assertEqual(self.lib.native_map_download_pending(b"atlas"), 2)
-            self.lib.set_map_sets(0, 0)
-            self.assertEqual(self.map_list(), stock)
+            self.lib.set_map_sets(0, 0, 1)
+            self.assertEqual(self.map_list(), [b"chillout_digsite"])
+            self.lib.set_map_sets(0, 1, 0)
+            self.assertEqual(self.map_list(), [b"digsite_arena", b"downrush", b"h1pb_chillout"])
+
+    def test_digsite_group_matches_reviewed_identities_case_insensitively(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.lib.set_directory(temporary.encode())
+            for name in ("CHILLOUT_DIG", "ChillOut_Digsite", "my_chillout_dig", "digsite"):
+                Path(temporary, name + ".map").write_bytes(header(name))
+            self.lib.set_map_sets(0, 0, 1)
+            self.assertEqual(self.map_list(), [b"CHILLOUT_DIG", b"ChillOut_Digsite"])
+            self.lib.set_map_sets(0, 1, 0)
+            self.assertEqual(self.map_list(), [b"digsite", b"my_chillout_dig"])
+
+    def test_no_installed_eligible_maps_never_restore_hidden_stock(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary, "base"); base.mkdir()
+            overlay = Path(temporary, "managed"); overlay.mkdir()
+            self.lib.set_directory(str(base).encode())
+            self.lib.set_overlay(str(overlay).encode())
+            self.lib.set_download_status(1)
+            (base / "bloodgulch.map").write_bytes(header("bloodgulch"))
+            (overlay / "bloodgulch.map").write_bytes(header("bloodgulch"))
+            (base / "invalid.map").write_bytes(header("invalid", kind=0))
+            (overlay / "pending.partial").write_bytes(header("pending"))
+            for og, community, digsite in product((0, 1), repeat=3):
+                with self.subTest(og=og, community=community, digsite=digsite):
+                    self.lib.set_map_sets(og, community, digsite)
+                    self.assertEqual(self.map_list(), [value.encode() for value in STOCK] if og else [])
+
+            (base / "downrush.map").write_bytes(header())
+            self.lib.set_map_sets(0, 0, 1)
+            self.assertEqual(self.map_list(), [])
             (base / "downrush.map").unlink()
-            (base / "h1pb_chillout.map").unlink()
-            self.lib.set_map_sets(0, 1)
-            self.assertEqual(self.map_list(), stock)
+            (overlay / "chillout_digsite.map").write_bytes(header("chillout_digsite"))
+            self.lib.set_map_sets(0, 1, 0)
+            self.assertEqual(self.map_list(), [])
+            self.lib.set_map_sets(0, 0, 1)
+            self.lib.set_download_status(2)
+            self.assertEqual(self.map_list(), [])
+
+    def test_hidden_map_sets_preserve_load_join_and_download_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary, "base"); base.mkdir()
+            overlay = Path(temporary, "managed"); overlay.mkdir()
+            for name in ("bloodgulch", "downrush", "chillout_digsite"):
+                (base / (name + ".map")).write_bytes(header(name))
+            for name in ("atlas", "chillout_dig"):
+                (overlay / (name + ".map")).write_bytes(header(name))
+            self.lib.set_directory(str(base).encode())
+            self.lib.set_overlay(str(overlay).encode())
+            self.lib.set_download_status(1)
+            self.lib.set_map_sets(0, 0, 0)
+            self.assertEqual(self.map_list(), [])
+            path = ctypes.create_string_buffer(256)
+            for name in ("bloodgulch", "downrush", "chillout_digsite"):
+                with self.subTest(local=name):
+                    self.assertTrue(self.lib.native_map_get_path(f"levels\\test\\{name}\\{name}".encode(), path, len(path)))
+                    self.assertEqual(path.value, str(base / (name + ".map")).encode())
+                    self.assertEqual(self.lib.native_map_download_pending(name.encode()), 0)
+            for name in ("atlas", "chillout_dig"):
+                with self.subTest(managed=name):
+                    self.assertTrue(self.lib.native_map_get_path(name.encode(), path, len(path)))
+                    self.assertEqual(path.value, f"m:\\{name}.map".encode())
+                    self.assertEqual(self.lib.native_map_download_pending(name.encode()), 0)
+                    (overlay / (name + ".map")).unlink()
+            # Joining a host can still fetch a map from either hidden custom
+            # group; selection preferences do not suppress download status.
+            (base / "chillout_digsite.map").unlink()
+            for status, pending in ((0, 0), (1, 0), (2, 2), (-1, -1)):
+                self.lib.set_download_status(status)
+                for name in (b"atlas", b"chillout_dig", b"missing_community", b"chillout_digsite"):
+                    with self.subTest(status=status, map=name):
+                        self.assertEqual(self.lib.native_map_download_pending(name), pending)
 
 
 class ImportBoundaryTests(unittest.TestCase):

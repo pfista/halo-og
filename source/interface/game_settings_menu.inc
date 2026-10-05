@@ -27,10 +27,10 @@ static short const device_settings_deadzone_presets[] = {0, 3277, 6553, 9000, 98
 static char const *const device_settings_deadzone_labels[] = {"0%", "10%", "20%", "Xbox", "30%", "40%", "49%"};
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 7
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 7, 4, 3};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 7, 4, 4};
 #else
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 6
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 5, 5, 4, 3};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 5, 5, 4, 4};
 #endif
 static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX_PAGE_ROWS] = {
     {NONE, NONE, NONE, NONE},
@@ -50,7 +50,8 @@ static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX
 #endif
     {_device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone, _device_setting_look_acceleration,
      _device_setting_fast_menu_repeat},
-    {_device_setting_show_og_maps, _device_setting_show_community_maps, _device_setting_join_in_progress}};
+    {_device_setting_show_og_maps, _device_setting_show_community_maps, _device_setting_show_digsite_maps,
+     _device_setting_join_in_progress}};
 static short const device_settings_page_titles[_ds_page_count] = {_ds_game_label, _ds_audio_label, _ds_video_label, _ds_timer_label, _ds_controller_label, _ds_multiplayer_label};
 static short const device_settings_page_help[_ds_page_count] = {_ds_back_help, _ds_audio_help, _ds_video_help, _ds_timer_help, _ds_controller_help, _ds_multiplayer_help};
 #define DEVICE_SETTINGS_STRING_COUNT (_ds_value_start + MAXIMUM_NUMBER_OF_LOCAL_PLAYERS * NUMBER_OF_DEVICE_SETTINGS)
@@ -582,7 +583,7 @@ static boolean device_settings_build(void)
         "MASTER VOLUME:", "MUSIC VOLUME:", "EFFECTS VOLUME:", "DIALOGUE VOLUME:", "TIMER VOLUME:",
         "MENU MUSIC:", "FULLSCREEN:", "VSYNC:", "SMOOTH MOTION:",
         "COUNTDOWN:", "BEEPS:", "MINUTE ANNOUNCEMENTS:", "ITEM CUES:", "TIMER POSITION:", "TIMER SIZE:",
-        "OG MAPS:", "COMMUNITY MAPS:", "JOIN IN PROGRESS:", "LEFT STICK DEADZONE:", "RIGHT STICK DEADZONE:", "LOOK ACCELERATION:", "MENU REPEAT:"
+        "OG MAPS:", "COMMUNITY MAPS:", "DIGSITE MAPS:", "JOIN IN PROGRESS:", "LEFT STICK DEADZONE:", "RIGHT STICK DEADZONE:", "LOOK ACCELERATION:", "MENU REPEAT:"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "RENDERER:", "RESOLUTION:", "FPS LIMIT:", "ANTI-ALIASING:"
 #endif
@@ -603,8 +604,9 @@ static boolean device_settings_build(void)
         "Play scheduled rocket and powerup cues\r\nwhen supported by this map.\r\nHost Timer Sounds must be on.",
         "Choose where the match timer appears.\r\nThe host must enable the timer.",
         "Adjust timer size from 50% to 100%.\r\nThe host must enable the timer.",
-        "Show original Xbox maps when hosting.\r\nKeep at least one map set enabled.\r\nJoining hidden maps stays available.",
-        "Show installed community maps.\r\nAn empty list shows OG maps.\r\nJoining hidden maps stays available.",
+        "Show original Xbox maps when hosting.\r\nOff hides them from map selection.\r\nJoining hidden maps stays available.",
+        "Show installed community maps.\r\nDigsite maps have their own setting.\r\nJoining hidden maps stays available.",
+        "Show installed Digsite maps.\r\nOff hides them from map selection.\r\nJoining hidden maps stays available.",
         "Allow new players into running matches\r\nthat you host. Pregame lobbies stay\r\nopen when this option is off.",
         "Ignore small left-stick movements.\r\nXbox keeps the original deadzone.\r\nLower values may allow stick drift.",
         "Ignore small right-stick movements.\r\nXbox keeps the original deadzone.\r\nLower values may allow stick drift.",
@@ -779,7 +781,8 @@ static boolean device_settings_build(void)
              * settings and Accept inside the smallest split-screen root. */
             if (!main_menu && (page == _ds_video || page == _ds_timer)) pitch = 22;
 #endif
-            /* Five-row Controller pages use the existing six-row frame. */
+            /* Five-row Controller and Multiplayer pages use the existing
+             * six-row frame. */
             short height = main_menu ? 28 + rows * pitch + 40 : rows <= 4 ? 159 : rows <= 6 ? 213 : 240;
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
             if (!main_menu && pitch < 27) height = 240;
@@ -1044,7 +1047,7 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
         "Master", "Music", "Effects", "Dialogue", "Volume",
         "Menu Music", "Fullscreen", "VSync", "Smooth Motion",
         "Countdown", "Beeps", "Minutes", "Item Cues", "Position", "Timer Size",
-        "OG Maps", "Community Maps", "Join In Progress", "Left Deadzone", "Right Deadzone", "Look Acceleration", "Menu Repeat"
+        "OG Maps", "Community Maps", "Digsite Maps", "Join In Progress", "Left Deadzone", "Right Deadzone", "Look Acceleration", "Menu Repeat"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "Renderer", "Resolution", "FPS Limit", "AA"
 #endif

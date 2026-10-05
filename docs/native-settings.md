@@ -68,12 +68,16 @@ gameplay input or simulation timing. See [menu repeat](menu-repeat.md).
 | Menu control | Config key | Default | Meaning |
 | --- | --- | --- | --- |
 | OG Maps | `maps.show_og` | On | Show the original Xbox maps when hosting |
-| Community Maps | `maps.show_community` | On | Show installed community maps, including alternate/refined imports |
+| Community Maps | `maps.show_community` | On | Show installed community maps, including alternate/refined imports, excluding Digsite |
+| Digsite Maps | `maps.show_digsite` | On | Show installed Digsite maps when hosting |
 | Join In Progress | `network.join_in_progress` | On | Permit new players to join a running hosted match |
 
 Map visibility affects the host's map-selection list. Hidden maps remain
-available for joining and approved downloads. At least one set must remain
-On; if no visible community map is installed, the list falls back to OG maps.
+available for joining and approved downloads. After Accept, saved map settings
+apply the next time the map selector opens. Turning a set Off hides its maps
+from that selection. Digsite Maps is independent of Community Maps. All three
+sets can be Off; an empty selection stays empty without restoring any disabled
+set and prompts you to enable map groups in Settings or install maps.
 Separate alternate/refined categories require reviewed catalog metadata.
 
 Join In Progress is a local host preference. Off closes admission and reports

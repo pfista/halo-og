@@ -694,10 +694,13 @@ static void custom_map_text(struct widget_instance *widget, char const *caption)
 {
 	unsigned int i;
 	int capitalize = TRUE;
+	/* Captions include descriptions and empty-list instructions, which can be
+	   longer than a cache identity. Map filenames retain their separate limit. */
+	unsigned int caption_capacity = HALO_CUSTOM_MAP_NAME_SIZE * 2;
 	widget->parameters.text_box.text = ui_widget_realloc(widget->parameters.text_box.text,
-		HALO_CUSTOM_MAP_NAME_SIZE * sizeof(wchar_t), __FILE__, __LINE__);
+		caption_capacity * sizeof(wchar_t), __FILE__, __LINE__);
 	if (!widget->parameters.text_box.text) return;
-	for (i = 0; i < HALO_CUSTOM_MAP_NAME_SIZE - 1 && caption[i]; i++)
+	for (i = 0; i < caption_capacity - 1 && caption[i]; i++)
 	{
 		unsigned char c = (unsigned char)caption[i];
 		if (c == '_') c = ' ';
@@ -4345,14 +4348,37 @@ static void mp_level_select_list_update_displayed_items(
 		definition->child_count == 3,
 		"expected 3 children (list items) for 'level select' widget");
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Every map group can be disabled. Reuse the original row text widgets
+	   for the empty state, and hide every previous map and its artwork. */
+	if (!list_widget->parameters.list.list_items ||
+		!list_widget->parameters.list.number_of_items)
+	{
+		for (item_index = 0; item_index < 3; item_index++)
+		{
+			struct widget_instance *item = widget_instance_get_nth_child(list_widget, item_index);
+			struct widget_instance *map_name = item->child;
+			struct widget_instance *map_bitmap = map_name->next;
+			struct widget_instance *map_description = map_bitmap->next;
+
+			item->visible = item_index == 0;
+			map_bitmap->visible = FALSE;
+			if (item_index == 0)
+			{
+				custom_map_text(map_name, "No maps");
+				/* Retail map cards do not wrap text automatically. Keep these
+				   lines inside the narrow left card's original text bounds. */
+				custom_map_text(map_description, "Enable map groups\rIn Settings or\rInstall maps.");
+			}
+		}
+		return;
+	}
+#endif
 	spinner_list_3wide_determine_displayed_item_indices(
 		list_widget,
 		displayed_item_indices);
 
-	for (item_index = 0;
-		item_index < 3 &&
-			displayed_item_indices[item_index] != NONE;
-		item_index++)
+	for (item_index = 0; item_index < 3; item_index++)
 	{
 		struct widget_instance *item = widget_instance_get_nth_child(
 			list_widget,
@@ -4361,6 +4387,10 @@ static void mp_level_select_list_update_displayed_items(
 		struct widget_instance *map_bitmap = map_name->next;
 		struct widget_instance *map_description = map_bitmap->next;
 
+		item->visible = displayed_item_indices[item_index] != NONE;
+		if (!item->visible)
+			continue;
+		map_bitmap->visible = TRUE;
 		definition = ui_widget_definition_get(item->definition_tag_index);
 		match_vassert(
 			"c:\\halo\\SOURCE\\interface\\ui_widget_game_data_input_functions.c",
