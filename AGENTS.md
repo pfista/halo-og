@@ -51,6 +51,20 @@ settings; verify the installed signature and `Contents/Resources/BuildInfo.txt`.
 - [Community maps](docs/community-maps.md): conversion and managed storage.
 - [Map publishing](docs/map-publishing.md): complete community maps on Cloudflare.
 
+## Commits and changelog
+
+- Commit each independently reviewable bug fix or feature separately. Include
+  its supporting tests and documentation; keep unrelated pending work out of
+  the commit. Shared setup may accompany the first feature that needs it.
+- Use Conventional Commit subjects: `fix:` for bug fixes, `feat:` for new
+  features, and `docs:`, `test:`, `refactor:`, `build:`, `ci:` or `chore:` for
+  those changes. An optional scope is welcome, such as `fix(input): ...`.
+- Describe the concrete behavior in the subject. Release changelogs use commit
+  subjects directly, so each must make sense to readers without the chat or
+  diff. Avoid vague subjects or bundling several fixes into one entry.
+- Preserve published history unless the user explicitly authorizes rewriting
+  it. Commit requests do not authorize pushes, tags or releases.
+
 ## GitHub releases
 
 Keep release notes simple: a short description followed by direct download
