@@ -12,6 +12,85 @@ Metal command interface. The native host omits the GL resolver, GL bridge and
 GL performance wrappers, EGL/GLES linking, ANGLE rpaths and ANGLE packaging.
 SDL, Cocoa, Metal, QuartzCore and Sparkle remain.
 
+Native playtest configurations now have two additional integer settings. They
+use config files, with no environment overrides:
+
+```toml
+[display]
+frame_limit = 60       # 0 (uncapped), 30, 60 or 120
+render_height = 1080   # 480, 720, 1080, 1440 or 2160; requires restart
+interpolation = true
+vsync = false
+high_res_hud = false
+direct_camera = false
+```
+
+The reference profile uses interpolation=false, frame_limit=30 and
+render_height=480. The original throttle owns that mode. Other profiles enable
+the existing presentation interpolation and apply a monotonic deadline cap
+after native submission, before pumping the next frame's input. A missed
+deadline is discarded; loading pauses do not accumulate catch-up frames.
+Vsync is independent: cap0/vsync=true follows display pacing, while
+cap0/vsync=false applies no additional software wait. These settings do not
+change TICKS_PER_SECOND or the original gameplay tick queue.
+
+Render height changes actual color/depth allocation, raster viewports, scissors,
+clears, history copies and screenshot readbacks. D3D surface metadata, original
+shader constants, texture dimensions and menu/input coordinates remain logical.
+Only targets matching the logical screen dimensions are enlarged; authored
+textures and smaller water/offscreen targets retain their original dimensions.
+Fractional scaling rounds shared rectangle edges once, so adjacent split-screen
+rectangles agree. The render height is chosen at startup, avoiding live backing
+replacement. At the original 4:3 shape the five presets allocate 640x480,
+960x720, 1440x1080, 1920x1440 and 2880x2160. These are rendering presets;
+they do not replace original HUD artwork.
+
+`tools/metal_playtest_profiles.py` prepares fresh isolated human playtest saves,
+promotes exact profiles against a new `--display-options --fixed-function` build
+proof and bounded runtime evidence, and creates a Terminal chooser over those
+profiles. Each launcher verifies its frozen binaries/config/evidence before
+running. Original asset directories are referenced without modification.
+Bounded runtime success is distinct from achieved FPS, manual input/audio,
+original pixel fidelity and a performance improvement.
+
+The display-options build checkpoint is
+`build/macos-metal/display-options-build-proof-attempt1/result.json`
+(SHA256 `449e8dcd8f1f7994c4cad9774a71f85a09f7e5b7f80c7bce56f0c7e95eee3208`).
+Its successful incremental native build binds 41 source/binary inputs and 23
+additional evidence files, including both actual ILP32 helper objects, config
+registration and final guest exports. Existing older proof contracts remain
+unchanged when `--display-options` is omitted.
+
+Fourteen independent 20-second API-validation runs under
+`build/macos-metal/display-runtime-attempt3/` completed with host and guest
+exit 0, no renderer/API errors, the requested physical capture dimensions and
+positive original simulation ticks. The runs cover Blood Gulch's reference
+30 FPS, 30 FPS at 1080 lines, 60 FPS at all five heights, 120 FPS at 480/1080
+lines, uncapped at 480/1080 lines and display pacing at 1080 lines, plus
+Damnation and Hang 'Em High at 60 FPS and 1080 lines. Their saved
+world/weapon/HUD images were inspected for presence and alignment. This is
+bounded coverage, not original pixel parity or a full gameplay test. Simulation
+telemetry after startup averaged approximately 29.84-30.00 Hz across these runs.
+
+The ready human chooser is generated separately under
+`build/macos-metal/display-playtests-attempt3/chooser/`. It keeps initial config
+bytes as provenance while allowing normal preference saves/default insertion;
+display/offline/diagnostic controls remain fixed to the tested profile. Runtime
+logs, configs, executions and captures remain separate immutable evidence.
+Original proprietary assets and these local build artifacts are not distributed
+as source changes.
+
+Additional validation-off diagnostics preserve their own results under
+`build/macos-metal/display-runtime-without-validation-attempt1/`. For the
+13 one-second intervals beginning at original tick 150 or later, Blood Gulch's
+60 cap at 1440x1080 averaged 59.776 render FPS and 30.003 simulation Hz. The
+120 cap at 640x480 averaged 64.485 render FPS and 29.955 simulation Hz on this
+Mac. Uncapped 1440x1080 averaged 65.577 render FPS and 30.004 simulation Hz
+over the same interval selection. These movement/firing runs include screenshots and shader warmup; they
+are not a controlled renderer-performance comparison. The 120 setting is a cap,
+and sustaining 120 requires further optimization. Validation-off diagnostics
+cannot promote a profile into readiness.
+
 The SDL guest creates the window and exposes its handle through
 `platform_video_native_window()`. Device `Present` owns native submission and
 presentation. `halo_video_apply_settings()` calls the frontend's

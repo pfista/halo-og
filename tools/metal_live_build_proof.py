@@ -18,6 +18,17 @@ FORBIDDEN_SYMBOL = re.compile(r'(?<![A-Za-z0-9])_?(?:gl[A-Z]|egl[A-Z]|host_gl_|h
 FORBIDDEN_LINK = re.compile(r'ANGLE|libEGL|libGLES|OpenGL\.framework', re.I)
 FORBIDDEN_GRAPH = ('d3d8_gl.', 'gl_functions.', 'guest_gl.', 'guest_gl_stubs',
                    'android_gl_stubs', 'gl_imports.list', 'toolchain/gl', 'GLES2', 'GLES3')
+DISPLAY_SOURCES = ('port/linux/src/port_config.c',
+                   'port/linux/src/halo_frame_pacing.c', 'port/linux/src/halo_frame_pacing.h',
+                   'port/linux/src/metal_render_scale.c', 'port/linux/src/metal_render_scale.h')
+DISPLAY_IMPLEMENTATIONS = {
+    'port_config': ('config_integer',),
+    'halo_frame_pacing': ('halo_frame_pacing_reset', 'halo_frame_pacing_deadline'),
+    'metal_render_scale': ('halo_metal_render_target_dimensions', 'halo_metal_render_scale_rectangle',
+                          'halo_metal_render_presentation_box', 'halo_metal_render_window_point'),
+}
+DISPLAY_TESTS = ('tools/test_halo_frame_pacing.py', 'tools/test_metal_render_scale.py',
+                 'tools/test_metal_live_build_proof.py')
 
 
 def digest(data):
@@ -64,8 +75,14 @@ def record_command(output, name, command):
     }
 
 
-def binding_paths(reference, texture_contract='original', fixed_function=False):
+def require_display_dependencies(fixed_function, display_options):
+    if display_options and not fixed_function:
+        raise ValueError('Display options require the fixed-function build contract')
+
+
+def binding_paths(reference, texture_contract='original', fixed_function=False, display_options=False):
     """Select the existing proof inputs plus explicitly requested helpers."""
+    require_display_dependencies(fixed_function, display_options)
     paths = [item['path'] for item in reference['source_bindings']]
     for path in ('port/linux/src/metal_packet_room.c', 'port/linux/src/metal_packet_room.h',
                  'port/linux/src/xbox_xapi.c'):
@@ -79,6 +96,8 @@ def binding_paths(reference, texture_contract='original', fixed_function=False):
         paths += ['port/linux/src/metal_mip_composite.c', 'port/linux/src/metal_mip_composite.h']
     if fixed_function:
         paths += ['port/linux/src/metal_fixed_function.c', 'port/linux/src/metal_fixed_function.h']
+    if display_options:
+        paths += list(DISPLAY_SOURCES)
     additional_paths = [
         'build.ninja', 'port/linux/src/xgpu_msl.h', 'tools/metal_live_build_proof.py',
         'tools/test_macos_renderer_build.py',
@@ -96,10 +115,15 @@ def binding_paths(reference, texture_contract='original', fixed_function=False):
                              'build/macos-metal/guest/obj/source/rasterizer/rasterizer.o']
     if fixed_function:
         additional_paths.append('build/macos-metal/guest/obj/port/linux/src/metal_fixed_function.o')
+    if display_options:
+        additional_paths += [f'build/macos-metal/guest/obj/port/linux/src/{name}.o'
+                             for name in DISPLAY_IMPLEMENTATIONS]
+        additional_paths += list(DISPLAY_TESTS)
     return paths, additional_paths
 
 
-def graph_checks(text, fixed_function=False):
+def graph_checks(text, fixed_function=False, display_options=False):
+    require_display_dependencies(fixed_function, display_options)
     logical = text.replace('$\n', '')
     native = [line for line in logical.splitlines()
               if line.startswith('build ') and 'build/macos-metal/' in line.split(':', 1)[0]]
@@ -111,6 +135,8 @@ def graph_checks(text, fixed_function=False):
     paths = ('d3d8_metal', 'metal_packet_room', 'xbox_xapi')
     if fixed_function:
         paths += ('metal_fixed_function',)
+    if display_options:
+        paths += tuple(DISPLAY_IMPLEMENTATIONS)
     edges = {}
     for name in paths:
         target = f'build/macos-metal/guest/obj/port/linux/src/{name}.o'
@@ -119,21 +145,29 @@ def graph_checks(text, fixed_function=False):
             raise ValueError('Missing native source edge: ' + name)
         if name == 'metal_fixed_function' and f'port/linux/src/{name}.c' not in matches[0].split():
             raise ValueError('Missing exact fixed-function source edge')
+        if display_options and name in DISPLAY_IMPLEMENTATIONS and f'port/linux/src/{name}.c' not in matches[0].split():
+            raise ValueError('Missing exact display-options source edge: ' + name)
         edges[name] = matches[0]
     links = [line for line in native if line.startswith('build build/macos-metal/halo_guest.elf:')]
     if len(links) != 1 or not all(f'/port/linux/src/{name}.o' in links[0] for name in paths):
         raise ValueError('Native guest link omits source object')
     if fixed_function and 'build/macos-metal/guest/obj/port/linux/src/metal_fixed_function.o' not in links[0].split():
         raise ValueError('Native guest link omits exact fixed-function object')
+    if display_options:
+        for name in DISPLAY_IMPLEMENTATIONS:
+            if f'build/macos-metal/guest/obj/port/linux/src/{name}.o' not in links[0].split():
+                raise ValueError('Native guest link omits exact display-options object: ' + name)
     return {'native_build_edges': len(native), 'source_edges': edges,
             'guest_link_edge': links[0], 'no_gl_native_edges': True}
 
 
-def implementation_checks(name, symbols, object_symbols, guest_symbols, compile_text):
+def implementation_checks(name, symbols, object_symbols, guest_symbols, compile_text, exact_source=False):
     lines = [line for line in compile_text.splitlines() if f'port/linux/src/{name}.c' in line]
     if len(lines) != 1 or not all(flag in lines[0] for flag in (
             '--target=arm64_32-apple-watchos', '-DHALO_MACOS_NATIVE_METAL=1', '-ffp-contract=off')):
         raise ValueError('Missing ILP32 native compile flags: ' + name)
+    if exact_source and f'port/linux/src/{name}.c' not in lines[0].split():
+        raise ValueError('Missing exact display-options compile source: ' + name)
     for symbol in symbols:
         if not re.search(r'\b[Tt]\s+_?' + re.escape(symbol) + r'\s*$', object_symbols, re.M):
             raise ValueError('Native object omits exported implementation: ' + symbol)
@@ -143,7 +177,44 @@ def implementation_checks(name, symbols, object_symbols, guest_symbols, compile_
         raise ValueError('Native source object retains GL boundary: ' + name)
 
 
-def prepare(output, execution_path, reference_path, texture_contract='original', fixed_function=False):
+def display_configuration_checks(text):
+    """Verify native-only integer defaults without adding application env vars."""
+    # Keep string/character literals while ignoring commented-out entries and
+    # directives. Retain comment newlines for preprocessor line boundaries.
+    text = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*.*?\*/',
+                  lambda token: token[0] if token[0].startswith(('"', "'")) else
+                  re.sub(r'[^\n]', ' ', token[0]), text, flags=re.S)
+    required = {'display.frame_limit': '0', 'display.render_height': '480'}
+    result = {}
+    for name, default in required.items():
+        entries = list(re.finditer(r'\{\s*"' + re.escape(name) + r'"\s*,', text))
+        if len(entries) != 1:
+            raise ValueError('Expected one native display config entry: ' + name)
+        fields = [field.strip() for field in text[entries[0].end():].split(',', 5)[:5]]
+        if fields[:5] != ['_config_integer', '"' + default + '"', 'NULL',
+                          '_environment_value', '_platform_all']:
+            raise ValueError('Native display config type/default/environment changed: ' + name)
+        guards = []
+        for directive in re.finditer(r'^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b([^\n]*)',
+                                     text[:entries[0].start()], re.M):
+            keyword, condition = directive.groups()
+            if keyword in ('if', 'ifdef', 'ifndef'):
+                guards.append(keyword == 'if' and re.sub(r'\s+', '', condition) ==
+                              'defined(HALO_MACOS_NATIVE_METAL)&&HALO_MACOS_NATIVE_METAL')
+            elif keyword in ('elif', 'else') and guards:
+                guards[-1] = False
+            elif keyword == 'endif' and guards:
+                guards.pop()
+        if not any(guards):
+            raise ValueError('Display config entry is not native Metal guarded: ' + name)
+        result[name] = {'type': 'integer', 'default': int(default), 'environment': None,
+                        'native_metal_only': True}
+    return result
+
+
+def prepare(output, execution_path, reference_path, texture_contract='original', fixed_function=False,
+            display_options=False):
+    require_display_dependencies(fixed_function, display_options)
     if output.exists():
         raise ValueError('Output already exists; historical proofs must be preserved')
     execution_bytes = execution_path.read_bytes()
@@ -161,9 +232,12 @@ def prepare(output, execution_path, reference_path, texture_contract='original',
     reference = read_json(reference_path)
     extended = texture_contract in ('copy-volume', 'copy-volume-depth', 'copy-volume-depth-border')
     typed_depth = texture_contract in ('copy-volume-depth', 'copy-volume-depth-border')
-    paths, additional_paths = binding_paths(reference, texture_contract, fixed_function)
+    paths, additional_paths = binding_paths(reference, texture_contract, fixed_function, display_options)
     bindings = [describe(ROOT / path) for path in paths]
     evidence_bindings = [describe(ROOT / path) for path in additional_paths]
+    display_configuration = None
+    if display_options:
+        display_configuration = display_configuration_checks((ROOT / 'port/linux/src/port_config.c').read_text())
     if typed_depth:
         header = (ROOT / 'source/rasterizer/rasterizer.h').read_text()
         if not re.search(r'offsetof\(struct rasterizer_globals_definition,\s*floating_point_zbuffer\)\s*==\s*0x3C', header):
@@ -195,7 +269,7 @@ def prepare(output, execution_path, reference_path, texture_contract='original',
         if digest(data) != item['sha256']:
             raise ValueError('Input changed during freeze: ' + item['path'])
         copy_snapshot(ROOT / item['path'], output / 'snapshot' / item['path'], item['sha256'])
-    graph = graph_checks((ROOT / 'build.ninja').read_text(), fixed_function)
+    graph = graph_checks((ROOT / 'build.ninja').read_text(), fixed_function, display_options)
     linkage, linkage_command = record_command(output, 'linkage', ['otool', '-L', 'build/macos-metal/halo'])
     host_symbols, host_command = record_command(output, 'host-undefined', ['nm', '-u', 'build/macos-metal/halo'])
     guest_symbols, guest_command = record_command(output, 'guest-defined',
@@ -218,6 +292,8 @@ def prepare(output, execution_path, reference_path, texture_contract='original',
                                    ('xbox_textures', 'xgpu_texture_volume_mip_copy')]
     if fixed_function:
         object_implementations.append(('metal_fixed_function', 'metal_fixed_function_pack_unlit_immediate'))
+    if display_options:
+        object_implementations += [(name, symbols[0]) for name, symbols in DISPLAY_IMPLEMENTATIONS.items()]
     for name, symbol in object_implementations:
         path = f'build/macos-metal/guest/obj/port/linux/src/{name}.o'
         object_symbols, obj_command = record_command(output, name + '-symbols',
@@ -227,10 +303,13 @@ def prepare(output, execution_path, reference_path, texture_contract='original',
         symbols = (symbol,)
         if name == 'metal_fixed_function':
             symbols += ('metal_fixed_function_vertex_to_msl',)
-        implementation_checks(name, symbols, object_symbols, guest_symbols, compile_text)
+        if display_options and name in DISPLAY_IMPLEMENTATIONS:
+            symbols = DISPLAY_IMPLEMENTATIONS[name]
+        implementation_checks(name, symbols, object_symbols, guest_symbols, compile_text,
+                              exact_source=display_options and name in DISPLAY_IMPLEMENTATIONS)
         compiled[name] = {'object': describe(ROOT / path), 'symbol': symbol,
                           'linked_in_guest': True, 'native_ilp32_flags': True}
-        if name == 'metal_fixed_function':
+        if name == 'metal_fixed_function' or (display_options and name in DISPLAY_IMPLEMENTATIONS):
             compiled[name]['additional_linked_symbols'] = list(symbols[1:])
         commands.extend((obj_command, compile_command))
     original_global = None
@@ -272,6 +351,9 @@ def prepare(output, execution_path, reference_path, texture_contract='original',
     }
     if fixed_function:
         result['fixed_function'] = True
+    if display_options:
+        result['display_options'] = True
+        result['display_configuration'] = display_configuration
     write_new(output / 'result.json', (json.dumps(result, indent=2) + '\n').encode())
     print(json.dumps({'result': describe(output / 'result.json'), 'bindings': len(bindings),
                       'no_angle_gl_linkage_or_imports': True}, indent=2))
@@ -287,9 +369,16 @@ def main():
         help='Explicitly bind the additive rendered-mip copy and authored-volume implementations')
     parser.add_argument('--fixed-function', action='store_true',
         help='Additionally bind the bounded unlit fixed-function sources and linked ILP32 guest object')
+    parser.add_argument('--display-options', action='store_true',
+        help='Bind native integer display settings, render pacing and physical backing helpers; requires --fixed-function')
     args = parser.parse_args()
+    if args.display_options and not args.fixed_function:
+        parser.error('--display-options requires --fixed-function')
+    options = {'fixed_function': args.fixed_function}
+    if args.display_options:
+        options['display_options'] = True
     prepare(args.output.resolve(), args.execution.resolve(), args.reference.resolve(), args.texture_contract,
-            fixed_function=args.fixed_function)
+            **options)
 
 
 if __name__ == '__main__':

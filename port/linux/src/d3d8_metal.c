@@ -15,6 +15,9 @@
 #include "metal_draw_state.h"
 #include "metal_fixed_function.h"
 #include "metal_mip_composite.h"
+#include "metal_render_scale.h"
+#include "halo_frame_pacing.h"
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +38,15 @@ render target the size of the screen has per unit of it */
 static long screen_width;
 static float screen_scale[2] = { 1.0f, 1.0f };
 static long ui_offset;
+/* Chosen once: storage scale never changes underneath live attachments. */
+static uint32_t render_height;
+static uint32_t native_render_height(void) {
+    if (!render_height) {
+        long requested=config_integer("display.render_height");
+        render_height=(requested==720 || requested==1080 || requested==1440 || requested==2160) ? requested:480;
+    }
+    return render_height;
+}
 #define UI_OFFSET ((long)ui_offset)
 
 static void screen_mode_choose(long *width, float scale[2])
@@ -52,7 +64,7 @@ static void screen_mode_choose(long *width, float scale[2])
 	if (*width > 1600)
 		*width = 1600;
 	*width &= ~1L;
-	scale[0] = scale[1] = 1.0f;
+	scale[0] = scale[1] = (float)native_render_height() / SCREEN_HEIGHT;
 #else
 	long display_width, display_height;
 
@@ -115,7 +127,7 @@ struct native_resource {
     struct xgpu_texture_description description;
     unsigned long generation, palette_hash;
     uint64_t last_rendered;
-    uint32_t format, usage;
+    uint32_t format, usage, storage_width, storage_height;
     BOOL mip_composite, volume;
 };
 struct native_program {
@@ -922,13 +934,34 @@ static uint32_t texture_format(enum xgpu_texture_copy_format format) {
     default:native_fail("original texture format",HALO_METAL_UNSUPPORTED);return 0;
     }
 }
+static struct halo_metal_render_dimensions resource_dimensions(const struct native_resource *entry) {
+    return (struct halo_metal_render_dimensions){entry->description.width,entry->description.height,
+        entry->storage_width,entry->storage_height};
+}
+static void native_raster_scale(const struct native_resource *target,struct halo_metal_draw_state *state) {
+    struct halo_metal_render_dimensions dimensions=resource_dimensions(target);
+    struct halo_metal_render_edges edges={(int64_t)state->viewport[0],(int64_t)state->viewport[1],
+        (int64_t)state->viewport[0]+(int64_t)state->viewport[2],
+        (int64_t)state->viewport[1]+(int64_t)state->viewport[3]};
+    struct halo_metal_render_rectangle rectangle;
+    require_status("scale native viewport",halo_metal_render_scale_rectangle(&dimensions,&edges,&rectangle));
+    state->viewport[0]=rectangle.x;state->viewport[1]=rectangle.y;
+    state->viewport[2]=rectangle.width;state->viewport[3]=rectangle.height;
+    edges=(struct halo_metal_render_edges){state->scissor[0],state->scissor[1],
+        (int64_t)state->scissor[0]+state->scissor[2],(int64_t)state->scissor[1]+state->scissor[3]};
+    require_status("scale native scissor",halo_metal_render_scale_rectangle(&dimensions,&edges,&rectangle));
+    state->scissor[0]=rectangle.x;state->scissor[1]=rectangle.y;
+    state->scissor[2]=rectangle.width;state->scissor[3]=rectangle.height;
+}
 static void resource_create(struct native_resource *entry) {
     struct halo_metal_create_ex command={0};
     if (!next_resource_id) native_fail("resource ID overflow",HALO_METAL_MEMORY);
     entry->ref.id=next_resource_id++; entry->ref.generation=1;
     command.command.opcode=HALO_METAL_CREATE_TEXTURE_EX;
     command.resource=entry->ref; command.format=entry->format;
-    command.width=entry->description.width; command.height=entry->description.height;
+    if (!entry->storage_width) entry->storage_width=entry->description.width;
+    if (!entry->storage_height) entry->storage_height=entry->description.height;
+    command.width=entry->storage_width; command.height=entry->storage_height;
     command.depth=entry->volume ? entry->description.depth:1;
     command.type=entry->volume ? HALO_METAL_TEXTURE_3D:
         entry->description.cube_map ? HALO_METAL_TEXTURE_CUBE:HALO_METAL_TEXTURE_2D;
@@ -941,9 +974,13 @@ static struct native_resource *target_get(const D3DSurface *surface) {
     unsigned long width,height; BOOL depth;
     if (!surface || !surface->Data) native_fail("missing original render target",HALO_METAL_INVALID);
     surface_dimensions(surface,&width,&height,&depth);
+    struct halo_metal_render_dimensions dimensions;
+    require_status("native target dimensions",halo_metal_render_target_dimensions(width,height,
+        halo_screen_width(),native_render_height(),&dimensions));
     for (entry=resources;entry;entry=entry->next)
         if ((entry->usage&HALO_METAL_RENDER_TARGET) && entry->data==surface->Data &&
-            entry->format_word==surface->Format && entry->size_word==surface->Size) return entry;
+            entry->format_word==surface->Format && entry->size_word==surface->Size &&
+            entry->storage_width==dimensions.storage_width && entry->storage_height==dimensions.storage_height) return entry;
     entry=calloc(1,sizeof(*entry));
     if (!entry) native_fail("allocate render target",HALO_METAL_MEMORY);
     entry->data=surface->Data;entry->format_word=surface->Format;entry->size_word=surface->Size;
@@ -951,6 +988,7 @@ static struct native_resource *target_get(const D3DSurface *surface) {
     if (entry->description.cube_map || entry->description.depth!=1)
         native_fail("render target type",HALO_METAL_UNSUPPORTED);
     entry->description.levels=1;
+    entry->storage_width=dimensions.storage_width;entry->storage_height=dimensions.storage_height;
     entry->format=depth ? HALO_METAL_DEPTH32_STENCIL8 : HALO_METAL_BGRA8;
     entry->usage=HALO_METAL_SHADER_READ|HALO_METAL_RENDER_TARGET;
     resource_create(entry);
@@ -958,7 +996,7 @@ static struct native_resource *target_get(const D3DSurface *surface) {
        zero allocation so untouched planes can safely be loaded by Metal.
        This uses no reference framebuffer or captured after-draw pixels. */
     struct halo_metal_clear clear={0};
-    clear.command.opcode=HALO_METAL_CLEAR;clear.width=width;clear.height=height;
+    clear.command.opcode=HALO_METAL_CLEAR;clear.width=entry->storage_width;clear.height=entry->storage_height;
     if (depth) { clear.depth_stencil=entry->ref;clear.planes=HALO_METAL_DEPTH|HALO_METAL_STENCIL; }
     else { clear.color=entry->ref;clear.planes=HALO_METAL_COLOR; }
     packet_begin(sizeof(clear),NULL,0);command_append(&clear,sizeof(clear));packet_finish();
@@ -982,8 +1020,8 @@ static void backbuffer_color_copy(struct native_resource *source,
         native_fail("indexed back-buffer copy capability",HALO_METAL_UNSUPPORTED);
     if (!source || !destination || source->ref.id==destination->ref.id ||
         source->format!=HALO_METAL_BGRA8 || destination->format!=source->format ||
-        !width || !height || width>source->description.width || height>source->description.height ||
-        width>destination->description.width || height>destination->description.height)
+        !width || !height || width>source->storage_width || height>source->storage_height ||
+        width>destination->storage_width || height>destination->storage_height)
         native_fail("indexed back-buffer copy extent",HALO_METAL_INVALID);
     struct halo_metal_copy_subresource command={0};
     command.command.opcode=HALO_METAL_COPY_SUBRESOURCE;
@@ -997,12 +1035,13 @@ static void backbuffer_history_advance(struct native_resource *back) {
         native_fail("indexed back-buffer history capability",HALO_METAL_UNSUPPORTED);
     struct native_resource *history=target_get(&device.history_buffer);
     if (back->description.width!=history->description.width ||
-        back->description.height!=history->description.height)
+        back->description.height!=history->description.height ||
+        back->storage_width!=history->storage_width || back->storage_height!=history->storage_height)
         native_fail("indexed back-buffer history dimensions",HALO_METAL_INVALID);
     /* The source loading screen clears0 before requesting-1. History must
        therefore advance at every Present, including before its first use.
        No physical Xbox buffer rotation or display callback is inferred. */
-    backbuffer_color_copy(back,history,back->description.width,back->description.height);
+    backbuffer_color_copy(back,history,back->storage_width,back->storage_height);
 }
 #ifndef HALO_ANDROID
 static void backbuffer_surfaces_resize(unsigned long width,unsigned long height) {
@@ -1026,11 +1065,18 @@ static void backbuffer_surfaces_resize(unsigned long width,unsigned long height)
        those bytes when growing again; no stretch or filtered copy occurs. */
     struct halo_metal_clear clear={0};
     clear.command.opcode=HALO_METAL_CLEAR;clear.color=history->ref;
-    clear.planes=HALO_METAL_COLOR;clear.width=width;clear.height=height;
+    clear.planes=HALO_METAL_COLOR;clear.width=history->storage_width;clear.height=history->storage_height;
     packet_begin(sizeof(clear),NULL,0);command_append(&clear,sizeof(clear));packet_finish();
     history->last_rendered=rendered_serial_next();
-    backbuffer_color_copy(previous,history,width<old_width ? width:old_width,
-        height<old_height ? height:old_height);
+    if ((uint64_t)previous->storage_height*history->description.height !=
+        (uint64_t)history->storage_height*previous->description.height)
+        native_fail("indexed back-buffer resize scale",HALO_METAL_UNSUPPORTED);
+    struct halo_metal_render_dimensions dimensions=resource_dimensions(previous);
+    struct halo_metal_render_edges edges={0,0,width<old_width ? width:old_width,
+        height<old_height ? height:old_height};
+    struct halo_metal_render_rectangle rectangle;
+    require_status("indexed back-buffer resize rectangle",halo_metal_render_scale_rectangle(&dimensions,&edges,&rectangle));
+    backbuffer_color_copy(previous,history,rectangle.width,rectangle.height);
 }
 #endif
 static struct native_resource *rendered_mip_composite(DWORD data,
@@ -1057,7 +1103,7 @@ static struct native_resource *rendered_mip_composite(DWORD data,
         if (!(entry->usage&HALO_METAL_RENDER_TARGET) || entry->format==HALO_METAL_DEPTH32_STENCIL8) continue;
         const struct xgpu_texture_description *d=&entry->description;
         targets[index++]=(struct halo_metal_mip_composite_target){entry->ref,entry->data,
-            d->width,d->height,d->width,d->height,d->levels,HALO_METAL_TEXTURE_2D,entry->format,entry->usage,
+            d->width,d->height,entry->storage_width,entry->storage_height,d->levels,HALO_METAL_TEXTURE_2D,entry->format,entry->usage,
             1,entry->last_rendered,entry->last_rendered};
     }
     int status=halo_metal_mip_composite_plan(&request,targets,target_count,&plan);
@@ -1395,6 +1441,9 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
         }
         native_fail("pack original draw state",status);
     }
+    /* Original constants and texture normalization stay logical. Only the
+       raster viewport/scissor describe the larger Metal attachment. */
+    native_raster_scale(color,&output.state);
     if (device.fixed_function_selected) {
         struct metal_fixed_function_input fixed={
             (const uint32_t *)D3D__RenderState,(const uint32_t (*)[32])D3D__TextureState,
@@ -1537,7 +1586,13 @@ void WINAPI D3DDevice_Clear(DWORD count,const D3DRECT *rectangles,DWORD flags,D3
         if (right>(int64_t)target->description.width) right=target->description.width;
         if (bottom>(int64_t)target->description.height) bottom=target->description.height;
         if (left>=right || top>=bottom) continue;
-        command.clear.x=left;command.clear.y=top;command.clear.width=right-left;command.clear.height=bottom-top;
+        struct halo_metal_render_dimensions dimensions=resource_dimensions(target);
+        struct halo_metal_render_edges edges={left,top,right,bottom};
+        struct halo_metal_render_rectangle rectangle;
+        require_status("scale native clear",halo_metal_render_scale_rectangle(&dimensions,&edges,&rectangle));
+        if (!rectangle.width || !rectangle.height) continue;
+        command.clear.x=rectangle.x;command.clear.y=rectangle.y;
+        command.clear.width=rectangle.width;command.clear.height=rectangle.height;
         packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();
         if (command.clear.planes&HALO_METAL_COLOR) target->last_rendered=rendered_serial_next();
         if (depth && (command.clear.planes&6)) depth->last_rendered=rendered_serial_next();
@@ -1551,19 +1606,18 @@ int halo_metal_apply_video_settings(void) {
     packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();packet_flush();return 1;
 }
 static void ui_point_from_window(float wx,float wy,short *x,short *y) {
-    struct xgpu_texture_description back;
-    int ww,wh,pw,ph,width,height,left,top;
+    int ww,wh,pw,ph;
     *x=*y=-1;
-    if (!device.created) return;
-    xgpu_texture_describe(device.back_buffer.Format,device.back_buffer.Size,&back);
+    if (!device.created || !device.ready) return;
+    struct native_resource *back=target_get(&device.back_buffer);
+    struct halo_metal_render_dimensions dimensions=resource_dimensions(back);
+    struct halo_metal_render_point point;
     platform_video_window_size(&ww,&wh);platform_video_drawable_size(&pw,&ph);
-    if (ww<=0 || wh<=0 || pw<=0 || ph<=0 || !back.width || !back.height) return;
-    width=pw;height=(long)pw*back.height/back.width;
-    if (height>ph) { height=ph;width=(long)ph*back.width/back.height; }
-    if (!width || !height) return;
-    left=(pw-width)/2;top=(ph-height)/2;
-    *x=floorf((wx*pw/ww-left)*(float)back.width/width-(float)(halo_screen_width()-640)/2);
-    *y=floorf((wy*ph/wh-top)*(float)back.height/height);
+    if (ww<=0 || wh<=0 || pw<=0 || ph<=0) return;
+    if (halo_metal_render_window_point(&dimensions,ww,wh,pw,ph,wx,wy,
+        (halo_screen_width()-640)/2,&point) || point.x<SHRT_MIN || point.x>SHRT_MAX ||
+        point.y<SHRT_MIN || point.y>SHRT_MAX) return;
+    *x=point.x;*y=point.y;
 }
 int halo_ui_pointer_update(int menus_active,struct halo_ui_pointer *pointer) {
     struct platform_ui_pointer state;
@@ -1581,7 +1635,7 @@ int halo_ui_pointer_update(int menus_active,struct halo_ui_pointer *pointer) {
 static void write_screenshot(struct native_resource *target) {
     const char *directory=config_string("debug.screenshot_directory");
     if (!*directory) return;
-    uint32_t width=target->description.width,height=target->description.height,size=width*height*4;
+    uint32_t width=target->storage_width,height=target->storage_height,size=width*height*4;
     unsigned char *pixels=malloc(size),header[54]={'B','M'};
     if (!pixels) native_fail("allocate screenshot",HALO_METAL_MEMORY);
     packet_flush();
@@ -1595,6 +1649,49 @@ static void write_screenshot(struct native_resource *target) {
     FILE *file=fopen(path,"wb");
     if (file) { fwrite(header,1,sizeof(header),file);fwrite(pixels,1,size,file);fclose(file); }
     free(pixels);
+}
+/* This wait controls completed presentation frames only when the existing
+   interpolation is enabled. Original simulation and vblank remain below. */
+static struct halo_frame_pacing frame_pacing;
+static void native_frame_wait(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC,&now) || now.tv_sec<0 || now.tv_nsec<0 || now.tv_nsec>=1000000000) {
+        halo_frame_pacing_reset(&frame_pacing);return;
+    }
+    uint64_t deadline=halo_frame_pacing_deadline(&frame_pacing,
+        (uint64_t)now.tv_sec*UINT64_C(1000000000)+(uint64_t)now.tv_nsec,
+        config_integer("display.frame_limit"),halo_interpolation_enabled());
+    if (!deadline) return;
+    struct timespec until={(time_t)(deadline/UINT64_C(1000000000)),(long)(deadline%UINT64_C(1000000000))};
+    int status;
+    do { status=clock_nanosleep(CLOCK_MONOTONIC,TIMER_ABSTIME,&until,NULL); } while (status==EINTR);
+    if (status) halo_frame_pacing_reset(&frame_pacing);
+}
+/* Diagnostic reads of the original tick counter never advance simulation. */
+extern unsigned char game_time_initialized(void);
+extern long game_time_get(void);
+static void native_frame_statistics(void) {
+    static uint64_t previous_ns;
+    static unsigned long previous_frame;
+    static long previous_tick;
+    static int previous_initialized;
+    if (!config_boolean("debug.gpu_stats")) return;
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC,&now)) return;
+    uint64_t ns=(uint64_t)now.tv_sec*UINT64_C(1000000000)+(uint64_t)now.tv_nsec;
+    int initialized=game_time_initialized()!=0;
+    long tick=initialized ? game_time_get():0;
+    if (previous_ns && ns>previous_ns && ns-previous_ns<UINT64_C(1000000000)) return;
+    if (previous_ns && ns>previous_ns) {
+        struct native_resource *back=target_get(&device.back_buffer);
+        double seconds=(double)(ns-previous_ns)/1e9;
+        platform_log("Native display: %.3f FPS, %.3f simulation Hz, %ux%u storage, %lux%lu logical, cap %ld, interpolation %d, ticks %ld-%ld",
+            (device.frame-previous_frame)/seconds,
+            initialized && previous_initialized && tick>=previous_tick ? (tick-previous_tick)/seconds:0.0,
+            back->storage_width,back->storage_height,back->description.width,back->description.height,
+            config_integer("display.frame_limit"),halo_interpolation_enabled(),previous_tick,tick);
+    }
+    previous_ns=ns;previous_frame=device.frame;previous_tick=tick;previous_initialized=initialized;
 }
 void WINAPI D3DDevice_Present(const RECT *source,const RECT *destination,void *unused,void *unused2) {
     (void)source;(void)destination;(void)unused;(void)unused2;
@@ -1619,6 +1716,8 @@ void WINAPI D3DDevice_Present(const RECT *source,const RECT *destination,void *u
         statistics_batches=submitted_batches;statistics_commands=submitted_commands;
         statistics_bytes=submitted_bytes;statistics_wall_ns=submit_wall_ns;largest_statistics_batch=0;
     }
+    native_frame_wait();
+    if (device.ready) native_frame_statistics();
     platform_pump_events();vertical_blank_start();
     pthread_mutex_lock(&vertical_blank_lock);
     if (halo_interpolation_enabled()) flip_count++;

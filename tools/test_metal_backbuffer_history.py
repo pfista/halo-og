@@ -65,6 +65,7 @@ HARNESS = r'''
 #include <string.h>
 #include <setjmp.h>
 #include "port/macos/include/halo_metal_abi.h"
+#include "port/linux/src/metal_render_scale.h"
 #define WINAPI
 #define TRUE 1
 #define FALSE 0
@@ -106,7 +107,7 @@ struct xgpu_texture_description { unsigned long width,height,depth,levels;
 struct native_resource { struct native_resource *next; struct halo_metal_ref ref;
     DWORD data,format_word,size_word; struct xgpu_texture_description description;
     unsigned long generation,palette_hash; uint64_t last_rendered; uint32_t format,usage;
-    BOOL mip_composite,volume; };
+    BOOL mip_composite,volume; uint32_t storage_width,storage_height; };
 static struct { D3DPRESENT_PARAMETERS presentation;
     D3DSurface back_buffer,history_buffer,depth_buffer;
     D3DSurface *render_target,*depth_stencil; D3DVIEWPORT8 viewport;
@@ -125,6 +126,8 @@ static unsigned flip_count,pending_flips;
 static int vertical_blank_lock,vertical_blank_condition;
 static unsigned allocations,viewport_updates,video_calls;
 static long requested_width=640;
+static unsigned render_height=480;
+static unsigned frame_waits,frame_statistics,event_pumps,phase,wait_phase,pump_phase;
 static long screenshot_every;
 static const char *screenshot_directory="";
 static int vsync;
@@ -144,7 +147,9 @@ static void native_initialize(void) { device.ready=TRUE; transport.reply.capabil
 static int config_boolean(const char *key) { return !strcmp(key,"display.vsync") ? vsync:0; }
 static long config_integer(const char *key) { return !strcmp(key,"debug.screenshot_every") ? screenshot_every:0; }
 static const char *config_string(const char *key) { assert(!strcmp(key,"debug.screenshot_directory")); return screenshot_directory; }
-static void platform_pump_events(void) {}
+static void native_frame_wait(void) { frame_waits++;wait_phase=++phase; }
+static void native_frame_statistics(void) { frame_statistics++; }
+static void platform_pump_events(void) { event_pumps++;pump_phase=++phase;assert(wait_phase && wait_phase<pump_phase); }
 static void vertical_blank_start(void) {}
 static int halo_interpolation_enabled(void) { return 1; }
 static int pthread_mutex_lock(int *p) { (void)p; return 0; }
@@ -171,6 +176,7 @@ enum { FLUSH_EVENT=100,READBACK_EVENT=101,MOCK_WRITE=1000 };
 struct event { unsigned kind,size; unsigned char command[96]; };
 static struct event events[2048];
 static unsigned event_count,applied_event,copy_count,present_count,readback_count;
+static uint32_t pattern(unsigned x,unsigned y,unsigned seed);
 static struct target_record *record(struct halo_metal_ref ref) {
     for(unsigned i=0;i<target_count;i++) if(targets[i].native.ref.id==ref.id && targets[i].native.ref.generation==ref.generation) return &targets[i];
     assert(0);return NULL;
@@ -189,15 +195,15 @@ static void packet_flush(void) {
             struct target_record *s=record(c.source),*d=record(c.destination);
             assert(s!=d && c.planes==HALO_METAL_COLOR && !c.reserved);
             assert(!c.source_mip && !c.destination_mip && !c.source_slice && !c.destination_slice);
-            assert(c.source_x+c.width<=s->native.description.width && c.source_y+c.height<=s->native.description.height);
-            assert(c.destination_x+c.width<=d->native.description.width && c.destination_y+c.height<=d->native.description.height);
-            for(unsigned y=0;y<c.height;y++) memcpy(d->pixels+(y+c.destination_y)*d->native.description.width+c.destination_x,
-                s->pixels+(y+c.source_y)*s->native.description.width+c.source_x,c.width*sizeof(uint32_t));
+            assert(c.source_x+c.width<=s->native.storage_width && c.source_y+c.height<=s->native.storage_height);
+            assert(c.destination_x+c.width<=d->native.storage_width && c.destination_y+c.height<=d->native.storage_height);
+            for(unsigned y=0;y<c.height;y++) memcpy(d->pixels+(y+c.destination_y)*d->native.storage_width+c.destination_x,
+                s->pixels+(y+c.source_y)*s->native.storage_width+c.source_x,c.width*sizeof(uint32_t));
             copy_count++;
         } else if(e->kind==HALO_METAL_CLEAR) {
             struct halo_metal_clear c;memcpy(&c,e->command,sizeof(c));assert(c.planes==HALO_METAL_COLOR);
             struct target_record *d=record(c.color);
-            assert(!c.x && !c.y && c.width==d->native.description.width && c.height==d->native.description.height);
+            assert(!c.x && !c.y && c.width==d->native.storage_width && c.height==d->native.storage_height);
             assert(c.rgba[0]==0 && c.rgba[1]==0 && c.rgba[2]==0 && c.rgba[3]==0);
             memset(d->pixels,0,c.width*c.height*sizeof(uint32_t));
         } else if(e->kind==HALO_METAL_PRESENT_SCALED) {
@@ -207,8 +213,8 @@ static void packet_flush(void) {
         } else if(e->kind==MOCK_WRITE) {
             uint32_t id,seed;memcpy(&id,e->command+8,4);memcpy(&seed,e->command+12,4);
             struct target_record *d=record((struct halo_metal_ref){id,1});
-            for(unsigned y=0;y<d->native.description.height;y++) for(unsigned x=0;x<d->native.description.width;x++)
-                d->pixels[y*d->native.description.width+x]=0xff000000u|(seed<<20)|(y<<10)|x;
+            for(unsigned y=0;y<d->native.storage_height;y++) for(unsigned x=0;x<d->native.storage_width;x++)
+                d->pixels[y*d->native.storage_width+x]=pattern(x,y,seed);
         }
     }
     assert(event_count<2048);events[event_count++].kind=FLUSH_EVENT;applied_event=event_count;
@@ -220,17 +226,23 @@ static struct native_resource *target_get(const D3DSurface *surface) {
     entry->native.ref=(struct halo_metal_ref){next_resource_id++,1};entry->native.data=surface->Data;
     entry->native.format_word=surface->Format;entry->native.size_word=surface->Size;
     xgpu_texture_describe(surface->Format,surface->Size,&entry->native.description);
+    entry->native.storage_width=entry->native.description.width;
+    entry->native.storage_height=entry->native.description.height;
+    if(entry->native.description.height==SCREEN_HEIGHT) {
+        entry->native.storage_width=(entry->native.description.width*render_height+SCREEN_HEIGHT/2)/SCREEN_HEIGHT;
+        entry->native.storage_height=render_height;
+    }
     entry->native.format=HALO_METAL_BGRA8;entry->native.usage=HALO_METAL_SHADER_READ|HALO_METAL_RENDER_TARGET;
-    entry->pixels=malloc(entry->native.description.width*entry->native.description.height*sizeof(uint32_t));assert(entry->pixels);
-    memset(entry->pixels,0x99,entry->native.description.width*entry->native.description.height*sizeof(uint32_t));
+    entry->pixels=malloc(entry->native.storage_width*entry->native.storage_height*sizeof(uint32_t));assert(entry->pixels);
+    memset(entry->pixels,0x99,entry->native.storage_width*entry->native.storage_height*sizeof(uint32_t));
     entry->native.next=resources;resources=&entry->native;
     struct halo_metal_clear c={0};c.command.opcode=HALO_METAL_CLEAR;c.color=entry->native.ref;c.planes=HALO_METAL_COLOR;
-    c.width=entry->native.description.width;c.height=entry->native.description.height;
+    c.width=entry->native.storage_width;c.height=entry->native.storage_height;
     packet_begin(sizeof(c),NULL,0);command_append(&c,sizeof(c));packet_finish();return &entry->native;
 }
 static int halo_metal_guest_readback(void *t,struct halo_metal_ref ref,uint32_t plane,void *out,uint32_t bytes) {
     assert(t==&transport && plane==HALO_METAL_COLOR);struct target_record *r=record(ref);
-    assert(bytes==r->native.description.width*r->native.description.height*4);
+    assert(bytes==r->native.storage_width*r->native.storage_height*4);
     memcpy(out,r->pixels,bytes);events[event_count++].kind=READBACK_EVENT;readback_count++;return 0;
 }
 static struct native_resource *rendered_mip_composite(DWORD data,const struct xgpu_texture_description *description) {
@@ -244,15 +256,18 @@ static void create(unsigned width) {
     D3DPRESENT_PARAMETERS p=presentation(width);D3DDevice *out=NULL;
     assert(Direct3D_CreateDevice(0,0,NULL,0,&p,&out)==S_OK && out==device_pointer());
 }
-static uint32_t pattern(unsigned x,unsigned y,unsigned seed) { return 0xff000000u | (seed<<20) | (y<<10) | x; }
+/* Distinct pixels across the whole scaled image expose row-stride errors. */
+static uint32_t pattern(unsigned x,unsigned y,unsigned seed) {
+    return 0xff000000u | ((y*8192u+x+seed*131071u)&0x00ffffffu);
+}
 static void fill(struct native_resource *resource,unsigned seed) {
     struct target_record *r=record(resource->ref);
-    for(unsigned y=0;y<r->native.description.height;y++) for(unsigned x=0;x<r->native.description.width;x++) r->pixels[y*r->native.description.width+x]=pattern(x,y,seed);
+    for(unsigned y=0;y<r->native.storage_height;y++) for(unsigned x=0;x<r->native.storage_width;x++) r->pixels[y*r->native.storage_width+x]=pattern(x,y,seed);
 }
 static void assert_pattern(struct native_resource *resource,unsigned overlap,unsigned seed) {
     struct target_record *r=record(resource->ref);
-    for(unsigned y=0;y<r->native.description.height;y++) for(unsigned x=0;x<r->native.description.width;x++)
-        assert(r->pixels[y*r->native.description.width+x]==(x<overlap ? pattern(x,y,seed):0));
+    for(unsigned y=0;y<r->native.storage_height;y++) for(unsigned x=0;x<r->native.storage_width;x++)
+        assert(r->pixels[y*r->native.storage_width+x]==(x<overlap ? pattern(x,y,seed):0));
 }
 static void expect_get_failure(INT index,D3DBACKBUFFER_TYPE type,D3DSurface **out,int status) {
     failure_expected=1;if(!setjmp(failure_jump)) { D3DDevice_GetBackBuffer(index,type,out);assert(0); }
@@ -319,9 +334,11 @@ static void test_present(void) {
         }
         assert(copy!=UINT32_MAX && copy<present && events[event_count-1].kind==FLUSH_EVENT);
         assert(copy_count==iteration+1 && present_count==iteration+1 && device.frame==iteration+1);
+        assert(frame_waits==iteration+1 && frame_statistics==iteration+1 && event_pumps==iteration+1);
         assert(device.back_buffer.Data==zero && device.history_buffer.Data==history);
     }
     device.ready=FALSE;unsigned before=event_count;D3DDevice_Present(NULL,NULL,NULL,NULL);assert(event_count==before && copy_count==3);
+    assert(frame_waits==4 && frame_statistics==3 && event_pumps==4);
 }
 static void test_copy(void) {
     create(960);struct native_resource *back=target_get(&device.back_buffer),*past=target_get(&device.history_buffer);
@@ -374,6 +391,44 @@ static void test_snapshot(const char *directory) {
     screenshot_every=1;D3DDevice_Present(NULL,NULL,NULL,NULL);
     assert(readback_count==2 && copy_count==copies+1 && present_count==presents+1);assert_pattern(past,640,4);
 }
+static void test_scaled_snapshot(const char *directory) {
+    render_height=1080;screen_width=640;create(640);
+    DWORD logical_size=(480u<<16)|640u,zero=device.back_buffer.Data,history=device.history_buffer.Data;
+    assert(device.back_buffer.Size==logical_size && device.history_buffer.Size==logical_size);
+    assert(device.viewport.Width==640 && device.viewport.Height==480);
+    struct native_resource *back=target_get(&device.back_buffer);packet_flush();fill(back,10);
+    assert(back->description.width==640 && back->description.height==480);
+    assert(back->storage_width==1440 && back->storage_height==1080);
+    D3DDevice_Present(NULL,NULL,NULL,NULL);
+    struct native_resource *past=target_get(&device.history_buffer);
+    assert_pattern(past,1440,10);
+    uint64_t serial=past->last_rendered;
+    struct halo_metal_copy_subresource copy={0};unsigned found=0;
+    for(unsigned i=0;i<event_count;i++) if(events[i].kind==HALO_METAL_COPY_SUBRESOURCE) {
+        memcpy(&copy,events[i].command,sizeof(copy));found++;
+    }
+    assert(found==1 && copy.width==1440 && copy.height==1080);
+    assert(copy.source.id==back->ref.id && copy.destination.id==past->ref.id);
+    fill(back,11);screenshot_directory=directory;write_screenshot(back);
+    assert(readback_count==1 && copy_count==1 && present_count==1 && past->last_rendered==serial);
+    assert_pattern(past,1440,10);
+    char path[1024];snprintf(path,sizeof(path),"%s/frame00001.bmp",directory);
+    FILE *file=fopen(path,"rb");assert(file);
+    unsigned char header[54];assert(fread(header,1,54,file)==54 && header[0]=='B' && header[1]=='M');
+    uint32_t width,size,offset,image_size;int32_t height;
+    memcpy(&size,header+2,4);memcpy(&offset,header+10,4);memcpy(&width,header+18,4);
+    memcpy(&height,header+22,4);memcpy(&image_size,header+34,4);
+    assert(width==1440 && height==-1080 && offset==54);
+    assert(image_size==1440u*1080u*4u && size==54+image_size);
+    uint32_t *pixels=malloc(image_size);assert(pixels);
+    assert(fread(pixels,1,image_size,file)==image_size && fgetc(file)==EOF);
+    for(unsigned y=0;y<1080;y++) for(unsigned x=0;x<1440;x++) assert(pixels[y*1440+x]==pattern(x,y,11));
+    free(pixels);assert(!fclose(file));
+    assert(device.back_buffer.Size==logical_size && device.history_buffer.Size==logical_size);
+    assert(device.back_buffer.Data==zero && device.history_buffer.Data==history && allocations==3);
+    D3DDevice_Present(NULL,NULL,NULL,NULL);assert_pattern(past,1440,11);
+    assert(frame_waits==2 && frame_statistics==2 && event_pumps==2);
+}
 static void test_resize(void) {
     create(640);screen_width=640;DWORD zero=device.back_buffer.Data,history=device.history_buffer.Data;
     D3DBaseTexture aliases[2]={{0},{0}};aliases[0].Data=aliases[1].Data=zero;
@@ -384,7 +439,8 @@ static void test_resize(void) {
     command_append(&pending,sizeof(pending)); /* Simulate an already queued original history write. */
     for(unsigned i=0;i<3;i++) {
         requested_width=i==1 ? 640:960;unsigned start=event_count;assert(halo_screen_commit()==requested_width);packet_flush();
-        struct native_resource *past=target_get(&device.history_buffer);assert_pattern(past,640,6);
+        unsigned overlap=640*render_height/SCREEN_HEIGHT;
+        struct native_resource *past=target_get(&device.history_buffer);assert_pattern(past,overlap,6);
         assert(past->last_rendered==serial+2 && rendered_alias(history)==past);serial=past->last_rendered;
         assert(device.back_buffer.Data==zero && device.history_buffer.Data==history && allocations==3);
         assert(aliases[0].Data==zero && aliases[1].Data==zero && device.history_buffer.Size==device.back_buffer.Size);
@@ -394,12 +450,13 @@ static void test_resize(void) {
                 if(c.color.id==past->ref.id) { clears++;clear_at=n; }
             }
             if(events[n].kind==HALO_METAL_COPY_SUBRESOURCE) { struct halo_metal_copy_subresource c;memcpy(&c,events[n].command,sizeof(c));
-                assert(c.destination.id==past->ref.id && c.width==640 && c.height==480);copies++;copy_at=n;
+                assert(c.destination.id==past->ref.id && c.width==overlap && c.height==render_height);copies++;copy_at=n;
             }
         }
         assert(clears>=1 && copies==1 && clear_at<copy_at);
         if(i==0) { /* Dirty cached 960-wide storage must not leak on later regrowth. */
-            struct target_record *r=record(past->ref);for(unsigned y=0;y<480;y++) for(unsigned x=640;x<960;x++) r->pixels[y*960+x]=0xabcdef01;
+            struct target_record *r=record(past->ref);for(unsigned y=0;y<r->native.storage_height;y++)
+                for(unsigned x=overlap;x<r->native.storage_width;x++) r->pixels[y*r->native.storage_width+x]=0xabcdef01;
         }
     }
     unsigned before=event_count;assert(halo_screen_commit()==960);assert(event_count==before);
@@ -412,7 +469,9 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"copy")) test_copy();
     else if(!strcmp(argv[1],"first_history_use")) test_first_history_use();
     else if(!strcmp(argv[1],"snapshot")) { assert(argc==3);test_snapshot(argv[2]); }
+    else if(!strcmp(argv[1],"scaled_snapshot")) { assert(argc==3);test_scaled_snapshot(argv[2]); }
     else if(!strcmp(argv[1],"resize")) test_resize();
+    else if(!strcmp(argv[1],"scaled_resize")) { render_height=1080;test_resize(); }
     else assert(0);
     for(unsigned i=0;i<target_count;i++) free(targets[i].pixels);
     printf("%s: production frontend CPU checks passed\n",argv[1]);return 0;
@@ -427,7 +486,7 @@ class BackbufferHistoryTests(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.directory = Path(cls.temporary.name)
         source = SOURCE.read_text()
-        names = ("surface_dimensions", "backbuffer_presentation_supported", "backbuffer_surfaces_initialize",
+        names = ("surface_dimensions", "resource_dimensions", "backbuffer_presentation_supported", "backbuffer_surfaces_initialize",
                  "Direct3D_CreateDevice", "D3DDevice_GetBackBuffer", "rendered_serial_next",
                  "backbuffer_color_copy", "backbuffer_history_advance", "backbuffer_surfaces_resize",
                  "write_screenshot", "D3DDevice_Present", "halo_screen_commit", "rendered_alias")
@@ -442,13 +501,14 @@ class BackbufferHistoryTests(unittest.TestCase):
         cls.executable = cls.directory / "history"
         compiled = subprocess.run(["clang", "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
                                    "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
-                                   "-I", str(ROOT), str(probe), "-o", str(cls.executable)],
+                                   "-DHALO_MACOS_NATIVE_METAL=1", "-I", str(ROOT), str(probe),
+                                   str(ROOT / "port/linux/src/metal_render_scale.c"), "-o", str(cls.executable)],
                                   capture_output=True, text=True, timeout=30)
         if compiled.returncode:
             raise AssertionError(compiled.stderr)
 
     def run_case(self, name):
-        result = subprocess.run([str(self.executable), name, *([str(self.directory)] if name == "snapshot" else [])],
+        result = subprocess.run([str(self.executable), name, *([str(self.directory)] if name in ("snapshot", "scaled_snapshot") else [])],
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("production frontend CPU checks passed", result.stdout)
@@ -473,6 +533,12 @@ class BackbufferHistoryTests(unittest.TestCase):
 
     def test_resize_overlap_zero_regrowth_and_stable_aliases(self):
         self.run_case("resize")
+
+    def test_1080_storage_history_and_complete_bmp_preserve_logical_headers(self):
+        self.run_case("scaled_snapshot")
+
+    def test_1080_resize_copies_physical_overlap_and_clears_cached_regrowth(self):
+        self.run_case("scaled_resize")
 
 
 if __name__ == "__main__":

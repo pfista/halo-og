@@ -85,6 +85,15 @@ static const struct config_setting config_settings[] =
 	{ "display.interpolation", _config_boolean, "false", "HALO_INTERPOLATION", _environment_value, _platform_all,
 		"Draw a frame for every display refresh, blending between the game's 30\n"
 		"ticks a second; false keeps the original 30 frames a second." },
+#if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL
+	{ "display.frame_limit", _config_integer, "0", NULL, _environment_value, _platform_all,
+		"Native Metal render cap: 0 is uncapped, or choose 30, 60 or 120.\n"
+		"Higher rates require interpolation; VSync can limit the achieved rate.\n"
+		"Simulation remains 30 ticks a second." },
+	{ "display.render_height", _config_integer, "480", NULL, _environment_value, _platform_all,
+		"Native Metal render height: 480, 720, 1080, 1440 or 2160 pixels.\n"
+		"Width follows the startup aspect. Restart after changing this setting." },
+#endif
 	{ "display.timer_position", _config_integer, "0", NULL, _environment_value, _platform_all,
 		"PB timer position: 0 is top center, 1 bottom center, 2 bottom right." },
 	{ "display.timer_scale", _config_real, "1.0", NULL, _environment_value, _platform_all,
