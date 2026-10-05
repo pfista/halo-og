@@ -10,10 +10,32 @@ const listing = {
   platform: 'macos', build: 'directory-test',
 };
 
-async function setup(t) {
+async function setup(t, {inspectStorage = false} = {}) {
+  const scriptPath = fileURLToPath(new URL('../worker.mjs', import.meta.url));
   const mf = new Miniflare({
-    modules: true,
-    scriptPath: fileURLToPath(new URL('../worker.mjs', import.meta.url)),
+    ...(inspectStorage ? {
+      // This fixture exists only in Miniflare; production has no inspection API.
+      modules: [{
+        type: 'ESModule',
+        path: fileURLToPath(new URL('../test-worker.mjs', import.meta.url)),
+        contents: `
+          import worker, {GameDirectory as Directory} from './worker.mjs';
+          // Keep minute-based quota assertions independent of the wall clock.
+          const fixtureTime = Date.now();
+          Date.now = () => fixtureTime;
+          export default worker;
+          export class GameDirectory extends Directory {
+            async fetch(request) {
+              if (new URL(request.url).pathname === '/__test/sql') {
+                const {query, bindings} = await request.json();
+                return Response.json(this.sql.exec(query, ...bindings).toArray());
+              }
+              return super.fetch(request);
+            }
+          }
+        `,
+      }, {type: 'ESModule', path: scriptPath}],
+    } : {modules: true, scriptPath}),
     compatibilityDate: '2026-07-30',
     durableObjects: {DIRECTORY: {className: 'GameDirectory', useSQLite: true}},
   });
@@ -26,7 +48,19 @@ async function setup(t) {
       method, headers, body: body === undefined ? undefined : JSON.stringify(body),
     });
   };
-  return {mf, request};
+  let storage;
+  if (inspectStorage) {
+    const namespace = await mf.getDurableObjectNamespace('DIRECTORY');
+    const directory = namespace.get(namespace.idFromName('public-games-v1'));
+    storage = {async exec(query, ...bindings) {
+      const response = await directory.fetch('https://directory.invalid/__test/sql', {
+        method: 'POST', body: JSON.stringify({query, bindings}),
+      });
+      assert.equal(response.status, 200);
+      return response.json();
+    }};
+  }
+  return {mf, request, storage};
 }
 
 test('register, list, update, remove; leases and addresses never appear in listings', async (t) => {
@@ -100,6 +134,39 @@ test('expired games disappear and their leases cannot revive them', async (t) =>
   assert.equal((await request(`/v1/games/${lease.id}`, 'PUT', listing, lease.lease_token)).status, 404);
 });
 
+test('reads hide expired games without cleanup writes before the alarm runs', async (t) => {
+  const {request, storage} = await setup(t, {inspectStorage: true});
+  const expired = await (await request('/v1/games', 'POST', listing)).json();
+  const live = await (await request('/v1/games', 'POST', {...listing, name: 'Live game'})).json();
+  const registrationMinute = (await storage.exec('SELECT minute FROM registrations'))[0].minute;
+  // The registration alarm is still 90 seconds in the future. Set this lease
+  // to its exact expiry boundary at the fixed fixture time, so reads cannot
+  // rely on alarm cleanup or include a lease whose deadline is now.
+  await storage.exec('UPDATE games SET expires_at = updated_at WHERE id = ?', expired.id);
+  await storage.exec('UPDATE registrations SET minute = ?', registrationMinute - 3);
+
+  assert.equal((await (await request('/health')).json()).active_games, 1);
+  for (const path of ['/v1/games', '/v1/games?network_version=11']) {
+    const response = await (await request(path)).json();
+    assert.deepEqual(response.games.map((game) => game.id), [live.id]);
+  }
+  assert.equal((await storage.exec('SELECT COUNT(*) AS count FROM games'))[0].count, 2);
+  assert.equal((await storage.exec('SELECT COUNT(*) AS count FROM registrations'))[0].count, 1);
+
+  const path = `/v1/games/${expired.id}`;
+  assert.equal((await request(path, 'PUT', listing, expired.lease_token)).status, 404);
+  assert.equal((await request(path, 'DELETE', undefined, expired.lease_token)).status, 404);
+  assert.equal((await storage.exec('SELECT COUNT(*) AS count FROM games'))[0].count, 2);
+
+  // Registration still removes expired rows and stale quota accounting in its
+  // transaction before checking limits and adding the new lease.
+  const replacement = await request('/v1/games', 'POST', listing);
+  assert.equal(replacement.status, 201);
+  assert.equal((await storage.exec('SELECT COUNT(*) AS count FROM games'))[0].count, 2);
+  assert.deepEqual(await storage.exec('SELECT minute, count FROM registrations'),
+    [{minute: registrationMinute, count: 1}]);
+});
+
 test('invalid listings and oversized bodies are rejected', async (t) => {
   const {request} = await setup(t);
   for (const change of [
@@ -119,4 +186,18 @@ test('per-address hosting quota is enforced, including concurrent registrations'
   assert.equal(responses.filter((response) => response.status === 201).length, 8);
   assert.equal(responses.filter((response) => response.status === 429).length, 4);
   assert.equal((await request('/v1/games', 'POST', listing, undefined, '192.0.2.2')).status, 201);
+});
+
+test('removing listings does not reset the per-address registration rate limit', async (t) => {
+  const {request} = await setup(t, {inspectStorage: true});
+  for (let index = 0; index < 12; index++) {
+    const created = await request('/v1/games', 'POST', listing);
+    assert.equal(created.status, 201);
+    const lease = await created.json();
+    assert.equal((await request(`/v1/games/${lease.id}`, 'DELETE', undefined, lease.lease_token)).status, 204);
+  }
+  const limited = await request('/v1/games', 'POST', listing);
+  assert.equal(limited.status, 429);
+  assert.equal(limited.headers.get('Retry-After'), '30');
+  assert.equal((await limited.json()).error, 'registration_rate_limited');
 });

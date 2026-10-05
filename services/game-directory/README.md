@@ -60,14 +60,20 @@ did not supply its score limit, not a zero limit. `oddball_variant` marks
 Juggernaut's frag-based scoring instead of the usual Oddball minutes.
 Required names use printable ASCII to fit the Xbox-style menus.
 
-Public hosting registers once, updates every 30 seconds or when game details
-change, and deletes when hosting ends or becomes private. A 404 on update means
-the lease expired: register again. Changing the invite also requires a new
+Public hosting registers once and renews every 30 seconds. Changed game details
+are coalesced into updates at least five seconds apart. Hosting ending or becoming
+private requests immediate deletion. A 404 on update means the lease expired:
+register again. Changing the invite also requires a new
 registration. Use a new private invite after removing a public listing.
 If withdrawal fails, retain its lease and retry before registering a different
 invite; resuming the same invite renews its existing listing.
-Browse every 5–10 seconds while System Link is open, off the game thread; merge
-with LAN discovery and deduplicate by the invite's host identity. Selecting a
+Fetch immediately when the rendered System Link game list opens or regains
+focus, then refresh every ten seconds while that list is visible and focused,
+off the game thread. Stop browsing when the list closes, a join begins, gameplay
+starts, or the app loses focus. Failed browse requests retry with increasing
+delays from five seconds to one minute, with jitter; a numeric `Retry-After`
+may extend that delay up to five minutes. Merge with LAN discovery and
+deduplicate by the invite's host identity. Selecting a
 listing uses `p2p_join_invite()` and waits for the actual host's network advertisement
 before joining. Download maps only from the configured trusted map catalog,
 not from URLs supplied by a listing. A protocol number alone does not prove
@@ -82,9 +88,12 @@ This v1 HTTPS API does not implement upstream's signed MQTT listing format or
 automatically see games advertised only on MQTT. Those require client adapters.
 The existing MQTT invite signalling is separate from this directory.
 
-Listings expire after 90 seconds, including after host crashes. Alarms clean up
-stored rows; every API read also filters expired entries. Limits: 4 KiB request
-body, 256 active listings globally, eight per network address, and 12 new
+Listings expire after 90 seconds, including after host crashes. List and health
+reads filter expired entries without cleanup writes, even when an alarm is
+delayed. Alarms remove expired rows; registration also cleans up expired rows
+and stale quota counters within its transaction before checking limits.
+Limits: 4 KiB request body, 256 active listings globally, eight per network
+address, and 12 new
 registrations per address per minute. Network addresses are hashed internally
 for quotas and not returned publicly. Quota limits return HTTP 429; a full
 directory returns HTTP 503. Public reads do not expose lease credentials.
@@ -100,7 +109,9 @@ python3 smoke.py
 ```
 
 Tests run the real Workers runtime using pinned Miniflare, including a complete
-90-second lease expiry. Deployment reads `CLOUDFLARE_WORKERS_API_TOKEN` from an
+90-second lease expiry and expired rows held until their scheduled alarm, proving
+that reads hide them without deleting them and that expired leases cannot be
+renewed. Deployment reads `CLOUDFLARE_WORKERS_API_TOKEN` from an
 existing approved 1Password environment mount without echoing or copying it.
 The R2 credential is separate. Account, domain, and service settings are in
 `wrangler.jsonc`; the running service has no deployment credential or app secret.

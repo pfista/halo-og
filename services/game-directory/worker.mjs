@@ -190,16 +190,17 @@ export class GameDirectory {
       const url = new URL(request.url);
       const now = Date.now();
       const address = request.headers.get('X-Directory-Address');
-      this.cleanup(now);
       if (request.method === 'GET' && url.pathname === '/health') {
-        const active = this.sql.exec('SELECT COUNT(*) AS count FROM games').one().count;
+        const active = this.sql.exec('SELECT COUNT(*) AS count FROM games WHERE expires_at > ?', now).one().count;
         return json({ok: true, service: 'halo-og-directory', api_version: 1, active_games: active});
       }
       if (request.method === 'GET' && url.pathname === '/v1/games') {
         const version = url.searchParams.get('network_version');
         if (version !== null && !/^[1-9][0-9]{0,4}$/.test(version)) throw new ApiError(400, 'invalid_network_version');
         if (version !== null && Number(version) > 65535) throw new ApiError(400, 'invalid_network_version');
-        const games = this.sql.exec('SELECT id, listing, expires_at, updated_at FROM games').toArray()
+        // Reads must remain fresh even if an expiry alarm is delayed, without
+        // performing cleanup writes for every browser refresh.
+        const games = this.sql.exec('SELECT id, listing, expires_at, updated_at FROM games WHERE expires_at > ?', now).toArray()
           .map((row) => ({id: row.id, ...JSON.parse(row.listing),
             expires_at: Math.floor(row.expires_at / 1000), updated_at: Math.floor(row.updated_at / 1000)}))
           .filter((game) => version === null || game.network_version === Number(version))
