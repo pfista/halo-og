@@ -518,6 +518,14 @@ boolean network_game_client_start_frame(
 		main_goto_main_menu();
 		result = TRUE;
 	}
+	else if (!global_network_game_client)
+	{
+		/* Leaving a lobby can dispose the client before the connection changes.
+		 * Restore the same local queues as end_frame, including menu frames. */
+		game_connection_set(0);
+		main_menu_ensure_player_queues_exist();
+		result = TRUE;
+	}
 	else
 	{
 		result = network_game_client_idle(global_network_game_client);

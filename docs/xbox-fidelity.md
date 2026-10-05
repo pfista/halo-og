@@ -37,6 +37,7 @@ were diff-reviewed and remain unintegrated; their runtime behavior is unvalidate
 | `62b630a2610e7c0df88ffa43d6f03914cb35345e` | Exclude new weapon/loadout policy. |
 | `23b542601f2ca505c7a0143703e92fbda6075e18` | Exclude altered infinite-grenade and unarmed-loadout rules; retain existing Xbox behavior. October 4 compatibility changes deliberately remove the v11 gametype-options gate for best-effort mixed-host tests; protocol, PB capability, packet and map checks remain enforced. This admission change does not implement the excluded rules. |
 | `601a4c1f506662dcd93d79105e3fe69410397a87` | Adopt loaded-map cleanup before the next network game. A stopped menu clock still leaves a loaded map and texture cache. Committed locally; validation is recorded below. |
+| `7e00135d31bf55250c477295279f6625e3e45983` | Adopt null-client connection recovery before frame idle, mirroring the existing end-frame recovery. Committed locally; validation is recorded below. |
 
 Prioritize verified matching corrections, correctness, stability, performance
 and renderer/platform fixes that preserve the baseline. Assess netcode for
@@ -177,10 +178,15 @@ Linux; they do not establish reference-Xbox or cross-platform gameplay parity.
 
 Loaded-map cleanup (`601a4c1f`) disposes retained menu/map resources before
 the next network map opens, including when the previous game clock has stopped.
+Null-client frame recovery (`7e00135d`) restores the local connection and
+input queues when leaving a lobby disposes the client before its state changes.
 These corrections preserve normal gameplay rules and 30 Hz simulation timing.
 
-The map transition fixture passes nine tests, including the old-code failure
-control, cleanup order, consecutive transitions, and load/spawn failure paths.
+The map transition and client lifecycle fixtures pass 20 tests, including
+old-code failure controls, valid client states, and disconnect recovery.
+
+Local commits: loaded-map cleanup `26654de7`; null-client recovery
+is included in the commit containing this section.
 The fixtures run on Mac, Linux and Windows CI; remote runs remain pending.
 They do not establish complete multiplayer or retail-Xbox parity.
 
