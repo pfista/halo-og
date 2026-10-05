@@ -456,7 +456,7 @@ class UrlSchemeRegistrationTests(unittest.TestCase):
             source.write_text(WINDOWS_NATIVE_HARNESS.replace("/* PRODUCTION_WINDOWS */", production).replace("@SECRET@", SECRET))
             subprocess.run(["clang", "-std=c11", "-Wall", "-Wextra", "-Werror", "-D_CRT_SECURE_NO_WARNINGS",
                             *WINDOWS_CRT_FORMAT_FLAGS,
-                            str(source), "-I" + str(PORT), "advapi32.lib", "shell32.lib", "-o", str(probe)], check=True)
+                            str(source), "-I" + str(PORT), "-ladvapi32", "-lshell32", "-o", str(probe)], check=True)
             subprocess.run([str(probe), "--exercise", scheme], check=True, capture_output=True, text=True, timeout=15)
             self.wait_for_capture(probe.parent / "launched.txt", [str(probe), f"{scheme}://join/{SECRET}"])
         finally:
