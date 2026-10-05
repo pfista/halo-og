@@ -135,6 +135,7 @@ symbols in this file:
 #include "objects/objects.h"
 #include "physics/breakable_surfaces.h"
 #include "physics/collision_usage.h"
+#include "physics/collision_model_definitions.h"
 #include "physics/collisions.h"
 #include "physics/physics.h"
 #include "scenario/scenario.h"
