@@ -75,7 +75,7 @@ their actions. [All key names and controls](../port/linux/README.md#controls).
 ## Host or join a game
 
 Use the **same release and map** as your friends. Start with stock Blood Gulch,
-Slayer, and **Performance Options → Stock**; optional competitive changes default off.
+Slayer, and **Performance Options → Stock**, with Input Delay and Hardcore Off.
 
 1. The host opens **Multiplayer → System Link**, selects a profile, and chooses
    **Create Game** (Y on a controller, or Tab). Select the map and mode.

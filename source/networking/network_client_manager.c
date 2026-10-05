@@ -1294,10 +1294,10 @@ static unsigned network_game_client_performance_settings_flags(
 	if (!global_network_game_server_get())
 		flags = network_performance_host_settings_flags(flags,
 			network_game_client_performance_host_capabilities);
-	/* Live PB controls may change aids, but never the active match's timing. */
+	/* Live controls may change aids, but never the active match's rules. */
 	if (client->state == _network_game_client_state_ingame)
-		flags = (flags & ~_performance_option_input_delay) |
-			(performance_variant_get_flags(&client->game.variant) & _performance_option_input_delay);
+		flags = (flags & ~PERFORMANCE_MATCH_RULE_FLAGS) |
+			(performance_variant_get_flags(&client->game.variant) & PERFORMANCE_MATCH_RULE_FLAGS);
 	return flags;
 }
 
@@ -2814,7 +2814,7 @@ static boolean network_game_client_idle_joining(
 
 				/* Earlier hosts reject unknown capability bits. Announce each
 				 * supported generation first: timer/markers, then timer audio,
-				 * then event-specific sound rules, then input delay. Each host
+				 * then event-specific sound rules, input delay, and Hardcore. Each host
 				 * retains the newest capability it understands before the
 				 * reliable join request. */
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY, 3);
@@ -2826,6 +2826,10 @@ static boolean network_game_client_idle_joining(
 					return FALSE;
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
 					supported & 31);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported & 63);
 				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
 					return FALSE;
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,

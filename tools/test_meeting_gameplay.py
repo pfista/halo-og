@@ -1,4 +1,4 @@
-"""Exercise the production host admission and player-addition gates."""
+"""Exercise the production firing cone and shared host admission gate."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -21,6 +21,83 @@ def run_fixture(text):
 
 
 class MeetingGameplayTests(unittest.TestCase):
+    def test_firing_cone_preserves_buildup_rng_and_stock(self):
+        source = (ROOT / "source/items/weapons.c").read_text()
+        firing = block(source, "static void trigger_create_projectiles(\n\tlong weapon_index,\n\tshort trigger_index)\n{")
+        bounds = firing[firing.index("real initial_error ="):firing.index("object_placement_data_new(", firing.index("real initial_error ="))]
+        cone = firing[firing.index("if (error==0.0f)"):firing.index("if (projectile_index==0)")]
+        # The native-only bounds declaration starts after its opening directive.
+        fixture = r'''
+#include <assert.h>
+#include <math.h>
+#include "items/performance_precision.h"
+#define HALO_PORT_MAXIMUM_NETWORK_PLAYERS 16
+#define NONE (-1)
+#define TEST_FLAG(v,b) ((v)&(1u<<(b)))
+typedef float real;
+enum { _performance_option_hardcore=64, _weapon_trigger_analog_rate_of_fire_bit=0,
+       _weapon_trigger_use_error_when_unzoomed_bit=1, _weapon_control_zoomed_bit=0 };
+struct definition { unsigned flags; float projectile_error_angle_lower_bound,
+    projectile_error_angle_upper_bound, projectile_error_inner_cone_angle; };
+struct trigger { float error; };
+struct weapon { long definition_index; struct { unsigned control_flags; float primary_trigger; } weapon; };
+static unsigned flags;
+static int multiplayer, calls;
+static float sampled_inner, sampled_outer;
+static unsigned performance_variant_get_flags(void *v) { (void)v;return flags; }
+static void *game_engine_get_variant(void) { return 0; }
+static int game_engine_running(void) { return multiplayer; }
+static long weapon_definition_index_to_list_index(long i) { return i; }
+static void random_vector_in_cone3d(float *in,float inner,float outer,float *out) {
+    (void)in;(void)out;calls++;sampled_inner=inner;sampled_outer=outer;
+}
+static float fire(long slot,int controlled,short trigger_index,int zoomed,float fraction,
+                  unsigned trigger_flags,float original_error) {
+    struct definition definition={trigger_flags,.25f,2.0f,.1f},*trigger_definition=&definition;
+    struct trigger t={fraction},*trigger=&t;
+    struct weapon w={slot,{zoomed,fraction}},*weapon=&w;
+    struct { float forward; } data={0};
+    int precision_player=controlled;
+    float error=original_error;
+    calls=0;sampled_inner=sampled_outer=-1;
+    /* BOUNDS */
+    /* CONE */
+    return error;
+}
+static void close_to(float a,float b) { assert(fabsf(a-b)<.000001f); }
+int main(void) {
+    multiplayer=1;flags=0;
+    for(int slot=0;slot<16;slot++) for(int step=0;step<=4;step++) {
+        float f=step*.25f;
+        close_to(fire(slot,1,0,0,f,0,0),(1-f)*.25f+f*2);
+        assert(calls==1);close_to(sampled_inner,.1f);
+    }
+    flags=64;
+    for(int step=0;step<=4;step++) for(int slot=4;slot<=9;slot+=5) {
+        float f=step*.25f;
+        close_to(fire(slot,1,0,0,f,0,0),f*2);
+        assert(calls==1);close_to(sampled_inner,0);close_to(sampled_outer,f*2);
+        close_to(fire(slot,1,0,0,f,1,0),f*2);assert(calls==1);
+    }
+    for(int slot=0;slot<16;slot++) if(slot!=4 && slot!=9) {
+        close_to(fire(slot,1,0,0,0,0,0),.25f);close_to(sampled_inner,.1f);
+    }
+    close_to(fire(4,1,0,1,0,0,0),0);assert(calls==1); /* pistol zoom retains rule */
+    close_to(fire(9,1,0,1,0,2,0),.25f);assert(calls==0); /* scoped sniper unchanged */
+    close_to(fire(4,0,0,0,0,0,0),.25f);close_to(sampled_inner,.1f); /* AI */
+    close_to(fire(4,1,1,0,0,0,0),.25f);close_to(sampled_inner,.1f); /* secondary */
+    close_to(fire(NONE,1,0,0,0,0,0),.25f); /* missing globals role */
+    multiplayer=0;
+    close_to(fire(4,1,0,0,0,0,0),.25f);close_to(sampled_inner,.1f); /* campaign */
+    multiplayer=1;
+    close_to(fire(4,0,0,0,0,0,.75f),.75f); /* existing actor aim error */
+    return 0;
+}
+'''
+        # This closing #endif belongs to the opening native directive in weapons.c.
+        bounds = "#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS\n" + bounds
+        run_fixture(fixture.replace("/* BOUNDS */", bounds).replace("/* CONE */", cone))
+
     def test_host_preference_gates_late_joins_but_preserves_lobby(self):
         source = (ROOT / "source/networking/network_server_manager.c").read_text()
         functions = "\n".join(block(source, signature) for signature in (

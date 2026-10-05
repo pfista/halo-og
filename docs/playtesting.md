@@ -93,7 +93,8 @@ app data. See [Android installation/data](../port/android/README.md#game-data).
 
 1. Confirm everyone uses the **same Halo OG release tag/commit**, protocol 11,
    and matching map data. Old protocol-10 builds cannot join. For this first
-   test, use a stock map and leave **Performance Options → Stock** selected.
+   test, use a stock map and select **Performance Options → Stock**, with
+   **Input Delay Off** and **Hardcore Off**.
 2. The host opens **Multiplayer → System Link** and creates a game. Select a
    stock map such as Blood Gulch and a game type such as Slayer.
 3. On the same LAN, clients open **Multiplayer → System Link** and select the

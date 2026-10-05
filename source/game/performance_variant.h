@@ -13,9 +13,12 @@ enum
 	_performance_option_silent_movement = 8,
 	_performance_option_silent_weapon_ready = 16,
 	_performance_option_input_delay = 32,
+	_performance_option_hardcore = 64,
+	/* Match rules are selected before starting, independently of aid presets. */
+	PERFORMANCE_MATCH_RULE_FLAGS = 96,
 	/* The existing Practice preset keeps the original movement/weapon audio. */
 	PERFORMANCE_PRACTICE_FLAGS = 7,
-	PERFORMANCE_OPTIONS_MASK = 63,
+	PERFORMANCE_OPTIONS_MASK = 127,
 	/* Nominal Xbox duration; one 30 Hz simulation update is 33.333 ms.
 	 * Preserve this duration if simulation frequency changes in the future. */
 	PERFORMANCE_INPUT_DELAY_MILLISECONDS = 33,

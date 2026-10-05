@@ -45,7 +45,7 @@ map-name and map compatibility checks remain enforced before settings can
 change state or start precaching. Hosting defaults remain original. This is
 best-effort test admission, not supported mixed-host gameplay for every option.
 
-Use Performance Options Stock and Input Delay Off when testing current cybersecurity
+Use Performance Options Stock, Input Delay Off and Hardcore Off when testing current cybersecurity
 hosts. Any enabled PB option advertises `0x800B`; 33ms delay also requires
 confirmed delay support on every peer, so older PB builds cannot join an
 enabled-delay match. See [Performance Options](performance-options.md#host-authority-and-v11-compatibility).

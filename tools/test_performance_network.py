@@ -35,7 +35,8 @@ enum { _game_variant_draw_object_in_motion_sensor_bit=0, _game_variant_infinite_
 #define network_event(...) ((void)0)
 #define error(...) ((void)0)
 #define ustrncpy wcsncpy
-enum { _performance_option_timer_audio=4, _performance_option_input_delay=32, PERFORMANCE_OPTIONS_MASK=63,
+enum { _performance_option_timer_audio=4, _performance_option_input_delay=32, _performance_option_hardcore=64,
+       PERFORMANCE_MATCH_RULE_FLAGS=96, PERFORMANCE_OPTIONS_MASK=127,
        _network_game_server_state_pregame=1, _network_game_server_state_ingame=2,
        _network_game_server_state_postgame=3, _message_server_begin_game=2,
        _network_game_client_state_joining=1, _network_game_client_state_pregame=2, _network_game_client_state_ingame=3,
@@ -62,7 +63,7 @@ static byte network_game_server_performance_capabilities[MAXIMUM_NETWORK_MACHINE
 static int network_game_server_start_players[16];
 static boolean network_game_server_started_with_five_players;
 static int recordings=1,apply_calls,override_calls,pregame_sends,setting_sends,start_sends,opened;
-static unsigned runtime_flags,capabilities[4],capability_count;
+static unsigned runtime_flags,capabilities[5],capability_count;
 static unsigned network_game_client_performance_host_capabilities;
 static char shown[512];
 int halo_performance_audio_available(void) {return recordings;}
@@ -101,7 +102,7 @@ static int network_game_server_send_message_to_all_machines(struct network_game_
     (void)s;(void)m;start_sends++;return TRUE;
 }
 static int network_game_client_write(void *connection,void *packet,unsigned size,void *address,int reliable) {
-    (void)connection;assert(!address && reliable==1 && capability_count<4);
+    (void)connection;assert(!address && reliable==1 && capability_count<5);
     assert(network_performance_decode(packet,size,NETWORK_PERFORMANCE_CAPABILITY,&capabilities[capability_count++]));
     return TRUE;
 }
@@ -163,7 +164,20 @@ int main(void) {
     assert(!performance_options_set_host_flags(0));unchanged(32,10);
     server.state=_network_game_server_state_pregame;
     assert(performance_options_set_host_flags(0));unchanged(0,11);
+    assert(!performance_options_set_host_flags(128));unchanged(0,11);
+    /* An input-delay-capable older peer still cannot run Hardcore. */
     assert(!performance_options_set_host_flags(64));unchanged(0,11);
+    assert(strstr(shown,"Hardcore unavailable"));
+    network_game_server_performance_capability(&server.client_machines[1],127);
+    assert(performance_options_set_host_flags(64));unchanged(64,12);
+    server.state=_network_game_server_state_ingame;
+    assert(!performance_options_set_host_flags(0));unchanged(64,12);
+    assert(strstr(shown,"Hardcore locked"));
+    assert(performance_options_set_host_flags(67));unchanged(67,13);
+    server.state=_network_game_server_state_pregame;server.sent_start_game_message=TRUE;
+    assert(!performance_options_set_host_flags(3));unchanged(67,13);
+    server.sent_start_game_message=FALSE;
+    assert(performance_options_set_host_flags(0));unchanged(0,14);
     apply_calls=3;
     /* Saved variant selection cannot bypass the same missing-pack gate. */
     struct game_variant chosen={.flags=7};recordings=0;
@@ -189,11 +203,11 @@ int main(void) {
      * never advertise audio support to an enabled host. */
     struct network_game_client client={0};
     recordings=0;capability_count=0;assert(announce(&client));
-    assert(capability_count==4 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==59);
+    assert(capability_count==5 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==59 && capabilities[4]==123);
     recordings=1;capability_count=0;assert(announce(&client));
-    assert(capability_count==4 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31 && capabilities[3]==63);
+    assert(capability_count==5 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31 && capabilities[3]==63 && capabilities[4]==127);
     capability_count=0;assert(announce_without_queue(&client));
-    assert(capability_count==4 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==27);
+    assert(capability_count==5 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==27 && capabilities[4]==27);
     assert(!network_game_server_performance_peers_support_without_queue(&server,32));
     assert(strstr(shown,"This build does not support"));
     assert(network_game_server_performance_peers_support_without_queue(&server,0));
@@ -225,6 +239,13 @@ int main(void) {
     assert(network_game_client_performance_settings_flags(&client,39)==39);
     client.state=_network_game_client_state_postgame;
     assert(network_game_client_performance_settings_flags(&client,32)==32);
+    assert(network_game_client_performance_settings_flags(&client,64)==0);
+    network_game_client_performance_host_capabilities=127;
+    assert(network_game_client_performance_settings_flags(&client,64)==64);
+    client.state=_network_game_client_state_ingame;client.game.variant.flags=96;
+    assert(network_game_client_performance_settings_flags(&client,7)==103);
+    client.game.variant.flags=0;
+    assert(network_game_client_performance_settings_flags(&client,103)==7);
     active=&server;
     /* Start repeats admission checks; an older peer cannot join a delayed
      * match even if it connected while the delay was disabled. */

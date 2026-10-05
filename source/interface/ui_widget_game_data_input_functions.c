@@ -3310,20 +3310,26 @@ static void variant_profile_update_cache_for_nwide_list(
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 /* The card has 256 UTF-16 characters and room for one more small-ui line.
-Keep the indication generic as additional performance options are introduced. */
+Prioritize the gameplay-changing Hardcore rule when it is enabled. */
 static void playlist_profile_append_performance_status(
 	wchar_t *description,
 	struct playlist_profile const *profile)
 {
 	static wchar_t const status[] = L"\r\nPerformance options active";
+	static wchar_t const hardcore_status[] = L"\r\nHardcore: On";
+	unsigned flags;
 	unsigned long length;
 	wchar_t const *suffix;
 	unsigned long suffix_length;
 
-	if (!description || !performance_variant_get_flags((struct game_variant const *)profile))
+	if (!description)
+		return;
+	flags = performance_variant_get_flags((struct game_variant const *)profile);
+	if (!flags)
 		return;
 	length = ustrnlen(description, 0x100);
-	suffix = description[0] ? status : status + 2;
+	suffix = (flags & _performance_option_hardcore) ? hardcore_status : status;
+	if (!description[0]) suffix += 2;
 	suffix_length = ustrlen(suffix);
 	if (length + suffix_length < 0x100)
 		ustrncpy(description + length, suffix, suffix_length + 1);

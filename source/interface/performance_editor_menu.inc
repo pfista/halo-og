@@ -3,11 +3,12 @@
 #define PB_EDIT_PATH PB_EDIT_PREFIX "playlist_edit\\gametype_edit_screen"
 #define PB_EDIT_RUNTIME "ui\\native_pb\\editor"
 enum { _pb_editor_initialize = 32000, _pb_editor_accept = 32001 };
-enum { _pb_editor_row_count = 7 };
+enum { _pb_editor_row_count = 8 };
 static unsigned const pb_editor_option_flags[_pb_editor_row_count - 1] = {
     _performance_option_match_timer, _performance_option_spawn_markers,
     _performance_option_timer_audio, _performance_option_silent_movement,
-    _performance_option_silent_weapon_ready, _performance_option_input_delay};
+    _performance_option_silent_weapon_ready, _performance_option_input_delay,
+    _performance_option_hardcore};
 static struct
 {
     struct ui_widget_definition root, list, entry, screen, heading, menu, help;
@@ -17,8 +18,8 @@ static struct
     struct ui_widget_event_handler_reference entry_events[2], menu_events[3];
     struct ui_widget_game_data_input_reference list_input, menu_input;
     struct string_list strings[8];
-    struct string_list_entry string_entries[8][15];
-    wchar_t string_text[8][15][256];
+    struct string_list_entry string_entries[8][17];
+    wchar_t string_text[8][17][256];
     long root_tag, list_tag, menu_tag, spinner_tag[_pb_editor_row_count];
     short last_preset;
     unsigned last_flags;
@@ -70,13 +71,13 @@ static long pb_editor_register(char const *name, struct ui_widget_definition *de
 static boolean pb_editor_build(void)
 {
     static char const *const labels[] = {"PERFORMANCE OPTIONS", "PRESET:", "MATCH TIMER:", "SPAWN MARKERS:", "TIMER SOUNDS:",
-        "MOVEMENT SOUNDS:", "WEAPON SOUNDS:", "INPUT DELAY:", "PERFORMANCE OPTIONS"};
+        "MOVEMENT SOUNDS:", "WEAPON SOUNDS:", "INPUT DELAY:", "HARDCORE:", "PERFORMANCE OPTIONS"};
     static char const *const presets[] = {"STOCK", "PRACTICE", "CUSTOM"};
     static char const *const toggles[] = {"OFF", "ON"};
     static char const *const sounds[] = {"NORMAL", "SILENT"};
     static char const *const delays[] = {"OFF", "33MS"};
     static char const *const help[] = {
-        "Original game settings.\r\nAll practice aids are off.",
+        "Practice aids are off.\r\nMatch rules are chosen separately.",
         "Practice with a timer, sounds and spawn markers.\r\nThe host controls these options for all players.",
         "Choose each performance option individually.",
         "The match timer is hidden.",
@@ -90,10 +91,12 @@ static boolean pb_editor_build(void)
         "Normal equip and switch sounds.\r\nFiring and reloading are unchanged.",
         "Silent equip and switch sounds.\r\nFiring and reloading are unchanged.",
         "No added action delay.\r\nThe host selects this before the match.",
-        "Fixed delay of about 33.3ms at 30Hz.\r\nSelected before the match for all players."};
-    static char const *const row_names[] = {"ui\\native_pb\\preset_row", "ui\\native_pb\\timer_row", "ui\\native_pb\\markers_row", "ui\\native_pb\\audio_row", "ui\\native_pb\\movement_row", "ui\\native_pb\\weapon_row", "ui\\native_pb\\delay_row"};
-    static char const *const label_names[] = {"ui\\native_pb\\preset_label", "ui\\native_pb\\timer_label", "ui\\native_pb\\markers_label", "ui\\native_pb\\audio_label", "ui\\native_pb\\movement_label", "ui\\native_pb\\weapon_label", "ui\\native_pb\\delay_label"};
-    static char const *const spinner_names[] = {"ui\\native_pb\\preset_spinner", "ui\\native_pb\\timer_spinner", "ui\\native_pb\\markers_spinner", "ui\\native_pb\\audio_spinner", "ui\\native_pb\\movement_spinner", "ui\\native_pb\\weapon_spinner", "ui\\native_pb\\delay_spinner"};
+        "Fixed delay of about 33.3ms at 30Hz.\r\nSelected before the match for all players.",
+        "Original precision weapon spread.",
+        "Zero initial spread for pistol and unscoped sniper rifle.\r\nSustained fire still increases spread."};
+    static char const *const row_names[] = {"ui\\native_pb\\preset_row", "ui\\native_pb\\timer_row", "ui\\native_pb\\markers_row", "ui\\native_pb\\audio_row", "ui\\native_pb\\movement_row", "ui\\native_pb\\weapon_row", "ui\\native_pb\\delay_row", "ui\\native_pb\\hardcore_row"};
+    static char const *const label_names[] = {"ui\\native_pb\\preset_label", "ui\\native_pb\\timer_label", "ui\\native_pb\\markers_label", "ui\\native_pb\\audio_label", "ui\\native_pb\\movement_label", "ui\\native_pb\\weapon_label", "ui\\native_pb\\delay_label", "ui\\native_pb\\hardcore_label"};
+    static char const *const spinner_names[] = {"ui\\native_pb\\preset_spinner", "ui\\native_pb\\timer_spinner", "ui\\native_pb\\markers_spinner", "ui\\native_pb\\audio_spinner", "ui\\native_pb\\movement_spinner", "ui\\native_pb\\weapon_spinner", "ui\\native_pb\\delay_spinner", "ui\\native_pb\\hardcore_spinner"};
     long labels_tag, presets_tag, toggles_tag, sounds_tag, delays_tag, help_tag, small_font, i, tag;
     struct ui_widget_definition *preview_text;
     struct string_list *original_strings;
@@ -178,7 +181,7 @@ static boolean pb_editor_build(void)
         if (tag == NONE) return FALSE;
         pb_editor.row_children[i][0].widget_tag = pb_editor_reference(UI_WIDGET_DEFINITION_TAG, tag);
         pb_editor.spinner[i].text_label_string_list = pb_editor_reference(UNICODE_STRING_LIST_TAG,
-            i == 0 ? presets_tag : i < 4 ? toggles_tag : i < 6 ? sounds_tag : delays_tag);
+            i == 0 ? presets_tag : i < 4 || i == 7 ? toggles_tag : i < 6 ? sounds_tag : delays_tag);
         pb_editor.spinner[i].bounds.x1 = 142;
         pb_editor.spinner[i].list_footer_bounds.x0 = 142;
         pb_editor.spinner[i].list_footer_bounds.x1 = 148;
@@ -195,7 +198,7 @@ static boolean pb_editor_build(void)
     if (pb_editor.menu_tag == NONE) return FALSE;
     pb_editor.heading = pb_editor.label[0];
     pb_editor.heading.bounds = (rectangle2d){24, 54, 60, 566};
-    pb_editor.heading.string_list_index = 8;
+    pb_editor.heading.string_list_index = 9;
     pb_editor.heading.horizontal_offset = pb_editor.heading.vertical_offset = 0;
     pb_editor.heading.text_color = (real_argb_color){1, 1, 1, 1};
     tag = pb_editor_register("ui\\native_pb\\heading", &pb_editor.heading);
@@ -259,7 +262,7 @@ static struct widget_instance *pb_editor_spinner(struct widget_instance *menu, s
 
 static short pb_editor_preset(unsigned flags)
 {
-    flags &= ~_performance_option_input_delay;
+    flags &= ~PERFORMANCE_MATCH_RULE_FLAGS;
     return flags == 0 ? 0 : flags == PERFORMANCE_PRACTICE_FLAGS ? 1 : 2;
 }
 
@@ -280,8 +283,9 @@ static void pb_editor_sync(struct widget_instance *menu)
         short preset = spinners[0]->parameters.list.selected_index;
         if (preset < 2)
         {
-            /* Timing is selected independently and survives either aid preset. */
-            flags = (flags & _performance_option_input_delay) | (preset ? PERFORMANCE_PRACTICE_FLAGS : 0);
+            /* Match rules are selected independently of the practice aids. */
+            flags = (flags & PERFORMANCE_MATCH_RULE_FLAGS) |
+                (preset ? PERFORMANCE_PRACTICE_FLAGS : 0);
             for (row = 1; row < _pb_editor_row_count; row++)
                 spinners[row]->parameters.list.selected_index = (flags & pb_editor_option_flags[row - 1]) != 0;
         }

@@ -29,6 +29,8 @@ static void performance_console_status(void)
 	console_printf(FALSE, "PB: movement sounds %s | weapon sounds %s",
 		(flags & _performance_option_silent_movement) ? "SILENT" : "NORMAL",
 		(flags & _performance_option_silent_weapon_ready) ? "SILENT" : "NORMAL");
+	console_printf(FALSE, "Hardcore: %s (selected before the match)",
+        (flags & _performance_option_hardcore) ? "ON" : "OFF");
 	console_printf(FALSE, "timer recordings: %s", halo_performance_audio_available() ? "installed" : "missing");
 	performance_options_timer_statistics(&timer_statistics);
 	console_printf(FALSE, "PB timer: prefs=%u countdown=%lu beeps=%lu minutes=%lu items=%lu last=%s",
@@ -89,7 +91,7 @@ boolean console_process_native_command(char const *command)
 	else if (!strcmp(option, "stock") || !strcmp(option, "practice"))
 	{
 		if (*value) goto usage;
-		flags = (flags & _performance_option_input_delay) |
+		flags = (flags & PERFORMANCE_MATCH_RULE_FLAGS) |
 			(!strcmp(option, "stock") ? 0 : PERFORMANCE_PRACTICE_FLAGS);
 	}
 	else

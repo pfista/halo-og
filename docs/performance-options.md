@@ -2,7 +2,8 @@
 
 Performance Options provides explicitly selected multiplayer practice aids: an
 elapsed match timer, spawn markers, timer announcements, and optional silent
-movement or weapon equip sounds. All modifications are **off by default**.
+movement or weapon equip sounds, plus optional Hardcore precision spread.
+All optional rules and aids are **off by default**.
 The host also selects **Input Delay: Off / 33ms** before the match. It is
 independent of the practice aids and applies to every player.
 
@@ -12,7 +13,8 @@ In **Multiplayer → Edit Gametypes → select a game type**, **Performance Opti
 below **Indicator Options**. The submenu is titled **Performance Options**.
 Its native game widgets use the existing menu fonts, navigation and help text.
 Choose a preset or change the options individually. Game-type selection cards
-show **Performance options active** whenever the saved variant enables any option.
+show **Hardcore: On** when Hardcore is enabled, or **Performance options active**
+when another saved option is enabled.
 
 | Preset | Match Timer | Spawn Markers | Timer Sounds | Movement / Weapon Sounds |
 | --- | --- | --- | --- | --- |
@@ -24,8 +26,8 @@ The preset is a convenience over the practice-aid bits. Reopening the page shows
 Stock when all aids are off, Practice when just the original three aids are on,
 and Custom for any other aid selection. There is no separate saved preset
 identifier. Selecting either Silent rule therefore shows Custom. Input Delay
-does not change the preset label, and selecting Stock or Practice preserves the
-chosen delay.
+and Hardcore do not change the preset label. Selecting Stock or Practice
+preserves these independently selected match rules.
 
 Changes on this page are staged. **Accept** puts them into the game type being
 edited; finish the existing **Save Changes** flow to persist that variant.
@@ -39,9 +41,9 @@ see the host's current choices with the controls disabled. Session changes do
 not write the saved game type back to disk; use Edit Gametypes to save a
 preset for later.
 
-Input Delay is available only in Edit Gametypes, before starting a match. The
-pause page omits its control; Apply and either preset preserve the match's
-existing delay. Other practice aids remain adjustable during play.
+Input Delay and Hardcore are available only in Edit Gametypes, before starting
+a match. The pause page omits their controls; Apply and either preset preserve
+the match's existing rules. Other practice aids remain adjustable during play.
 
 The editor and pause pages are native game widgets registered in the loaded
 cache's runtime UI table. Retail map files are not rewritten. Performance Options uses
@@ -65,6 +67,23 @@ and weapon/grenade/zoom choices. Direct Camera can still show current local aim
 while shots use delayed actions. Buffered actions are cleared for a new unit,
 pause, teleport, or clock resynchronization; a teleport retains the destination
 facing.
+
+## Hardcore precision spread
+
+**Hardcore: Off / On** is a host-selected game-type rule, default Off. On sets
+initial projectile spread to zero for the pistol and unscoped sniper rifle.
+Sustained fire still builds toward the tag's original maximum spread; release
+and recovery remain unchanged. The scoped sniper path, other weapons, secondary
+triggers, AI and campaign use their original rules. The option identifies the
+pistol/sniper roles in the map's globals weapon list, so reviewed replacements
+in those roles inherit it. Battle rifles and other added precision weapons
+need a reviewed role mapping before this rule applies to them.
+
+The change retains the original cone RNG call, including at zero spread.
+Every player must support Hardcore before the host can enable or start it.
+Saved settings from an older host cannot enable the rule without that host's
+capability acknowledgement. It is fixed for each match; the pause menu and
+console aid presets preserve it.
 
 ## Match timer
 
@@ -205,7 +224,7 @@ introduced.
 | --- | --- |
 | `pad0`, `pad1`, `pad2` | ASCII `P`, `F`, `O` |
 | `pad4` | Format version `1` |
-| `pad5` | Flags: timer `1`, spawn markers `2`, timer sounds `4`, silent movement `8`, silent weapons `16`, input delay `32` |
+| `pad5` | Flags: timer `1`, spawn markers `2`, timer sounds `4`, silent movement `8`, silent weapons `16`, input delay `32`, Hardcore `64` |
 | `pad6` | Flags XOR `0xA5` |
 
 All flags off writes all six bytes as zero. Old padding, an unknown format version,
@@ -217,7 +236,8 @@ still handles the saved variant. `game_variant.flags` is not repurposed.
 
 The client's reliable connection announces supported subsets before its normal
 join request: the original timer/marker mask, the timer-audio generation, the
-sound-rule generation (mask 31), then the complete set (mask 63). Earlier PB hosts retain the newest subset they
+sound-rule generation (mask 31), input-delay generation (mask 63), then the
+complete set (mask 127). Earlier hosts retain the newest subset they
 understand. An unextended v11 host ignores those unknown data messages.
 The updated host keeps capabilities per connection slot and clears them when
 the slot is removed or reused.
@@ -241,14 +261,15 @@ check the connected peers. An unsupported existing peer causes the host's
 change to be refused with an explanation. Joining clients cannot change the
 host's option state.
 
-Input Delay is locked at match start. The host refuses a request to change its
-flag during play, including a debug-console request. Clients retain the active
-delay flag while applying other live aid changes. Presets and edits to the other
-aids preserve the current delay flag.
+Input Delay and Hardcore are locked at match start. The host refuses a request
+to change either flag during play, including a debug-console request. Clients
+retain the active rules while applying other live aid changes. Presets and edits
+to the other aids preserve the current match rules.
 
-The host confirms its delay capability on the reliable connection before the
-settings record. A client enables the saved delay only after this confirmation.
-If an older host loads a newer saved variant containing an unsupported delay
+The host confirms its match-rule capability on the reliable connection before
+the settings record, using a mask the recipient can decode. A client enables
+the saved match rules only after this confirmation. If an older host loads a
+newer saved variant containing an unsupported delay or Hardcore
 flag, the client treats that extension as off, matching the older host.
 
 The normal reliable settings record carries the variant before begin-game,
@@ -262,7 +283,7 @@ client session clears the effective options.
 
 Press **F2** for the existing developer console. `pb` shows settings and help;
 `pb stock` disables the practice aids and `pb practice` enables the original
-three aids. Both preserve Input Delay. Use
+three aids. Both preserve Input Delay and Hardcore. Use
 `pb timer on`, `pb markers off`, or `pb audio toggle` for individual controls.
 Those accept `on`, `off` or `toggle`. Use `pb movement silent` or
 `pb weapons normal` for sound rules; these accept `normal`, `silent` or `toggle`.
@@ -270,9 +291,9 @@ Tab completion is available. Host authority
 and peer capability checks are identical to the pause menu. These are session
 changes; save a game type in Edit Gametypes for future matches.
 
-The diagnostic `performance_options [0..63]` is available, with flags timer `1`,
+The diagnostic `performance_options [0..127]` is available, with flags timer `1`,
 markers `2`, audio `4`, silent movement `8`, silent weapons `16` and input delay
-`32`. A request to change the delay during play is refused. Status also
+`32` and Hardcore `64`. A request to change either match rule during play is refused. Status also
 reports per-map sound provenance, muted dispatch counts, timer cue preferences
 and successful cue dispatch counts; these are diagnostic
 counters and do not by themselves prove the audible output.

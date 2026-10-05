@@ -152,8 +152,9 @@ static void format_and_default(void) {
     assert(offsetof(struct game_variant, universal_variant.pad6) == offsets[5]);
     assert(_performance_option_match_timer == 1 && _performance_option_spawn_markers == 2 &&
         _performance_option_timer_audio == 4 && _performance_option_silent_movement == 8 &&
-        _performance_option_silent_weapon_ready == 16 && _performance_option_input_delay == 32 &&
-        PERFORMANCE_PRACTICE_FLAGS == 7 && PERFORMANCE_OPTIONS_MASK == 63 &&
+        _performance_option_silent_weapon_ready == 16 && _performance_option_input_delay == 32 && _performance_option_hardcore == 64 &&
+        PERFORMANCE_MATCH_RULE_FLAGS == 96 &&
+        PERFORMANCE_PRACTICE_FLAGS == 7 && PERFORMANCE_OPTIONS_MASK == 127 &&
         PERFORMANCE_INPUT_DELAY_MILLISECONDS == 33);
     assert(performance_variant_get_flags(NULL) == 0);
     assert(performance_variant_get_input_delay_milliseconds(NULL) == 0);
@@ -161,7 +162,7 @@ static void format_and_default(void) {
     performance_variant_set_flags(NULL, 3);
     edited = legacy; performance_variant_set_flags(&edited, 0);
     assert(!memcmp(&legacy, &edited, sizeof(legacy)));
-    for (unsigned flags = 1; flags <= 63; flags++) {
+    for (unsigned flags = 1; flags <= 127; flags++) {
         memset(&legacy, 0x5a, sizeof(legacy)); edited = legacy;
         performance_variant_set_flags(&edited, flags);
         assert(performance_variant_get_flags(&edited) == flags);
@@ -184,9 +185,9 @@ static void format_and_default(void) {
     }
     edited.universal_variant.pad4 = 2; assert(performance_variant_get_flags(&edited) == 0);
     performance_variant_set_flags(&edited, 3);
-    edited.universal_variant.pad5 = 64; edited.universal_variant.pad6 = 64 ^ 0xA5;
+    edited.universal_variant.pad5 = 128; edited.universal_variant.pad6 = 128 ^ 0xA5;
     assert(performance_variant_get_flags(&edited) == 0);
-    performance_variant_set_flags(&edited, 64); assert(performance_variant_get_flags(&edited) == 0);
+    performance_variant_set_flags(&edited, 128); assert(performance_variant_get_flags(&edited) == 0);
     for (unsigned n = 0; n < NUMBEROF(offsets); n++) assert(((byte *)&edited)[offsets[n]] == 0);
     for (unsigned padding = 0; padding < 256; padding++) {
         memset(&legacy, padding, sizeof(legacy)); edited = legacy;
@@ -198,7 +199,7 @@ static void format_and_default(void) {
 static void input_delay_duration(void) {
     struct game_variant variant, before;
     build_game_variant_slayer(&variant);
-    for (unsigned flags = 0; flags <= 63; flags++) {
+    for (unsigned flags = 0; flags <= 127; flags++) {
         performance_variant_set_flags(&variant, flags);
         before = variant;
         assert(!performance_variant_set_input_delay_milliseconds(&variant, 1));
@@ -217,7 +218,7 @@ static void input_delay_duration(void) {
 static void persistence(void) {
     struct game_variant original, loaded, copy;
     const int32_t profile0 = (int32_t)FLAG(_saved_game_file_index_valid_bit);
-    for (unsigned flags = 0; flags <= 63; flags++) {
+    for (unsigned flags = 0; flags <= 127; flags++) {
         build_game_variant_slayer(&original);
         original.human_readable_game_description[0] = 'A';
         original.universal_variant.score_to_win = 25;
@@ -235,7 +236,7 @@ static void persistence(void) {
         selected_file = 1; assert(playlist_profile_get_from_path("copy", &loaded));
         assert(!memcmp(&copy, &loaded, sizeof(copy)));
         assert(performance_variant_get_flags(&loaded) == flags);
-        performance_variant_set_flags(&loaded, flags ^ 63);
+        performance_variant_set_flags(&loaded, flags ^ 127);
         playlist_profile_save(profile0 | 2, &loaded);
         assert(playlist_profile_get(profile0 | 1, &loaded));
         assert(performance_variant_get_flags(&loaded) == flags);
@@ -250,7 +251,7 @@ static void persistence(void) {
     saved_game_file_generate_checksum(disk[1], 104, (XCALCSIG_SIGNATURE *)(disk[1] + 104));
     assert(playlist_profile_get(profile0 | 1, &loaded));
     assert(performance_variant_get_flags(&loaded) == 0);
-    assert(write_calls == 192 && checksum_calls > write_calls);
+    assert(write_calls == 384 && checksum_calls > write_calls);
 }
 
 static void editor_dirty(void) {
@@ -300,7 +301,7 @@ static void selecting_game_engine(void) {
     boolean deleted=FALSE;
     struct game_variant original,loaded;
     list.type=3; item.parent=&list;
-    for (unsigned flags=0;flags<=63;flags++) {
+    for (unsigned flags=0;flags<=127;flags++) {
         build_game_variant_slayer(&original);
         playlist_profile_save(profile,&original);
         player_ui_begin_editing_profile(profile);

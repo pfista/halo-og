@@ -893,10 +893,10 @@ static boolean network_game_server_performance_peers_support(
 	long index;
 
 #ifndef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-	if (flags & _performance_option_input_delay)
+	if (flags & PERFORMANCE_MATCH_RULE_FLAGS)
 	{
-		platform_show_message("Halo: input delay unavailable",
-			"This build does not support the game type's input delay. Turn Input Delay off, or use a compatible build.");
+		platform_show_message("Halo: match rules unavailable",
+			"This build does not support Input Delay or Hardcore. Turn these options off, or use a compatible build.");
 		return FALSE;
 	}
 #endif
@@ -926,6 +926,13 @@ static boolean network_game_server_performance_peers_support(
 			!network_game_server_client_machine_is_local(server, machine) &&
 			!network_game_server_performance_supported(machine, flags))
 		{
+			if ((flags & _performance_option_hardcore) &&
+				!network_game_server_performance_supported(machine, _performance_option_hardcore))
+			{
+				platform_show_message("Halo: Hardcore unavailable",
+					"A connected player does not support Hardcore. Turn Hardcore off, or have that player update before starting.");
+				return FALSE;
+			}
 			if ((flags & _performance_option_input_delay) &&
 				!network_game_server_performance_supported(machine, _performance_option_input_delay))
 			{
@@ -953,6 +960,13 @@ static boolean network_game_server_input_delay_change_allowed(
 	{
 		platform_show_message("Halo: input delay locked",
 			"Input Delay is fixed for the match. Choose it in the game type before starting the next match.");
+		return FALSE;
+	}
+	if (((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_hardcore) &&
+		(server->state != _network_game_server_state_pregame || server->sent_start_game_message))
+	{
+		platform_show_message("Halo: Hardcore locked",
+			"Hardcore is fixed for the match. Choose it in the game type before starting the next match.");
 		return FALSE;
 	}
 	return TRUE;
@@ -1995,7 +2009,6 @@ boolean network_game_server_game_is_open(
 	{
 		game_is_open = FALSE;
 	}
-
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	/* Local host preference: lobby joins remain available. All advertisement,
 	 * invite and admission paths consume this same in-progress gate. */

@@ -265,7 +265,6 @@ static boolean performance_pause_build(void)
 				_gamepad_binary_button_start, 0, FLAG(_event_handler_open_widget_bit), settings_tag);
 			performance_pause_block(&settings->event_handlers, 2, performance_pause_settings_events[layout]);
 		}
-
 		/* The full label is 224 px in large_ui; small_ui fits the resident
 		 * 202 px button while retaining its authored bitmap and placement. */
 		entry->text_font.index = font;
@@ -379,7 +378,7 @@ static boolean performance_pause_is_spinner(struct widget_instance *widget)
 
 static short performance_pause_preset(unsigned flags)
 {
-	flags &= ~_performance_option_input_delay;
+	flags &= ~PERFORMANCE_MATCH_RULE_FLAGS;
 	return flags == 0 ? 0 : (flags == PERFORMANCE_PRACTICE_FLAGS ? 1 : 2);
 }
 
@@ -429,14 +428,14 @@ static void performance_pause_update(struct widget_instance *widget)
 	{
 		draft->preset = preset->parameters.list.selected_index;
 		if (draft->preset == 0)
-			draft->flags &= _performance_option_input_delay;
+			draft->flags &= PERFORMANCE_MATCH_RULE_FLAGS;
 		else if (draft->preset == 1)
-			draft->flags = (draft->flags & _performance_option_input_delay) | PERFORMANCE_PRACTICE_FLAGS;
+			draft->flags = (draft->flags & PERFORMANCE_MATCH_RULE_FLAGS) | PERFORMANCE_PRACTICE_FLAGS;
 	}
 	else
 	{
-		/* Match-start timing has no pause control and cannot be changed here. */
-		flags = (draft->flags & _performance_option_input_delay) |
+		/* Pregame match rules have no pause controls and cannot be changed here. */
+		flags = (draft->flags & PERFORMANCE_MATCH_RULE_FLAGS) |
 			(timer->parameters.list.selected_index ? _performance_option_match_timer : 0) |
 			(markers->parameters.list.selected_index ? _performance_option_spawn_markers : 0) |
 			(audio->parameters.list.selected_index ? _performance_option_timer_audio : 0) |

@@ -72,7 +72,7 @@ sessions advertise `0x800B` and require supporting peers; current cybersecurity
 clients reject that extended version. Do not disguise those games as ordinary
 protocol-11 sessions. Input Delay: 33ms also needs confirmed delay support on
 every connected peer; older PB builds cannot join an enabled-delay match.
-Keep Input Delay Off for stock cybersecurity tests. See [Performance Options](performance-options.md) and the
+Keep Input Delay and Hardcore Off for stock cybersecurity tests. See [Performance Options](performance-options.md) and the
 [fidelity policy](xbox-fidelity.md#protocol-compatibility).
 
 ## Public discovery reference

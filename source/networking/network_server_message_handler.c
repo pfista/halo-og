@@ -701,13 +701,16 @@ static boolean network_game_server_send_performance_capability(
 	word capability[NETWORK_PERFORMANCE_MESSAGE_SIZE / sizeof(word)];
 	unsigned supported;
 
-	if (!network_game_server_performance_supported(machine, _performance_option_input_delay))
+	if (!network_game_server_performance_supported(machine, _performance_option_input_delay) &&
+		!network_game_server_performance_supported(machine, _performance_option_hardcore))
 		return TRUE;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	supported = network_performance_runtime_supported_flags(TRUE, halo_performance_audio_available());
 #else
 	supported = network_performance_runtime_supported_flags(FALSE, FALSE);
 #endif
+	supported = network_performance_capability_for_peer(supported,
+		network_game_server_performance_supported(machine, _performance_option_hardcore));
 
 	/* A saved variant may contain flags this host cannot interpret. Confirm
 	 * runtime support before the full record, on the same reliable stream;
