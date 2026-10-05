@@ -1,7 +1,7 @@
 # Publishing the testing map catalog
 
 [`map-publisher.json`](../tools/map-publisher.json) pins the nonsecret R2 account,
-`halo` bucket, public origin, testing catalog destination and reviewed 40-map
+`halo` bucket, public origin, testing catalog destination and reviewed 41-map
 allowlist. Expand the allowlist only after reviewing additional maps for public
 distribution. Never upload XISOs, stock/campaign/UI caches, extracted originals,
 helper binaries or private logs as map objects.
@@ -13,6 +13,13 @@ their embedded Halo dependencies. Prepare a new catalog directory with explicit
 `--map` arguments for the reviewed caches. Current Mac, Windows, and Linux
 clients download all eligible catalog maps when automatic downloads are enabled.
 Retain `--prefetch <map-id>` for older clients that use this hint.
+
+The prepared catalog replaces the current catalog; it is not an append request.
+When adding a map, retain every existing entry and immutable object from the live
+catalog, add the reviewed map, and verify that the old entries are unchanged.
+Guard the publisher's initial authenticated catalog read against the exact live
+snapshot used for preparation. Its ETag condition then protects against changes
+during publication.
 
 ```sh
 python3 tools/map_catalog.py \
@@ -39,10 +46,39 @@ Run `python3 tools/publish_map_catalog.py --help` for the current CLI contract.
 
 ## Distribution scope
 
-The live testing catalog contains the 40 complete playable community maps.
+The live testing catalog contains 41 complete converted community maps.
 Local reconstruction and package-only distribution are set aside. Keep using
 the complete-map publisher; no content-tool download or local map rebuild is
 required by the desktop release.
+
+On 2026-10-05, `chillout_digsite` replaced the earlier `chillout_dig` POC entry.
+It appears as **Chillout Digsite** in the community map menu and is eligible for
+automatic downloads on existing clients. Its embedded bitmaps and sounds need
+no external resource files. The published Xbox v5 cache SHA-256 is
+`93d966f3e191cb3f0506d8c31b2d0d3641e3530fac063387b6f4d2c435b6631d`
+and its transfer size is 35,586,048 bytes. The
+[complete map download](https://dl.oghalo.com/maps/sha256/93d966f3e191cb3f0506d8c31b2d0d3641e3530fac063387b6f4d2c435b6631d/chillout_digsite.map)
+is immutable. The testing catalog remains at
+[`current.json`](https://dl.oghalo.com/catalogs/testing/current.json); its
+published SHA-256 is
+`bab01df54df64b2b04f1b998f6110dc79dbc0962b108020d3df6f6d9d2b1d9d1`.
+All 41 complete objects were verified through R2 and public HTTPS before the
+catalog update, and the other 40 catalog entries were preserved unchanged.
+The old POC object remains downloadable; previously installed POC files are
+not deleted or renamed.
+
+Static checks cover all nine classic presets. Two native peers on one Mac
+verified CTF, Oddball, Team Oddball, King and Team King scoring, natural match
+end and rematch against this exact cache without targeted cache/sound warnings.
+The user accepted publication for player testing with this coverage. Slayer,
+Team Slayer, Race and Team Race runtime qualification, representative custom
+weapon network damage/kill coverage, physical cross-platform play, split-screen
+and audible sound quality remain unverified. This revision removes the POC's
+first-player SMG grant, restores exact stock Xbox Race checkpoints, corrects
+three multiplayer text entries and selects an existing missile-launcher mip
+for the Xbox texture budget. See the
+[conversion guide](community-map-conversion.md) and
+[native multiplayer record](community-multiplayer-testing.md).
 
 Local validation, upload completion, old-object retirement and gameplay acceptance
 are separate results. See [playtesting](playtesting.md) for client acceptance.

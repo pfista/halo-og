@@ -11,6 +11,25 @@ CEA cache to an Xbox v5 map. It is an offline, one-player conversion with a
 reviewed script subset and custom weapon smoke coverage. It does not establish
 full MCC behavior, every weapon's fidelity, or multiplayer acceptance.
 
+The separate multiplayer candidate uses `chillout_digsite` rather than updating
+the POC's `chillout_dig` identity. Its script profile removes the first-player
+SMG grant and typed SMG probe, preserves the three authored grenade profiles
+and native random starting-equipment lists, and retains the native-compatible
+pro-mode sword filter. Original Digsite spawns, CTF bases, Oddball locations,
+hill polygons, teleporters and item placements remain authored content. Twelve
+Race checkpoints are restored from the exact original Xbox Chillout scenario;
+that is a recorded compatibility addition, not an authored Digsite Race course.
+Their coordinates and IDs are copied without changing native Race rules.
+
+This multiplayer conversion is available in the Cloudflare testing catalog as
+**Chillout Digsite**. Static eligibility checks pass for all nine classic mode
+presets. Two native peers verified CTF, Oddball, Team Oddball, King and Team King
+scoring, natural match end and rematch against the published checksum. Slayer,
+Team Slayer, Race and Team Race qualification remains pending; the user accepted
+publication for player testing with that coverage. See the separate
+[native multiplayer checks](community-multiplayer-testing.md) and
+[distribution record](map-publishing.md).
+
 ## Choose the importer for the content
 
 | Input | Entry point | Dependency policy |
@@ -76,6 +95,9 @@ Retries create fresh build directories and preserve partial diagnostics. The
 compile and provenance commands reject tool-generated HUD, PCM sound, duplicate
 Chicago-layer, map-local weapon-alias and existing-mip overlays
 that failed conversion or no longer match their recorded output hashes.
+Managed marker-copy and Unicode-entry overlays use the same checks; their
+scoped operations are described in the
+[conversion helper guide](../tools/map_conversion/README.md).
 Complete the reviewed codec, script and metadata steps between model conversion
 and compilation. The separate reviewed
 [PCM sound converter](../tools/map_conversion/convert_sounds.py) produces a
@@ -426,6 +448,29 @@ This is an explicit loss of its highest-detail level, reducing the request from
 preservation outside the scoped mip fields, immutable original inputs, and a
 fresh sustained-fire run with no cache-warning phrases. Do not apply this rule
 to other textures without their own allocation evidence and reviewed profile.
+
+Two-peer multiplayer testing exposed the separate `msllauncher` first-person
+bitmap at a postgame transition. It requested 342 pages while 1,137 pages were
+locked, leaving only 271 pages available. Its complete authored mip chain has
+the same reviewed layout, so a separate profile selects its existing 1024-pixel
+mip as well: 5,592,448 compiled bytes become 1,398,144, saving 4 MiB. All
+59 first-person bitmap images were inventoried; no other image requires this
+treatment from that failure dump. The resulting cache passed natural match end
+and rematch in the five objective presets listed above without targeted cache
+or sound warnings. Those checks do not establish every weapon's network damage
+or audible sound quality.
+
+### Native multiplayer text
+
+The imported 191-entry multiplayer text list supplies entries beyond the stock
+Xbox list, bypassing the native fallback strings. Its score prompt contains a
+formatter placeholder that the Xbox call site copies without formatting, and
+its postgame prompts name PC keyboard controls. A reviewed
+[Unicode-entry overlay](../tools/map_conversion/convert_unicode_strings.py)
+restores only entries 72, 73 and 100 to the verified native Xbox wording.
+The other 188 entries and separate 89-entry custom pickup table stay unchanged.
+Record exact before/after text and the traced native call sites in the private
+profile; another map needs its own entry/count/hash review.
 
 The full Chillout weapon audit also finds five additional primary ammo families
 still using scale 1, plus Battle Rifle at its authored relative scale 0.5.
