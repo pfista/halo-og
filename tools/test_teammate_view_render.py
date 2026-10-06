@@ -168,6 +168,7 @@ static void reset(void) {
     memset(fog_reads,0,sizeof(fog_reads)); memset(planar_reads,0,sizeof(planar_reads));
     memset(aa,0,sizeof(aa)); memset(&render,0,sizeof(render));
     memset(object_debug,0,sizeof(object_debug));
+    local_lookups=0;
     target_player=202; target_first_person_unit=600; target_window=1;
 }
 static struct render_window window(short local,boolean console) {
@@ -200,7 +201,7 @@ int main(void) {
     /* A real local slot retains its normal rendering despite a stale sidecar. */
     reset(); target_window=0; render_frame(windows,3,NULL,NULL,NULL,.01f);
     assert(world[0]==1 && callbacks[0]==7 && labels[0]==0 && fog_reads[0]==1);
-    reset(); render.window_index=1; render.local_player_index=NONE; local_lookups=0;
+    reset(); render.window_index=1; render.local_player_index=NONE;
     fixture_object_debug(700); assert(object_debug[1]==0);
     assert(object_is_first_person_camera(600));
     assert(!object_is_first_person_camera(500));
@@ -221,9 +222,12 @@ int main(void) {
 #endif
     render.local_player_index=0; render.window_index=0; perspective=_director_perspective_first_person;
     fixture_object_debug(700); assert(object_debug[0]==1);
+    local_lookups=0;
     assert(object_is_first_person_camera(500)); assert(!object_is_first_person_camera(600));
     perspective=_director_perspective_third_person; assert(!object_is_first_person_camera(500));
     assert(object_is_first_person_camera(999));
+    /* Every define set retains real local-player lookup for the local pane. */
+    assert(local_lookups>0);
     puts("teammate render passed"); return 0;
 }
 '''

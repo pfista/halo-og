@@ -58,9 +58,13 @@ static short const option_counts[5][8]={{2,6,2,2,5},{2,5,2},{2,2,2,5,2},{4,4,3,3
 static long id(unsigned i) { return 0x34560000|i; }
 static struct tag_reference ref(unsigned i) { return pb_editor_reference(i<WIDGET_COUNT ? 'DeLa':'ustr',id(i)); }
 static void setup(short mode) {
- if(cache_file_globals.tags_loaded) scenario_tags_unload();
+ if(cache_file_globals.tags_loaded) {
+  unsigned previous_unloads=unload_calls;
+  scenario_tags_unload();
+  assert(unload_calls==previous_unloads+5 && !cache_file_globals.tags_loaded && !global_tag_instances);
+ }
  memset(&authored,0,sizeof(authored));memset(tags,0,sizeof(tags));memset(names,0,sizeof(names));
- register_calls=fail_registration=pops=0; editing=TRUE;
+ register_calls=fail_registration=pops=mutation_calls=help_calls=0; editing=TRUE;
  for(unsigned i=0;i<TAG_COUNT;i++) {
   snprintf(names[i],sizeof(names[i]),"fixture\\%u",i);
   tags[i]=(struct cache_file_tag_instance){i<WIDGET_COUNT ? 'DeLa':'ustr',{NONE,NONE},id(i),names[i],NULL,{0,0}};
@@ -140,7 +144,8 @@ static void exercise(short mode) {
  struct widget_instance *spinner=widget_instance_find_by_tag_index_recursive(menu,team_view_menus[mode].spinner_tag),*row=spinner->parent;
  assert(spinner->parameters.list.selected_index==0 && row->visible);
  spinner->parameters.list.selected_index=1;menu->focused_child=row;
- game_options_menu_update_text_desc(menu);
+ ui_widget_game_data_function_invoke(menu,authored.input.function);
+ assert(help_calls==1);
  assert(menu->parameters.list.extended_description->parameters.text_box.string_list_index==team_view_menus[mode].descriptions.strings.count-1);
  assert(memcmp(&before,&edited,sizeof(edited))==0); /* Cancel discards the draft. */
  free_widget(root);root=make_widget(mapped,NULL);menu=root->child->next;
@@ -165,9 +170,11 @@ static void exercise(short mode) {
   assert(teammate_view_menu_event(menu,&event,_team_view_menu_accept,&deleted));
   assert(!edited.universal_variant.teams && !teammate_view_variant_enabled(&edited) && (edited.universal_variant.flags&255)==0x2D);
  }
+ /* Rule callbacks must not write the separate Performance settings draft. */
+ assert(mutation_calls==0);
  free_widget(root);
  setup(mode);fail_registration=1;assert(teammate_view_menu_remap_tag(id(SCREEN))==id(SCREEN));
- assert(memcmp(&authored,&original,sizeof(authored))==0);
+ assert(memcmp(&authored,&original,sizeof(authored))==0 && mutation_calls==0 && help_calls==0);
 }
 int main(void) { for(short i=0;i<5;i++) exercise(i);puts("teammate view menu tests passed");return 0; }
 '''
