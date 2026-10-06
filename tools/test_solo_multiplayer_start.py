@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -190,6 +191,8 @@ static void request(short machine_index,short event) {
 }
 static void tick(uint32_t elapsed) {
     now+=elapsed; assert(network_game_server_idle_pregame_tasks(&server));
+    /* Every fixture lobby has fewer than five players when it starts. */
+    if (server.sent_start_game_message) assert(!network_game_server_started_with_five_players);
 }
 static void ready(void) {
     assert(server_has_enough_machines(&server));
@@ -385,10 +388,11 @@ class SoloMultiplayerStart(unittest.TestCase):
         source = directory / "fixture.c"
         source.write_text(production_fixture())
         cls.executables = {}
+        platform_flags = ["-D_CRT_SECURE_NO_WARNINGS"] if sys.platform == "win32" else []
         for mode, flags in (("native", ["-DHALO_PORT_MAXIMUM_NETWORK_PLAYERS=16"]), ("legacy", [])):
             executable = directory / mode
             subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function",
-                            "-Wno-unused-variable", *flags, str(source), "-o", str(executable)], check=True)
+                            "-Wno-unused-variable", *platform_flags, *flags, str(source), "-o", str(executable)], check=True)
             cls.executables[mode] = executable
 
     @classmethod
