@@ -551,6 +551,34 @@ multiplayer Chill Out drops and visual resolution of the Pelican jump remain
 unverified. ANGLE remains the default; the original assets and 30 Hz schedule
 remain intact.
 
+### System Link teammate split-screen prototype (October 6, 2026)
+
+At the user's explicit request, a host-selected **Team Split Screen** option
+appears in the authored gametype Rules menus when Team Play is enabled. It
+defaults Off. The native presentation adds one camera-only, living, on-foot
+remote teammate view for machines with one real local player. Input ownership,
+30 Hz simulation, hit authority and network scheduling remain unchanged; it
+uses already received unit state, including the existing 5 Hz scheduling tier.
+The prototype adds no camera packets or network capability and carries the
+host's setting in unused upper bits of the existing complete game variant.
+
+This is an intentional presentation departure, not an Xbox fidelity correction.
+The teammate pane omits weapon hands, HUD, zoom, camera effects, atmospheric fog
+and weather. Audio remains the real player's audio, and distant effects remain
+limited by the existing local visibility coverage. Off retains the ordinary
+HUD count and rendering paths. Matching prototype builds are needed for every
+participant to see teammate panes; older builds ignore the option.
+
+Compiled fixtures validate target restrictions, stable player/controller
+ownership, staged menu accept/cancel, rule-byte preservation and renderer
+isolation, including GLES/Metal/retail defines with ASan/UBSan. A local ANGLE
+four-process 2v2 enabled session and Off control passed, with all eight clean
+exits and all role screenshots inspected. The final HUD build also passed an
+enabled Native Metal four-process 2v2 session. This does not establish separate
+machine LAN/WAN performance, smooth 5 Hz presentation or retail parity.
+Local and unreleased. See [prototype behavior and validation](teammate-split-screen.md).
+No upstream baseline or reviewed-through revision changes.
+
 ### Original target
 
 The executable target is Xbox build **2342**, `cachebeta.exe`, SHA-256

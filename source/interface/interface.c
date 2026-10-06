@@ -1221,7 +1221,8 @@ static void interface_splitscreen_render(
 	if (game_engine_force_single_screen() || cinematic_in_progress())
 		return;
 
-	window_count = local_player_count();
+	/* Display-only teammate panes use the ordinary split-screen dividers. */
+	window_count = main_get_window_count();
 
 	if (window_count <= 1)
 		return;

@@ -388,6 +388,13 @@ symbols in this file:
 #include "text/draw_string.h"
 #include "text/font_group.h"
 #include "tag_files/files.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "camera/first_person_camera.h"
+#include "camera/static_camera.h"
+#include "game/teammate_view_variant.h"
+#include "render/teammate_view.h"
+#include "units/units.h"
+#endif
 
 /* ---------- constants */
 
@@ -1406,11 +1413,19 @@ void compute_window_bounds(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "main/teammate_view.inc"
+#endif
+
 short main_get_window_count(
 	void)
 {
 	boolean single_window = game_engine_force_single_screen() || cinematic_in_progress();
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (!single_window && teammate_view_find_player() != NONE)
+		return 2;
+#endif
 	return single_window ? 1 : PIN(local_player_count(), 1, MAXIMUM_WINDOWS);
 }
 
@@ -2987,6 +3002,9 @@ static void main_game_render(
 	long player_window_count;
 	long window_count;
 	short last_local_player_index;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	struct observer_result teammate_observer;
+#endif
 
 	lock_global_random_seed();
 	collision_log_continue_period(TRUE);
@@ -2996,6 +3014,11 @@ static void main_game_render(
 
 	window_count = PIN(local_player_count(), 1, MAXIMUM_LOCAL_PLAYERS);
 	player_window_count = window_count;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	teammate_view_player_index = teammate_view_find_player();
+	if (teammate_view_player_index != NONE)
+		player_window_count = 2;
+#endif
 	if (force_single_screen || cinematic_in_progress())
 	{
 		window_count = 1;
@@ -3038,6 +3061,13 @@ static void main_game_render(
 		else
 		{
 			window->local_player_index = NONE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			if (window_index == 1 && teammate_view_player_index != NONE)
+			{
+				teammate_view_camera(teammate_view_player_index, &teammate_observer);
+				observer = &teammate_observer;
+			}
+#endif
 		}
 
 		set_window_camera_values(window, observer);

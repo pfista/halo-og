@@ -124,6 +124,11 @@ symbols in this file:
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/players.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "render/teammate_view.h"
+#else
+#define teammate_view_hud_player_count local_player_count
+#endif
 #include "input/input_abstraction.h"
 #include "interface/hud_draw.h"
 #include "bitmaps/bitmap_color_conversion.h"
@@ -542,7 +547,7 @@ static void render_state_bitmap(
 	if (bitmap && _texture_cache_bitmap_get_hardware_format(
 		(struct bitmap_data *)bitmap, FALSE, TRUE))
 	{
-		scale = local_player_count() > 1 ? 0.75f : 1.0f;
+		scale = teammate_view_hud_player_count() > 1 ? 0.75f : 1.0f;
 		point.x = (short)(icon->offset.x * scale + cursor_bounds->x0);
 		point.y = (short)(cursor_bounds->y1 - icon->offset.y * scale);
 		hud_draw_bitmap_direct(
@@ -1151,7 +1156,7 @@ void scripted_hud_messages_clear(
 long hud_get_font_index(
 	void)
 {
-	if (local_player_count() > 1 &&
+	if (teammate_view_hud_player_count() > 1 &&
 		hud_msg_def->multi_player_font.index != NONE)
 	{
 		return hud_msg_def->multi_player_font.index;
@@ -1320,7 +1325,7 @@ void hud_messaging_update(
 		game_engine_hud_draw_messages(local_player_get_player_index(local_player_index)))
 	{
 		long font_index = hud_get_font_index();
-		boolean split_screen = local_player_count() > 1;
+		boolean split_screen = teammate_view_hud_player_count() > 1;
 		point2d screen_point;
 		struct font_header *font;
 		short line_top;
@@ -1338,7 +1343,7 @@ void hud_messaging_update(
 			&hud_msg_def->absolute_placement,
 			&hud_msg_def->placement,
 			NULL,
-			local_player_count() > 1,
+			teammate_view_hud_player_count() > 1,
 			0.0f,
 			&screen_point);
 		line_top = screen_point.y;
@@ -1356,7 +1361,7 @@ void hud_messaging_update(
 		}
 		first_line_height = line_height;
 		datum = &hud_messaging_globals->message_data[render.local_player_index];
-		maximum_message_count = 4 - (local_player_count() > 1);
+		maximum_message_count = 4 - (teammate_view_hud_player_count() > 1);
 		objective_active = hud_messaging_globals->objective.message &&
 			hud_messaging_globals->objective.uptime;
 		help_active = hud_scripted_globals->show_hud_help_text &&

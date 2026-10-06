@@ -1441,6 +1441,7 @@ static boolean ui_check_for_pause_game(
 #include "../../port/linux/game/device_settings.h"
 #include "performance_editor_menu.inc"
 #include "fiesta_item_options_menu.inc"
+#include "teammate_view_menu.inc"
 #include "native_pause_frame.inc"
 #include "performance_pause_menu.inc"
 #include "game_settings_menu.inc"
@@ -3251,6 +3252,8 @@ static void event_handler_dispatch(
 				performance_editor_event(widget, handler->function) :
 			handler->function >= 32010 && handler->function <= 32019 ?
 				performance_pause_event(widget, handler->function) :
+			handler->function >= 32030 && handler->function <= 32031 ?
+				teammate_view_menu_event(widget, event, handler->function, &widget_deleted) :
 #endif
 			ui_widget_event_handler_function_invoke(widget, event, handler->function, &widget_deleted)))
 	{
@@ -3781,6 +3784,7 @@ struct widget_instance *ui_widget_load_by_name_or_tag(
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		tag_index = performance_editor_remap_tag(tag_index);
 		tag_index = fiesta_item_options_remap_tag(tag_index);
+		tag_index = teammate_view_menu_remap_tag(tag_index);
 		tag_index = performance_pause_remap_tag(tag_index);
 		tag_index = game_settings_remap_tag(tag_index);
 #endif
@@ -5904,6 +5908,7 @@ static void widget_instance_render_recursive(
 			input_index;
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		teammate_view_menu_update(widget);
 		if (input->function >= 32000 && input->function <= 32001)
 			performance_editor_input(widget, input->function);
 		else
@@ -6402,10 +6407,14 @@ static void widget_instance_tab_to_next_valid_widget(
 		struct ui_widget_definition *definition =
 			ui_widget_definition_get(child->definition_tag_index);
 
-		if (definition->event_handlers.count > 0 ||
+		if (
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			!teammate_view_menu_hidden_row(child) &&
+#endif
+			(definition->event_handlers.count > 0 ||
 			TEST_FLAG(definition->flags, _widget_pass_unhandled_events_to_children_bit) ||
 			widget->type == _ui_widget_type_spinner_list ||
-			widget->type == _ui_widget_type_column_list)
+			widget->type == _ui_widget_type_column_list))
 		{
 			widget->focused_child = child;
 			break;
@@ -6441,10 +6450,14 @@ static void widget_instance_tab_to_previous_valid_widget(
 		struct ui_widget_definition *definition =
 			ui_widget_definition_get(child->definition_tag_index);
 
-		if (definition->event_handlers.count > 0 ||
+		if (
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			!teammate_view_menu_hidden_row(child) &&
+#endif
+			(definition->event_handlers.count > 0 ||
 			TEST_FLAG(definition->flags, _widget_pass_unhandled_events_to_children_bit) ||
 			widget->type == _ui_widget_type_spinner_list ||
-			widget->type == _ui_widget_type_column_list)
+			widget->type == _ui_widget_type_column_list))
 		{
 			widget->focused_child = child;
 			break;
