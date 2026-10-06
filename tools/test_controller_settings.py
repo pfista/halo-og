@@ -182,11 +182,13 @@ int main(void) {
                               (ROOT / "port/include/xdk/xdk_xbox.h").read_text(), re.M))
         functions = "\n".join(block(source, signature) for signature in (
             "static BYTE analog(", "static void keyboard_gamepad(",
+            "static void keyboard_navigation_gamepad(",
             "int halo_linux_mouse_aiming(", "static void mouse_poll(",
             "static unsigned controller_physical_axis_mask(",
             "static SHORT stick(", "static inline void merge_gamepad_state(",
             "static void merge_button(", "static void sdl_gamepad_state(",
             "static int controller_port(", "unsigned halo_controller_physical_axes(",
+            "int halo_menu_navigation_read(",
             "DWORD WINAPI XInputGetState("))
         # Use the actual look-axis hook and transform in the backend fixture too.
         prefix = ENGINE_PREFIX.replace(
@@ -214,6 +216,8 @@ typedef struct { DWORD dwPacketNumber;XINPUT_GAMEPAD Gamepad; } XINPUT_STATE,*PX
 struct controller { BOOL open;DWORD packet_number;XINPUT_GAMEPAD previous; };
 static struct controller controllers[4];
 static unsigned controller_physical_axis_flags[4];
+static struct halo_menu_navigation_state menu_navigation_states[4];
+static BOOL menu_navigation_valid[4];
 static pthread_mutex_t mouse_lock=PTHREAD_MUTEX_INITIALIZER;
 static Uint64 ticks=100,mouse_aimed_ms,stick_aimed_ms,wheel_moved_ms,wheel_press_until_ms;
 static float mouse_pending_x,mouse_pending_y,mouse_wheel_accumulated;
@@ -252,6 +256,7 @@ static void aim_mouse(void) {
 }
 int main(void) {
     XINPUT_GAMEPAD pad;
+    struct halo_menu_navigation_state navigation;
     struct gamepad_state processed;
     XINPUT_STATE second;
     int baseline,range;
@@ -259,6 +264,8 @@ int main(void) {
     left_deadzone=right_deadzone=0;joystick_controls=1;
     input.keys[SDL_SCANCODE_W]=1;aim_mouse();ticks++;
     pad=poll();assert(pad.sThumbLY==32767 && halo_linux_mouse_aiming(0));
+    assert(halo_menu_navigation_read(0,&navigation) && !navigation.left_y);
+    assert(!halo_menu_navigation_read(-1,&navigation) && !halo_menu_navigation_read(4,&navigation));
     synthetic_look=1;ticks++;pad=poll();
     assert(pad.sThumbRX==32767 && halo_linux_mouse_aiming(0));synthetic_look=0;
     physical_count=1;ticks++;pad=poll();
@@ -282,6 +289,13 @@ int main(void) {
     input.keys[SDL_SCANCODE_D]=1;axes[SDL_GAMEPAD_AXIS_LEFTX]=12345;
     buttons[SDL_GAMEPAD_BUTTON_LEFT_SHOULDER]=true;pad=poll();
     assert(pad.sThumbLX==32767 && pad.bAnalogButtons[XINPUT_GAMEPAD_BLACK]==255);
+    assert(halo_menu_navigation_read(0,&navigation) && navigation.left_x==12345 &&
+        (navigation.physical_axes & HALO_CONTROLLER_AXIS_LEFT_X));
+    input.keys[SDL_SCANCODE_LEFT]=1;buttons[SDL_GAMEPAD_BUTTON_DPAD_UP]=true;pad=poll();
+    assert((pad.wButtons & (XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_UP))==
+        (XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_UP));
+    assert(halo_menu_navigation_read(0,&navigation) && navigation.dpad==XINPUT_GAMEPAD_DPAD_UP);
+    input.keys[SDL_SCANCODE_LEFT]=0;buttons[SDL_GAMEPAD_BUTTON_DPAD_UP]=false;
     /* Controller settings cannot alter W+D's established keyboard diagonal. */
     memset(axes,0,sizeof(axes));memset(input.keys,0,sizeof(input.keys));
     input.keys[SDL_SCANCODE_W]=input.keys[SDL_SCANCODE_D]=1;

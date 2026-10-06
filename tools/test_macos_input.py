@@ -68,6 +68,7 @@ bool SDL_PollEvent(SDL_Event *event) {
 SDL_Gamepad *SDL_OpenGamepad(SDL_JoystickID id) { (void)id; return NULL; }
 static void platform_show_pending_message(void) {}
 static void platform_invite_clipboard(BOOL look) { (void)look; }
+static void platform_exit_success(void) { assert(!"unexpected authored exit"); }
 
 /* PRODUCTION_CODE */
 
@@ -230,7 +231,8 @@ int main(void) {
         controls = source.split("void platform_mouse_capture(", 1)[1].split("/* ---------- keyboard translation */", 1)[0]
         translation = source.split("/* ---------- keyboard translation */", 1)[1].split("/* ---------- internet play", 1)[0]
         events = source.split("void platform_pump_events(", 1)[1]
-        production = foreground + "void platform_mouse_capture(" + controls + translation + "void platform_pump_events(" + events
+        menu_keyboard = source.split("/* Menu key edges", 1)[1].split("/* debug keyboard queue */", 1)[0]
+        production = foreground + "/* Menu key edges" + menu_keyboard + "void platform_mouse_capture(" + controls + translation + "void platform_pump_events(" + events
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             (directory / "prefix.h").write_text(PREFIX)

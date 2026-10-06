@@ -215,11 +215,13 @@ controllers, cross-platform late joining and reference-Xbox comparisons were
 not exercised by these runs.
 
 Controller settings offer **Menu Repeat: Original / Faster** as an intentional
-local UI preference. Original retains the reconstructed 250 ms cadence; Faster
-opts into 100 ms held navigation for arrows, D-pad directions and sticks in
-menus and the on-screen keyboard. It defaults Original and applies only after
-Accept, with no simulation, gameplay-button or network-rule change. This does
-not alter the original event-queue or stick-edge behavior. See
+local UI preference. Original retains the reconstructed 250 ms cadence and its
+existing event-queue and stick-edge behavior. Faster moves once immediately,
+waits for a 750 ms hold, then repeats every 150 ms for arrows, D-pad directions
+and sticks in menus and the on-screen keyboard. Its separate keyboard edges
+preserve discrete taps; release, stick neutral or a new stick direction resets
+the hold timer. It defaults Original and applies only after Accept, with no
+simulation, gameplay-button or network-rule change. See
 [menu repeat](menu-repeat.md) for the option and validation boundaries.
 
 New configurations set `display.high_res_hud`, `display.interpolation` and

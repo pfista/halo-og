@@ -13,9 +13,17 @@
 
 /* Local menu-only opt-in; the original quarter-second cadence remains default.
  * Read live so accepting Controller settings takes effect without a restart. */
+#define HALO_MENU_REPEAT_INITIAL_DELAY 750UL
+#define HALO_MENU_REPEAT_FAST_INTERVAL 150UL
+
+static __inline int halo_menu_repeat_is_fast(void)
+{
+	return config_boolean("input.fast_menu_repeat");
+}
+
 static __inline unsigned long halo_menu_repeat_milliseconds(void)
 {
-	return config_boolean("input.fast_menu_repeat") ? 100UL : 250UL;
+	return halo_menu_repeat_is_fast() ? HALO_MENU_REPEAT_FAST_INTERVAL : 250UL;
 }
 
 static __inline short halo_controller_deadzone(long value)

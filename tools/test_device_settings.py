@@ -153,7 +153,7 @@ static void check_menu_repeat_settings(double values[NUMBER_OF_DEVICE_SETTINGS])
     write_ok=1;
     assert(device_settings_apply(menu_repeat,values));
     assert(saved[21]==1 && device_settings_get(_device_setting_fast_menu_repeat)==1 &&
-        halo_menu_repeat_milliseconds()==100 && writes==2);
+        halo_menu_repeat_milliseconds()==150 && writes==2);
     assert(!audio_applies && !video_applies && !switches && !starts && !stops);
     assert(device_settings_apply(menu_repeat,values) && writes==2);
     values[_device_setting_fast_menu_repeat]=0;
