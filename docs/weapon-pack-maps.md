@@ -208,6 +208,11 @@ python3 -m unittest tools.test_texture_cache_budget
 ## Delivering hidden arsenals
 
 The hidden Fiesta profile is separate from the visible 41-map community catalog.
+The generation-one catalog and objects are prepared and offline verified, but
+their R2 upload is pending. Automatic expanded-Fiesta downloads are currently
+unavailable; until publication, install the matching prepared cache/manifest
+pairs manually with `tools/install_fiesta_arsenal.py`. Original-map digests still
+must match, and the runtime validates every installed pair before use.
 Its public endpoint is
 `https://dl.oghalo.com/catalogs/testing/arsenals-v1.json`. Root fields are exactly
 `schema_version`, `profile` (`fiesta-arsenal-v1`), `generation` (1),

@@ -75,7 +75,11 @@ Uncut Fiesta and All Fiesta request a separate hidden weapon cache for the
 selected logical map. These variants contain the whole map plus the shared
 weapon dependencies because the engine reads one compiled map cache at a time.
 The full generation-one library has 54 variants, about 1.995 GB; Prisoner alone
-is 34 MiB. Mac, Windows and Linux download only requested variants through
+is 34 MiB. Its public catalog and cache objects are pending R2 upload, so
+automatic expanded-Fiesta downloads are currently unavailable. Until publication,
+install matching prepared cache/manifest pairs manually using the
+[weapon-cache guide](weapon-pack-maps.md). Once published, Mac, Windows and Linux
+download only requested variants through
 `catalogs/testing/arsenals-v1.json`, under the same download preference as
 community maps. Ordinary modes keep using the original map files.
 
