@@ -2060,6 +2060,14 @@ static GLenum address_mode(DWORD mode)
 	}
 }
 
+/* The original mip bias belongs to the Xbox bitmap, whose size differs from
+ * the replacement. Use the same effective bias in the sampler and GLES
+ * shader uniforms; desktop GL applies it through its sampler instead. */
+static DWORD effective_texture_lod_bias(BOOL hires, DWORD original)
+{
+	return hires ? 0 : original;
+}
+
 /* hires: a high-res HUD texture (hud_hires.h), drawn smaller than it is, so
 filtered and from its mip levels whatever the game asks: the HUD's meters are
 point sampled for one player, to keep the Xbox bitmaps' texels sharp */
@@ -2074,7 +2082,7 @@ static void configure_sampler(int stage, BOOL mipmapped, BOOL hires)
 	DWORD mip_filter = hires ? D3DTEXF_LINEAR : mipmapped ? state[D3DTSS_MIPFILTER] : D3DTEXF_NONE;
 	DWORD mag_filter = hires ? D3DTEXF_LINEAR : state[D3DTSS_MAGFILTER];
 	DWORD maximum_mip_level = hires ? 0 : state[D3DTSS_MAXMIPLEVEL];
-	DWORD lod_bias = hires ? 0 : state[D3DTSS_MIPMAPLODBIAS];
+	DWORD lod_bias = effective_texture_lod_bias(hires, state[D3DTSS_MIPMAPLODBIAS]);
 	GLenum minification;
 	float border[4];
 	DWORD inputs[11];
@@ -2249,9 +2257,10 @@ static GLuint mip_composite_get(const struct xgpu_texture_description *descripti
 	return composite->texture;
 }
 
-/* Border emulation is exact for a single 2D level. Mipmapped, anisotropic,
-3D and cube sampling need different footprints; do not apply a level-zero
-coverage estimate to those paths. The shadow render targets have one level. */
+/* Original border emulation covers single-level 2D textures. The optional HUD
+ * redraws have complete mip chains and unbiased trilinear filtering; their
+ * GLES fallback corrects each selected mip before interpolation. Other
+ * authored mipmapped, anisotropic, 3D and cube paths remain unchanged. */
 static void texture_border_key(struct nv2a_pixel_shader_key *key, int stage,
 	GLenum target, const struct xgpu_texture_description *description)
 {
@@ -2260,13 +2269,20 @@ static void texture_border_key(struct nv2a_pixel_shader_key *key, int stage,
 	DWORD min_filter = description->hires ? D3DTEXF_LINEAR : state[D3DTSS_MINFILTER];
 	DWORD mag_filter = description->hires ? D3DTEXF_LINEAR : state[D3DTSS_MAGFILTER];
 
-	if (!xgpu_capabilities.border_clamp && target == GL_TEXTURE_2D && description->levels == 1 &&
+	if (!xgpu_capabilities.border_clamp && target == GL_TEXTURE_2D &&
+		(description->levels == 1 || (description->hires && description->levels > 1)) &&
 		min_filter != D3DTEXF_ANISOTROPIC && mag_filter != D3DTEXF_ANISOTROPIC)
 	{
 		key->border_axes[stage] = (state[D3DTSS_ADDRESSU] == D3DTADDRESS_BORDER ? 1 : 0) |
 			(state[D3DTSS_ADDRESSV] == D3DTADDRESS_BORDER ? 2 : 0);
 		if (key->border_axes[stage])
 		{
+			if (description->hires && description->levels > 1)
+			{
+				/* Filtering value4 is the GLES-only complete HUD mip chain. */
+				key->border_filter[stage] = 4;
+				return;
+			}
 			key->border_filter[stage] = (min_filter == D3DTEXF_POINT ? 0 : 1) |
 				(mag_filter == D3DTEXF_POINT ? 0 : 2);
 			/* A positive minimum LOD forces minification filtering even for
@@ -2278,7 +2294,7 @@ static void texture_border_key(struct nv2a_pixel_shader_key *key, int stage,
 #endif
 }
 
-static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale[4][4])
+static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale[4][4], DWORD texture_lod_bias[4])
 {
 	int stage;
 
@@ -2289,6 +2305,8 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 
 		texture_scale[stage][0] = texture_scale[stage][1] = 1.0f;
 		texture_scale[stage][2] = texture_scale[stage][3] = 1.0f;
+		texture_lod_bias[stage] = effective_texture_lod_bias(FALSE,
+			D3D__TextureState[stage][D3DTSS_MIPMAPLODBIAS]);
 		if (!texture || !texture->Data || mode == 0 || mode == 0x04 || mode == 0x05 || mode == 0x11)
 		{
 			state_texture(stage, GL_TEXTURE_2D, 0);
@@ -2330,6 +2348,8 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 				}
 			}
 			state_texture(stage, gl_target, gl_texture);
+			texture_lod_bias[stage] = effective_texture_lod_bias(description.hires,
+				D3D__TextureState[stage][D3DTSS_MIPMAPLODBIAS]);
 			state_sampler(stage, device.samplers[stage]);
 			configure_sampler(stage, description.levels > 1, description.hires);
 			texture_border_key(key, stage, gl_target, &description);
@@ -2836,6 +2856,7 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	struct nv2a_pixel_shader_key key;
 	struct program_entry *entry;
 	struct draw_uniforms uniforms;
+	DWORD texture_lod_bias[D3DTSS_MAXSTAGES];
 	BOOL has_depth = FALSE;
 	int stage;
 
@@ -2868,7 +2889,7 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	on Metal), which bind framebuffers of their own and turn the scissor off
 	- after the target, the draw went to the wrong framebuffer (the water's
 	reflection, drawn with its ripple map's levels, never showed) */
-	bind_textures(&key, uniforms.texture_scale);
+	bind_textures(&key, uniforms.texture_scale, texture_lod_bias);
 	if (!bind_targets(&has_depth))
 	{
 		stats.skipped_no_target++;
@@ -2990,7 +3011,9 @@ static struct program_entry *prepare_draw(BOOL immediate)
 			inputs[count++] = state[D3DTSS_BUMPENVMAT11];
 			inputs[count++] = state[D3DTSS_BUMPENVLSCALE];
 			inputs[count++] = state[D3DTSS_BUMPENVLOFFSET];
-			inputs[count++] = state[D3DTSS_MIPMAPLODBIAS];
+			/* Include the effective bias, so an original/redraw transition
+			 * refreshes these uniforms even when the Xbox state is identical. */
+			inputs[count++] = texture_lod_bias[stage];
 			inputs[count++] = state[D3DTSS_BORDERCOLOR];
 		}
 		if (!draw_uniforms_serial || memcmp(inputs, draw_uniform_inputs, sizeof(inputs)))
@@ -3028,7 +3051,7 @@ static struct program_entry *prepare_draw(BOOL immediate)
 				converted->bump_luminance[stage][0] = dword_to_float(state[D3DTSS_BUMPENVLSCALE]);
 				converted->bump_luminance[stage][1] = dword_to_float(state[D3DTSS_BUMPENVLOFFSET]);
 				converted->bump_luminance[stage][2] = converted->bump_luminance[stage][3] = 0.0f;
-				converted->texture_lod_bias[stage] = dword_to_float(state[D3DTSS_MIPMAPLODBIAS]);
+				converted->texture_lod_bias[stage] = dword_to_float(texture_lod_bias[stage]);
 				color_to_vec4(state[D3DTSS_BORDERCOLOR], converted->texture_border_color[stage]);
 			}
 			converted->screen_offset = (float)UI_OFFSET;

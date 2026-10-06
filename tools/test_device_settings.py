@@ -35,7 +35,7 @@ static const char *names[] = {"audio.volume", "audio.music_volume", "audio.effec
     "display.timer_position", "display.timer_scale", "display.fullscreen",
     "maps.show_og", "maps.show_community", "network.join_in_progress",
     "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration",
-    "input.fast_menu_repeat"};
+    "input.fast_menu_repeat", "display.high_res_hud"};
 #define TEST_SETTING_COUNT (sizeof(names)/sizeof(names[0]))
 static double saved[TEST_SETTING_COUNT];
 static const char *renderer="angle",*antialiasing="off";
@@ -92,7 +92,7 @@ void ui_apply_main_menu_music_setting(void) { if (saved[5]) starts++; else stops
 static void reset(double values[NUMBER_OF_DEVICE_SETTINGS]) {
     for (unsigned i=0;i<TEST_SETTING_COUNT;i++) saved[i]=(i==7 || i==11 || i==12) ? 0.0 : 1.0;
     saved[18]=saved[19]=9000;
-    saved[21]=0;
+    saved[21]=saved[22]=0;
     saved[0]=0.15; fullscreen=native_fullscreen=1; write_ok=switch_ok=apply_ok=1;
     renderer="angle";antialiasing="off";render_height=480;frame_limit=0;
     writes=audio_applies=video_applies=switches=starts=stops=0;
@@ -167,10 +167,39 @@ static void check_menu_repeat_settings(double values[NUMBER_OF_DEVICE_SETTINGS])
     assert(!device_settings_apply(menu_repeat | (1UL<<_device_setting_vsync),values));
     assert(saved[21]==0 && saved[6]==1 && halo_menu_repeat_milliseconds()==250 && writes==2);
 }
+static void check_hud_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) {
+    unsigned long hud=1UL<<_device_setting_high_res_hud;
+    const double bad[]={-1,2,0.5,NAN,INFINITY,-INFINITY};
+    reset(values);
+    assert(values[_device_setting_high_res_hud]==0);
+    assert(device_settings_apply(hud,values) && !writes);
+    for(unsigned i=0;i<sizeof(bad)/sizeof(bad[0]);i++) {
+        values[_device_setting_high_res_hud]=bad[i];
+        assert(!device_settings_apply(hud,values));
+    }
+    assert(!writes && !audio_applies && !video_applies && !switches);
+    values[_device_setting_high_res_hud]=1;write_ok=0;
+    assert(!device_settings_apply(hud,values));
+    assert(saved[22]==0 && writes==1);
+    write_ok=1;
+    assert(device_settings_apply(hud,values));
+    assert(saved[22]==1 && device_settings_get(_device_setting_high_res_hud)==1 && writes==2);
+    /* Texture choice takes effect on relaunch, without live display/audio work. */
+    assert(!audio_applies && !video_applies && !switches && !starts && !stops);
+    assert(device_settings_apply(hud,values) && writes==2);
+    values[_device_setting_high_res_hud]=0;
+    assert(device_settings_apply(hud,values) && saved[22]==0 && writes==3);
+    /* A rejected live video row rolls back the entire saved draft. */
+    reset(values);values[_device_setting_high_res_hud]=1;values[_device_setting_vsync]=0;
+    apply_fail_on=1;
+    assert(!device_settings_apply(hud|(1UL<<_device_setting_vsync),values));
+    assert(saved[22]==0 && saved[6]==1 && writes==2 && video_applies==2);
+}
 int main(void) {
     double values[NUMBER_OF_DEVICE_SETTINGS];
     check_controller_settings(values);
     check_menu_repeat_settings(values);
+    check_hud_settings(values);
     if (MOBILE_FULLSCREEN) {
         /* Android/iOS remain fullscreen and never read or persist the
          * desktop-only preference, even in a mixed settings draft. */
@@ -331,7 +360,7 @@ int main(void) {
         (1UL<<_device_setting_join_in_progress),values));
     assert(writes==2 && saved[6]==1 && saved[15]==1 && saved[16]==1 && saved[17]==1);
 #if MAC_FULLSCREEN
-    assert(NUMBER_OF_DEVICE_SETTINGS==26);
+    assert(NUMBER_OF_DEVICE_SETTINGS==27);
     reset(values);values[_device_setting_renderer]=1;values[_device_setting_render_height]=0;
     values[_device_setting_frame_limit]=120;values[_device_setting_anti_aliasing]=1;
     assert(device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_render_height)|
@@ -369,7 +398,7 @@ int main(void) {
     assert(values[_device_setting_render_height]==720);
     assert(device_settings_apply(1UL<<_device_setting_render_height,values) && !writes);
 #else
-    assert(NUMBER_OF_DEVICE_SETTINGS==22);
+    assert(NUMBER_OF_DEVICE_SETTINGS==23);
 #endif
     puts("device settings save/apply tests passed");
 }
@@ -411,6 +440,12 @@ class DeviceSettingsTests(unittest.TestCase):
         for optimization in ("-O0", "-O2"):
             with self.subTest(optimization=optimization):
                 self.run_save_apply_boundary(["-std=gnu89", "-D__STRICT_ANSI__", optimization])
+
+    def test_linux_and_windows_share_hud_save_boundary(self):
+        for platform in ("HALO_LINUX", "HALO_WINDOWS"):
+            with self.subTest(platform=platform):
+                self.run_save_apply_boundary(["-std=gnu89", "-D__STRICT_ANSI__", "-O2"],
+                                             ["-D" + platform + "=1"])
 
     def test_mac_fullscreen_uses_native_preferences(self):
         for renderer in ("0", "1"):

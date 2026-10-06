@@ -239,6 +239,10 @@ int metal_draw_state_pack(const struct metal_draw_state_input *in,
                 TS_BAD(0,in->texture_depth[stage],"volume requires explicit normalized native metadata within 512 texels");
         } else if(in->texture_depth[stage]>1)
             TS_BAD(0,in->texture_depth[stage],"nonvolume resource depth exceeds one");
+        if(t->hires_coverage && !t->hires)
+            TS_BAD(0,0,"HUD coverage requires a high-resolution replacement");
+        if(t->hires && t->sampler_type!=_xgpu_sampler_2d)
+            TS_BAD(0,t->sampler_type,"high-resolution HUD replacement requires texture2d");
         if(t->sampler_type==_xgpu_sampler_cube && t->width!=t->height)
             TS_BAD(0,0,"cube resource must have square faces");
         dimension=t->width>t->height?t->width:t->height;
@@ -259,6 +263,10 @@ int metal_draw_state_pack(const struct metal_draw_state_input *in,
         mag_filter=t->hires?D3DTEXF_LINEAR:ts[D3DTSS_MAGFILTER];
         mip_filter=t->hires?D3DTEXF_LINEAR:ts[D3DTSS_MIPFILTER];
         max_mip=t->hires?0:ts[D3DTSS_MAXMIPLEVEL];
+        /* The replacement is drawn at the original HUD size. Match the GL
+         * override's unbiased trilinear footprint instead of applying a bias
+         * or minimum mip chosen for the much smaller Xbox bitmap. */
+        if(t->hires) out.pixel.texture_lod_bias[stage]=0.0f;
         if(min_filter<D3DTEXF_POINT || min_filter>D3DTEXF_ANISOTROPIC)
             TS_BAD(D3DTSS_MINFILTER,min_filter,"unsupported sampler filter");
         if(mag_filter<D3DTEXF_POINT || mag_filter>D3DTEXF_ANISOTROPIC)
@@ -312,13 +320,14 @@ int metal_draw_state_pack(const struct metal_draw_state_input *in,
                 if(in->native_black_border && t->sampler_type==_xgpu_sampler_2d && ts[D3DTSS_BORDERCOLOR]==0) {
                     /* The literal transparent-black path needs no companion. */
                 } else if(in->native_alpha_border && t->sampler_type==_xgpu_sampler_2d &&
-                    t->levels>1 && !t->linear && !t->hires &&
+                    t->levels>1 && !t->linear &&
                     (ts[D3DTSS_BORDERCOLOR]&0x00ffffffu)==0 &&
                     min_filter==D3DTEXF_LINEAR && mag_filter==D3DTEXF_LINEAR &&
-                    mip_filter==D3DTEXF_POINT && ts[D3DTSS_MAXANISOTROPY]==1) {
+                    (t->hires?mip_filter==D3DTEXF_LINEAR:mip_filter==D3DTEXF_POINT) &&
+                    ts[D3DTSS_MAXANISOTROPY]==1) {
                     out.native_alpha_border_mask|=1u<<stage;
                 } else
-                    TS_BAD(D3DTSS_ADDRESSU,axes,"border emulation requires single-mip nonanisotropic texture2d or explicit native transparent-black support; alpha-border requires validated normalized mip2D black-RGB linear/nearest aniso1");
+                    TS_BAD(D3DTSS_ADDRESSU,axes,"border emulation requires single-mip nonanisotropic texture2d or explicit native transparent-black support; alpha-border requires validated normalized mip2D black-RGB linear/nearest (high-res HUD trilinear) aniso1");
                 /* The native sampler supplies the entire footprint including
                  * mip transitions and anisotropic taps. A level-zero shader
                  * coverage estimate would apply the border twice. */
@@ -332,7 +341,9 @@ int metal_draw_state_pack(const struct metal_draw_state_input *in,
 #undef TS_BAD
     }
     if(!(rs[D3DRS_ALPHABLENDENABLE] && rs[D3DRS_SRCBLEND]==D3DBLEND_CONSTANTCOLOR && rs[D3DRS_DESTBLEND]==D3DBLEND_SRCALPHA)) k.coverage_alpha=0;
-    if(k.coverage_alpha) BAD(HALO_METAL_UNSUPPORTED,0,0,"hires coverage-alpha shader unverified in native emitter");
+    /* nv2a_psh.c shares this meter correction across GLSL and MSL: green is
+     * the replacement's coverage, while alpha remains the Xbox meter value.
+     * Only the original CONSTANTCOLOR/SRCALPHA blend needs that correction. */
     /* Original model-lighting uploads include unused float padding (actual
      * c[-73].w can contain 0xffffffff); its DP3 consumes only XYZ. Preserve
      * all 3072 constant bytes, as the original GL upload does. Validate the

@@ -46,6 +46,16 @@ jobs:
           python3 tools/macos_setup.py
           python3 tools/macos_build.py --plugin-only
           python3 tools/ios_build.py --plugin-only
+      - name: HUD fixture dependencies
+        run: python3 -m pip install Pillow
+      - name: Shared HUD assets, settings and ANGLE rendering
+        run: |
+          python3 -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_device_settings
+          python3 tools/test_game_settings.py
+          python3 tools/hud_glsl_validate.py --output build/hud-glsl-validation
+          python3 tools/test_texture_border.py
+      - name: iOS shared game image
+        run: python3 tools/ios_build.py --guest-only --jobs 6
       - name: Mac ABI, allocation, networking and audio
         run: python3 tools/test_macos_runtime.py --standalone
       - name: Guest directory and map service imports

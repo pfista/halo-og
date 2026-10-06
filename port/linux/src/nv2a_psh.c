@@ -387,6 +387,29 @@ static void border_sample_function(struct xgpu_text *text, const struct nv2a_pix
 
 	if (!axes)
 		return;
+	if (filtering == 4)
+	{
+		/* Optional HUD redraws use a complete, unbiased mip chain. Correct
+		 * the bilinear border footprint separately at each selected level;
+		 * a level-zero coverage mask is wrong across mip transitions. */
+		xgpu_text_append(text,
+			"vec4 sample_border_level%d(vec2 uv, int mip)\n{\n"
+			"\tvec4 value = textureLod(tex%d, uv, float(mip));\n"
+			"\tvec2 size = vec2(textureSize(tex%d, mip));\n"
+			"\tvec2 coverage = clamp(vec2(0.5) + min(uv, vec2(1.0) - uv) * size, 0.0, 1.0);\n"
+			"\treturn mix(texture_border_color[%d], value, %s);\n}\n"
+			"vec4 sample_border%d(vec2 uv)\n{\n"
+			"\tvec2 size = vec2(textureSize(tex%d, 0));\n"
+			"\tvec2 dx = dFdx(uv) * size, dy = dFdy(uv) * size;\n"
+			"\tfloat lod = clamp(0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1.0)),\n"
+			"\t\t0.0, floor(log2(max(size.x, size.y))));\n"
+			"\tint low = int(floor(lod)), high = int(ceil(lod));\n"
+			"\treturn mix(sample_border_level%d(uv, low), sample_border_level%d(uv, high), fract(lod));\n}\n",
+			stage, stage, stage, stage,
+			axes == 3 ? "coverage.x * coverage.y" : axes == 1 ? "coverage.x" : "coverage.y",
+			stage, stage, stage, stage);
+		return;
+	}
 	xgpu_text_append(text,
 		"vec4 sample_border%d(vec2 uv)\n{\n"
 		"\tvec4 value = texture(tex%d, uv, texture_lod_bias[%d]);\n"

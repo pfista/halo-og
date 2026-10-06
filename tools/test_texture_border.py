@@ -30,6 +30,7 @@ enum { D3DTSS_MINFILTER, D3DTSS_MAGFILTER, D3DTSS_ADDRESSU, D3DTSS_ADDRESSV, D3D
 enum { D3DTEXF_POINT = 1, D3DTEXF_LINEAR, D3DTEXF_ANISOTROPIC };
 enum { D3DTADDRESS_WRAP = 1, D3DTADDRESS_CLAMP = 3, D3DTADDRESS_BORDER = 4 };
 enum { _xgpu_sampler_none, _xgpu_sampler_2d, _xgpu_sampler_3d, _xgpu_sampler_cube };
+enum shader_language { _shader_glsl, _shader_msl };
 static struct { int border_clamp; } xgpu_capabilities;
 static DWORD D3D__TextureState[4][5];
 struct xgpu_texture_description { unsigned long levels; int hires; };
@@ -92,7 +93,7 @@ static GLuint program(unsigned axes, unsigned filtering) {
         "layout(location=0) out vec4 color;\n");
     border_sample_function(&text, &key, 0);
     xgpu_text_append(&text, "void main() { vec4 coordinates = vec4(test_uv + (gl_FragCoord.xy - vec2(2.5)) * test_delta, 0.0, 1.0); color = ");
-    sample(&text, &key, 0, "coordinates");
+    sample(&text, &key, 0, "coordinates", _shader_glsl, 0, 0);
     xgpu_text_append(&text, "; }\n");
     GLuint vertex = shader(GL_VERTEX_SHADER, "#version 300 es\nvoid main() { vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); }");
     GLuint fragment = shader(GL_FRAGMENT_SHADER, text.buffer);

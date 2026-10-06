@@ -229,6 +229,13 @@ New configurations set `display.high_res_hud`, `display.interpolation` and
 stays at 30 Hz; high-refresh rendering can be appropriate, with interpolation
 and input response assessed separately.
 
+At the user's explicit request, Video exposes the existing HUD redraws as
+**Original / High Resolution**, with Original as the default. Native Metal now
+supports the same optional assets as ANGLE, including meter coverage blending.
+These are hand-authored PC-derived reconstructions in Xbox layout, not a new
+stock-artwork baseline. Original fonts and localized/modified bitmap fallbacks
+remain. See [HUD provenance and comparison](high-resolution-hud.md).
+
 ### Native Metal presentation experiment
 
 Local commit `1dc7043f58b6a1d9a2be3fb02ae9bb7e66db88de` adds optional pre-HUD world

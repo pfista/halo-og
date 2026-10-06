@@ -94,15 +94,24 @@ int main(int argc,const char **argv) { @autoreleasepool {
     require(depthTexture!=nil && depthReadback!=nil,@"No fixture depth resources");
     for (NSDictionary *f in manifest[@"pixel_tests"]) {
         NSString *name=f[@"shader"]; id<MTLLibrary> fl=libraries[name];require(fl!=nil,name);
-        id<MTLRenderPipelineState> pipeline=pipelines[name];
+        bool meterBlend=f[@"meter_blend"]!=nil;
+        NSString *pipelineKey=[name stringByAppendingString:meterBlend?@":meter":@":opaque"];
+        id<MTLRenderPipelineState> pipeline=pipelines[pipelineKey];
         if (!pipeline) {
             MTLRenderPipelineDescriptor *pd=[MTLRenderPipelineDescriptor new];
             pd.vertexFunction=[vl newFunctionWithName:@"test_vertex"];
             pd.fragmentFunction=[fl newFunctionWithName:@"xgpu_fragment"];
             pd.colorAttachments[0].pixelFormat=MTLPixelFormatRGBA32Float;
+            if(meterBlend) {
+                // The original HUD meter uses CONSTANTCOLOR/SRCALPHA for
+                // both RGB and alpha; green coverage adjusts source alpha.
+                auto color=pd.colorAttachments[0];color.blendingEnabled=YES;
+                color.sourceRGBBlendFactor=color.sourceAlphaBlendFactor=MTLBlendFactorBlendColor;
+                color.destinationRGBBlendFactor=color.destinationAlphaBlendFactor=MTLBlendFactorSourceAlpha;
+            }
             pd.depthAttachmentPixelFormat=MTLPixelFormatDepth32Float;
             NSError *e=nil;pipeline=[device newRenderPipelineStateWithDescriptor:pd error:&e];
-            require(pipeline!=nil,e.localizedDescription);pipelines[name]=pipeline;
+            require(pipeline!=nil,e.localizedDescription);pipelines[pipelineKey]=pipeline;
         }
         TestInputs inputs={}; NSDictionary *in=f[@"inputs"];
         inputs.d0=vector(in[@"d0"]);inputs.d1=vector(in[@"d1"]);
@@ -128,13 +137,18 @@ int main(int argc,const char **argv) { @autoreleasepool {
         pass.colorAttachments[0].texture=texture;
         pass.colorAttachments[0].loadAction=MTLLoadActionClear;
         pass.colorAttachments[0].storeAction=MTLStoreActionStore;
-        pass.colorAttachments[0].clearColor=MTLClearColorMake(-1,-1,-1,-1);
+        simd_float4 clear=f[@"clear_color"]?vector(f[@"clear_color"]):simd_float4{-1,-1,-1,-1};
+        pass.colorAttachments[0].clearColor=MTLClearColorMake(clear.x,clear.y,clear.z,clear.w);
         pass.depthAttachment.texture=depthTexture;
         pass.depthAttachment.loadAction=MTLLoadActionClear;pass.depthAttachment.storeAction=MTLStoreActionStore;
         pass.depthAttachment.clearDepth=f[@"clear_depth"]?[f[@"clear_depth"] doubleValue]:.9;
         id<MTLCommandBuffer> cmd=[queue commandBuffer];
         id<MTLRenderCommandEncoder> enc=[cmd renderCommandEncoderWithDescriptor:pass];
         [enc setRenderPipelineState:pipeline];[enc setVertexBytes:&inputs length:sizeof(inputs) atIndex:0];
+        if(meterBlend) {
+            simd_float4 tint=vector(f[@"meter_blend"]);
+            [enc setBlendColorRed:tint.x green:tint.y blue:tint.z alpha:tint.w];
+        }
         MTLDepthStencilDescriptor *ds=[MTLDepthStencilDescriptor new];
         ds.depthWriteEnabled=f[@"depth_write"]?[f[@"depth_write"] boolValue]:YES;
         ds.depthCompareFunction=[f[@"depth_compare"] isEqual:@"less"]?MTLCompareFunctionLess:MTLCompareFunctionAlways;
@@ -148,12 +162,18 @@ int main(int argc,const char **argv) { @autoreleasepool {
             NSUInteger depth=kind==2?[t[@"depth"] unsignedIntegerValue]:1;
             require(kind>=1 && kind<=3 && width && height && depth,@"Fixture texture dimensions/type");
             require(kind!=3 || width==height,@"Fixture cube must be square");
-            MTLTextureDescriptor *d=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:width height:height mipmapped:NO];
+            NSArray *mips=t[@"mipmaps"] ?: @[t];
+            require(mips.count==1 || kind==1,@"Mipped fixture requires texture2d");
+            MTLTextureDescriptor *d=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:width height:height mipmapped:mips.count>1];
+            d.mipmapLevelCount=mips.count;
             if(kind==2) { d.textureType=MTLTextureType3D;d.depth=depth; }
             else if(kind==3)d.textureType=MTLTextureTypeCube;
             d.usage=MTLTextureUsageShaderRead;d.storageMode=MTLStorageModeShared;
             id<MTLTexture> sample=[device newTextureWithDescriptor:d]; require(sample!=nil,@"Fixture texture");
-            NSArray *faces=kind==3?t[@"faces"]:@[t[@"rgba"]];
+            for(NSUInteger level=0;level<mips.count;level++) {
+            NSDictionary *mip=mips[level];
+            NSUInteger mipWidth=MAX((NSUInteger)1,width>>level),mipHeight=MAX((NSUInteger)1,height>>level);
+            NSArray *faces=kind==3?mip[@"faces"]:@[mip[@"rgba"]];
             require(faces.count==(kind==3?6u:1u),@"Fixture cube face count");
             for(NSUInteger face=0;face<faces.count;face++) {
                 NSArray *bytes=faces[face];std::vector<uint8_t> pixels;
@@ -161,9 +181,10 @@ int main(int argc,const char **argv) { @autoreleasepool {
                     require([b isKindOfClass:NSNumber.class] && b.doubleValue==b.unsignedCharValue,@"Fixture texel byte");
                     pixels.push_back(b.unsignedCharValue);
                 }
-                require(pixels.size()==width*height*depth*4,@"Fixture texture bytes");
-                [sample replaceRegion:MTLRegionMake3D(0,0,0,width,height,depth) mipmapLevel:0
-                    slice:face withBytes:pixels.data() bytesPerRow:width*4 bytesPerImage:width*height*4];
+                require(pixels.size()==mipWidth*mipHeight*depth*4,@"Fixture texture bytes");
+                [sample replaceRegion:MTLRegionMake3D(0,0,0,mipWidth,mipHeight,depth) mipmapLevel:level
+                    slice:face withBytes:pixels.data() bytesPerRow:mipWidth*4 bytesPerImage:mipWidth*mipHeight*4];
+            }
             }
             MTLSamplerDescriptor *sd=[MTLSamplerDescriptor new];
             bool linear=[t[@"linear"] boolValue];sd.minFilter=sd.magFilter=linear?MTLSamplerMinMagFilterLinear:MTLSamplerMinMagFilterNearest;
@@ -171,9 +192,20 @@ int main(int argc,const char **argv) { @autoreleasepool {
             sd.sAddressMode=(axes&1)?MTLSamplerAddressModeClampToEdge:MTLSamplerAddressModeRepeat;
             sd.tAddressMode=(axes&2)?MTLSamplerAddressModeClampToEdge:MTLSamplerAddressModeRepeat;
             sd.rAddressMode=(axes&4)?MTLSamplerAddressModeClampToEdge:MTLSamplerAddressModeRepeat;
+            unsigned borderAxes=[t[@"native_border_axes"] unsignedIntValue];
+            if(borderAxes&1)sd.sAddressMode=MTLSamplerAddressModeClampToBorderColor;
+            if(borderAxes&2)sd.tAddressMode=MTLSamplerAddressModeClampToBorderColor;
+            sd.mipFilter=mips.count>1?([t[@"trilinear"] boolValue]?MTLSamplerMipFilterLinear:MTLSamplerMipFilterNearest):MTLSamplerMipFilterNotMipmapped;
+            if(t[@"lod"])sd.lodMinClamp=sd.lodMaxClamp=[t[@"lod"] floatValue];
             id<MTLSamplerState> sampler=[device newSamplerStateWithDescriptor:sd];
             [enc setFragmentTexture:sample atIndex:s];[enc setFragmentSamplerState:sampler atIndex:s];
             [resources addObject:sample];[resources addObject:sampler];
+            if(t[@"alpha_border_companion"]) {
+                require(kind==1 && borderAxes,@"Alpha border companion requires bordered texture2d");
+                sd.borderColor=MTLSamplerBorderColorOpaqueBlack;
+                id<MTLSamplerState> companion=[device newSamplerStateWithDescriptor:sd];
+                [enc setFragmentSamplerState:companion atIndex:4+s];[resources addObject:companion];
+            }
         }
         [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];[enc endEncoding];
         if(f[@"expected_depth"]) {
@@ -186,10 +218,12 @@ int main(int argc,const char **argv) { @autoreleasepool {
         [cmd commit];[cmd waitUntilCompleted];require(cmd.status==MTLCommandBufferStatusCompleted,cmd.error.localizedDescription);
         float actual[4];[texture getBytes:actual bytesPerRow:16 fromRegion:MTLRegionMake2D(2,2,1,1) mipmapLevel:0];
         bool discard=[f[@"discard"] boolValue];
+        float tolerance=f[@"float_tolerance"]?[f[@"float_tolerance"] floatValue]:.00002f;
+        require(std::isfinite(tolerance) && tolerance>0 && tolerance<=1.0f/255,@"Invalid fixture float tolerance");
         for(int c=0;c<4;c++) {
-            float expected=discard?-1:[f[@"expected"][c] floatValue];
+            float expected=discard?clear[c]:[f[@"expected"][c] floatValue];
             float error=fabsf(actual[c]-expected);maxError=fmaxf(maxError,error);
-            require(std::isfinite(actual[c]) && error<0.00002f,
+            require(std::isfinite(actual[c]) && error<tolerance,
                 [NSString stringWithFormat:@"%@: channel %d actual %.9g expected %.9g",f[@"name"],c,actual[c],expected]);
         }
         if(f[@"expected_depth"]) {

@@ -718,9 +718,41 @@ class DrawStateTests(unittest.TestCase):
         status,key,out,error=self.run_pack(data);self.assertEqual(status,0,error.message)
         self.assertEqual(key.coverage_alpha,0);self.assertEqual(out.samplers[:3],[1,1,2])
         self.assertEqual(struct.unpack_from('<2f',bytes(out.samplers),32),(0,2))
-        self.assertEqual(out.pixel[148],1.) # source raw LOD uniform, not sampler override
+        self.assertEqual(out.pixel[148],0.) # high-res HUD uses unbiased replacement mips
         rs[59]=1;rs[62]=32769;rs[63]=770
-        self.reject_atomic(data,-2,'coverage-alpha')
+        status,key,out,error=self.run_pack(data);self.assertEqual(status,0,error.message)
+        self.assertEqual(key.coverage_alpha,1)
+        self.assertEqual(out.state[1:5],[1,12,5,1])
+
+    def test_hires_coverage_is_stage0_and_original_meter_blend_only(self):
+        for stage in range(4):
+            for enabled,source,destination,coverage in ((1,32769,770,1),(0,32769,770,0),
+                                                       (1,1,770,0),(1,32769,0,0)):
+                with self.subTest(stage=stage,blend=(enabled,source,destination)):
+                    data,keep=self.basic();rs,ts=keep[:2]
+                    rs[116]=1<<(5*stage);rs[59]=enabled;rs[62]=source;rs[63]=destination
+                    data.textures[stage]=Texture(1,1,64,32,7,0,1,1)
+                    ts[stage][10]=ts[stage][11]=ts[stage][12]=1
+                    ts[stage][13]=ts[stage][14]=1;ts[stage][17]=2
+                    status,key,out,error=self.run_pack(data);self.assertEqual(status,0,error.message)
+                    self.assertEqual(key.coverage_alpha,coverage if stage==0 else 0)
+
+    def test_hires_metadata_rejects_nonreplacement_coverage_and_cube(self):
+        data,keep=self.basic();rs,ts=keep[:2];rs[116]=1
+        data.textures[0]=Texture(1,1,64,64,7,0,0,1)
+        self.reject_atomic(data,-2,'coverage requires')
+        data.textures[0]=Texture(1,3,64,64,7,0,1,1)
+        self.reject_atomic(data,-2,'requires texture2d')
+
+    def test_hires_alpha_border_uses_same_trilinear_footprint(self):
+        data,keep=self.basic();rs,ts=keep[:2];rs[116]=1;data.native_alpha_border=1
+        data.textures[0]=Texture(1,1,512,512,10,0,1,0)
+        ts[0][10]=ts[0][11]=4;ts[0][12]=1
+        ts[0][13]=ts[0][14]=ts[0][15]=1;ts[0][18]=1;ts[0][29]=0x46000000
+        status,key,out,error=self.run_pack(data);self.assertEqual(status,0,error.message)
+        self.assertEqual(out.samplers[:8],[1,1,2,3,3,0,1,0])
+        self.assertEqual((key.border_axes[0],key.border_filter[0],out.native_alpha_border_mask),(0,0,1))
+        self.assertAlmostEqual(out.pixel[135],70/255)
 
     def test_explicit_native_black_border_six_mips_and_anisotropy(self):
         # Exact newly observed live draw state:32x32, six authored levels,
@@ -788,7 +820,6 @@ class DrawStateTests(unittest.TestCase):
         changes=[('RGB',lambda d,t:t[0].__setitem__(29,0x46000100)),
                  ('linear',lambda d,t:setattr(d.textures[0],'linear',1)),
                  ('cube',lambda d,t:setattr(d.textures[0],'sampler_type',3)),
-                 ('hires',lambda d,t:setattr(d.textures[0],'hires',1)),
                  ('trilinear',lambda d,t:t[0].__setitem__(15,2)),
                  ('point min',lambda d,t:t[0].__setitem__(14,1)),
                  ('point mag',lambda d,t:t[0].__setitem__(13,1)),

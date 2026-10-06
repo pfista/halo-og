@@ -15,7 +15,9 @@
 #include "metal_draw_state.h"
 #include "metal_fixed_function.h"
 #include "metal_mip_composite.h"
+#include "metal_hud_mipmap.h"
 #include "metal_render_scale.h"
+#include "hud_hires.h"
 #include "halo_frame_pacing.h"
 #include <errno.h>
 #include <math.h>
@@ -134,13 +136,15 @@ struct vertex_shader_object {
 };
 struct native_resource {
     struct native_resource *next;
+    struct native_resource *hud_override;
     struct halo_metal_ref ref;
     DWORD data, format_word, size_word;
     struct xgpu_texture_description description;
-    unsigned long generation, palette_hash;
+    unsigned long generation, palette_hash, hud_generation;
+    long hud_asset;
     uint64_t last_rendered;
     uint32_t format, usage, storage_width, storage_height, scale_mode;
-    BOOL mip_composite, volume;
+    BOOL mip_composite, volume, hud_checked;
 };
 struct native_program {
     struct native_program *next;
@@ -1231,6 +1235,57 @@ static unsigned long palette_hash(const D3DCOLOR *palette) {
     if (palette) for (unsigned i=0;i<256;i++) hash=(hash^palette[i])*16777619UL;
     return palette ? hash : 0;
 }
+/* One immutable native GPU texture per embedded HUD sheet, independent of the
+ * map's source address. Each source still has to pass its tag/size/CRC check.
+ * Only an enabled, matching HUD bitmap reaches this allocation/upload path. */
+static struct native_resource *hud_texture_get(long asset) {
+    struct native_resource *entry;
+    for (entry=resources;entry;entry=entry->next)
+        if (entry->description.hires && entry->hud_asset==asset) return entry;
+    unsigned long width=0,height=0;
+    unsigned char *pixels=hud_hires_override_pixels(asset,&width,&height);
+    if (!pixels) return NULL;
+    if (!width || !height || width>8192 || height>8192 ||
+        (width&(width-1)) || (height&(height-1))) {
+        platform_log("Native high-res HUD: invalid dimensions %lux%lu for asset %ld; original bitmap used",
+            width,height,asset);
+        free(pixels);return NULL;
+    }
+    uint32_t bytes=(uint32_t)(width*height*4),upload_end,payloads[]={bytes};
+    require_status("largest high-res HUD mip reservation",halo_metal_packet_room(
+        sizeof(struct halo_metal_packet),transport.capacity,sizeof(struct halo_metal_upload_ex),
+        payloads,1,&upload_end));
+    entry=calloc(1,sizeof(*entry));
+    if (!entry) native_fail("allocate high-res HUD cache",HALO_METAL_MEMORY);
+    entry->hud_asset=asset;
+    entry->description=(struct xgpu_texture_description){.format=D3DFMT_A8R8G8B8,
+        .width=width,.height=height,.depth=1,.levels=1,.hires=TRUE,
+        .hires_coverage=hud_hires_override_coverage(asset)};
+    for (unsigned long largest=width>height ? width:height;largest>1;largest>>=1)
+        entry->description.levels++;
+    entry->format=HALO_METAL_RGBA8;entry->usage=HALO_METAL_SHADER_READ;
+    resource_create(entry);
+    uint32_t mip_width=(uint32_t)width,mip_height=(uint32_t)height;
+    for (uint32_t mip=0;mip<entry->description.levels;mip++) {
+        struct halo_metal_upload_ex upload={0};
+        upload.command.opcode=HALO_METAL_UPLOAD_EX;upload.resource=entry->ref;
+        upload.mip=mip;upload.width=mip_width;upload.height=mip_height;upload.depth=1;
+        upload.bytes_per_row=mip_width*4;upload.bytes_per_image=mip_width*mip_height*4;
+        upload.data_size=upload.bytes_per_image;upload.plane=HALO_METAL_COLOR;
+        uint32_t mip_payloads[]={upload.data_size};
+        packet_begin(sizeof(upload),mip_payloads,1);uint32_t offset=command_append(&upload,sizeof(upload));
+        payload_append(offset,offsetof(struct halo_metal_upload_ex,data_offset),pixels,upload.data_size);
+        packet_finish();
+        if (mip+1<entry->description.levels) {
+            metal_hud_mip_reduce_rgba(pixels,mip_width,mip_height);
+            mip_width=mip_width>1 ? mip_width/2:1;mip_height=mip_height>1 ? mip_height/2:1;
+        }
+    }
+    free(pixels);entry->next=resources;resources=entry;
+    platform_log("Native high-res HUD: asset %ld uploaded %lux%lu, %lu mip levels",
+        asset,width,height,entry->description.levels);
+    return entry;
+}
 static struct native_resource *texture_get(D3DBaseTexture *texture,D3DPalette *palette,unsigned stage) {
     struct native_resource *entry=rendered_alias(texture->Data);
     /* Device-owned indexed history is GPU storage even before its first
@@ -1248,7 +1303,7 @@ static struct native_resource *texture_get(D3DBaseTexture *texture,D3DPalette *p
         return entry;
     }
     for (entry=resources;entry;entry=entry->next)
-        if (!(entry->usage&HALO_METAL_RENDER_TARGET) && !entry->mip_composite && entry->data==texture->Data &&
+        if (!(entry->usage&HALO_METAL_RENDER_TARGET) && !entry->mip_composite && !entry->description.hires && entry->data==texture->Data &&
             entry->format_word==texture->Format && entry->size_word==texture->Size) break;
     struct xgpu_texture_mip_layout layout;
     struct xgpu_texture_volume_mip_layout volume_layout;
@@ -1317,6 +1372,22 @@ static struct native_resource *texture_get(D3DBaseTexture *texture,D3DPalette *p
         entry->format=texture_format(layout.format);entry->usage=HALO_METAL_SHADER_READ;
         resource_create(entry);entry->next=resources;resources=entry;
     }
+    /* Protect before CRC validation as well as original uploads, so a later
+     * source write invalidates this association on the next draw. A changed
+     * or localized bitmap falls back to its authored pixels. */
+    if (!entry->hud_checked || generation!=entry->hud_generation) {
+        memory_watch_protect(watched_address,layout.source_total_size);
+        generation=memory_watch_generation(watched_address,layout.source_total_size);
+        entry->hud_override=NULL;
+        if (!volume && !original.cube_map && original.format!=D3DFMT_P8) {
+            unsigned long level0_size=original.levels>1 ?
+                xgpu_texture_level_offset(&original,1):xgpu_texture_face_size(&original);
+            long asset=hud_hires_override_find(watched_address,original.width,original.height,level0_size);
+            if (asset>=0) entry->hud_override=hud_texture_get(asset);
+        }
+        entry->hud_generation=generation;entry->hud_checked=TRUE;
+    }
+    if (entry->hud_override) return entry->hud_override;
     if (!fresh && generation==entry->generation && hash==entry->palette_hash) return entry;
     /* Protect before copying; a racing guest write increments the generation,
        forcing another upload at the next use rather than being lost. */
@@ -1500,7 +1571,7 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
         struct xgpu_texture_description *d=&bound[stage]->description;
         input.textures[stage]=(struct metal_draw_texture){1,bound[stage]->volume ? _xgpu_sampler_3d:
             d->cube_map ? _xgpu_sampler_cube:_xgpu_sampler_2d,
-            d->width,d->height,d->levels,original.linear,0,0};
+            d->width,d->height,d->levels,original.linear,d->hires,d->hires_coverage};
         input.texture_depth[stage]=bound[stage]->volume ? d->depth:0;
     }
     struct native_resource *color=target_get(device.render_target);
@@ -1528,6 +1599,15 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
                 s[D3DTSS_BORDERCOLOR],s[D3DTSS_MINFILTER],s[D3DTSS_MAGFILTER],s[D3DTSS_MIPFILTER],s[D3DTSS_MAXANISOTROPY]);
         }
         native_fail("pack original draw state",status);
+    }
+    /* A linear Xbox bitmap uses pixel coordinates in its original dimensions.
+     * The replacement's real dimensions validate its native mip chain, while
+     * this normalization preserves the game's original atlas/layout UVs. */
+    for (unsigned stage=0;stage<4;stage++) if (bound[stage] && bound[stage]->description.hires && input.textures[stage].linear) {
+        struct xgpu_texture_description original;
+        xgpu_texture_describe(device.textures[stage]->Format,device.textures[stage]->Size,&original);
+        output.pixel.texture_scale[stage][0]=1.0f/(float)original.width;
+        output.pixel.texture_scale[stage][1]=1.0f/(float)original.height;
     }
     /* Original constants and texture normalization stay logical. Only the
        raster viewport/scissor describe the larger Metal attachment. */

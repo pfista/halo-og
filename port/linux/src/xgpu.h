@@ -103,8 +103,9 @@ struct nv2a_pixel_shader_key
 	/* D3DTSS_COLORSIGN: channels (bit 0 alpha ... bit 3 blue, as
 	D3DTSIGN_*) that hold signed data in an unsigned texture format */
 	unsigned char color_sign[4];
-	/* GLES without texture_border_clamp: non-mipmapped 2D textures only.
-	Bit 0/1 select U/V; filtering bit 0/1 selects linear min/magnification. */
+	/* GLES without texture_border_clamp: bit0/1 select U/V. Filtering0..3
+	 * selects single-level linear min/magnification by bit0/1; filtering4
+	 * selects the optional HUD's complete unbiased trilinear mip chain. */
 	unsigned char border_axes[4];
 	unsigned char border_filter[4];
 	/* D3DCMP_* function for the alpha test, or 0 when disabled */

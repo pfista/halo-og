@@ -495,7 +495,10 @@ HaloMetalDraw prepare_draw(const std::vector<uint8_t> &packet, size_t position, 
                 const auto &s = c.samplers[i];
                 check(t.type == HALO_METAL_TEXTURE_2D && t.mip_levels > 1 &&
                     (s.address_u == 3 || s.address_v == 3) && s.min_filter == 1 && s.mag_filter == 1 &&
-                    s.mip_filter == 1 && s.max_anisotropy == 1,HALO_METAL_UNSUPPORTED);
+                    (s.mip_filter == 1 || (s.mip_filter == 2 && t.format == HALO_METAL_RGBA8)) &&
+                    s.max_anisotropy == 1,HALO_METAL_UNSUPPORTED);
+                // HUD redraws use RGBA8 trilinear mips. Both border samplers
+                // retain the same footprint through fractional mip blends.
                 // PS608 layout: texture_border_color begins at byte 528.
                 float rgba[4]; memcpy(rgba,packet.data()+c.pixel_uniforms_offset+528+i*16,sizeof(rgba));
                 check(rgba[0] == 0 && rgba[1] == 0 && rgba[2] == 0 && rgba[3] >= 0 && rgba[3] <= 1,

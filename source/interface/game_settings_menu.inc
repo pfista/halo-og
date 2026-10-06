@@ -27,11 +27,11 @@ static short const device_settings_choices[] = {_ds_audio, _ds_video, _ds_contro
 static short const device_settings_deadzone_presets[] = {0, 3277, 6553, 9000, 9830, 13107, 16000};
 static char const *const device_settings_deadzone_labels[] = {"0%", "10%", "20%", "Xbox", "30%", "40%", "49%"};
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-#define DEVICE_SETTINGS_MAX_PAGE_ROWS 7
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 7, 4, 3};
+#define DEVICE_SETTINGS_MAX_PAGE_ROWS 8
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 8, 7, 4, 3};
 #else
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 6
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 5, 5, 4, 3};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 6, 5, 4, 3};
 #endif
 static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX_PAGE_ROWS] = {
     {NONE, NONE, NONE, NONE},
@@ -39,13 +39,13 @@ static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX
      _device_setting_dialogue_volume, NONE, _device_setting_menu_music},
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
     {_device_setting_renderer, _device_setting_fullscreen, _device_setting_vsync, _device_setting_interpolation,
-     _device_setting_render_height, _device_setting_frame_limit, _device_setting_anti_aliasing},
+     _device_setting_high_res_hud, _device_setting_render_height, _device_setting_frame_limit, _device_setting_anti_aliasing},
     {_device_setting_timer_volume, _device_setting_timer_countdown, _device_setting_timer_beeps,
      _device_setting_timer_minutes, _device_setting_timer_items,
      _device_setting_timer_position, _device_setting_timer_scale},
 #else
     {_device_setting_fullscreen, _device_setting_vsync, _device_setting_interpolation,
-     _device_setting_timer_position, _device_setting_timer_scale},
+     _device_setting_high_res_hud, _device_setting_timer_position, _device_setting_timer_scale},
     {_device_setting_timer_volume, _device_setting_timer_countdown, _device_setting_timer_beeps,
      _device_setting_timer_minutes, _device_setting_timer_items},
 #endif
@@ -501,6 +501,7 @@ static boolean device_settings_build_native_pages(long strings, long const *head
         device_settings_native.spinners[row].list_flags = 0;
         device_settings_native.spinners[row].text_label_string_list = device_settings_reference(UNICODE_STRING_LIST_TAG, strings);
         device_settings_native.spinners[row].bounds.x1 = row == _device_setting_timer_position ? 136 : 112;
+        if (row == _device_setting_high_res_hud) device_settings_native.spinners[row].bounds.x1 = 160;
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         if (row == _device_setting_renderer) device_settings_native.spinners[row].bounds.x1 = 144;
 #endif
@@ -584,9 +585,9 @@ static boolean device_settings_build(void)
         "SETTINGS", "PROFILE SETTINGS", "GAME SETTINGS", "ABOUT", "AUDIO", "VIDEO", "ACCEPT",
         "A: Select    B: Back", "Effects includes announcer.\r\nLeft/Right: Adjust    B: Cancel",
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        "Accept saves. B: Cancel\r\nRenderer, resolution and AA:\r\nRelaunch Halo to apply.",
+        "Accept saves. B: Cancel\r\nRenderer, resolution, HUD and AA:\r\nRelaunch Halo to apply.",
 #else
-        "Left/Right: Adjust\r\nAccept saves. B: Cancel",
+        "Left/Right: Adjust\r\nAccept saves. B: Cancel\r\nRelaunch Halo for HUD changes.",
 #endif
         "Could not apply settings.\r\nYour changes remain here.",
         "Could not restore all settings.\r\nReview values and try again.",
@@ -599,7 +600,7 @@ static boolean device_settings_build(void)
         "MASTER VOLUME:", "MUSIC VOLUME:", "EFFECTS VOLUME:", "DIALOGUE VOLUME:", "TIMER VOLUME:",
         "MENU MUSIC:", "FULLSCREEN:", "VSYNC:", "SMOOTH MOTION:",
         "COUNTDOWN:", "BEEPS:", "MINUTE ANNOUNCEMENTS:", "ITEM CUES:", "TIMER POSITION:", "TIMER SIZE:",
-        "OG MAPS:", "COMMUNITY MAPS:", "JOIN IN PROGRESS:", "LEFT STICK DEADZONE:", "RIGHT STICK DEADZONE:", "LOOK ACCELERATION:", "MENU REPEAT:"
+        "OG MAPS:", "COMMUNITY MAPS:", "JOIN IN PROGRESS:", "LEFT STICK DEADZONE:", "RIGHT STICK DEADZONE:", "LOOK ACCELERATION:", "MENU REPEAT:", "HUD:"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "RENDERER:", "RESOLUTION:", "FPS LIMIT:", "ANTI-ALIASING:"
 #endif
@@ -626,7 +627,8 @@ static boolean device_settings_build(void)
         "Ignore small left-stick movements.\r\nXbox keeps the original deadzone.\r\nLower values may allow stick drift.",
         "Ignore small right-stick movements.\r\nXbox keeps the original deadzone.\r\nLower values may allow stick drift.",
         "Xbox builds horizontal turn speed.\r\nOff removes that held-stick speedup.\r\nBase turn speed stays the same.",
-        "Menus and on-screen keyboard:\r\nHeld arrows/D-pad/sticks. 250/100ms.\r\nAll local players. Accept saves."
+        "Menus and on-screen keyboard:\r\nHeld arrows/D-pad/sticks. 250/100ms.\r\nAll local players. Accept saves.",
+        "Choose original HUD artwork or\r\nhigh-resolution redraws.\r\nRelaunch Halo to apply."
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "Choose ANGLE or Native Metal.\r\nNative Metal is experimental.\r\nAccept saves for the next launch.",
         "Choose Native Metal render resolution.\r\nOriginal game assets stay the same.\r\nRelaunch Halo to apply.",
@@ -792,9 +794,10 @@ static boolean device_settings_build(void)
             short pitch = main_menu ? 24 : 27;
             short width = main_menu ? 284 : 202;
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-            /* Keep authored button rectangles/UVs while fitting all seven
-             * settings and Accept inside the smallest split-screen root. */
-            if (!main_menu && (page == _ds_video || page == _ds_timer)) pitch = 22;
+            /* Keep authored button rectangles/UVs while fitting all settings
+             * and Accept inside the smallest split-screen root. */
+            if (!main_menu && page == _ds_video) pitch = 20;
+            else if (!main_menu && page == _ds_timer) pitch = 22;
 #endif
             /* Five-row Controller pages use the existing six-row frame. */
             short height = main_menu ? 28 + rows * pitch + 40 : rows <= 4 ? 159 : rows <= 6 ? 213 : 240;
@@ -1000,7 +1003,7 @@ static void device_settings_video_visibility(struct device_settings_draft *draft
 {
     struct widget_instance *column, *child;
     boolean native;
-    short index = 0;
+    short index = 0, visible_rows = 0;
     if (draft->page != _ds_video) return;
     native = draft->values[_device_setting_renderer] != 0.0;
     for (column = draft->root->child; column; column = column->next)
@@ -1008,11 +1011,14 @@ static void device_settings_video_visibility(struct device_settings_draft *draft
     if (!column) return;
     for (child = column->child; child; child = child->next, index++)
     {
-        child->visible = native || index < 4 || index == device_settings_page_counts[_ds_video];
+        short setting = index < device_settings_page_counts[_ds_video] ? device_settings_page_rows[_ds_video][index] : NONE;
+        child->visible = native || (setting != _device_setting_render_height &&
+            setting != _device_setting_frame_limit && setting != _device_setting_anti_aliasing);
         child->disabled = !child->visible;
         if (!device_settings.native_pages && child->definition_tag_index == device_settings.accept_tag)
-            child->vertical_offset = column->vertical_offset + (native ? 7 : 4) *
+            child->vertical_offset = column->vertical_offset + visible_rows *
                 device_settings.column_children[draft->layout][_ds_video][1].vertical_offset;
+        if (child->visible) visible_rows++;
     }
     if (!column->focused_child || !column->focused_child->visible || column->focused_child->disabled)
     {
@@ -1061,7 +1067,7 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
         "Master", "Music", "Effects", "Dialogue", "Volume",
         "Menu Music", "Fullscreen", "VSync", "Smooth Motion",
         "Countdown", "Beeps", "Minutes", "Item Cues", "Position", "Timer Size",
-        "OG Maps", "Community Maps", "Join In Progress", "Left Deadzone", "Right Deadzone", "Look Acceleration", "Menu Repeat"
+        "OG Maps", "Community Maps", "Join In Progress", "Left Deadzone", "Right Deadzone", "Look Acceleration", "Menu Repeat", "HUD"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "Renderer", "Resolution", "FPS Limit", "AA"
 #endif
@@ -1120,6 +1126,8 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Xbox" : "Off");
         else if (row == _device_setting_fast_menu_repeat)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Faster" : "Original");
+        else if (row == _device_setting_high_res_hud)
+            snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "High Resolution" : "Original");
         else snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "ON" : "OFF");
         if (device_settings.native_pages) snprintf(text, sizeof(text), "%s", value);
         else snprintf(text, sizeof(text), "%s: < %s >", names[row], value);

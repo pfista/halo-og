@@ -129,6 +129,13 @@ playing. Changing Menu Music during a match affects the next main-menu visit.
 
 ## Video
 
+Video includes **HUD: Original / High Resolution**, with Original as the default.
+Accept saves `display.high_res_hud`; relaunch Halo to apply the texture choice.
+Both Mac renderers and the Linux, Windows, Android and iOS ports support it.
+The redraws preserve HUD placement and size;
+original bitmap fonts and message artwork remain. See
+[high-resolution HUD](high-resolution-hud.md) for asset provenance and coverage.
+
 Video contains **Fullscreen**, **VSync**, **Smooth Motion**, **Timer Position**
 and **Timer Size**. Smooth Motion enables render interpolation while simulation remains
 30 Hz. Switching interpolation resets its old snapshots before rendering with
@@ -144,7 +151,7 @@ Fullscreen shares the existing native Mac preference in `macos-settings.json`;
 Linux and Windows save it as `display.fullscreen` in `config.toml`.
 VSync and Smooth Motion use `display.vsync` and `display.interpolation` in
 `config.toml`. Settings apply on Accept without restarting. Rendering resolution,
-aspect selection, Direct Camera and high-resolution HUD behavior are unchanged.
+aspect selection and Direct Camera behavior are unchanged.
 
 ## Mac input and window behavior
 

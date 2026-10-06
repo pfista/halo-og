@@ -8,8 +8,8 @@ Which bitmap is at an address the game knows (from the loaded map's tags:
 port/linux/game/hud_hires_tags.c). Each texture is decoded from its PNG when
 first drawn and kept: up to 69 of them, about 225 MB with their mip levels,
 though a game draws only some (the scopes' only when zoomed).
-They are drawn with linear filtering and their mip levels (d3d8_gl.c,
-configure_sampler), as they are larger than they appear.
+Both renderers upload these pixels with linear filtering and mip levels,
+as the redraws are larger than they appear.
 
 The PNGs are the ones tools/hud_assets.py writes, so only what it writes is
 read: 8-bit RGBA, not interlaced, its data inflated with the game's zlib.
@@ -197,12 +197,35 @@ failed:
 	return NULL;
 }
 
+unsigned char *hud_hires_override_pixels(long asset, unsigned long *width, unsigned long *height)
+{
+	const struct hud_hires_embedded *embedded;
+	unsigned char *pixels;
+
+	if (width) *width = 0;
+	if (height) *height = 0;
+	if (!width || !height || asset < 0 || asset >= hud_hires_asset_count() || textures[asset].failed)
+		return NULL;
+	embedded = &hud_hires_embedded[asset];
+	pixels = png_decode(embedded);
+	if (!pixels)
+	{
+		platform_log("high-res hud: could not decode the texture for %s bitmap %d", embedded->tag, embedded->bitmap);
+		textures[asset].failed = 1;
+		return NULL;
+	}
+	*width = embedded->width;
+	*height = embedded->height;
+	return pixels;
+}
+
 #if !defined(HALO_MACOS_NATIVE_METAL)
 unsigned int hud_hires_override_texture(long asset, unsigned long *levels)
 {
 	const struct hud_hires_embedded *embedded;
 	unsigned char *pixels;
 	unsigned long largest;
+	unsigned long width, height;
 	GLuint texture;
 
 	if (asset < 0 || asset >= hud_hires_asset_count() || textures[asset].failed)
@@ -213,13 +236,9 @@ unsigned int hud_hires_override_texture(long asset, unsigned long *levels)
 		return textures[asset].texture;
 	}
 	embedded = &hud_hires_embedded[asset];
-	pixels = png_decode(embedded);
+	pixels = hud_hires_override_pixels(asset, &width, &height);
 	if (!pixels)
-	{
-		platform_log("high-res hud: could not decode the texture for %s bitmap %d", embedded->tag, embedded->bitmap);
-		textures[asset].failed = 1;
 		return 0;
-	}
 	textures[asset].levels = 1;
 	for (largest = embedded->width > embedded->height ? embedded->width : embedded->height; largest > 1; largest >>= 1)
 		textures[asset].levels++;
@@ -236,6 +255,8 @@ unsigned int hud_hires_override_texture(long asset, unsigned long *levels)
 	free(pixels);
 	textures[asset].texture = texture;
 	*levels = textures[asset].levels;
+	platform_log("high-res hud: OpenGL asset %ld uploaded %lux%lu, %lu mip levels",
+		asset, width, height, textures[asset].levels);
 	return texture;
 }
 #endif

@@ -40,6 +40,10 @@ texture was drawn for (another language's maps, which have their own text,
 or modified ones) */
 long hud_hires_override_find(unsigned long address, unsigned long width, unsigned long height,
 	unsigned long level0_size);
+/* Decode one embedded redraw for either renderer. Returns RGBA rows, top first,
+ * owned by the caller (free after upload), or NULL on failure. Width and height
+ * are the redraw's physical dimensions; original tag coordinates stay intact. */
+unsigned char *hud_hires_override_pixels(long asset, unsigned long *width, unsigned long *height);
 /* its GL texture (decoded and uploaded, mipmapped, on first use; 0 if it
 could not be), and the number of its mip levels */
 #if !defined(HALO_MACOS_NATIVE_METAL)

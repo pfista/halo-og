@@ -166,6 +166,16 @@ class PixelEmitterTests(unittest.TestCase):
         self.assertIn("if (t0.a == 0.0) discard_fragment()", source)
         self.assertIn("floor(clamp(result.a, 0.0, 1.0) * 255.0 + 0.5) > u.alpha_reference", source)
 
+    def test_hud_meter_coverage_precedes_alpha_test_in_both_emitters(self):
+        key = textured_key()
+        self.assertNotIn("result.a = mix(1.0, result.a, t0.g)", self.emit(key))
+        key.coverage_alpha = 1
+        key.alpha_test_function = 516
+        for language in ("msl", "glsl"):
+            source = self.emit(key, language)
+            self.assertLess(source.index("result.a = mix(1.0, result.a, t0.g)"),
+                            source.index("floor(clamp(result.a, 0.0, 1.0) * 255.0 + 0.5)"))
+
     def test_declares_texture_dimension_from_key(self):
         for mode, dimension in ((1, "texture2d"), (2, "texture3d"), (3, "texturecube")):
             self.assertIn(f"{dimension}<float> tex0", self.emit(textured_key(mode)))

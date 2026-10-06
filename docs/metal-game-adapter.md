@@ -758,8 +758,9 @@ water executes in the bounded Damnation runs, but its native pixel parity
 remains unverified. Near-half nearest-LOD selection
 and roof/downward glyph clipping remain unresolved.
 Compressed/render-target volumes, BC2/BC3 cubes, missing rendered-mip generation,
-floating/unknown DOT_ZW depth units, multisample/coverage-alpha paths and native
-high-resolution HUD uploads remain explicitly unsupported. Integer-D24 packing
+floating/unknown DOT_ZW depth units and multisample paths remain explicitly
+unsupported. Optional high-resolution HUD uploads and their meter coverage-alpha
+path are implemented; see [the HUD guide](high-resolution-hud.md). Integer-D24 packing
 and controlled depth fixtures pass; actual zsprite draw parity remains open. Physical Xbox
 D24/F24 and sampling precision remain a separate fidelity gate from matching
 the current ANGLE port.

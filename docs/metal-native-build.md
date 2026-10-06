@@ -10,10 +10,13 @@ Quit and reopen Halo to change engines; a current match is never restarted by
 Accept or by the macOS selector.
 
 Native Metal reveals resolution, frame limit and anti-aliasing controls in Video.
+Both renderers also offer **HUD: Original / High Resolution**, default Original.
+The HUD texture choice applies after relaunch; see
+[high-resolution HUD](high-resolution-hud.md) for redraw provenance and coverage.
 Resolution and anti-aliasing changes also take effect on the next launch. VSync
 and Smooth Motion remain available for both engines. Mac timer position and size
 are on the Timer page. Other platforms retain their existing menus. Gameplay
-continues at 30 Hz; the original assets and HUD are preserved.
+continues at 30 Hz; Original HUD remains the default.
 
 The app's primary `halo` executable starts the paired `halo-metal` process before
 AppKit/SDL initialization when Metal is selected. `halo_guest.elf` belongs to
@@ -224,9 +227,10 @@ The SDL guest creates the window and exposes its handle through
 presentation. `halo_video_apply_settings()` calls the frontend's
 `halo_metal_apply_video_settings()` and resets interpolation only when that
 callback succeeds. The callback must report only settings that presentation
-actually applies. The high resolution HUD's CPU metrics remain available;
-its GL upload API is absent in the native build, so native GPU use requires
-an explicit backend upload implementation.
+actually applies. Native Metal uploads the optional high-resolution HUD sheets
+through its GL-free command interface, with a full RGBA mip chain and the
+original meter blending correction. Source dimensions and pixel checksums
+guard replacement selection; Original retains the map's own artwork.
 
 For an isolated host integration check after the native import table exists:
 
