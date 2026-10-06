@@ -79,8 +79,21 @@ def function(source, name):
 def libraries(egl=None, gles=None):
     if sys.platform == 'darwin':
         angle = ROOT / 'build/macos/angle/dist'
+        bundled = egl is None and gles is None
         egl = egl or angle / 'EGL.xcframework/macos-arm64/libEGL.framework/libEGL'
         gles = gles or angle / 'GLESv2.xcframework/macos-arm64/libGLESv2.framework/libGLESv2'
+        if bundled:
+            # ANGLE opens this companion beside EGL, even when GLES is loaded
+            # explicitly. The app builder prepares the same link, but the
+            # standalone CI probe runs before the host app has been built.
+            for path in (egl, gles):
+                if not path.is_file():
+                    raise OSError(f'Missing bundled ANGLE library: {path}')
+            companion = egl.with_name('libGLESv2.dylib')
+            if companion.is_symlink() and companion.resolve() != gles.resolve():
+                companion.unlink()
+            if not companion.exists():
+                companion.symlink_to(gles.resolve())
     else:
         egl = egl or ctypes.util.find_library('EGL') or 'libEGL.dll'
         gles = gles or ctypes.util.find_library('GLESv2') or 'libGLESv2.dll'
@@ -285,13 +298,48 @@ def gl_fixtures():
         yield key,f
 
 
+def pixel_tolerance(key, fixture):
+    """Bound RGBA8 filter rounding without weakening exact sampling controls.
+
+    Some GLES samplers return filtered UNORM8 components rounded to one of the
+    authored eight-bit codes. Keep the independent real-valued reference and
+    propagate half a code only through equations that consume fractional
+    coverage. The constant-blue/art meter controls and discard checks stay at
+    the original float threshold. Border fixtures have their own stated bound.
+    """
+    strict = .00002
+    if 'float_tolerance' in fixture:
+        return fixture['float_tolerance']
+    if fixture.get('discard'):
+        return strict
+    coverage = fixture.get('coverage')
+    fractional = (coverage is not None and
+                  abs(coverage * 255 - round(coverage * 255)) > 1e-8)
+    scale = 0.
+    if 'meter_blend' in fixture and key.coverage_alpha and fractional:
+        alpha = fixture['meter_blend'][3]
+        clear = fixture['clear_color']
+        scale = (1 - alpha) * max(*clear[:3], alpha + clear[3])
+    elif 'text_blend' in fixture and fractional:
+        tint = fixture['inputs']['d0']
+        scale = tint[3]
+        if fixture['text_blend']:
+            scale *= max(abs(a - b) for a, b in
+                         zip(tint[:3], fixture['clear_color'][:3]))
+    elif fixture.get('point_control') and fixture['hires'] and any(
+            abs(value * 255 - round(value * 255)) > 1e-8
+            for value in fixture['expected']):
+        scale = 1.
+    return strict + scale * .5 / 255
+
+
 def validate(out, egl=None, gles=None, backend=None):
     out.mkdir(parents=True,exist_ok=True)
     before=source_hashes()
     gl=Gles(*libraries(egl,gles),backend=backend)
     try:
         sampler=production_sampler(out,gl);emitter=shader.build_library(out)
-        programs={};tests=[];maximum=0.;discarded=0
+        programs={};tests=[];maximum=0.;discarded=0;rounded=0
         cases=itertools.chain(gl_fixtures(),real_text_fixtures(out))
         for provider_key,f in cases:
             if f.get('real_glyph'):f['hires']=True;f['single_mip']=True
@@ -337,10 +385,12 @@ def validate(out, egl=None, gles=None, backend=None):
             error_code=gl.GetError()
             if error_code:raise RuntimeError(f'{f["name"]}: GL error 0x{error_code:04x}')
             expected=clear if f.get('discard') else f['expected']
-            tolerance=f.get('float_tolerance',.00002)
+            tolerance=pixel_tolerance(key,f)
             error=max(abs(a-b) for a,b in zip(actual,expected));maximum=max(maximum,error)
             if not all(math.isfinite(a) for a in actual) or error>=tolerance:
-                raise RuntimeError(f'{f["name"]}: actual {list(actual)}, expected {expected}, error {error}')
+                raise RuntimeError(f'{f["name"]}: actual {list(actual)}, expected {expected}, error {error}, tolerance {tolerance}, renderer {gl.renderer}')
+            rounded+=tolerance>.00002 and 'float_tolerance' not in f
+            f['validated_float_tolerance']=tolerance
             discarded+=bool(f.get('discard'));f['shader']=name;tests.append(f)
             gl.DeleteTextures(1,C.byref(tex))
         if before!=source_hashes():
@@ -350,6 +400,7 @@ def validate(out, egl=None, gles=None, backend=None):
             forced_hires_mip_border_cases=77,original_point_controls=4,hires_filter_controls=4,
             bias_controls=2,production_sampler=True,native_border_available=gl.border_clamp,
             synthetic_text_cases=30,real_glyph_cases=24,
+            rgba8_filter_rounding_cases=rounded,
             source_sha256=before,
             shader_sha256={name:digest(out/name) for _,name in programs.values()},
             sampler_source_sha256=digest(out/'sampler.c'),sampler_library_sha256=digest(out/'sampler.dylib'),

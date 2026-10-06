@@ -158,3 +158,13 @@ and `/private/tmp/halo-native-text-validation`. Runtime captures, map data and
 binaries stay outside source control. The first menu smoke attempt used an
 invalid validation-layer environment value; it failed before rendering, and
 the corrected attempt above supplies the runtime evidence.
+
+The standalone Mac GLES probe prepares ANGLE's sibling GLES library link before
+loading EGL, matching the app builder. Its RGBA8 pixel checks propagate a half
+code of filtering precision only where fractional coverage enters the meter,
+text or linear-filter equations. Original point sampling, exact authored-code
+samples and discard controls retain the original float tolerance. This accounts
+for the Linux CI sampler rounding green coverage from .25 to 64/255; the
+resulting meter-alpha difference matches the independent reference equation.
+Four focused tests and all 333 Mac ANGLE GPU cases pass with these controls.
+The updated Linux GPU run remains a separate CI requirement.
