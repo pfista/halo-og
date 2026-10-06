@@ -111,6 +111,14 @@ app data. See [Android installation/data](../port/android/README.md#game-data).
 5. Start the match. Check movement, shooting, damage, deaths/respawns, audio,
    and the scoreboard on both machines. Play a second match without restarting.
 
+You can also start a **Split Screen** or **System Link** match by yourself.
+Join the lobby with your profile, then press **START** or **A** on your
+controller, click **START GAME**, or press **Enter/Space** with the keyboard.
+This begins the normal countdown; waiting alone does not start it automatically.
+Team games can start with your one player on either team. In System Link,
+other players can join after the match starts when **Game Settings → Multiplayer
+→ Join In Progress** is On. Split Screen remains local to your machine.
+
 Physical cross-platform and Internet/NAT play are still being validated. Report
 which pairing/network worked or failed; a successful CI build is not proof of
 that pairing. [Invite/network details](../port/linux/README.md#internet-play)

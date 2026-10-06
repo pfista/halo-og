@@ -190,6 +190,30 @@ a different tick rate. Original PC v7 caches remain unsupported.
 
 ## Defaults and comparison profile
 
+At the user's request, native Split Screen and System Link hosts may explicitly
+start a match with one joined local player, including a team game with only one
+team occupied. The existing **START GAME** action begins the normal countdown.
+This is an intentional extension to original Xbox lobby rules, selected by the
+host's action each match. Waiting alone still leaves the countdown stopped;
+normal automatic countdowns and two-team requirements for multiple players
+remain in place. System Link uses the existing Join In Progress setting for
+later arrivals. The lobby retains its original widgets, fonts and countdown,
+with a short solo-start directions prompt.
+
+The production-function fixture `tools/test_solo_multiplayer_start.py` checks
+solo and team countdowns in both modes, host request authorization, readiness,
+pause and precache gates, the start-message transition, and the unchanged
+legacy two-player requirement; it does not establish native gameplay or Xbox parity.
+
+Local Mac validation passes 42 focused network tests, the dual-renderer build
+and strict app-signature verification. Isolated native UI playtests on Battle
+Creek/Slayer observed one-player lobbies remaining idle, then the existing
+START action beginning 10-second Split Screen and 30-second System Link
+countdowns and spawning into gameplay. Both instances exited cleanly. Evidence
+is in `build/macos/solo-multiplayer-validation/runtime/result.json`; physical
+controllers, cross-platform late joining and reference-Xbox comparisons were
+not exercised by these runs.
+
 Controller settings offer **Menu Repeat: Original / Faster** as an intentional
 local UI preference. Original retains the reconstructed 250 ms cadence; Faster
 opts into 100 ms held navigation for arrows, D-pad directions and sticks in

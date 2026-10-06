@@ -338,6 +338,9 @@ enum network_game_server_countdown_event
 	_network_game_server_countdown_event_player_joined,
 	_network_game_server_countdown_event_stop,
 	_network_game_server_countdown_event_start_immediately,
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	_network_game_server_countdown_event_start_countdown,
+#endif
 };
 
 /* ---------- macros */
@@ -2393,6 +2396,16 @@ static boolean network_game_server_handle_message_client_game_start_request(
 					countdown_event == _network_game_server_countdown_event_start_immediately) &&
 					network_game_server_client_machine_is_local(server, client_machine)))
 			{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				/* The existing Start/faster wire request can launch a solo
+				 * countdown only from the host's own machine. Automatic player
+				 * joins still use player_joined and wait for other players. */
+				if (countdown_event == _network_game_server_countdown_event_player_joined &&
+					network_game_server_client_machine_is_local(server, client_machine))
+				{
+					countdown_event = _network_game_server_countdown_event_start_countdown;
+				}
+#endif
 				network_game_server_update_countdown(server, countdown_event);
 			}
 			else
