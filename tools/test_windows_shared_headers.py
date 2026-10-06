@@ -24,6 +24,7 @@ SHARED_HEADERS = (
     "performance_sound.h", "performance_audio.h", "native_audio.h",
     "native_video.h", "native_input_events.h", "halo_port_capacity.h",
     "controller_settings.h",
+    "halo_expanded_cache.h", "halo_expanded_cache_weapons.h", "halo_sha256.h",
 )
 
 
@@ -56,7 +57,8 @@ def generated_game_include_flags():
     result = {}
     for source in ("source/effects/effects.c", "port/linux/game/device_settings.c",
                    "source/input/input_xbox.c", "source/interface/event_manager.c",
-                   "source/interface/ui_widget.c", "source/interface/virtual_keyboard.c"):
+                   "source/interface/ui_widget.c", "source/interface/virtual_keyboard.c",
+                   "port/linux/game/expanded_cache.c"):
         tokens = shlex.split(writer.compile_flags[source].replace("\\", "/"))
         includes = []
         index = 0
@@ -80,6 +82,9 @@ PROBE = r'''
 #include "native_input_events.h"
 #include "halo_port_capacity.h"
 #include "controller_settings.h"
+#include "halo_expanded_cache.h"
+#include "halo_expanded_cache_weapons.h"
+#include "halo_sha256.h"
 #include "port_config.h"
 
 typedef char windows_pointer_is_32_bits[sizeof(void *) == 4 ? 1 : -1];
@@ -88,10 +93,14 @@ typedef char windows_wchar_is_16_bits[sizeof(__WCHAR_TYPE__) == 2 ? 1 : -1];
 typedef char native_input_event_is_present[HALO_NATIVE_MOUSE_RELEASE != 0 ? 1 : -1];
 typedef char native_sound_capacity_is_present[HALO_PORT_MAXIMUM_EFFECTS >= 256 ? 1 : -1];
 typedef char original_controller_deadzone_is_present[HALO_CONTROLLER_DEADZONE_DEFAULT == 9000 ? 1 : -1];
+typedef char full_cache_digest_is_present[sizeof(((struct native_map_cache_selection *)0)->sha256) == 32 ? 1 : -1];
+typedef char global_weapon_catalog_is_present[sizeof(native_expanded_cache_weapon_names) / sizeof(native_expanded_cache_weapon_names[0]) == 31 ? 1 : -1];
 
 void native_bridge_declarations(void)
 {
     struct performance_sound_statistics statistics;
+    struct sha256 hash;
+    unsigned char digest[32];
     unsigned previous = performance_sound_push(_performance_sound_movement);
     performance_sound_capture(_performance_sound_effect, 1);
     performance_sound_pop(previous);
@@ -112,6 +121,9 @@ void native_bridge_declarations(void)
     halo_controller_look_active(0, 0, 0, 0, 0);
     halo_controller_physical_axes(0);
     config_write_boolean("audio.menu_music", 1);
+    sha256_begin(&hash);
+    sha256_add(&hash, native_expanded_cache_weapon_names[0], 1);
+    sha256_end(&hash, digest);
 }
 '''
 
@@ -133,9 +145,17 @@ class WindowsSharedHeadersTests(unittest.TestCase):
             source = directory / "native_bridges.c"
             source.write_text(PROBE)
             output = directory / "native_bridges.obj"
+            # SHA-256 uses memcpy through the real Windows CRT wrapper. Supply
+            # only its SDK declaration for this SDK/linker-free cross probe.
+            sdk = directory / "sdk"
+            sdk.mkdir()
+            (sdk / "string.h").write_text(
+                "typedef __SIZE_TYPE__ size_t;\n"
+                "void *memcpy(void *, const void *, size_t);\n")
             subprocess.run([
                 self.clang, "--target=i686-pc-windows-msvc", "-std=gnu11",
                 "-Wall", "-Wextra", "-Werror", "-nostdinc", *paths[0],
+                "-isystem", str(sdk),
                 "-c", str(source), "-o", str(output),
             ], cwd=ROOT, check=True, capture_output=True, text=True)
             # A genuine 32-bit COFF object, not a successful host compilation.
