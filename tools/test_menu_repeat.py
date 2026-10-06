@@ -238,6 +238,8 @@ static void check_gameplay_hold_counts(void) {
     assert(config_reads==reads);
 }
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* Expected user policy, independent of the production header constants. */
+enum { FIRST_REPEAT=500, REPEAT_INTERVAL=100 };
 static const int dpad_buttons[4]={_gamepad_binary_button_dpad_up,_gamepad_binary_button_dpad_down,
     _gamepad_binary_button_dpad_left,_gamepad_binary_button_dpad_right};
 static void set_dpad(int controller,unsigned mask) {
@@ -248,39 +250,45 @@ static void set_dpad(int controller,unsigned mask) {
 static void check_faster_dpad(void) {
     int direction,controller;
     for(direction=0;direction<4;direction++) for(controller=0;controller<MAXIMUM_GAMEPADS;controller++) {
+        unsigned long after_stall=2000,repress=after_stall+REPEAT_INTERVAL+2;
+        unsigned long redirected=repress+FIRST_REPEAT+1;
         reset_events(1);present[controller]=TRUE;set_dpad(controller,1u<<direction);
         capture_events(0);expect_button(dpad_buttons[direction],controller);
         event_manager_flush();
-        capture_events(1);assert(!posted_count);capture_events(749);assert(!posted_count);
-        capture_events(750);expect_button(dpad_buttons[direction],controller);
-        capture_events(899);assert(!posted_count);capture_events(900);expect_button(dpad_buttons[direction],controller);
+        capture_events(1);assert(!posted_count);capture_events(499);assert(!posted_count);
+        capture_events(500);expect_button(dpad_buttons[direction],controller);
+        capture_events(599);assert(!posted_count);capture_events(600);expect_button(dpad_buttons[direction],controller);
         /* A delayed poll emits once and starts the next interval there. */
-        capture_events(2000);expect_button(dpad_buttons[direction],controller);
-        capture_events(2000);assert(!posted_count);capture_events(2149);assert(!posted_count);
-        capture_events(2150);expect_button(dpad_buttons[direction],controller);
-        set_dpad(controller,0);capture_events(2151);assert(!posted_count);
-        set_dpad(controller,1u<<direction);capture_events(2152);expect_button(dpad_buttons[direction],controller);
-        capture_events(2901);assert(!posted_count);capture_events(2902);expect_button(dpad_buttons[direction],controller);
-        set_dpad(controller,1u<<((direction+1)%4));capture_events(2903);
+        capture_events(after_stall);expect_button(dpad_buttons[direction],controller);
+        capture_events(after_stall);assert(!posted_count);
+        capture_events(after_stall+REPEAT_INTERVAL-1);assert(!posted_count);
+        capture_events(after_stall+REPEAT_INTERVAL);expect_button(dpad_buttons[direction],controller);
+        set_dpad(controller,0);capture_events(repress-1);assert(!posted_count);
+        set_dpad(controller,1u<<direction);capture_events(repress);expect_button(dpad_buttons[direction],controller);
+        capture_events(repress+FIRST_REPEAT-1);assert(!posted_count);
+        capture_events(repress+FIRST_REPEAT);expect_button(dpad_buttons[direction],controller);
+        set_dpad(controller,1u<<((direction+1)%4));capture_events(redirected);
         expect_button(dpad_buttons[(direction+1)%4],controller);
-        capture_events(3053);assert(!posted_count);capture_events(3653);expect_button(dpad_buttons[(direction+1)%4],controller);
+        capture_events(redirected+REPEAT_INTERVAL);assert(!posted_count);
+        capture_events(redirected+FIRST_REPEAT);expect_button(dpad_buttons[(direction+1)%4],controller);
     }
     reset_events(1);present[0]=present[1]=TRUE;set_dpad(0,HALO_MENU_DIRECTION_LEFT);
     capture_events(1000);expect_button(_gamepad_binary_button_dpad_left,0);
-    set_dpad(1,HALO_MENU_DIRECTION_RIGHT);capture_events(1100);expect_button(_gamepad_binary_button_dpad_right,1);
-    capture_events(1750);expect_button(_gamepad_binary_button_dpad_left,0);
-    capture_events(1850);expect_button(_gamepad_binary_button_dpad_right,1);
-    present[0]=FALSE;capture_events(1851);assert(!posted_count);
-    present[0]=TRUE;capture_events(1852);expect_button(_gamepad_binary_button_dpad_left,0);
+    set_dpad(1,HALO_MENU_DIRECTION_RIGHT);capture_events(1050);expect_button(_gamepad_binary_button_dpad_right,1);
+    capture_events(1000+FIRST_REPEAT);expect_button(_gamepad_binary_button_dpad_left,0);
+    capture_events(1050+FIRST_REPEAT);expect_button(_gamepad_binary_button_dpad_right,1);
+    present[0]=FALSE;capture_events(1051+FIRST_REPEAT);assert(!posted_count);
+    present[0]=TRUE;capture_events(1052+FIRST_REPEAT);expect_button(_gamepad_binary_button_dpad_left,0);
     reset_events(1);present[0]=TRUE;inputs[0].buttons[_gamepad_analog_button_a]=2;
     capture_events(1000);assert(posted_count==1 && posted[0].data.button.value==2);
     assert(widget_button(_gamepad_analog_button_a,2,0,2000)==2);
     assert(widget_button(_widget_event_dpad_up,2,0,1000)==2);
     assert(widget_button(_widget_event_dpad_up,1,0,1000)==1);
     reset_events(1);present[0]=TRUE;set_dpad(0,HALO_MENU_DIRECTION_UP);
-    capture_events(ULONG_MAX-500);expect_button(_gamepad_binary_button_dpad_up,0);
+    capture_events(ULONG_MAX-250);expect_button(_gamepad_binary_button_dpad_up,0);
     capture_events(248);assert(!posted_count);capture_events(249);expect_button(_gamepad_binary_button_dpad_up,0);
-    capture_events(398);assert(!posted_count);capture_events(399);expect_button(_gamepad_binary_button_dpad_up,0);
+    capture_events(249+REPEAT_INTERVAL-1);assert(!posted_count);
+    capture_events(249+REPEAT_INTERVAL);expect_button(_gamepad_binary_button_dpad_up,0);
 }
 static void set_stick(int controller,int stick,short x,short y) {
     if(stick) { navigation[controller].right_x=x;navigation[controller].right_y=y; }
@@ -291,35 +299,41 @@ static void set_stick(int controller,int stick,short x,short y) {
 static void check_faster_sticks(void) {
     int stick,controller;
     for(stick=0;stick<2;stick++) for(controller=0;controller<MAXIMUM_GAMEPADS;controller++) {
+        unsigned long first=1001,repeat=first+FIRST_REPEAT;
+        unsigned long changed=repeat+REPEAT_INTERVAL+2,repress=changed+FIRST_REPEAT+4;
         reset_events(1);present[controller]=TRUE;
         set_stick(controller,stick,STICK_EVENT_THRESHOLD-1,0);capture_events(1000);assert(!posted_count);
-        set_stick(controller,stick,STICK_EVENT_THRESHOLD,0);capture_events(1001);expect_stick(stick,SHORT_MAX,0,controller);
-        set_stick(controller,stick,STICK_EVENT_THRESHOLD-1,0);capture_events(1002);assert(!posted_count);
-        set_stick(controller,stick,28000,0);capture_events(1750);assert(!posted_count);
-        capture_events(1751);expect_stick(stick,SHORT_MAX,0,controller);
-        capture_events(1900);assert(!posted_count);capture_events(1901);expect_stick(stick,SHORT_MAX,0,controller);
-        set_stick(controller,stick,SHORT_MIN,0);capture_events(1902);expect_stick(stick,SHORT_MIN,0,controller);
-        set_stick(controller,stick,0,SHORT_MAX);capture_events(1903);expect_stick(stick,0,SHORT_MAX,controller);
-        capture_events(2053);assert(!posted_count);capture_events(2653);expect_stick(stick,0,SHORT_MAX,controller);
-        set_stick(controller,stick,0,24576);capture_events(2654);assert(!posted_count);
-        set_stick(controller,stick,0,24575);capture_events(2655);assert(!posted_count);
-        set_stick(controller,stick,0,28000);capture_events(2656);assert(!posted_count);
-        set_stick(controller,stick,0,SHORT_MAX);capture_events(2657);expect_stick(stick,0,SHORT_MAX,controller);
+        set_stick(controller,stick,STICK_EVENT_THRESHOLD,0);capture_events(first);expect_stick(stick,SHORT_MAX,0,controller);
+        set_stick(controller,stick,STICK_EVENT_THRESHOLD-1,0);capture_events(first+1);assert(!posted_count);
+        set_stick(controller,stick,28000,0);capture_events(repeat-1);assert(!posted_count);
+        capture_events(repeat);expect_stick(stick,SHORT_MAX,0,controller);
+        capture_events(repeat+REPEAT_INTERVAL-1);assert(!posted_count);
+        capture_events(repeat+REPEAT_INTERVAL);expect_stick(stick,SHORT_MAX,0,controller);
+        set_stick(controller,stick,SHORT_MIN,0);capture_events(changed-1);expect_stick(stick,SHORT_MIN,0,controller);
+        set_stick(controller,stick,0,SHORT_MAX);capture_events(changed);expect_stick(stick,0,SHORT_MAX,controller);
+        capture_events(changed+REPEAT_INTERVAL);assert(!posted_count);
+        capture_events(changed+FIRST_REPEAT);expect_stick(stick,0,SHORT_MAX,controller);
+        set_stick(controller,stick,0,24576);capture_events(repress-3);assert(!posted_count);
+        set_stick(controller,stick,0,24575);capture_events(repress-2);assert(!posted_count);
+        set_stick(controller,stick,0,28000);capture_events(repress-1);assert(!posted_count);
+        set_stick(controller,stick,0,SHORT_MAX);capture_events(repress);expect_stick(stick,0,SHORT_MAX,controller);
         /* Exact neutral resets even while another button remains held. */
         inputs[controller].buttons[_gamepad_analog_button_a]=2;
-        set_stick(controller,stick,0,0);capture_events(2658);assert(posted_count==1);
+        set_stick(controller,stick,0,0);capture_events(repress+1);assert(posted_count==1);
         inputs[controller].buttons[_gamepad_analog_button_a]=0;
-        set_stick(controller,stick,0,SHORT_MAX);capture_events(2659);expect_stick(stick,0,SHORT_MAX,controller);
-        capture_events(3408);assert(!posted_count);capture_events(3409);expect_stick(stick,0,SHORT_MAX,controller);
+        set_stick(controller,stick,0,SHORT_MAX);capture_events(repress+2);expect_stick(stick,0,SHORT_MAX,controller);
+        capture_events(repress+2+FIRST_REPEAT-1);assert(!posted_count);
+        capture_events(repress+2+FIRST_REPEAT);expect_stick(stick,0,SHORT_MAX,controller);
     }
     /* Small changes near a diagonal must not create fresh direction changes. */
     reset_events(1);present[0]=TRUE;set_stick(0,0,32000,31900);
     capture_events(1000);expect_stick(0,SHORT_MAX,0,0);
     set_stick(0,0,31900,32000);capture_events(1001);assert(!posted_count);
     set_stick(0,0,32000,31900);capture_events(1002);assert(!posted_count);
-    set_stick(0,0,31900,32000);capture_events(1750);expect_stick(0,SHORT_MAX,0,0);
-    set_stick(0,0,28000,SHORT_MAX);capture_events(1751);expect_stick(0,0,SHORT_MAX,0);
-    capture_events(2500);assert(!posted_count);capture_events(2501);expect_stick(0,0,SHORT_MAX,0);
+    set_stick(0,0,31900,32000);capture_events(1000+FIRST_REPEAT);expect_stick(0,SHORT_MAX,0,0);
+    set_stick(0,0,28000,SHORT_MAX);capture_events(1001+FIRST_REPEAT);expect_stick(0,0,SHORT_MAX,0);
+    capture_events(1000+2*FIRST_REPEAT);assert(!posted_count);
+    capture_events(1001+2*FIRST_REPEAT);expect_stick(0,0,SHORT_MAX,0);
 }
 static void queue_key(unsigned pressed,unsigned released,unsigned held) {
     struct halo_menu_keyboard_event *event;
@@ -335,18 +349,23 @@ static void queue_two_taps(void) {
 static void check_faster_keyboard(void) {
     int direction;
     for(direction=0;direction<4;direction++) {
+        unsigned long first=1000,repeat=first+FIRST_REPEAT;
+        unsigned long repress=repeat+REPEAT_INTERVAL+2,changed=repress+FIRST_REPEAT+1;
         unsigned mask=1u<<direction;reset_events(1);present[0]=TRUE;
         inputs[0].buttons[dpad_buttons[direction]]=1;
-        queue_key(mask,0,mask);capture_events(1000);expect_button(dpad_buttons[direction],0);
+        queue_key(mask,0,mask);capture_events(first);expect_button(dpad_buttons[direction],0);
         inputs[0].buttons[dpad_buttons[direction]]=2;
-        capture_events(1749);assert(!posted_count);capture_events(1750);expect_button(dpad_buttons[direction],0);
-        capture_events(1899);assert(!posted_count);capture_events(1900);expect_button(dpad_buttons[direction],0);
-        queue_key(0,mask,0);inputs[0].buttons[dpad_buttons[direction]]=0;capture_events(1901);assert(!posted_count);
-        queue_key(mask,0,mask);capture_events(1902);expect_button(dpad_buttons[direction],0);
-        capture_events(2651);assert(!posted_count);capture_events(2652);expect_button(dpad_buttons[direction],0);
-        queue_key(1u<<((direction+1)%4),mask,1u<<((direction+1)%4));capture_events(2653);
+        capture_events(repeat-1);assert(!posted_count);capture_events(repeat);expect_button(dpad_buttons[direction],0);
+        capture_events(repeat+REPEAT_INTERVAL-1);assert(!posted_count);
+        capture_events(repeat+REPEAT_INTERVAL);expect_button(dpad_buttons[direction],0);
+        queue_key(0,mask,0);inputs[0].buttons[dpad_buttons[direction]]=0;capture_events(repress-1);assert(!posted_count);
+        queue_key(mask,0,mask);capture_events(repress);expect_button(dpad_buttons[direction],0);
+        capture_events(repress+FIRST_REPEAT-1);assert(!posted_count);
+        capture_events(repress+FIRST_REPEAT);expect_button(dpad_buttons[direction],0);
+        queue_key(1u<<((direction+1)%4),mask,1u<<((direction+1)%4));capture_events(changed);
         expect_button(dpad_buttons[(direction+1)%4],0);
-        capture_events(2803);assert(!posted_count);capture_events(3403);expect_button(dpad_buttons[(direction+1)%4],0);
+        capture_events(changed+REPEAT_INTERVAL);assert(!posted_count);
+        capture_events(changed+FIRST_REPEAT);expect_button(dpad_buttons[(direction+1)%4],0);
     }
     reset_events(1);present[0]=TRUE;queue_two_taps();capture_events(1000);
     assert(posted_count==2 && posted[0].data.button.index==_gamepad_binary_button_dpad_left &&
@@ -360,15 +379,16 @@ static void check_faster_keyboard(void) {
     clock_ms=1000;event_manager_update();virtual_keyboard_process_internal();assert(tabs[_event_tab_left]==2);
     queue_key(HALO_MENU_DIRECTION_RIGHT,0,HALO_MENU_DIRECTION_RIGHT);
     clock_ms=2000;event_manager_update();virtual_keyboard_process_internal();assert(tabs[_event_tab_right]==1);
-    clock_ms=2749;event_manager_update();virtual_keyboard_process_internal();assert(tabs[_event_tab_right]==1);
-    clock_ms=2750;event_manager_update();virtual_keyboard_process_internal();assert(tabs[_event_tab_right]==2);
-    clock_ms=2899;event_manager_update();virtual_keyboard_process_internal();assert(tabs[_event_tab_right]==2);
-    clock_ms=2900;event_manager_update();virtual_keyboard_process_internal();assert(tabs[_event_tab_right]==3);
+    clock_ms=2000+FIRST_REPEAT-1;event_manager_update();virtual_keyboard_process_internal();assert(tabs[_event_tab_right]==1);
+    clock_ms=2000+FIRST_REPEAT;event_manager_update();virtual_keyboard_process_internal();assert(tabs[_event_tab_right]==2);
+    clock_ms=2000+FIRST_REPEAT+REPEAT_INTERVAL-1;event_manager_update();virtual_keyboard_process_internal();assert(tabs[_event_tab_right]==2);
+    clock_ms=2000+FIRST_REPEAT+REPEAT_INTERVAL;event_manager_update();virtual_keyboard_process_internal();assert(tabs[_event_tab_right]==3);
     reset_events(1);present[0]=TRUE;
     queue_key(HALO_MENU_DIRECTION_UP<<HALO_MENU_KEYBOARD_MOVE_SHIFT,0,
               HALO_MENU_DIRECTION_UP<<HALO_MENU_KEYBOARD_MOVE_SHIFT);
     inputs[0].sticks[_gamepad_stick_left].y=SHORT_MAX;capture_events(1000);expect_stick(0,0,SHORT_MAX,0);
-    capture_events(1749);assert(!posted_count);capture_events(1750);expect_stick(0,0,SHORT_MAX,0);
+    capture_events(1000+FIRST_REPEAT-1);assert(!posted_count);
+    capture_events(1000+FIRST_REPEAT);expect_stick(0,0,SHORT_MAX,0);
     /* Brief opposing movement keys cancel the direction even between polls.
      * Releasing the opposing key restarts W's hold delay without a fresh move. */
     reset_events(1);present[0]=TRUE;
@@ -379,22 +399,25 @@ static void check_faster_keyboard(void) {
               0);
     queue_key(0,HALO_MENU_DIRECTION_DOWN<<HALO_MENU_KEYBOARD_MOVE_SHIFT,
               HALO_MENU_DIRECTION_UP<<HALO_MENU_KEYBOARD_MOVE_SHIFT);
-    capture_events(1700);assert(!posted_count);
-    capture_events(1750);assert(!posted_count);
-    capture_events(2449);assert(!posted_count);
-    capture_events(2450);expect_stick(0,0,SHORT_MAX,0);
+    capture_events(1450);assert(!posted_count);
+    capture_events(1000+FIRST_REPEAT);assert(!posted_count);
+    capture_events(1450+FIRST_REPEAT-1);assert(!posted_count);
+    capture_events(1450+FIRST_REPEAT);expect_stick(0,0,SHORT_MAX,0);
 }
 static void check_live_mode_switch(void) {
     reset_events(1);present[0]=TRUE;set_dpad(0,HALO_MENU_DIRECTION_LEFT);
-    capture_events(1000);expect_button(_gamepad_binary_button_dpad_left,0);capture_events(1749);assert(!posted_count);
-    fast_repeat=0;capture_events(1750);assert(posted_count==1 && posted[0].data.button.value==2);
-    fast_repeat=1;capture_events(1751);expect_button(_gamepad_binary_button_dpad_left,0);
-    capture_events(2500);assert(!posted_count);capture_events(2501);expect_button(_gamepad_binary_button_dpad_left,0);
+    capture_events(1000);expect_button(_gamepad_binary_button_dpad_left,0);
+    capture_events(1000+FIRST_REPEAT-1);assert(!posted_count);
+    fast_repeat=0;capture_events(1000+FIRST_REPEAT);assert(posted_count==1 && posted[0].data.button.value==2);
+    fast_repeat=1;capture_events(1001+FIRST_REPEAT);expect_button(_gamepad_binary_button_dpad_left,0);
+    capture_events(1000+2*FIRST_REPEAT);assert(!posted_count);
+    capture_events(1001+2*FIRST_REPEAT);expect_button(_gamepad_binary_button_dpad_left,0);
     reset_events(0);present[0]=TRUE;
     queue_key(HALO_MENU_DIRECTION_LEFT,0,HALO_MENU_DIRECTION_LEFT);
     capture_events(1000);assert(!posted_count);
     fast_repeat=1;capture_events(1001);expect_button(_gamepad_binary_button_dpad_left,0);
-    capture_events(1750);assert(!posted_count);capture_events(1751);expect_button(_gamepad_binary_button_dpad_left,0);
+    capture_events(1000+FIRST_REPEAT);assert(!posted_count);
+    capture_events(1001+FIRST_REPEAT);expect_button(_gamepad_binary_button_dpad_left,0);
 }
 #endif
 int main(void) {

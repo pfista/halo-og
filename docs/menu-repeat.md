@@ -7,7 +7,7 @@ Pause.
 | Choice | First held repeat | Following repeats | Behavior |
 | --- | --- | --- | --- |
 | Original | 250 ms | 250 ms | Preserves the existing Xbox-derived input and menu behavior |
-| Faster | 750 ms | 150 ms | Moves once immediately, then scrolls quickly after a deliberate hold |
+| Faster | 500 ms | 100 ms | Moves once immediately, then scrolls quickly after a deliberate hold |
 
 **Original** is the default. Select **Accept** to save and apply the choice;
 Cancel discards the draft. The preference belongs to the local installation
@@ -19,7 +19,7 @@ and analog-stick navigation in menus, including the on-screen keyboard used to
 name profiles and game types. **Original** retains its existing behavior.
 
 With **Faster**, a fresh press moves once immediately. Holding the direction
-repeats at 750 ms, then every 150 ms. Release the key or D-pad button, or return
+repeats at 500 ms, then every 100 ms. Release the key or D-pad button, or return
 the stick to neutral, to stop and reset the hold timer. The next press moves
 immediately again; changing stick direction also starts a fresh hold. Keyboard
 presses remain separate even when multiple press/release pairs arrive between
@@ -58,7 +58,7 @@ latch, on-screen keyboard action reduction and stick-edge quirks. Faster uses
 separate menu-only press tracking, repeat state and event storage; gameplay
 packets, button hold counters and network rules retain their existing behavior.
 
-Focused fixtures cover immediate presses, the 750/150 ms hold boundaries,
+Focused fixtures cover immediate presses, the 500/100 ms hold boundaries,
 release/repress, direction changes, exact neutral, stick hysteresis, multiple
 keyboard taps in one poll, on-screen name entry, live setting changes and the
 unchanged Original/gameplay paths. Separate settings fixtures cover saving,

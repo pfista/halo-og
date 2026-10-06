@@ -217,7 +217,7 @@ not exercised by these runs.
 Controller settings offer **Menu Repeat: Original / Faster** as an intentional
 local UI preference. Original retains the reconstructed 250 ms cadence and its
 existing event-queue and stick-edge behavior. Faster moves once immediately,
-waits for a 750 ms hold, then repeats every 150 ms for arrows, D-pad directions
+waits for a 500 ms hold, then repeats every 100 ms for arrows, D-pad directions
 and sticks in menus and the on-screen keyboard. Its separate keyboard edges
 preserve discrete taps; release, stick neutral or a new stick direction resets
 the hold timer. It defaults Original and applies only after Accept, with no

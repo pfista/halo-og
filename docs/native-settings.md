@@ -57,7 +57,7 @@ Profile sensitivity, the underlying stick-response curve, vertical turning,
 zoom scaling and direct mouse aiming retain their existing behavior.
 
 **Menu Repeat** offers **Original** (existing 250 ms timing) and **Faster**
-(one immediate movement, a 750 ms hold delay, then 150 ms repeats).
+(one immediate movement, a 500 ms hold delay, then 100 ms repeats).
 Original is the default. This controls held arrow keys, D-pad directions and
 stick navigation in menus and the on-screen name-entry keyboard. Accept saves
 and applies it immediately for all local players; Cancel discards the draft.

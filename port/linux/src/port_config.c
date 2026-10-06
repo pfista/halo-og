@@ -162,8 +162,8 @@ static const struct config_setting config_settings[] =
 		"Controller settings call this Xbox; Off removes only this timed boost.\n"
 		"Sensitivity, pitch response and direct mouse aiming stay separate." },
 	{ "input.fast_menu_repeat", _config_boolean, "false", NULL, _environment_value, _platform_all,
-		"Faster moves once immediately, then repeats after a 750 ms hold, every\n"
-		"150 ms. Original retains the existing 250 ms menu behavior.\n"
+		"Faster moves once immediately, then repeats after a 500 ms hold, every\n"
+		"100 ms. Original retains the existing 250 ms menu behavior.\n"
 		"Controller settings call this Menu Repeat: Original or Faster. Applies\n"
 		"to arrows, D-pad and sticks in menus and the on-screen keyboard only." },
 
