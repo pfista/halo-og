@@ -249,7 +249,7 @@ def release_notes(record):
             f"See the [platform setup guides]({source}/README.md#getting-started) "
             f"and [playtesting guide]({source}/docs/playtesting.md); "
             f"the [README]({source}/README.md) describes this fork. Mac, Windows and Linux automatically download "
-            "all 40 complete community maps (~863 MiB); Android map setup remains manual.\n\n"
+            "approved complete community maps; Android map setup remains manual.\n\n"
             f"[Timer Audio recordings]({source}/docs/timer-audio.md) are a separate optional download. "
             "Mac, Windows, Linux and Android download recordings automatically in the background; "
             "restart after their first installation.\n\n"

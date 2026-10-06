@@ -187,7 +187,9 @@ class TestingReleaseTests(unittest.TestCase):
         self.assertIn("| Platform | Download |", notes)
         for asset in (release.DMG, "halo-windows-release.zip", "halo-linux-release.zip", "halo-android-release.zip"):
             self.assertIn(f"[{asset}](https://github.com/{release.REPOSITORY}/releases/download/{TAG}/{asset})", notes)
-        self.assertIn("automatically download all 40 complete community maps", notes)
+        self.assertIn("automatically download approved complete community maps", notes)
+        self.assertNotIn("all 40", notes)
+        self.assertNotIn("863 MiB", notes)
         self.assertIn("Android map setup remains manual", notes)
         self.assertIn("ad-hoc signed and unnotarized", notes)
         self.assertIn("Physical cross-platform and Internet/NAT play still need testing", notes)
@@ -456,6 +458,17 @@ class TestingReleaseTests(unittest.TestCase):
                 license = license.with_name("LICENSE")
             license.parent.mkdir(parents=True)
             license.write_text("fixture license")
+        notices = {
+            "port/assets/fonts/Overpass-OFL.txt": "Overpass-OFL.txt",
+            "port/assets/fonts/OpenCE-OFL.txt": "OpenCE-OFL.txt",
+            "port/assets/fonts/Newtown-LICENSE.txt": "Newtown-LICENSE.txt",
+            "port/assets/fonts/README.md": "fonts-README.md",
+            "port/third_party/stb/LICENSE": "stb-LICENSE.txt",
+        }
+        for source, name in notices.items():
+            notice = self.root / source
+            notice.parent.mkdir(parents=True, exist_ok=True)
+            notice.write_text("fixture notice: " + name)
         for number in ("70", "71"):
             commands = []
             def capture(command, cwd=None):
@@ -471,6 +484,9 @@ class TestingReleaseTests(unittest.TestCase):
             self.assertIn("assembleRelease", gradle)
             self.assertTrue(all(update == "0" for _, update in commands))
             self.assertEqual(updater_number, "0")
+            for name in notices.values():
+                self.assertEqual((self.root / "dist/halo-android-release" / name).read_text(),
+                                 "fixture notice: " + name)
         for invalid in ("", "-1", "abc", "2100000001", "²"):
             with self.subTest(invalid=invalid):
                 self.assertEqual(ci_build.android_install_build_number({"GITHUB_RUN_NUMBER": invalid}), "0")
