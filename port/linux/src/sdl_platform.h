@@ -9,6 +9,7 @@ controller emulation (see sdl_platform.c).
 #define __HALO_LINUX_SDL_PLATFORM_H
 
 #include <SDL3/SDL_scancode.h>
+#include "../include/menu_navigation.h"
 
 #define PLATFORM_MOUSE_BUTTON_COUNT 8
 

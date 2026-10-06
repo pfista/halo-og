@@ -2,7 +2,8 @@
 
 Performance Options provides explicitly selected multiplayer practice aids: an
 elapsed match timer, spawn markers, timer announcements, and optional silent
-movement or weapon equip sounds, plus optional Hardcore precision spread.
+movement or weapon equip sounds, plus optional Hardcore precision spread and
+**Camo: Normal / Hardcore**.
 All optional rules and aids are **off by default**.
 The host also selects **Input Delay: Off / 33ms** before the match. It is
 independent of the practice aids and applies to every player.
@@ -13,7 +14,8 @@ In **Multiplayer → Edit Gametypes → select a game type**, **Performance** ap
 below **Indicator Options**. The submenu is titled **Performance**.
 Its native game widgets use the existing menu fonts, navigation and help text.
 Choose a preset or change the options individually. Game-type selection cards
-show **Hardcore: On** when Hardcore is enabled, or **Performance options active**
+show **Camo: Hardcore** when Hardcore camo is enabled, **Hardcore: On** for
+precision spread, or **Performance options active**
 when another saved aid is enabled. [Fiesta](fiesta.md) is selected separately
 under **Item Options → Starting Equipment**; cards identify that choice too.
 
@@ -27,7 +29,7 @@ The preset is a convenience over the practice-aid bits. Reopening the page shows
 Stock when all aids are off, Practice when just the original three aids are on,
 and Custom for any other aid selection. There is no separate saved preset
 identifier. Selecting either Silent rule therefore shows Custom. Input Delay
-and Hardcore do not change the preset label. Fiesta is also independent of
+and Hardcore precision spread or camo do not change the preset label. Fiesta is also independent of
 the preset label. Selecting Stock or Practice
 preserves these independently selected match rules.
 
@@ -43,7 +45,7 @@ see the host's current choices with the controls disabled. Session changes do
 not write the saved game type back to disk; use Edit Gametypes to save a
 preset for later.
 
-Input Delay and Hardcore are available only in Edit Gametypes, before starting
+Input Delay, Hardcore precision spread and Camo are available only in Edit Gametypes, before starting
 a match. The pause page omits their controls; Apply and either preset preserve
 the match's existing rules, including Fiesta starting equipment. Other
 practice aids remain adjustable during play.
@@ -87,6 +89,22 @@ Every player must support Hardcore before the host can enable or start it.
 Saved settings from an older host cannot enable the rule without that host's
 capability acknowledgement. It is fixed for each match; the pause menu and
 console aid presets preserve it.
+
+## Hardcore camo
+
+**Multiplayer → Edit Gametypes → select a game type → Performance → Camo**
+offers **Normal / Hardcore**. Normal is the default and retains the map's
+original active-camouflage tint. Hardcore removes the RGB tint, including
+the blue tint on stock maps, so a camouflaged player is harder to spot.
+The renderer uses a neutral white color multiplier to remove the tint.
+It retains refraction, distortion, opacity, camo duration, firing reveal and
+regrowth. Campaign camo retains its original behavior.
+
+This choice is independent of the precision-spread Hardcore option and the
+Stock/Practice presets. Accept and Save Changes persist it with the game
+type. The host selects it before starting; every player must support it,
+including players joining a running match. It is locked for the match.
+The shared camo draw path applies it to both ANGLE and Native Metal.
 
 ## Match timer
 
@@ -226,9 +244,15 @@ introduced.
 | Field | Enabled extension value |
 | --- | --- |
 | `pad0`, `pad1`, `pad2` | ASCII `P`, `F`, `O` |
-| `pad4` | Format version `1` |
-| `pad5` | Flags: timer `1`, spawn markers `2`, timer sounds `4`, silent movement `8`, silent weapons `16`, input delay `32`, Hardcore `64` |
-| `pad6` | Flags XOR `0xA5` |
+| `pad4` | Format version `1`, or version `2` with Hardcore camo enabled |
+| `pad5` | Low flags: timer `1`, spawn markers `2`, timer sounds `4`, silent movement `8`, silent weapons `16`, input delay `32`, precision Hardcore `64`, Fiesta `128` |
+| `pad6` | Low flags XOR `0xA5` for version 1; low flags XOR `0xA4` for version 2 |
+
+Version 2 implies Hardcore camo flag `256`; the other flags retain their
+original positions. Normal camo keeps the exact version-1 encoding, so
+existing game types need no conversion. Earlier builds reject version 2
+as all options off; host capability confirmation prevents newer clients
+from applying an unsupported saved camo rule.
 
 All flags off writes all six bytes as zero. Old padding, an unknown format version,
 unknown flag bits or a damaged check byte decode as all options off. The check
@@ -240,7 +264,8 @@ still handles the saved variant. `game_variant.flags` is not repurposed.
 The client's reliable connection announces supported subsets before its normal
 join request: the original timer/marker mask, the timer-audio generation, the
 sound-rule generation (mask 31), input-delay generation (mask 63), then the
-complete set (mask 127). Earlier hosts retain the newest subset they
+precision generation (mask 127), Fiesta generation (mask 255), and camo
+generation (mask 511). Earlier hosts retain the newest subset they
 understand. An unextended v11 host ignores those unknown data messages.
 The updated host keeps capabilities per connection slot and clears them when
 the slot is removed or reused.
@@ -264,15 +289,16 @@ check the connected peers. An unsupported existing peer causes the host's
 change to be refused with an explanation. Joining clients cannot change the
 host's option state.
 
-Input Delay and Hardcore are locked at match start. The host refuses a request
-to change either flag during play, including a debug-console request. Clients
+Input Delay, Hardcore precision spread, Fiesta and Hardcore camo are locked at match start.
+The host refuses a request to change these flags during play, including a debug-console request. Clients
 retain the active rules while applying other live aid changes. Presets and edits
 to the other aids preserve the current match rules.
 
 The host confirms its match-rule capability on the reliable connection before
 the settings record, using a mask the recipient can decode. A client enables
 the saved match rules only after this confirmation. If an older host loads a
-newer saved variant containing an unsupported delay or Hardcore
+newer saved variant containing an unsupported delay, Hardcore precision,
+Fiesta or Hardcore camo
 flag, the client treats that extension as off, matching the older host.
 
 The normal reliable settings record carries the variant before begin-game,
@@ -286,7 +312,7 @@ client session clears the effective options.
 
 Press **F2** for the existing developer console. `pb` shows settings and help;
 `pb stock` disables the practice aids and `pb practice` enables the original
-three aids. Both preserve Input Delay and Hardcore. Use
+three aids. Both preserve Input Delay, Hardcore precision, Fiesta and Hardcore camo. Use
 `pb timer on`, `pb markers off`, or `pb audio toggle` for individual controls.
 Those accept `on`, `off` or `toggle`. Use `pb movement silent` or
 `pb weapons normal` for sound rules; these accept `normal`, `silent` or `toggle`.
@@ -294,9 +320,10 @@ Tab completion is available. Host authority
 and peer capability checks are identical to the pause menu. These are session
 changes; save a game type in Edit Gametypes for future matches.
 
-The diagnostic `performance_options [0..127]` is available, with flags timer `1`,
+The diagnostic `performance_options [0..511]` is available, with flags timer `1`,
 markers `2`, audio `4`, silent movement `8`, silent weapons `16` and input delay
-`32` and Hardcore `64`. A request to change either match rule during play is refused. Status also
+`32`, Hardcore precision `64`, Fiesta `128` and Hardcore camo `256`.
+A request to change a match rule during play is refused. Status also
 reports per-map sound provenance, muted dispatch counts, timer cue preferences
 and successful cue dispatch counts; these are diagnostic
 counters and do not by themselves prove the audible output.
@@ -321,12 +348,19 @@ validation and admission/version combinations. Runtime probes are
 [`macos_performance_compatibility.py`](../tools/macos_performance_compatibility.py).
 Run probes sequentially with isolated saves because the game uses fixed ports.
 
+[`test_performance_camo.py`](../tools/test_performance_camo.py) compiles the
+production vertex-constant upload and pixel-combiner setup. It checks exact
+Normal/campaign values, unchanged refraction and reveal parameters, and that
+neutral-white tint preserves the refracted scene RGB and alpha. The editor,
+save and network fixtures cover all 512 flag combinations, Normal/Hardcore
+selection, preset preservation, version-1 compatibility and older-host gating.
+
 Check host/client option changes, admission with incompatible peers, late joins,
 marker filtering, timer schedules, audio and persistence. Fixtures and same-Mac
 runs do not establish physical cross-platform networking, controller navigation,
 long-session stability or reference-Xbox fidelity.
 
 The native editor, pause, and mouse fixtures cover Off/33ms selection, Accept
-and Cancel, preset preservation, unchanged pause controls, and all 64 flag
+and Cancel, preset preservation, unchanged pause controls, and all 512 flag
 combinations. Their tag and widget fixtures do not measure real gameplay input
 timing or rendered camera response.

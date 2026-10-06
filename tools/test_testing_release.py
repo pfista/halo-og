@@ -21,6 +21,10 @@ DATE = "2026-10-03T00:00:00Z"
 CHANGELOG = {"previous_tag": "test-v0.3.0-net11-setup2", "previous_sha": "b" * 40,
              "commits": [{"sha": "c" * 40, "subject": "Fix first launch setup"},
                          {"sha": SHA, "subject": "Show version on the home menu"}]}
+OVERVIEW = {"summary": "This release improves combat feedback and player controls.",
+            "highlights": ["Add an optional hardcore camo mode.",
+                           "Correct the Overshield drain sound.",
+                           "Improve control settings."]}
 DESKTOP_BINARY = ("synthetic executable\0" + SHA + "\0" + DATE + "\0"
                   "https://api.github.com/repos/pfista/halo-og/releases?per_page=5\0"
                   "Halo OG update available\0Open download\0Stop checking\0").encode()
@@ -31,6 +35,9 @@ class FixtureAPI:
         self.sha = SHA
         self.claimed = False
         self.version = "0.3.0"
+        self.overview = copy.deepcopy(OVERVIEW)
+        self.overview_content = None
+        self.get_calls, self.downloads = [], []
         self.posts = []
         self.runs, self.artifacts, self.archives = {}, {}, {}
         for run_id, (workflow, outputs) in enumerate(release.WORKFLOWS.items(), 1):
@@ -66,6 +73,7 @@ class FixtureAPI:
                 self.archives[artifact_id] = path
 
     def get(self, path, *, missing_ok=False):
+        self.get_calls.append((path, missing_ok))
         if path == "git/ref/heads/main":
             return {"object": {"sha": self.sha}}
         if path == "git/commits/" + SHA:
@@ -73,6 +81,13 @@ class FixtureAPI:
         if path.startswith(("git/ref/tags/", "releases/tags/")):
             return {"id": 1} if self.claimed else None
         if path.startswith("contents/"):
+            if path.startswith("contents/docs/releases/"):
+                if self.overview is None:
+                    return None
+                if self.overview_content is not None:
+                    return copy.deepcopy(self.overview_content)
+                return {"encoding": "base64",
+                        "content": base64.b64encode(json.dumps(self.overview).encode()).decode()}
             if "halo_og_version.h" in path:
                 return {"content": base64.b64encode(f'#define HALO_OG_VERSION "{self.version}"\n'.encode()).decode()}
             return {"content": base64.b64encode(b"#define HALO_PORT_NETWORK_VERSION 11\n").decode()}
@@ -88,6 +103,7 @@ class FixtureAPI:
         raise AssertionError("Unexpected API request: " + path)
 
     def download(self, artifact_id, destination):
+        self.downloads.append(artifact_id)
         shutil.copyfile(self.archives[artifact_id], destination)
 
     def post(self, path, payload):
@@ -117,11 +133,50 @@ class TestingReleaseTests(unittest.TestCase):
 
     def test_same_source_candidate_has_protocol_and_verifies(self):
         record = self.prepare()
+        self.assertEqual(record["overview"], OVERVIEW)
         self.assertEqual(record["network_protocol"], 11)
         self.assertEqual(record["source_date"], DATE)
         self.assertEqual(len(record["artifacts"]), 4)
         self.assertEqual(release.verify_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory), record)
         self.assertEqual({p.name for p in self.directory.iterdir()}, release.ASSETS | {"release-notes.md"})
+
+    def test_overview_reads_use_the_exact_selected_source_and_version(self):
+        record = self.prepare()
+        self.assertEqual(record["overview"], OVERVIEW)
+        path = f"contents/docs/releases/{TAG}.json?ref={SHA}"
+        self.assertEqual([call for call in self.api.get_calls if "docs/releases/" in call[0]],
+                         [(path, True)])
+        release.verify_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
+        self.assertEqual([call for call in self.api.get_calls if "docs/releases/" in call[0]],
+                         [(path, True), (path, True)])
+        self.api.get_calls.clear()
+        alternate_sha, alternate_tag = "e" * 40, "v0.3.1"
+        self.assertEqual(release.source_overview(self.api, alternate_sha, alternate_tag), OVERVIEW)
+        self.assertEqual(self.api.get_calls,
+                         [(f"contents/docs/releases/{alternate_tag}.json?ref={alternate_sha}", True)])
+
+    def test_missing_or_invalid_overview_fails_before_candidate_directory_or_downloads(self):
+        invalid = [None, {}, {"summary": "Summary", "highlights": []},
+                   {**OVERVIEW, "summary": "First paragraph\nSecond paragraph"},
+                   {**OVERVIEW, "highlights": ["Duplicate", "Duplicate"]},
+                   {**OVERVIEW, "extra": "Unexpected"}]
+        for overview in invalid:
+            self.api.overview = copy.deepcopy(overview)
+            with self.subTest(overview=overview), self.assertRaisesRegex(RuntimeError, "overview"):
+                self.prepare()
+            self.assertFalse(self.directory.exists())
+            self.assertEqual(self.api.downloads, [])
+
+    def test_malformed_source_overview_content_fails_before_downloads(self):
+        invalid = [[], {}, {"content": 1}, {"content": "!!!"},
+                   {"content": base64.b64encode(b"{invalid json").decode()},
+                   {"content": base64.b64encode(b"\xff").decode()}]
+        for payload in invalid:
+            self.api.overview_content = payload
+            with self.subTest(payload=payload), self.assertRaisesRegex(RuntimeError, "release overview"):
+                self.prepare()
+            self.assertFalse(self.directory.exists())
+            self.assertEqual(self.api.downloads, [])
 
     def test_release_download_table_and_setup_match_selected_source_and_tag(self):
         self.prepare()
@@ -169,6 +224,11 @@ class TestingReleaseTests(unittest.TestCase):
         notes = (self.directory / "release-notes.md").read_text()
         annotation = release.tag_message(record)
         self.assertEqual(release.release_title(record), "Halo OG v0.3.0")
+        for text in (notes, annotation):
+            self.assertIn("Overview\n\n", text)
+            self.assertIn(OVERVIEW["summary"].rstrip("."), text)
+            for highlight in OVERVIEW["highlights"]:
+                self.assertIn(highlight.rstrip("."), text)
         for commit in CHANGELOG["commits"]:
             self.assertIn(commit["sha"][:7], notes)
             self.assertIn(commit["sha"][:7], annotation)
@@ -193,6 +253,31 @@ class TestingReleaseTests(unittest.TestCase):
         # Another published release must replace the fallback, invalidating this candidate.
         self.changelog.side_effect = lambda *args: copy.deepcopy(CHANGELOG)
         with patch.object(release.subprocess, "run") as publish, self.assertRaisesRegex(RuntimeError, "previous release"):
+            release.publish_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
+        self.assertEqual(self.api.posts, [])
+        publish.assert_not_called()
+
+    def test_tampered_overview_cannot_publish_even_with_regenerated_notes_and_checksums(self):
+        self.prepare()
+        provenance = self.directory / "provenance.json"
+        record = json.loads(provenance.read_text())
+        record["overview"]["highlights"] = ["Claim a feature absent from the selected source"]
+        provenance.write_text(json.dumps(record, indent=2) + "\n")
+        (self.directory / "release-notes.md").write_text(release.release_notes(record))
+        (self.directory / "SHA256SUMS").write_text("".join(
+            f"{release.digest(self.directory / name)}  {name}\n"
+            for name in sorted(release.ASSETS - {"SHA256SUMS"})))
+        with patch.object(release.subprocess, "run") as publish, \
+                self.assertRaisesRegex(RuntimeError, "Prepared release overview does not match selected source"):
+            release.publish_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
+        self.assertEqual(self.api.posts, [])
+        publish.assert_not_called()
+
+    def test_source_overview_is_rechecked_before_any_publication(self):
+        self.prepare()
+        self.api.overview["summary"] = "Different overview returned for the pinned source"
+        with patch.object(release.subprocess, "run") as publish, \
+                self.assertRaisesRegex(RuntimeError, "Prepared release overview does not match selected source"):
             release.publish_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
         self.assertEqual(self.api.posts, [])
         publish.assert_not_called()

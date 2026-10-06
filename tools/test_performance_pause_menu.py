@@ -37,8 +37,8 @@ enum { _gamepad_analog_button_a=0, _gamepad_analog_button_b=1,
 enum { UNICODE_STRING_LIST_TAG='ustr', _performance_option_match_timer=1,
  _performance_option_spawn_markers=2, _performance_option_timer_audio=4,
  _performance_option_silent_movement=8, _performance_option_silent_weapon_ready=16,
- _performance_option_input_delay=32, _performance_option_hardcore=64, _performance_option_fiesta=128,
- PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=255, PERFORMANCE_MATCH_RULE_FLAGS=224 };
+ _performance_option_input_delay=32, _performance_option_hardcore=64, _performance_option_fiesta=128, _performance_option_hardcore_camo=256,
+ PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=511, PERFORMANCE_MATCH_RULE_FLAGS=480 };
 struct tag_block { long count; void *address; void *definition; };
 struct tag_reference { unsigned long group_tag; char *name; long name_length,index; };
 struct tag_data { long size; unsigned long pad; long file_offset; void *address,*definition; };
@@ -303,6 +303,19 @@ int main(void) {
    control(root,_pp_preset)->parameters.list.selected_index=1; performance_pause_update(root);
    assert(performance_pause_drafts[0].flags==(64|timing|7));
    assert(performance_pause_event(control(root,_pp_apply),_performance_pause_apply) && host_flags==(64|timing|7));
+   free_widget(root);
+ }
+ /* Hardcore Camo survives every live aid edit, independent of other
+  * match rules. Its appearance is chosen in the pregame editor. */
+ for(unsigned extras=0;extras<=224;extras+=32) {
+   host_flags=256|extras|8; root=open_options(0,0);
+   control(root,_pp_preset)->parameters.list.selected_index=0; performance_pause_update(root);
+   assert(performance_pause_drafts[0].flags==(256|extras));
+   control(root,_pp_timer)->parameters.list.selected_index=1; performance_pause_update(root);
+   assert(performance_pause_drafts[0].flags==(256|extras|1));
+   control(root,_pp_preset)->parameters.list.selected_index=1; performance_pause_update(root);
+   assert(performance_pause_drafts[0].flags==(256|extras|7));
+   assert(performance_pause_event(control(root,_pp_apply),_performance_pause_apply) && host_flags==(256|extras|7));
    free_widget(root);
  }
  long old=performance_pause_tags[_pp_pause_1p];

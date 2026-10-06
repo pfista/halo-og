@@ -48,7 +48,8 @@ typedef float real;
 #define network_event(...) ((void)0)
 enum { _game_variant_draw_object_in_motion_sensor_bit=0, _game_variant_infinite_grenades_bit=2 };
 enum { _performance_option_input_delay=32, _performance_option_hardcore=64, _performance_option_fiesta=128,
-       PERFORMANCE_MATCH_RULE_FLAGS=224, _network_game_client_state_joining=1, _network_game_client_state_pregame=2,
+       _performance_option_hardcore_camo=256, PERFORMANCE_MATCH_RULE_FLAGS=480,
+       _network_game_client_state_joining=1, _network_game_client_state_pregame=2,
        _network_game_client_state_ingame=3, _network_game_client_state_postgame=4 };
 /* DECLARATIONS */
 #include "game/game_variant_options.h"
@@ -297,9 +298,20 @@ static void active_input_delay(void) {
     client.state=_network_game_client_state_pregame;
     assert(network_game_client_game_settings_updated(&client,&game));
     assert(client.game.variant.flags==135 && applied_flags==135);
+    network_game_client_performance_host_capabilities=511;
+    client.state=_network_game_client_state_ingame;client.game.variant.flags=256;
+    game.variant.flags=7;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(client.game.variant.flags==263 && applied_flags==263);
+    client.game.variant.flags=7;game.variant.flags=263;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(client.game.variant.flags==7 && applied_flags==7);
+    client.state=_network_game_client_state_pregame;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(client.game.variant.flags==263 && applied_flags==263);
 }
 static void host_delay_acknowledgement(void) {
-    const unsigned unknown_flags[]={32,39,64,96,127,128,135,255};
+    const unsigned unknown_flags[]={32,39,64,96,127,128,135,255,256,263,511};
     for(unsigned i=0;i<sizeof(unknown_flags)/sizeof(unknown_flags[0]);i++) {
         struct network_game game=defaults(); reset();
         client.state=_network_game_client_state_pregame;
@@ -346,17 +358,34 @@ static void host_delay_acknowledgement(void) {
         assert(network_game_client_game_settings_updated(&client,&forwarded));
         assert(client.game.variant.flags==0 && applied_flags==0);
     }
+    /* The last version-1 generation gets byte-identical mask-255 support.
+     * It can forward saved v2 padding, but must not enable Camo or its aids. */
+    {
+        struct network_game_server legacy_host={.game=defaults()};
+        struct network_game_server_client_machine legacy_peer={.supported=255};
+        reset();client.state=_network_game_client_state_pregame;
+        legacy_host.game.variant.flags=135;
+        assert(network_game_server_send_game_settings_to_client_machine(&legacy_host,&legacy_peer,
+            &legacy_host.game,sizeof(legacy_host.game)));
+        assert(network_game_client_performance_host_capabilities==255);
+        assert(client.game.variant.flags==135 && applied_flags==135);
+        assert(!network_performance_can_join(256,255));
+        assert(network_performance_can_join(256,511));
+        struct network_game forwarded=defaults();forwarded.variant.flags=263;
+        assert(network_game_client_game_settings_updated(&client,&forwarded));
+        assert(client.game.variant.flags==0 && applied_flags==0);
+    }
     /* The actual sender and reassembler establish support before applying
      * saved delay, without any discovery advertisement. Direct late joins
      * use this per-client serializer before their begin-game packet. */
-    for(unsigned flags=0;flags<=255;flags++) {
+    for(unsigned flags=0;flags<=511;flags++) {
         struct network_game_server host={.game=defaults()};
-        struct network_game_server_client_machine machine={.supported=255};
+        struct network_game_server_client_machine machine={.supported=511};
         reset();client.state=_network_game_client_state_pregame;
         host.game.variant.flags=flags;
         assert(network_game_server_send_game_settings_to_client_machine(&host,&machine,&host.game,sizeof(host.game)));
         assert(sent_capabilities==1 && sent_settings_pieces>1);
-        assert(network_game_client_performance_host_capabilities==255);
+        assert(network_game_client_performance_host_capabilities==511);
         assert(client.game.variant.flags==flags && applied_flags==flags && applied==1);
     }
     /* No acknowledgement is sent to stock/older clients with all options
@@ -373,14 +402,14 @@ static void host_delay_acknowledgement(void) {
 static void normal_start_delay_acknowledgement(void) {
     /* Normal starts and lobby updates have a separate broadcast serializer.
      * Exercise it directly: stubbing it previously hid a missing handshake. */
-    for(unsigned flags=0;flags<=255;flags++) {
+    for(unsigned flags=0;flags<=511;flags++) {
         struct network_game_server host={.game=defaults()};
-        host.machines[1]=(struct network_game_server_client_machine){.supported=255,.joined=TRUE};
+        host.machines[1]=(struct network_game_server_client_machine){.supported=511,.joined=TRUE};
         reset();client.state=_network_game_client_state_pregame;
         host.game.variant.flags=flags;
         assert(network_game_server_send_game_settings_to_all_machines(&host,&host.game,sizeof(host.game)));
         assert(sent_capabilities==1 && sent_settings_pieces>1);
-        assert(network_game_client_performance_host_capabilities==255);
+        assert(network_game_client_performance_host_capabilities==511);
         assert(client.game.variant.flags==flags && applied_flags==flags && applied==1);
         assert(!network_game_settings_update_pending && network_game_settings_update_time==999);
     }

@@ -90,6 +90,17 @@ static void render_pb(struct widget_instance *root) {
     ui_mouse_target_count=0; ui_mouse_noting_targets=TRUE;
     draw_targets(root,(point2d){0,0}); ui_mouse_noting_targets=FALSE;
 }
+static point2d spinner_arrow_point(struct widget_instance *spinner,boolean right) {
+    struct ui_widget_definition *definition=ui_widget_definition_get(spinner->definition_tag_index);
+    rectangle2d bounds=right ? definition->list_footer_bounds:definition->list_header_bounds;
+    point2d point={(bounds.x0+bounds.x1)/2,(bounds.y0+bounds.y1)/2};
+    assert(point.x<definition->bounds.x0 || point.x>=definition->bounds.x1);
+    /* Use the rendered hierarchy so every row follows the production layout. */
+    for(struct widget_instance *ancestor=spinner;ancestor;ancestor=ancestor->parent) {
+        point.x+=ancestor->horizontal_offset; point.y+=ancestor->vertical_offset;
+    }
+    return point;
+}
 static short click_at(struct widget_instance *root,short x,short y) {
     render_pb(root); input=(struct halo_ui_pointer){.left_clicks=1,.click_x=x,.click_y=y};
     unsigned before=posted_count; posted_button=NONE; ui_widgets_process_mouse();
@@ -99,14 +110,12 @@ static short click_at(struct widget_instance *root,short x,short y) {
 static void arrow(struct widget_instance *root,short row,boolean right) {
     struct widget_instance *menu=widget_instance_find_by_tag_index_recursive(root,pb_editor.menu_tag);
     struct widget_instance *spinner=pb_editor_spinner(menu,row);
-    struct ui_widget_definition *definition=ui_widget_definition_get(spinner->definition_tag_index);
-    short x=(short)(54+300+(right ? 145:-3)),y=(short)(73+30*row+1+10);
-    assert((right ? 145:-3)<definition->bounds.x0 || (right ? 145:-3)>=definition->bounds.x1);
     render_pb(root);
-    struct ui_mouse_target *target=ui_mouse_target_at(x,y);
+    point2d point=spinner_arrow_point(spinner,right);
+    struct ui_mouse_target *target=ui_mouse_target_at(point.x,point.y);
     assert(target && target->widget==spinner && target->kind==_ui_mouse_target_value);
     short selected=spinner->parameters.list.selected_index;
-    short button=click_at(root,x,y);
+    short button=click_at(root,point.x,point.y);
     assert(button==(right ? _widget_event_dpad_right:_widget_event_dpad_left));
     assert(button!=_gamepad_analog_button_a && ui_mouse_widget_has_focus(spinner));
     assert(menu->parameters.list.selected_index==row);
@@ -131,7 +140,7 @@ static void fixture_setup(void) {
 }
 static void all_arrow_rows_and_staging(void) {
     fixture_setup(); struct widget_instance *root=open_pb();
-    for(short row=0;row<8;row++) {
+    for(short row=0;row<pb_editor.menu.child_widgets.count;row++) {
         arrow(root,row,TRUE); assert(edited.flags==0 && mutation_calls==0);
         arrow(root,row,FALSE); assert(edited.flags==0 && mutation_calls==0);
     }
@@ -171,7 +180,8 @@ static void stock_fallback_and_disabled(void) {
     close_pb(root);
     root=open_pb(); menu=widget_instance_find_by_tag_index_recursive(root,pb_editor.menu_tag);
     spinner=pb_editor_spinner(menu,4); spinner->disabled=TRUE;
-    render_pb(root); target=ui_mouse_target_at(54+300+145,73+30*4+1+10);
+    render_pb(root); point2d point=spinner_arrow_point(spinner,TRUE);
+    target=ui_mouse_target_at(point.x,point.y);
     assert(!target || target->widget!=spinner);
     close_pb(root);
 }
@@ -229,7 +239,7 @@ enum {_gamepad_analog_button_x=2,_gamepad_analog_button_y,_gamepad_analog_button
         ))
         source += "\n" + ui[ui.index("#define UI_MOUSE_MAXIMUM_TARGETS"):ui.index("static void widget_instance_render_recursive(\n", ui.index("#define UI_MOUSE_MAXIMUM_TARGETS"))]
         source += "\n".join(c_block(CHECKS, signature) for signature in (
-            "static void draw_targets(", "static void render_pb(", "static short click_at("))
+            "static void draw_targets(", "static void render_pb(", "static point2d spinner_arrow_point(", "static short click_at("))
         source += r'''
 static void apply_posted_setting(struct widget_instance *spinner) {
     struct ui_widget_definition *definition=ui_widget_definition_get(spinner->definition_tag_index);
@@ -253,17 +263,11 @@ int main(void) {
             struct ui_widget_definition *definition=ui_widget_definition_get(spinner->definition_tag_index);
             assert(game_settings_is_native_spinner(spinner) && !definition->flags);
             for(short right=0;right<2;right++) {
-                rectangle2d arrow=right ? definition->list_footer_bounds:definition->list_header_bounds;
-                short local_x=(arrow.x0+arrow.x1)/2;
-                assert(local_x<definition->bounds.x0 || local_x>=definition->bounds.x1);
                 render_pb(root);
-                short x=local_x,y=(arrow.y0+arrow.y1)/2;
-                for(struct widget_instance *ancestor=spinner;ancestor;ancestor=ancestor->parent) {
-                    x+=ancestor->horizontal_offset; y+=ancestor->vertical_offset;
-                }
-                struct ui_mouse_target *target=ui_mouse_target_at(x,y);
+                point2d point=spinner_arrow_point(spinner,right);
+                struct ui_mouse_target *target=ui_mouse_target_at(point.x,point.y);
                 assert(target && target->widget==spinner && target->kind==_ui_mouse_target_value);
-                assert(click_at(root,x,y)==(right ? _widget_event_dpad_right:_widget_event_dpad_left));
+                assert(click_at(root,point.x,point.y)==(right ? _widget_event_dpad_right:_widget_event_dpad_left));
                 assert(ui_mouse_widget_has_focus(spinner) && ui_mouse_wheel_widget(root)==spinner);
                 apply_posted_setting(spinner); assert(!writes);
                 render_pb(root);

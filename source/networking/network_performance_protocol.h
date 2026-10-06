@@ -5,15 +5,17 @@
 
 #define NETWORK_PERFORMANCE_MESSAGE_TYPE 0xE0
 #define NETWORK_PERFORMANCE_MESSAGE_SIZE 16
-#define NETWORK_PERFORMANCE_VERSION 1
+#define NETWORK_PERFORMANCE_VERSION 2
+#define NETWORK_PERFORMANCE_LEGACY_VERSION 1
 #define NETWORK_PERFORMANCE_CAPABILITY 1
 #define NETWORK_PERFORMANCE_SETTINGS 2
-#define NETWORK_PERFORMANCE_SUPPORTED_FLAGS 255
+#define NETWORK_PERFORMANCE_SUPPORTED_FLAGS 511
 #define NETWORK_PERFORMANCE_TIMER_AUDIO_FLAG 4
 #define NETWORK_PERFORMANCE_INPUT_DELAY_FLAG 32
 #define NETWORK_PERFORMANCE_HARDCORE_FLAG 64
 #define NETWORK_PERFORMANCE_FIESTA_FLAG 128
-#define NETWORK_PERFORMANCE_MATCH_RULE_FLAGS 224
+#define NETWORK_PERFORMANCE_HARDCORE_CAMO_FLAG 256
+#define NETWORK_PERFORMANCE_MATCH_RULE_FLAGS 480
 #define NETWORK_PERFORMANCE_ADVERTISED_FLAG 4
 /* Outside upstream's sequential versions: stock clients show their existing
  * update-required dialog only while practice options are on. */
@@ -32,10 +34,10 @@ static inline unsigned network_performance_runtime_supported_flags(
 /* A newer host must send a capability frame an older peer can decode. The
  * extension generations deliberately reject every unknown bit as a whole. */
 static inline unsigned network_performance_capability_for_peer(unsigned supported,
-    int peer_hardcore_supported, int peer_fiesta_supported)
+    int peer_hardcore_supported, int peer_fiesta_supported, int peer_camo_supported)
 {
-    return peer_fiesta_supported ? supported :
-        supported & (peer_hardcore_supported ? 127u : 63u);
+    return peer_camo_supported ? supported :
+        supported & (peer_fiesta_supported ? 255u : (peer_hardcore_supported ? 127u : 63u));
 }
 
 /* An older host preserves unknown saved padding, but decodes that entire
@@ -79,26 +81,32 @@ static inline void network_performance_encode(unsigned char *message,
     message[2] = NETWORK_PERFORMANCE_MESSAGE_TYPE;
     message[3] = 1;
     message[8] = 'H'; message[9] = 'P'; message[10] = 'F'; message[11] = 'O';
-    message[12] = NETWORK_PERFORMANCE_VERSION;
+    /* Keep every version-1 frame byte-identical for older peers. Version 2
+     * uses the final reserved payload byte for the high flags byte. */
+    message[12] = flags > 255 ? NETWORK_PERFORMANCE_VERSION : NETWORK_PERFORMANCE_LEGACY_VERSION;
     message[13] = (unsigned char)flags;
     message[14] = (unsigned char)kind;
+    message[15] = (unsigned char)(flags >> 8);
 }
 
 static inline int network_performance_decode(unsigned char const *message,
     unsigned size, unsigned kind, unsigned *flags)
 {
-    unsigned index;
+    unsigned index, decoded;
     if ((kind != NETWORK_PERFORMANCE_CAPABILITY && kind != NETWORK_PERFORMANCE_SETTINGS) ||
         !message || !flags || size != NETWORK_PERFORMANCE_MESSAGE_SIZE ||
         message[0] != 8 || message[1] != 1 ||
         message[2] != NETWORK_PERFORMANCE_MESSAGE_TYPE || message[3] != 1 ||
         message[8] != 'H' || message[9] != 'P' || message[10] != 'F' || message[11] != 'O' ||
-        message[12] != NETWORK_PERFORMANCE_VERSION || message[14] != kind ||
-        message[15] != 0 || (message[13] & ~NETWORK_PERFORMANCE_SUPPORTED_FLAGS) != 0)
+        message[14] != kind ||
+        !((message[12] == NETWORK_PERFORMANCE_LEGACY_VERSION && message[15] == 0) ||
+          (message[12] == NETWORK_PERFORMANCE_VERSION && message[15] == 1)))
         return 0;
     for (index = 4; index < 8; ++index)
         if (message[index] != 0) return 0;
-    *flags = message[13];
+    decoded = message[13] | ((unsigned)message[15] << 8);
+    if (decoded & ~NETWORK_PERFORMANCE_SUPPORTED_FLAGS) return 0;
+    *flags = decoded;
     return 1;
 }
 

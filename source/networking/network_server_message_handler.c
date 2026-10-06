@@ -338,6 +338,9 @@ enum network_game_server_countdown_event
 	_network_game_server_countdown_event_player_joined,
 	_network_game_server_countdown_event_stop,
 	_network_game_server_countdown_event_start_immediately,
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	_network_game_server_countdown_event_start_countdown,
+#endif
 };
 
 /* ---------- macros */
@@ -703,7 +706,8 @@ static boolean network_game_server_send_performance_capability(
 
 	if (!network_game_server_performance_supported(machine, _performance_option_input_delay) &&
 		!network_game_server_performance_supported(machine, _performance_option_hardcore) &&
-		!network_game_server_performance_supported(machine, _performance_option_fiesta))
+		!network_game_server_performance_supported(machine, _performance_option_fiesta) &&
+		!network_game_server_performance_supported(machine, _performance_option_hardcore_camo))
 		return TRUE;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	supported = network_performance_runtime_supported_flags(TRUE, halo_performance_audio_available());
@@ -712,7 +716,8 @@ static boolean network_game_server_send_performance_capability(
 #endif
 	supported = network_performance_capability_for_peer(supported,
 		network_game_server_performance_supported(machine, _performance_option_hardcore),
-		network_game_server_performance_supported(machine, _performance_option_fiesta));
+		network_game_server_performance_supported(machine, _performance_option_fiesta),
+		network_game_server_performance_supported(machine, _performance_option_hardcore_camo));
 
 	/* A saved variant may contain flags this host cannot interpret. Confirm
 	 * runtime support before the full record, on the same reliable stream;
@@ -2391,6 +2396,16 @@ static boolean network_game_server_handle_message_client_game_start_request(
 					countdown_event == _network_game_server_countdown_event_start_immediately) &&
 					network_game_server_client_machine_is_local(server, client_machine)))
 			{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				/* The existing Start/faster wire request can launch a solo
+				 * countdown only from the host's own machine. Automatic player
+				 * joins still use player_joined and wait for other players. */
+				if (countdown_event == _network_game_server_countdown_event_player_joined &&
+					network_game_server_client_machine_is_local(server, client_machine))
+				{
+					countdown_event = _network_game_server_countdown_event_start_countdown;
+				}
+#endif
 				network_game_server_update_countdown(server, countdown_event);
 			}
 			else

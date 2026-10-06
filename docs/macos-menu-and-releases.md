@@ -69,10 +69,21 @@ The prerelease includes:
   artifact IDs and SHA-256 hashes. Debug builds are omitted.
 
 Release notes start with a short description and direct platform download links,
-followed by key highlights and the full commit list. Both the annotated tag
+followed by an **Overview** with a short prose paragraph and player-facing
+highlight bullets, then the full commit list. Both the annotated tag
 message and release notes include concise commit subjects with short SHAs since
 the previous reachable Halo OG release tag, plus a GitHub compare link for that
 range. The platform asset filenames and download-link layout stay unchanged.
+
+Follow the [release-notes authoring prompt](releases/README.md) to review the
+entire range and explain the main features and fixes in player terms. Before
+building, commit `docs/releases/<tag>.json` containing `summary` and `highlights`.
+Preparation reads this overview from the exact source SHA, records it in
+`provenance.json`, and renders the same substantive overview in the annotated
+tag and release notes. Missing or invalid overviews stop preparation; there is
+no automatic fallback to recent commit subjects. Publication verifies the
+overview against that source again, so editing a prepared candidate cannot
+silently replace it.
 
 History comes from GitHub's published Halo OG releases, including legacy
 `test-v...` releases for the first version-only tag. The nearest ancestor is
@@ -84,8 +95,9 @@ the pinned October 2, 2026 baseline commit
 The notes label it as a baseline commit, not a previous release tag. This
 one-time fallback requires the same strict ancestry and complete comparison;
 after a recognized release is published, normal release history always wins.
-Highlights use up to five recent non-merge commit subjects; the complete list
-includes merges and every commit in the range. Publication rechecks that history.
+Highlights are authored for the release's significant player-facing changes;
+the complete list includes merges and every commit in the range. Publication
+rechecks that history.
 Notes must fit the 16 KiB limit in existing desktop clients; oversized complete
 changelogs are rejected rather than silently truncated.
 

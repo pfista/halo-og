@@ -26,8 +26,8 @@ and the debug keyboard that the game's console reads.
 #include "native_input_events.h"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #include "guest_host.h"
-extern unsigned char console_is_active(void);
 #endif
+extern unsigned char console_is_active(void);
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -63,6 +63,159 @@ static struct platform_ui_pointer ui_pointer;
 static float ui_pointer_wheel;
 #endif
 static pthread_mutex_t input_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* Menu key edges are independent of keys_pressed: several distinct taps in
+ * one frame must remain several presses, and a released key is never held. */
+static unsigned char menu_keyboard_keys[SDL_SCANCODE_COUNT];
+static struct halo_menu_keyboard_event *menu_keyboard_events;
+static size_t menu_keyboard_head, menu_keyboard_count, menu_keyboard_capacity;
+
+static void menu_keyboard_reset(void)
+{
+	memset(menu_keyboard_keys, 0, sizeof(menu_keyboard_keys));
+	menu_keyboard_head = menu_keyboard_count = 0;
+}
+
+static BOOL menu_keyboard_allowed(void)
+{
+	if (!input_state.focused || console_is_active())
+		return FALSE;
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	if (input_state.mouse_released && !input_state.ui_pointer)
+		return FALSE;
+#endif
+	return TRUE;
+}
+
+static unsigned menu_keyboard_key_directions(SDL_Scancode key)
+{
+	unsigned directions = 0;
+
+	if (input_binding_matches_key(_binding_console, key) ||
+		input_binding_matches_key(_binding_release_mouse, key))
+		return 0;
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	if (key == SDL_SCANCODE_ESCAPE)
+		return 0;
+#endif
+#ifndef HALO_ANDROID
+	if (key == SDL_SCANCODE_F11)
+		return 0;
+#endif
+#define DIRECTION(binding, direction, shift) \
+	if (input_binding_matches_key(_binding_##binding, key)) directions |= HALO_MENU_DIRECTION_##direction << shift
+	DIRECTION(dpad_up, UP, 0);
+	DIRECTION(dpad_down, DOWN, 0);
+	DIRECTION(dpad_left, LEFT, 0);
+	DIRECTION(dpad_right, RIGHT, 0);
+	DIRECTION(move_forward, UP, HALO_MENU_KEYBOARD_MOVE_SHIFT);
+	DIRECTION(move_back, DOWN, HALO_MENU_KEYBOARD_MOVE_SHIFT);
+	DIRECTION(move_left, LEFT, HALO_MENU_KEYBOARD_MOVE_SHIFT);
+	DIRECTION(move_right, RIGHT, HALO_MENU_KEYBOARD_MOVE_SHIFT);
+#undef DIRECTION
+	return directions;
+}
+
+static unsigned menu_keyboard_held_directions(void)
+{
+	unsigned directions = 0;
+	int scancode;
+
+	for (scancode = 1; scancode < SDL_SCANCODE_COUNT; scancode++)
+		if (menu_keyboard_keys[scancode])
+			directions |= menu_keyboard_key_directions((SDL_Scancode)scancode);
+	/* Opposing movement keys cancel just as the synthetic left stick does. */
+	if ((directions & ((HALO_MENU_DIRECTION_LEFT | HALO_MENU_DIRECTION_RIGHT) << HALO_MENU_KEYBOARD_MOVE_SHIFT)) ==
+		((HALO_MENU_DIRECTION_LEFT | HALO_MENU_DIRECTION_RIGHT) << HALO_MENU_KEYBOARD_MOVE_SHIFT))
+		directions &= ~((HALO_MENU_DIRECTION_LEFT | HALO_MENU_DIRECTION_RIGHT) << HALO_MENU_KEYBOARD_MOVE_SHIFT);
+	if ((directions & ((HALO_MENU_DIRECTION_UP | HALO_MENU_DIRECTION_DOWN) << HALO_MENU_KEYBOARD_MOVE_SHIFT)) ==
+		((HALO_MENU_DIRECTION_UP | HALO_MENU_DIRECTION_DOWN) << HALO_MENU_KEYBOARD_MOVE_SHIFT))
+		directions &= ~((HALO_MENU_DIRECTION_UP | HALO_MENU_DIRECTION_DOWN) << HALO_MENU_KEYBOARD_MOVE_SHIFT);
+	return directions;
+}
+
+/* Called under input_lock for physical SDL key transitions. */
+static void menu_keyboard_event(const SDL_KeyboardEvent *key)
+{
+	unsigned directions;
+	struct halo_menu_keyboard_event *event;
+
+	if (!menu_keyboard_allowed())
+	{
+		menu_keyboard_reset();
+		return;
+	}
+	if (key->scancode <= 0 || key->scancode >= SDL_SCANCODE_COUNT ||
+		(key->down && key->repeat))
+		return;
+	directions = menu_keyboard_key_directions(key->scancode);
+	if (!directions || (menu_keyboard_keys[key->scancode] != 0) == (key->down != 0))
+		return;
+	menu_keyboard_keys[key->scancode] = key->down;
+	if (menu_keyboard_head + menu_keyboard_count == menu_keyboard_capacity)
+	{
+		if (menu_keyboard_head)
+		{
+			memmove(menu_keyboard_events, menu_keyboard_events + menu_keyboard_head,
+				menu_keyboard_count * sizeof(*menu_keyboard_events));
+			menu_keyboard_head = 0;
+		}
+		else
+		{
+			size_t capacity = menu_keyboard_capacity ? menu_keyboard_capacity * 2 : 64;
+			struct halo_menu_keyboard_event *events;
+
+			if (capacity < menu_keyboard_capacity || capacity > (size_t)-1 / sizeof(*events))
+				return;
+			events = realloc(menu_keyboard_events, capacity * sizeof(*events));
+			if (!events)
+				return;
+			menu_keyboard_events = events;
+			menu_keyboard_capacity = capacity;
+		}
+	}
+	event = &menu_keyboard_events[menu_keyboard_head + menu_keyboard_count++];
+	event->pressed = key->down ? directions : 0;
+	event->released = key->down ? 0 : directions;
+	event->held = menu_keyboard_held_directions();
+}
+
+int halo_menu_keyboard_next(struct halo_menu_keyboard_event *event)
+{
+	int result = FALSE;
+
+	pthread_mutex_lock(&input_lock);
+	if (!menu_keyboard_allowed())
+		menu_keyboard_reset();
+	if (menu_keyboard_count)
+	{
+		*event = menu_keyboard_events[menu_keyboard_head++];
+		if (!--menu_keyboard_count)
+			menu_keyboard_head = 0;
+		result = TRUE;
+	}
+	pthread_mutex_unlock(&input_lock);
+	return result;
+}
+
+unsigned halo_menu_keyboard_held(void)
+{
+	unsigned held;
+
+	pthread_mutex_lock(&input_lock);
+	if (!menu_keyboard_allowed())
+		menu_keyboard_reset();
+	held = menu_keyboard_held_directions();
+	pthread_mutex_unlock(&input_lock);
+	return held;
+}
+
+void halo_menu_keyboard_clear(void)
+{
+	pthread_mutex_lock(&input_lock);
+	menu_keyboard_head = menu_keyboard_count = 0;
+	pthread_mutex_unlock(&input_lock);
+}
 
 /* debug keyboard queue */
 #define KEYSTROKE_QUEUE_SIZE 64
@@ -622,6 +775,7 @@ void platform_mouse_capture(BOOL capture)
    native panel or Resume click cannot leak movement/fire into gameplay. */
 static void platform_input_clear(void)
 {
+	menu_keyboard_reset();
 	memset(input_state.keys, 0, sizeof(input_state.keys));
 	memset(keys_pressed, 0, sizeof(keys_pressed));
 	memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
@@ -979,6 +1133,7 @@ void platform_pump_events(void)
 				if (event.key.down)
 					keys_pressed[event.key.scancode] = 1;
 			}
+			menu_keyboard_event(&event.key);
 			queue_keystroke(&event.key);
 			/* The configured mouse-release key releases or recaptures it. */
 			if (event.key.down && !event.key.repeat && input_binding_matches_key(_binding_release_mouse, event.key.scancode))
@@ -1070,6 +1225,7 @@ void platform_pump_events(void)
 			input_state.mouse_wheel += event.wheel.y;
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
+			menu_keyboard_reset();
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 			platform_mouse_released_set(TRUE);
 #else
@@ -1126,6 +1282,7 @@ void platform_ui_pointer_set_active(BOOL active)
 		return;
 	pthread_mutex_lock(&input_lock);
 	input_state.ui_pointer = active;
+	menu_keyboard_reset();
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 	/* Menus always free the pointer. Only an explicit Resume can authorize
 	   capture as they close; Escape/Back and navigation never do. */

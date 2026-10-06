@@ -196,7 +196,7 @@ def generate_changelog(api, repository, sha, tag):
 
 
 def _display_subject(subject, markdown):
-    # An arbitrary commit subject must never become another build-source claim
+    # Arbitrary overview text or a commit subject must never become a build-source claim
     # or a hyperlink/HTML fragment in generated release notes.
     subject = re.sub(r"(?i)\b(https?)://", r"\1: //", subject)
     if markdown:
@@ -205,23 +205,31 @@ def _display_subject(subject, markdown):
     return subject
 
 
+def validate_overview(overview):
+    """Require an authored paragraph and highlights, rather than guessing from commits."""
+    if not isinstance(overview, dict) or set(overview) != {"summary", "highlights"}:
+        raise RuntimeError("Release overview must contain only summary and highlights")
+    highlights = overview["highlights"]
+    if not isinstance(highlights, list) or not 1 <= len(highlights) <= 6:
+        raise RuntimeError("Release overview must contain one to six highlights")
+    for value in [overview["summary"], *highlights]:
+        if (not isinstance(value, str) or not value.strip() or value != value.strip()
+                or any(character in value for character in "\n\r")
+                or any(ord(character) < 32 for character in value)):
+            raise RuntimeError("Release overview summary and highlights must be non-empty single paragraphs of plain text")
+    if len(set(highlights)) != len(highlights):
+        raise RuntimeError("Release overview highlights must be distinct")
+    return overview
+
+
 def format_changelog(record, markdown=False):
-    """Render the same key changes and complete commit list for notes and tags."""
+    """Render the same authored overview and complete commit list for notes and tags."""
     changelog = record["changelog"]
     commits = changelog["commits"]
+    overview = validate_overview(record.get("overview"))
     prefix = "### " if markdown else ""
-    lines = [prefix + "Key changes", ""]
-    changes, seen = [], set()
-    for commit in reversed(commits):
-        subject = commit["subject"]
-        if not subject.startswith("Merge ") and subject not in seen:
-            changes.append(subject)
-            seen.add(subject)
-            if len(changes) == 5:
-                break
-    lines.extend("- " + _display_subject(subject, markdown) for subject in reversed(changes))
-    if not changes:
-        lines.append("- See the complete commit list below.")
+    lines = [prefix + "Overview", "", _display_subject(overview["summary"], markdown), ""]
+    lines.extend("- " + _display_subject(highlight, markdown) for highlight in overview["highlights"])
     baseline = changelog["previous_tag"]
     if baseline is None:
         baseline = "baseline commit " + changelog["previous_sha"][:12]

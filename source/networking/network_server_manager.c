@@ -548,6 +548,10 @@ enum
 	_network_game_server_countdown_event_player_joined,
 	_network_game_server_countdown_event_stop,
 	_network_game_server_countdown_event_start_immediately,
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Native host request only; never accepted as an event on the wire. */
+	_network_game_server_countdown_event_start_countdown,
+#endif
 
 	NUMBER_OF_NETWORK_GAME_SERVER_COUNTDOWN_EVENTS
 };
@@ -826,7 +830,7 @@ player is asked for as it joins) */
 static unsigned long network_game_server_client_machine_join_times[MAXIMUM_NETWORK_MACHINE_COUNT];
 
 /* A capability is attached to a connection slot, never a player or address. */
-static byte network_game_server_performance_capabilities[MAXIMUM_NETWORK_MACHINE_COUNT];
+static word network_game_server_performance_capabilities[MAXIMUM_NETWORK_MACHINE_COUNT];
 
 void platform_show_message(char const *title, char const *message);
 
@@ -836,7 +840,7 @@ void network_game_server_performance_capability(
 {
 	if (machine && VALID_INDEX(machine->machine_index, MAXIMUM_NETWORK_MACHINE_COUNT))
 		network_game_server_performance_capabilities[machine->machine_index] =
-			(byte)(flags & NETWORK_PERFORMANCE_SUPPORTED_FLAGS);
+			(word)(flags & NETWORK_PERFORMANCE_SUPPORTED_FLAGS);
 }
 
 boolean network_game_server_performance_supported(
@@ -896,7 +900,7 @@ static boolean network_game_server_performance_peers_support(
 	if (flags & PERFORMANCE_MATCH_RULE_FLAGS)
 	{
 		platform_show_message("Halo: match rules unavailable",
-			"This build does not support Input Delay, Hardcore, or Fiesta. Turn these options off, or use a compatible build.");
+			"This build does not support Input Delay, Hardcore, Fiesta, or Hardcore Camo. Turn these options off, or use a compatible build.");
 		return FALSE;
 	}
 #endif
@@ -926,6 +930,14 @@ static boolean network_game_server_performance_peers_support(
 			!network_game_server_client_machine_is_local(server, machine) &&
 			!network_game_server_performance_supported(machine, flags))
 		{
+			if ((flags & _performance_option_hardcore_camo) &&
+				!network_game_server_performance_supported(machine, _performance_option_hardcore_camo))
+			{
+				platform_show_message("Halo: Hardcore Camo unavailable",
+					"A connected player does not support Hardcore Camo. Select Normal under Camo, "
+					"or have that player update before starting.");
+				return FALSE;
+			}
 			if ((flags & _performance_option_fiesta) &&
 				!network_game_server_performance_supported(machine, _performance_option_fiesta))
 			{
@@ -963,6 +975,13 @@ static boolean network_game_server_input_delay_change_allowed(
 	struct network_game_server *server,
 	unsigned flags)
 {
+	if (((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_hardcore_camo) &&
+		(server->state != _network_game_server_state_pregame || server->sent_start_game_message))
+	{
+		platform_show_message("Halo: Hardcore Camo locked",
+			"Camo is fixed for the match. Choose Normal or Hardcore in the game type before starting the next match.");
+		return FALSE;
+	}
 	if (((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_fiesta) &&
 		(server->state != _network_game_server_state_pregame || server->sent_start_game_message))
 	{
@@ -3103,7 +3122,12 @@ boolean server_has_enough_machines(
 {
 	boolean has_enough_machines;
 	long minimum_machine_count =
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* A native host may explicitly start alone, then accept late joiners. */
+		1;
+#else
 		network_game_is_splitscreen_local() ? 1 : 2;
+#endif
 	long machine_count = 0;
 	long client_machine_index;
 
@@ -3130,7 +3154,11 @@ boolean server_ok_to_countdown(
 {
 	if (server_has_enough_machines(server) &&
 		server_has_a_player_on_each_machine(server) &&
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		(server->game.player_count == 1 || !server_needs_more_teams(server)) &&
+#else
 		!server_needs_more_teams(server) &&
+#endif
 		server->game.player_count >= server->game.minimum_players)
 	{
 		return TRUE;
@@ -3739,6 +3767,9 @@ void network_game_server_update_countdown(
 							break;
 
 						case _network_game_server_countdown_event_player_joined:
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+						case _network_game_server_countdown_event_start_countdown:
+#endif
 							server->countdown_state.adjusted_time_this_tick = TRUE;
 							if (countdown_timer_get_time_remaining(&server->countdown_state.timer) >
 								NETWORK_GAME_MINIMUM_COUNTDOWN_TIME)
@@ -3781,8 +3812,16 @@ void network_game_server_update_countdown(
 				}
 				else
 				{
-					if (network_game_should_accept_remote_connections() == FALSE ||
-						network_game_server_get_client_machine_count(server) > 1)
+					boolean start_countdown =
+						network_game_should_accept_remote_connections() == FALSE ||
+						network_game_server_get_client_machine_count(server) > 1;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+					/* Keep automatic starts waiting for other players. Only the
+					 * host's explicit lobby request starts a solo countdown. */
+					start_countdown = (server->game.player_count >= 2 && start_countdown) ||
+						countdown_event == _network_game_server_countdown_event_start_countdown;
+#endif
+					if (start_countdown)
 					{
 						unsigned long countdown;
 
@@ -4015,7 +4054,11 @@ static boolean network_game_server_setup_game_from_playlist(
 		ustrncpy(server->game.name, machine_name, NETWORK_GAME_NAME_LENGTH - 1);
 		server->game.name[NETWORK_GAME_NAME_LENGTH - 1] = L'\0';
 		server->game.map.version = 0;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		server->game.minimum_players = 1;
+#else
 		server->game.minimum_players = 2;
+#endif
 		server->game.maximum_players = MAXIMUM_NETWORK_PLAYER_COUNT;
 		game_variant_options_default(&server->game.variant, &server->game.variant_options);
 

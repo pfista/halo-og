@@ -75,10 +75,29 @@ settings; verify the installed signature and `Contents/Resources/BuildInfo.txt`.
 
 ## GitHub releases
 
-Keep release notes simple: a short description followed by direct download
-links for every included platform. Link to the playtesting guide for setup;
-keep platform requirements and any signing limitations brief. Publish matching
-platform builds from one source commit and include checksums and provenance.
+Keep the established release structure: a short product description, direct
+download links for every included platform, an **Overview** with a short prose
+paragraph and player-facing highlight bullets, then the complete commit list.
+Link to the playtesting guide for setup; keep platform requirements and signing
+limitations brief. Publish matching platform builds from one source commit and
+include checksums and provenance.
+
+- Follow [the release-notes authoring prompt](docs/releases/README.md) whenever
+  the user asks for a release. Review the entire range since the previous
+  reachable release, including relevant diffs and feature documentation. Choose
+  highlights by player impact, not commit recency or the number of commits.
+- Explain the release's main changes in two to four short sentences, followed
+  by usually three to six concise bullets (fewer for a small release). Cover the
+  significant gameplay rules, modes, maps, controls, bug fixes, rendering/audio
+  and network changes actually included. State optional settings and defaults
+  when they affect how players use a feature. Do not pad the overview with CI,
+  test, documentation or refactoring work unless it has a direct player benefit.
+- Author `docs/releases/<tag>.json` with `summary` and `highlights` before
+  committing and building the release source. The generator reads that file
+  from the exact build SHA and uses the same overview in the annotated tag and
+  GitHub notes. Do not substitute the latest few commit subjects, copy a stale
+  overview, or describe unfinished work as shipped. Recheck it against the final
+  source and release range before publication.
 
 - Commit and push requests do not authorize tags or releases. Require the user's
   explicit instruction for the specified source commit before creating or
@@ -94,7 +113,7 @@ platform builds from one source commit and include checksums and provenance.
   replace their published assets.
 - Both the annotated tag message and GitHub release notes must include concise
   commit subjects with short SHAs since the previous reachable Halo OG release
-  tag, plus a compare link. Keep key highlights and the full commit list in the
-  release notes after the description and platform download links.
+  tag, plus a compare link. Keep the overview and full commit list in the release
+  notes after the description and platform download links.
 - Preserve the established platform asset filenames and direct download links.
   Older `test-...` tags remain historical releases; do not rename them.

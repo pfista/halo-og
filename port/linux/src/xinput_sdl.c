@@ -59,6 +59,8 @@ struct controller
 
 static struct controller controllers[PORT_COUNT];
 static unsigned controller_physical_axis_flags[PORT_COUNT];
+static struct halo_menu_navigation_state menu_navigation_states[PORT_COUNT];
+static BOOL menu_navigation_valid[PORT_COUNT];
 static struct controller keyboard_device;
 static DWORD reported_gamepads = 0;
 static BOOL reported_keyboard = FALSE;
@@ -237,6 +239,38 @@ static void keyboard_gamepad(const struct platform_input_state *input, XINPUT_GA
 	pad->bAnalogButtons[XINPUT_GAMEPAD_BLACK] |= analog(HELD(black));
 	pad->bAnalogButtons[XINPUT_GAMEPAD_LEFT_TRIGGER] |= analog(HELD(left_trigger));
 	pad->bAnalogButtons[XINPUT_GAMEPAD_RIGHT_TRIGGER] |= analog(HELD(right_trigger));
+#undef HELD
+}
+
+/* Faster consumes keyboard navigation as ordered key transitions. Keep the
+ * remaining binding sources separate so a key cannot also move the merged
+ * D-pad/left stick, while mouse bindings and physical controllers still work. */
+static void keyboard_navigation_gamepad(const struct platform_input_state *input, XINPUT_GAMEPAD *pad)
+{
+	const unsigned char *m = input->mouse_released ? NULL : input->mouse_buttons;
+	int wheel = !input->mouse_released && SDL_GetTicks() < wheel_press_until_ms;
+	int x = 0, y = 0;
+
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	if (input->mouse_released && !input->ui_pointer)
+		return;
+#endif
+#define HELD(action) input_binding_down(_binding_##action, NULL, m, wheel)
+	if (HELD(move_right)) x++;
+	if (HELD(move_left)) x--;
+	if (HELD(move_forward)) y++;
+	if (HELD(move_back)) y--;
+	if (x || y)
+	{
+		float length = (x && y) ? 0.70710678f : 1.0f;
+
+		pad->sThumbLX = (SHORT)(x * 32767 * length);
+		pad->sThumbLY = (SHORT)(y * 32767 * length);
+	}
+	if (HELD(dpad_up)) pad->wButtons |= XINPUT_GAMEPAD_DPAD_UP;
+	if (HELD(dpad_down)) pad->wButtons |= XINPUT_GAMEPAD_DPAD_DOWN;
+	if (HELD(dpad_left)) pad->wButtons |= XINPUT_GAMEPAD_DPAD_LEFT;
+	if (HELD(dpad_right)) pad->wButtons |= XINPUT_GAMEPAD_DPAD_RIGHT;
 #undef HELD
 }
 
@@ -559,6 +593,8 @@ HANDLE WINAPI XInputOpen(PXPP_DEVICE_TYPE device_type, DWORD port, DWORD slot,
 		memset(&controllers[port], 0, sizeof(controllers[port]));
 		controllers[port].open = TRUE;
 		controller_physical_axis_flags[port] = 0;
+		memset(&menu_navigation_states[port], 0, sizeof(menu_navigation_states[port]));
+		menu_navigation_valid[port] = FALSE;
 		return (HANDLE)&controllers[port];
 	}
 	if (device_type == XDEVICE_TYPE_DEBUG_KEYBOARD && port == 0)
@@ -596,10 +632,21 @@ unsigned halo_controller_physical_axes(short gamepad_index)
 		controller_physical_axis_flags[gamepad_index] : 0;
 }
 
+int halo_menu_navigation_read(short gamepad_index, struct halo_menu_navigation_state *state)
+{
+	if (gamepad_index < 0 || gamepad_index >= PORT_COUNT ||
+		!controllers[gamepad_index].open || !menu_navigation_valid[gamepad_index])
+		return FALSE;
+	*state = menu_navigation_states[gamepad_index];
+	return TRUE;
+}
+
 DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 {
 	int port = controller_port(device);
 	SDL_Gamepad *gamepads[PORT_COUNT];
+	XINPUT_GAMEPAD navigation = {0};
+	unsigned navigation_physical_axes = 0;
 	int count;
 
 	memset(state, 0, sizeof(*state));
@@ -616,15 +663,29 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		mouse_poll(&input);
 		wheel_update();
 		if (!console_is_active())
+		{
 			keyboard_gamepad(&input, &state->Gamepad);
+			keyboard_navigation_gamepad(&input, &navigation);
+		}
 		if (count > 0)
 		{
 			XINPUT_GAMEPAD physical = {0};
 			sdl_gamepad_state(gamepads[0], &physical);
 			controller_physical_axis_flags[0] = controller_physical_axis_mask(&physical, &state->Gamepad);
+			navigation_physical_axes = controller_physical_axis_mask(&physical, &navigation);
 			merge_gamepad_state(&physical, &state->Gamepad);
+			merge_gamepad_state(&physical, &navigation);
 		}
-		controller_physical_axis_flags[0] &= ~test_input_gamepad(&state->Gamepad);
+		{
+			unsigned scripted_axes = test_input_gamepad(&state->Gamepad);
+
+			controller_physical_axis_flags[0] &= ~scripted_axes;
+			navigation_physical_axes &= ~scripted_axes;
+			if (scripted_axes & HALO_CONTROLLER_AXIS_LEFT_X) navigation.sThumbLX = state->Gamepad.sThumbLX;
+			if (scripted_axes & HALO_CONTROLLER_AXIS_LEFT_Y) navigation.sThumbLY = state->Gamepad.sThumbLY;
+			if (scripted_axes & HALO_CONTROLLER_AXIS_RIGHT_X) navigation.sThumbRX = state->Gamepad.sThumbRX;
+			if (scripted_axes & HALO_CONTROLLER_AXIS_RIGHT_Y) navigation.sThumbRY = state->Gamepad.sThumbRY;
+		}
 		if (halo_controller_look_active(0,
 			controller_physical_axis_flags[0] & HALO_CONTROLLER_AXIS_LEFT_X ? state->Gamepad.sThumbLX : 0,
 			controller_physical_axis_flags[0] & HALO_CONTROLLER_AXIS_LEFT_Y ? state->Gamepad.sThumbLY : 0,
@@ -640,7 +701,17 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	{
 		sdl_gamepad_state(gamepads[port], &state->Gamepad);
 		controller_physical_axis_flags[port] = 15u;
+		navigation = state->Gamepad;
+		navigation_physical_axes = 15u;
 	}
+	menu_navigation_states[port].dpad = navigation.wButtons &
+		(XINPUT_GAMEPAD_DPAD_UP | XINPUT_GAMEPAD_DPAD_DOWN | XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_RIGHT);
+	menu_navigation_states[port].left_x = navigation.sThumbLX;
+	menu_navigation_states[port].left_y = navigation.sThumbLY;
+	menu_navigation_states[port].right_x = navigation.sThumbRX;
+	menu_navigation_states[port].right_y = navigation.sThumbRY;
+	menu_navigation_states[port].physical_axes = navigation_physical_axes;
+	menu_navigation_valid[port] = TRUE;
 
 	if (memcmp(&state->Gamepad, &controllers[port].previous, sizeof(state->Gamepad)))
 	{

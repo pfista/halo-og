@@ -3022,12 +3022,53 @@ static void multiplayer_game_directions(
 		widget->type == _ui_widget_type_text_box,
 		"expected text box widget for team game directions");
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Native extension: the host may start alone using the existing A/START
+	 * action. Keep the stock directions widget and its original font/layout. */
+	if (server && game && game->player_count == 1 && game->machine_count == 1 &&
+		network_game_client_get_seconds_to_game_start(global_network_game_client_get()) < 0)
+	{
+		short local_machine_index = network_game_client_get_machine_index(
+			global_network_game_client_get());
+		long player_index;
+
+		for (player_index = 0; player_index < NUMBEROF(game->players); player_index++)
+		{
+			if (network_player_is_valid(&game->players[player_index]) &&
+				game->players[player_index].machine_index == local_machine_index)
+			{
+				static wchar_t const prompt[] = L"Press START to begin countdown";
+
+				widget->parameters.text_box.text = ui_widget_realloc(
+					widget->parameters.text_box.text, sizeof(prompt), __FILE__, __LINE__);
+				if (widget->parameters.text_box.text)
+				{
+					csmemcpy(widget->parameters.text_box.text, prompt, sizeof(prompt));
+					widget->parameters.text_box.string_list_index = HALO_CUSTOM_MAP_TEXT;
+					widget->visible = TRUE;
+					return;
+				}
+				break;
+			}
+		}
+	}
+#endif
+
 	if (server)
 	{
 		boolean waiting_for_machines = !network_game_is_splitscreen_local() &&
 			game &&
 			game->machine_count < 2;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* A manually started solo countdown no longer waits for opponents. */
+		if (game && game->player_count == 1 &&
+			network_game_client_get_seconds_to_game_start(global_network_game_client_get()) >= 0)
+		{
+			widget->visible = FALSE;
+			return;
+		}
+#endif
 		if (!waiting_for_machines &&
 			network_game_is_splitscreen_local() &&
 			game &&
@@ -3335,7 +3376,7 @@ static void variant_profile_update_cache_for_nwide_list(
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 /* The card has 256 UTF-16 characters and room for one more small-ui line.
-Prioritize starting equipment and Hardcore over optional practice aids. */
+Prioritize Hardcore Camo, then starting equipment and precision rules. */
 static void playlist_profile_append_performance_status(
 	wchar_t *description,
 	struct playlist_profile const *profile)
@@ -3344,6 +3385,7 @@ static void playlist_profile_append_performance_status(
 	static wchar_t const hardcore_status[] = L"\r\nHardcore: On";
 	static wchar_t const fiesta_status[] = L"\r\nStarting Equipment: Fiesta";
 	static wchar_t const fiesta_hardcore_status[] = L"\r\nFiesta / Hardcore: On";
+	static wchar_t const camo_status[] = L"\r\nCamo: Hardcore";
 	unsigned flags;
 	unsigned long length;
 	wchar_t const *suffix;
@@ -3355,7 +3397,9 @@ static void playlist_profile_append_performance_status(
 	if (!flags)
 		return;
 	length = ustrnlen(description, 0x100);
-	if (flags & _performance_option_fiesta)
+	if (flags & _performance_option_hardcore_camo)
+		suffix = camo_status;
+	else if (flags & _performance_option_fiesta)
 		suffix = (flags & _performance_option_hardcore) ? fiesta_hardcore_status : fiesta_status;
 	else
 		suffix = (flags & _performance_option_hardcore) ? hardcore_status : status;

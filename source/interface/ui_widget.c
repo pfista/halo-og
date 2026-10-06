@@ -6495,6 +6495,9 @@ static void widget_instance_process_one_event_recursive(
 #endif
 	if (event->type == _event_type_button &&
 		event->data.button.value > 1 &&
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		!halo_menu_repeat_is_fast() &&
+#endif
 		event->controller_index >= 0 &&
 		event->controller_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS &&
 		event->data.button.index >= _widget_event_dpad_up &&

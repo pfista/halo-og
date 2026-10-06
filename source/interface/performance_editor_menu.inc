@@ -3,12 +3,12 @@
 #define PB_EDIT_PATH PB_EDIT_PREFIX "playlist_edit\\gametype_edit_screen"
 #define PB_EDIT_RUNTIME "ui\\native_pb\\editor"
 enum { _pb_editor_initialize = 32000, _pb_editor_accept = 32001 };
-enum { _pb_editor_row_count = 8 };
+enum { _pb_editor_row_count = 9, _pb_editor_row_spacing = 27 };
 static unsigned const pb_editor_option_flags[_pb_editor_row_count - 1] = {
     _performance_option_match_timer, _performance_option_spawn_markers,
     _performance_option_timer_audio, _performance_option_silent_movement,
     _performance_option_silent_weapon_ready, _performance_option_input_delay,
-    _performance_option_hardcore};
+    _performance_option_hardcore, _performance_option_hardcore_camo};
 static struct
 {
     struct ui_widget_definition root, list, entry, screen, heading, menu, help;
@@ -17,9 +17,9 @@ static struct
     struct ui_widget_child_reference menu_children[_pb_editor_row_count], row_children[_pb_editor_row_count][2], preview_children[2];
     struct ui_widget_event_handler_reference entry_events[2], menu_events[3];
     struct ui_widget_game_data_input_reference list_input, menu_input;
-    struct string_list strings[8];
-    struct string_list_entry string_entries[8][17];
-    wchar_t string_text[8][17][256];
+    struct string_list strings[9];
+    struct string_list_entry string_entries[9][19];
+    wchar_t string_text[9][19][256];
     long root_tag, list_tag, menu_tag, spinner_tag[_pb_editor_row_count];
     short last_preset;
     unsigned last_flags;
@@ -71,11 +71,12 @@ static long pb_editor_register(char const *name, struct ui_widget_definition *de
 static boolean pb_editor_build(void)
 {
     static char const *const labels[] = {"PERFORMANCE", "PRESET:", "MATCH TIMER:", "SPAWN MARKERS:", "TIMER SOUNDS:",
-        "MOVEMENT SOUNDS:", "WEAPON SOUNDS:", "INPUT DELAY:", "HARDCORE:", "PERFORMANCE"};
+        "MOVEMENT SOUNDS:", "WEAPON SOUNDS:", "INPUT DELAY:", "HARDCORE:", "CAMO:", "PERFORMANCE"};
     static char const *const presets[] = {"STOCK", "PRACTICE", "CUSTOM"};
     static char const *const toggles[] = {"OFF", "ON"};
     static char const *const sounds[] = {"NORMAL", "SILENT"};
     static char const *const delays[] = {"OFF", "33MS"};
+    static char const *const camo[] = {"NORMAL", "HARDCORE"};
     static char const *const help[] = {
         "Practice aids are off.\r\nMatch rules are chosen separately.",
         "Practice with a timer, sounds and spawn markers.\r\nThe host controls these options for all players.",
@@ -93,11 +94,13 @@ static boolean pb_editor_build(void)
         "No added action delay.\r\nThe host selects this before the match.",
         "Fixed delay of about 33.3ms at 30Hz.\r\nSelected before the match for all players.",
         "Original precision weapon spread.",
-        "Zero initial spread for pistol and unscoped sniper rifle.\r\nSustained fire still increases spread."};
-    static char const *const row_names[] = {"ui\\native_pb\\preset_row", "ui\\native_pb\\timer_row", "ui\\native_pb\\markers_row", "ui\\native_pb\\audio_row", "ui\\native_pb\\movement_row", "ui\\native_pb\\weapon_row", "ui\\native_pb\\delay_row", "ui\\native_pb\\hardcore_row"};
-    static char const *const label_names[] = {"ui\\native_pb\\preset_label", "ui\\native_pb\\timer_label", "ui\\native_pb\\markers_label", "ui\\native_pb\\audio_label", "ui\\native_pb\\movement_label", "ui\\native_pb\\weapon_label", "ui\\native_pb\\delay_label", "ui\\native_pb\\hardcore_label"};
-    static char const *const spinner_names[] = {"ui\\native_pb\\preset_spinner", "ui\\native_pb\\timer_spinner", "ui\\native_pb\\markers_spinner", "ui\\native_pb\\audio_spinner", "ui\\native_pb\\movement_spinner", "ui\\native_pb\\weapon_spinner", "ui\\native_pb\\delay_spinner", "ui\\native_pb\\hardcore_spinner"};
-    long labels_tag, presets_tag, toggles_tag, sounds_tag, delays_tag, help_tag, i, tag;
+        "Zero initial spread for pistol and unscoped sniper rifle.\r\nSustained fire still increases spread.",
+        "Original active camouflage blue tint.\r\nDistortion and visibility timing are unchanged.",
+        "Remove the blue tint from active camouflage.\r\nDistortion and visibility timing are unchanged."};
+    static char const *const row_names[] = {"ui\\native_pb\\preset_row", "ui\\native_pb\\timer_row", "ui\\native_pb\\markers_row", "ui\\native_pb\\audio_row", "ui\\native_pb\\movement_row", "ui\\native_pb\\weapon_row", "ui\\native_pb\\delay_row", "ui\\native_pb\\hardcore_row", "ui\\native_pb\\camo_row"};
+    static char const *const label_names[] = {"ui\\native_pb\\preset_label", "ui\\native_pb\\timer_label", "ui\\native_pb\\markers_label", "ui\\native_pb\\audio_label", "ui\\native_pb\\movement_label", "ui\\native_pb\\weapon_label", "ui\\native_pb\\delay_label", "ui\\native_pb\\hardcore_label", "ui\\native_pb\\camo_label"};
+    static char const *const spinner_names[] = {"ui\\native_pb\\preset_spinner", "ui\\native_pb\\timer_spinner", "ui\\native_pb\\markers_spinner", "ui\\native_pb\\audio_spinner", "ui\\native_pb\\movement_spinner", "ui\\native_pb\\weapon_spinner", "ui\\native_pb\\delay_spinner", "ui\\native_pb\\hardcore_spinner", "ui\\native_pb\\camo_spinner"};
+    long labels_tag, presets_tag, toggles_tag, sounds_tag, delays_tag, camo_tag, help_tag, i, tag;
     struct ui_widget_definition *preview_text;
     struct string_list *original_strings;
     pb_editor.ready = FALSE;
@@ -130,7 +133,8 @@ static boolean pb_editor_build(void)
     help_tag = pb_editor_strings(3, "ui\\native_pb\\help_strings", help, NUMBEROF(help));
     sounds_tag = pb_editor_strings(6, "ui\\native_pb\\sound_values", sounds, NUMBEROF(sounds));
     delays_tag = pb_editor_strings(7, "ui\\native_pb\\delay_values", delays, NUMBEROF(delays));
-    if (labels_tag == NONE || presets_tag == NONE || toggles_tag == NONE || sounds_tag == NONE || delays_tag == NONE || help_tag == NONE) return FALSE;
+    camo_tag = pb_editor_strings(8, "ui\\native_pb\\camo_values", camo, NUMBEROF(camo));
+    if (labels_tag == NONE || presets_tag == NONE || toggles_tag == NONE || sounds_tag == NONE || delays_tag == NONE || camo_tag == NONE || help_tag == NONE) return FALSE;
     /* Performance options reuse the Indicators preview image. */
     {
         static char const *const caption[] = {"Performance options like\r\ntimers, spawn markers,\r\nand more.\r\n\r\nThis gametype:"};
@@ -159,8 +163,10 @@ static boolean pb_editor_build(void)
     for (i = 3; i < _pb_editor_row_count; i++)
     {
         pb_editor.menu_children[i] = pb_editor.menu_children[i - 1];
-        pb_editor.menu_children[i].vertical_offset += 30;
     }
+    /* Nine rows fit above the stock help box without changing Xbox fonts. */
+    for (i = 0; i < _pb_editor_row_count; i++)
+        pb_editor.menu_children[i].vertical_offset = pb_editor.menu_children[0].vertical_offset + i * _pb_editor_row_spacing;
     pb_editor.menu.child_widgets.count = _pb_editor_row_count;
     memcpy(pb_editor.menu_events, pb_editor.menu.event_handlers.address, sizeof(pb_editor.menu_events));
     pb_editor.menu_events[0].function = _pb_editor_initialize;
@@ -179,7 +185,7 @@ static boolean pb_editor_build(void)
         if (tag == NONE) return FALSE;
         pb_editor.row_children[i][0].widget_tag = pb_editor_reference(UI_WIDGET_DEFINITION_TAG, tag);
         pb_editor.spinner[i].text_label_string_list = pb_editor_reference(UNICODE_STRING_LIST_TAG,
-            i == 0 ? presets_tag : i < 4 || i == 7 ? toggles_tag : i < 6 ? sounds_tag : delays_tag);
+            i == 0 ? presets_tag : i < 4 || i == 7 ? toggles_tag : i < 6 ? sounds_tag : i == 6 ? delays_tag : camo_tag);
         pb_editor.spinner[i].bounds.x1 = 142;
         pb_editor.spinner[i].list_footer_bounds.x0 = 142;
         pb_editor.spinner[i].list_footer_bounds.x1 = 148;
@@ -196,7 +202,7 @@ static boolean pb_editor_build(void)
     if (pb_editor.menu_tag == NONE) return FALSE;
     pb_editor.heading = pb_editor.label[0];
     pb_editor.heading.bounds = (rectangle2d){24, 54, 60, 566};
-    pb_editor.heading.string_list_index = 9;
+    pb_editor.heading.string_list_index = 10;
     pb_editor.heading.horizontal_offset = pb_editor.heading.vertical_offset = 0;
     pb_editor.heading.text_color = (real_argb_color){1, 1, 1, 1};
     tag = pb_editor_register("ui\\native_pb\\heading", &pb_editor.heading);

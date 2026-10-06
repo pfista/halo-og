@@ -132,6 +132,31 @@ the best-effort gate admits that setting.
 See [networking](../port/linux/NETCODE.md), [Performance Options](performance-options.md)
 and [playtesting](playtesting.md) for implementation and player guidance.
 
+### Overshield drain audio
+
+The reconstructed local drain (`c8d001ee2`) lowers the shield and calls
+`hud_tick_shield` with the same loss. This keeps passive decay out of the
+original HUD's vitality-decrease damage cue. Distributed clients introduced
+by `8fcfe9e65` skip that local shield update and previously replaced vitality
+without its HUD compensation, causing harmless Overshield decay to play
+`shield_hit`.
+
+The correction restores that compensation for local client HUDs using the
+existing host tick and packed vitality/damage values. It accepts only a
+same-unit interval of at most one second whose loss matches the original
+per-tick float drain within the existing packing interval. New damage markers,
+explicit damage aftermaths, charging transitions, independent vitality changes
+and ambiguous losses retain damage feedback. Packet contents, version, host
+authority, damage amounts and the 30 Hz simulation are unchanged.
+
+Production-function fixtures cover complete local/client drains, quantized
+snapshot intervals, real and repeated hits, event ordering, final depletion,
+split-screen isolation and reset/sentinel handling. Sub-quantum damage whose
+aftermath is also lost cannot always be distinguished from decay with the
+existing protocol. Host/solo decay is quiet in those fixtures; the reported
+host/solo sound still needs a runtime reproduction and is not established as
+fixed by the client correction.
+
 ## Optional competitive features
 
 The October 5 meeting-feedback implementation adds an explicit Hardcore
@@ -142,6 +167,13 @@ and a host acknowledgement; active match rules are locked. Local map filters
 do not restrict joining, and Join In Progress defaults On to retain the prior
 host behavior. These are requested options, not reference-Xbox corrections.
 
+Camo: Normal / Hardcore is a separate requested gametype rule, default Normal.
+Hardcore neutralizes the interpolated active-camouflage RGB tint in the shared
+ANGLE/Native Metal draw path; refraction, visibility, duration, reveal and
+regrowth retain their existing behavior. Campaign remains unchanged. Saved
+variants use a version-2 extension only when Hardcore camo is selected, and
+enabled matches require camo capability confirmation from every player.
+
 The requested pistol hollow-metal effect and dirt-only overshield material
 changes are intentional content refinements of retail quirks. Loaded native
 tags are changed selectively; source caches and custom authored effects remain
@@ -150,7 +182,7 @@ for exact boundaries, evidence and remaining work.
 
 Performance Options permits host-selected match timers, timer announcements,
 spawn markers, silent movement/weapon-ready sounds, fixed 33ms input delay
-and Hardcore precision spread.
+and Hardcore precision spread and camo.
 All modifications default off; sounds default Normal. Timer audio/display
 preferences are local. These limited
 options do not authorize other Performance Build mechanics, weapon changes or
@@ -158,12 +190,38 @@ a different tick rate. Original PC v7 caches remain unsupported.
 
 ## Defaults and comparison profile
 
+At the user's request, native Split Screen and System Link hosts may explicitly
+start a match with one joined local player, including a team game with only one
+team occupied. The existing **START GAME** action begins the normal countdown.
+This is an intentional extension to original Xbox lobby rules, selected by the
+host's action each match. Waiting alone still leaves the countdown stopped;
+normal automatic countdowns and two-team requirements for multiple players
+remain in place. System Link uses the existing Join In Progress setting for
+later arrivals. The lobby retains its original widgets, fonts and countdown,
+with a short solo-start directions prompt.
+
+The production-function fixture `tools/test_solo_multiplayer_start.py` checks
+solo and team countdowns in both modes, host request authorization, readiness,
+pause and precache gates, the start-message transition, and the unchanged
+legacy two-player requirement; it does not establish native gameplay or Xbox parity.
+
+Local Mac validation passes 42 focused network tests, the dual-renderer build
+and strict app-signature verification. Isolated native UI playtests on Battle
+Creek/Slayer observed one-player lobbies remaining idle, then the existing
+START action beginning 10-second Split Screen and 30-second System Link
+countdowns and spawning into gameplay. Both instances exited cleanly. Evidence
+is in `build/macos/solo-multiplayer-validation/runtime/result.json`; physical
+controllers, cross-platform late joining and reference-Xbox comparisons were
+not exercised by these runs.
+
 Controller settings offer **Menu Repeat: Original / Faster** as an intentional
-local UI preference. Original retains the reconstructed 250 ms cadence; Faster
-opts into 100 ms held navigation for arrows, D-pad directions and sticks in
-menus and the on-screen keyboard. It defaults Original and applies only after
-Accept, with no simulation, gameplay-button or network-rule change. This does
-not alter the original event-queue or stick-edge behavior. See
+local UI preference. Original retains the reconstructed 250 ms cadence and its
+existing event-queue and stick-edge behavior. Faster moves once immediately,
+waits for a 500 ms hold, then repeats every 100 ms for arrows, D-pad directions
+and sticks in menus and the on-screen keyboard. Its separate keyboard edges
+preserve discrete taps; release, stick neutral or a new stick direction resets
+the hold timer. It defaults Original and applies only after Accept, with no
+simulation, gameplay-button or network-rule change. See
 [menu repeat](menu-repeat.md) for the option and validation boundaries.
 
 New configurations set `display.high_res_hud`, `display.interpolation` and

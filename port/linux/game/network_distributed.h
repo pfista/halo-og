@@ -230,7 +230,8 @@ void network_objects_set_seat(long unit_index, long vehicle_index, short seat_in
 void network_damage_new_game(void);
 void network_damage_host_tick(void);
 void network_damage_client_tick(void);
-void network_damage_handle_events(void const *entries, short count);
+void network_damage_handle_events(void const *entries, short count, long host_time);
+void network_distributed_note_shield_damage(long object_index, long host_time);
 void network_damage_handle_reports(long machine_index, void const *entries, short count);
 word network_damage_entry_size(byte type);
 

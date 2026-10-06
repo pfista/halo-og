@@ -76,7 +76,11 @@ static pthread_mutex_t input_lock = PTHREAD_MUTEX_INITIALIZER;
 static XINPUT_GAMEPAD press(SDL_Scancode key) {
     struct platform_input_state input = {0};
     XINPUT_GAMEPAD pad = {0};
-    input.keys[key] = 1; keyboard_gamepad(&input, &pad); return pad;
+    XINPUT_GAMEPAD navigation = {0};
+    input.keys[key] = 1; keyboard_gamepad(&input, &pad);
+    keyboard_navigation_gamepad(&input, &navigation);
+    assert(!navigation.wButtons && !navigation.sThumbLX && !navigation.sThumbLY);
+    return pad;
 }
 static void console_event(SDL_Scancode key, BYTE expected) {
     SDL_KeyboardEvent event = {0};
