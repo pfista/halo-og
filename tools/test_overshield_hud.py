@@ -235,6 +235,7 @@ static void update_hud(short local_index) {
 }
 static void local_tick(int32_t unit_index) {
     object_damage_update(unit_index); now++;
+    assert(!distributed_damage_authorized); /* Ordinary updates cannot leave the damage gate open. */
     short local_index = player_get(player_index_from_unit_index(unit_index))->local_player_index;
     if (local_index != NONE) update_hud(local_index);
 }
