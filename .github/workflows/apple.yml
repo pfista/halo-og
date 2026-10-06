@@ -64,7 +64,7 @@ jobs:
       - name: Input timing and fidelity comparison fixtures
         run: python3 -m unittest tools.test_input_delay tools.test_performance_network tools.test_performance_variants tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_halo_fidelity tools.test_meeting_gameplay tools.test_refined_tag_effects
       - name: Spawn inventory, teleports, trails and lifecycle safety
-        run: python3 -m unittest tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail tools.test_weapon_sound_events tools.test_map_lifecycle tools.test_network_client_lifecycle tools.test_stale_player_references
+        run: python3 -m unittest tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail tools.test_weapon_sound_events tools.test_overshield_hud tools.test_map_lifecycle tools.test_network_client_lifecycle tools.test_stale_player_references
       - name: Native data import and packaging rules
         run: python3 tools/test_macos_menu.py
       - name: App installation and desktop data migration

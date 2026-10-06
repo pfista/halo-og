@@ -80,7 +80,7 @@ struct damage_network_state
 /* ---------- prototypes/DAMAGE.C */
 
 void damage_initialize(void);
-void damage_set_network_state(long object_index, struct damage_network_state const *state);
+void damage_set_network_state(long object_index, struct damage_network_state const *state, real passive_shield_loss);
 void damage_get_network_state(long object_index, struct damage_network_state *state);
 void damage_dispose(void);
 void damage_initialize_for_new_map(void);

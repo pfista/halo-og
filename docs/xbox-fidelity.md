@@ -132,6 +132,31 @@ the best-effort gate admits that setting.
 See [networking](../port/linux/NETCODE.md), [Performance Options](performance-options.md)
 and [playtesting](playtesting.md) for implementation and player guidance.
 
+### Overshield drain audio
+
+The reconstructed local drain (`c8d001ee2`) lowers the shield and calls
+`hud_tick_shield` with the same loss. This keeps passive decay out of the
+original HUD's vitality-decrease damage cue. Distributed clients introduced
+by `8fcfe9e65` skip that local shield update and previously replaced vitality
+without its HUD compensation, causing harmless Overshield decay to play
+`shield_hit`.
+
+The correction restores that compensation for local client HUDs using the
+existing host tick and packed vitality/damage values. It accepts only a
+same-unit interval of at most one second whose loss matches the original
+per-tick float drain within the existing packing interval. New damage markers,
+explicit damage aftermaths, charging transitions, independent vitality changes
+and ambiguous losses retain damage feedback. Packet contents, version, host
+authority, damage amounts and the 30 Hz simulation are unchanged.
+
+Production-function fixtures cover complete local/client drains, quantized
+snapshot intervals, real and repeated hits, event ordering, final depletion,
+split-screen isolation and reset/sentinel handling. Sub-quantum damage whose
+aftermath is also lost cannot always be distinguished from decay with the
+existing protocol. Host/solo decay is quiet in those fixtures; the reported
+host/solo sound still needs a runtime reproduction and is not established as
+fixed by the client correction.
+
 ## Optional competitive features
 
 The October 5 meeting-feedback implementation adds an explicit Hardcore
