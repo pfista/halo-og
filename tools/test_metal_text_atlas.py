@@ -193,6 +193,15 @@ class MetalTextAtlasTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.library.fixture_reset()
+        if sys.platform == 'win32':
+            # Windows locks a loaded DLL; release it after the final fixture
+            # call so TemporaryDirectory can remove the verified build.
+            from _ctypes import FreeLibrary
+            import gc
+            handle = cls.library._handle
+            cls.library = None
+            gc.collect()
+            FreeLibrary(handle)
         cls.directory.cleanup()
 
     def setUp(self):
