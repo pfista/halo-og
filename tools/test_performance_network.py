@@ -534,19 +534,22 @@ int main(void) {
             path = Path(temporary) / "create.c"
             binary = Path(temporary) / "create"
             path.write_text(fixture)
+            flags = ["-D_CRT_SECURE_NO_WARNINGS"] if sys.platform == "win32" else []
             subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
-                            "-iquote", str(ROOT / "port/linux/include"), str(path), "-o", str(binary)], check=True)
+                            *flags, "-iquote", str(ROOT / "port/linux/include"), str(path), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
 
     def test_global_cache_identity_and_capability_protocols(self):
         compiler = shutil.which("clang") or shutil.which("cc")
         if not compiler:
             self.fail("A native C compiler is required")
+        flags = ["-D_CRT_SECURE_NO_WARNINGS"] if sys.platform == "win32" else []
         with tempfile.TemporaryDirectory(prefix="halo-arsenal-protocol-") as temporary:
             for name in ("performance_network", "expanded_cache_protocol"):
                 binary = Path(temporary) / name
                 subprocess.run([
                     compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+                    *flags,
                     "-I", str(ROOT / "source"), "-iquote", str(ROOT / "port/linux/include"),
                     str(ROOT / "port/macos/tests" / (name + ".c")), "-o", str(binary),
                 ], check=True)
