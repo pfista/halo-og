@@ -1,0 +1,8 @@
+{
+  "summary": "This update adds an optional Team Split Screen prototype for System Link team games, showing your view above one living remote teammate's view. It also hides the Mac menu bar and Dock during focused fullscreen play. The teammate pane is an experimental camera view reconstructed from existing network updates, so it can appear delayed or choppy.",
+  "highlights": [
+    "Team Split Screen: hosts can enable the prototype under Multiplayer, Edit Gametypes, Game Options, Set Game Rules. Enable Team Play first; CTF includes the option directly. Off remains the default.",
+    "Teammate view: machines with one local player can show one eligible on-foot teammate below their own view. The pane has a name label and omits weapon hands, HUD and atmospheric effects; audio and controls stay with the local player. Use matching builds to see teammate panes on every machine.",
+    "Mac fullscreen: the menu bar and Dock hide while the game has focus. Release the mouse with F12 and move to the top edge to reveal the menu bar; opening native settings restores system controls."
+  ]
+}
