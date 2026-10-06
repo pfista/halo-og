@@ -38,7 +38,8 @@ enum { _game_variant_draw_object_in_motion_sensor_bit=0, _game_variant_infinite_
 #define error(...) ((void)0)
 #define ustrncpy wcsncpy
 enum { _performance_option_timer_audio=4, _performance_option_input_delay=32, _performance_option_hardcore=64,
-       _performance_option_fiesta=128, PERFORMANCE_MATCH_RULE_FLAGS=224, PERFORMANCE_OPTIONS_MASK=255,
+       _performance_option_fiesta=128, _performance_option_hardcore_camo=256,
+       PERFORMANCE_MATCH_RULE_FLAGS=480, PERFORMANCE_OPTIONS_MASK=511,
        _network_game_server_state_pregame=1, _network_game_server_state_ingame=2,
        _network_game_server_state_postgame=3, _message_server_begin_game=2,
        _network_game_client_state_joining=1, _network_game_client_state_pregame=2, _network_game_client_state_ingame=3,
@@ -61,11 +62,11 @@ struct network_game_client {void *connection; int state; struct game_data game;}
 struct message_server_begin_game {int unused;};
 static struct network_game_server server,*active=&server;
 static struct game_variant runtime_variant,playlist_variant;
-static byte network_game_server_performance_capabilities[MAXIMUM_NETWORK_MACHINE_COUNT];
+static word network_game_server_performance_capabilities[MAXIMUM_NETWORK_MACHINE_COUNT];
 static int network_game_server_start_players[16];
 static boolean network_game_server_started_with_five_players;
 static int recordings=1,apply_calls,override_calls,pregame_sends,setting_sends,start_sends,opened;
-static unsigned runtime_flags,capabilities[6],capability_count;
+static unsigned runtime_flags,capabilities[7],capability_count;
 static unsigned network_game_client_performance_host_capabilities;
 static char shown[512];
 int halo_performance_audio_available(void) {return recordings;}
@@ -104,7 +105,7 @@ static int network_game_server_send_message_to_all_machines(struct network_game_
     (void)s;(void)m;start_sends++;return TRUE;
 }
 static int network_game_client_write(void *connection,void *packet,unsigned size,void *address,int reliable) {
-    (void)connection;assert(!address && reliable==1 && capability_count<6);
+    (void)connection;assert(!address && reliable==1 && capability_count<7);
     assert(network_performance_decode(packet,size,NETWORK_PERFORMANCE_CAPABILITY,&capabilities[capability_count++]));
     return TRUE;
 }
@@ -166,7 +167,7 @@ int main(void) {
     assert(!performance_options_set_host_flags(0));unchanged(32,10);
     server.state=_network_game_server_state_pregame;
     assert(performance_options_set_host_flags(0));unchanged(0,11);
-    assert(!performance_options_set_host_flags(256));unchanged(0,11);
+    assert(!performance_options_set_host_flags(512));unchanged(0,11);
     /* An input-delay-capable older peer still cannot run Hardcore. */
     assert(!performance_options_set_host_flags(64));unchanged(0,11);
     assert(strstr(shown,"Hardcore unavailable"));
@@ -205,14 +206,15 @@ int main(void) {
      * never advertise audio support to an enabled host. */
     struct network_game_client client={0};
     recordings=0;capability_count=0;assert(announce(&client));
-    assert(capability_count==6 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==59 && capabilities[4]==123 && capabilities[5]==251);
+    assert(capability_count==7 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==59 && capabilities[4]==123 && capabilities[5]==251 && capabilities[6]==507);
     recordings=1;capability_count=0;assert(announce(&client));
-    assert(capability_count==6 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31 && capabilities[3]==63 && capabilities[4]==127 && capabilities[5]==255);
+    assert(capability_count==7 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31 && capabilities[3]==63 && capabilities[4]==127 && capabilities[5]==255 && capabilities[6]==511);
     capability_count=0;assert(announce_without_queue(&client));
-    assert(capability_count==6 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==27 && capabilities[4]==27 && capabilities[5]==27);
+    assert(capability_count==7 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==27 && capabilities[4]==27 && capabilities[5]==27 && capabilities[6]==27);
     assert(!network_game_server_performance_peers_support_without_queue(&server,32));
     assert(strstr(shown,"This build does not support"));
     assert(!network_game_server_performance_peers_support_without_queue(&server,128));
+    assert(!network_game_server_performance_peers_support_without_queue(&server,256));
     assert(network_game_server_performance_peers_support_without_queue(&server,0));
     /* Only a reliable acknowledgement from the selected host establishes
      * timing support; old hosts can forward unknown saved extension bytes. */
@@ -261,6 +263,19 @@ int main(void) {
     assert(network_game_client_performance_settings_flags(&client,7)==135);
     client.game.variant.flags=0;
     assert(network_game_client_performance_settings_flags(&client,135)==7);
+    /* A version-1 host treats a saved v2 extension as entirely Off. Do not
+     * apply even its old aid flags before explicit Camo support arrives. */
+    client.state=_network_game_client_state_pregame;
+    assert(network_game_client_performance_settings_flags(&client,256)==0);
+    assert(network_game_client_performance_settings_flags(&client,263)==0);
+    network_performance_encode(host_capability,NETWORK_PERFORMANCE_CAPABILITY,511);
+    assert(network_game_client_receive_performance_capability(&client,host_capability,16,TRUE));
+    assert(network_game_client_performance_host_capabilities==511);
+    assert(network_game_client_performance_settings_flags(&client,263)==263);
+    client.state=_network_game_client_state_ingame;client.game.variant.flags=256;
+    assert(network_game_client_performance_settings_flags(&client,7)==263);
+    client.game.variant.flags=0;
+    assert(network_game_client_performance_settings_flags(&client,263)==7);
     active=&server;
     /* Start repeats admission checks; an older peer cannot join a delayed
      * match even if it connected while the delay was disabled. */
@@ -329,6 +344,32 @@ int main(void) {
     assert(performance_options_set_host_flags(128));unchanged(128,++fiesta_calls);
     server.state=_network_game_server_state_pregame;server.sent_start_game_message=FALSE;
     assert(performance_options_set_host_flags(0));unchanged(0,++fiesta_calls);
+    /* Camo requires the ninth capability bit. It is rechecked for saved
+     * selection, playlists and start, and fixed when begin-game is sent. */
+    int camo_calls=apply_calls;
+    assert(!performance_options_set_host_flags(256));unchanged(0,camo_calls);
+    assert(strstr(shown,"Hardcore Camo unavailable") && strstr(shown,"Normal"));
+    chosen.flags=263;network_game_server_change_game_variant(&server,&chosen);unchanged(0,camo_calls);
+    playlist_variant.flags=256;
+    assert(!network_game_server_setup_game_from_playlist(&server));
+    network_game_server_performance_capability(&server.client_machines[1],511);
+    assert(network_game_server_performance_supported(&server.client_machines[1],256));
+    assert(performance_options_set_host_flags(256));unchanged(256,++camo_calls);
+    network_game_server_performance_capability(&server.client_machines[1],255);
+    assert(!network_game_server_start_network_game(&server) && !server.sent_start_game_message);
+    assert(strstr(shown,"Hardcore Camo unavailable"));
+    network_game_server_performance_capability(&server.client_machines[1],511);
+    assert(network_game_server_start_network_game(&server) && server.sent_start_game_message);
+    assert(!performance_options_set_host_flags(0));unchanged(256,camo_calls);
+    assert(strstr(shown,"Hardcore Camo locked"));
+    chosen.flags=0;network_game_server_change_game_variant(&server,&chosen);unchanged(256,camo_calls);
+    assert(performance_options_set_host_flags(263));unchanged(263,++camo_calls);
+    server.state=_network_game_server_state_ingame;
+    assert(!performance_options_set_host_flags(7));unchanged(263,camo_calls);
+    assert(strstr(shown,"Hardcore Camo locked"));
+    assert(performance_options_set_host_flags(256));unchanged(256,++camo_calls);
+    server.state=_network_game_server_state_pregame;server.sent_start_game_message=FALSE;
+    assert(performance_options_set_host_flags(0));unchanged(0,++camo_calls);
     puts("performance host authority, assets, saved variants and capabilities: PASS");
     return 0;
 }

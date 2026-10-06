@@ -242,7 +242,8 @@ int main(void) {
     assert(creates==fiesta_creates && deletes==fiesta_deletes && draw_count==fiesta_draws && audio_plays==fiesta_audio);
     performance_options_apply_host_flags(_performance_option_fiesta|_performance_option_spawn_markers);
     assert(performance_options_get_flags()==(_performance_option_fiesta|_performance_option_spawn_markers));
-    performance_options_apply_host_flags(256); assert(performance_options_get_flags() == 0);
+    performance_options_apply_host_flags(256); assert(performance_options_get_flags() == 256);
+    performance_options_apply_host_flags(512); assert(performance_options_get_flags() == 0);
     /* Reload discards old ownership and re-reads the authoritative variant. */
     performance_options_dispose_from_old_map(); assert(performance_options_markers_supported_count() == 0);
     variant.flags = 3|_performance_option_fiesta; performance_options_initialize_for_new_map();

@@ -24,8 +24,8 @@ typedef int boolean;
 enum { _performance_option_match_timer=1, _performance_option_spawn_markers=2,
        _performance_option_timer_audio=4, _performance_option_silent_movement=8,
        _performance_option_silent_weapon_ready=16, _performance_option_input_delay=32, _performance_option_hardcore=64,
-       _performance_option_fiesta=128, PERFORMANCE_MATCH_RULE_FLAGS=224,
-       PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=255 };
+       _performance_option_fiesta=128, _performance_option_hardcore_camo=256, PERFORMANCE_MATCH_RULE_FLAGS=480,
+       PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=511 };
 static unsigned long flags;
 static unsigned mutation_calls, peer_support=63;
 static boolean host=TRUE;
@@ -90,10 +90,11 @@ int main(void) {
     inspect("performance_options");
     assert(strstr(output,"performance options: flags=0 ticks=1800 markers=0/24"));
     assert(strstr(output,"timer recordings: installed"));
+    assert(strstr(output,"Camo: NORMAL"));
     assert(strstr(output,"PB sound voices: normal=0 movement=12 ready=3"));
     const char *invalid[]={"pb bad","pb timer maybe","pb timer on extra","pb status extra",
         "pb practice extra","pb audio onxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","performance_options -1",
-        "performance_options 256","performance_options 999","performance_options 3x",
+        "performance_options 512","performance_options 999","performance_options 3x",
         "performance_options 3 extra"};
     for(unsigned i=0;i<NUMBEROF(invalid);i++) inspect(invalid[i]);
     change("pb practice",7);
@@ -145,7 +146,19 @@ int main(void) {
     }
     change("performance_options 128",128);
     change("performance_options 255",255);
-    inspect("performance_options 256");
+    peer_support=511;
+    for(unsigned extras=0;extras<=224;extras+=32) {
+        flags=256|extras;
+        change("pb practice",256|extras|7);
+        change("pb stock",256|extras);
+        change("pb movement silent",256|extras|8);
+        change("pb weapons silent",256|extras|24);
+        change("pb stock",256|extras);
+        inspect("pb status"); assert(strstr(output,"Camo: HARDCORE"));
+    }
+    change("performance_options 256",256);
+    change("performance_options 511",511);
+    inspect("performance_options 512");
     flags=3; peer_support=3;
     run("pb audio on"); assert(flags==3 && strstr(output,"change refused"));
     run("pb practice"); assert(flags==3 && strstr(output,"change refused"));

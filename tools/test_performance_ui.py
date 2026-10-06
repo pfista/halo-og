@@ -35,8 +35,8 @@ static boolean editing=TRUE;
 static unsigned mutation_calls,help_calls;
 enum { _performance_option_match_timer=1, _performance_option_spawn_markers=2, _performance_option_timer_audio=4,
        _performance_option_silent_movement=8, _performance_option_silent_weapon_ready=16,
-       _performance_option_input_delay=32, _performance_option_hardcore=64, _performance_option_fiesta=128,
-       PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=255, PERFORMANCE_MATCH_RULE_FLAGS=224 };
+       _performance_option_input_delay=32, _performance_option_hardcore=64, _performance_option_fiesta=128, _performance_option_hardcore_camo=256,
+       PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=511, PERFORMANCE_MATCH_RULE_FLAGS=480 };
 static struct game_variant *player_ui_get_edit_playlist_profile(void) { return editing ? &edited : NULL; }
 static unsigned performance_variant_get_flags(const struct game_variant *v) { return v->flags; }
 static void performance_variant_set_flags(struct game_variant *v,unsigned f) { mutation_calls++; v->flags=f; }
@@ -196,8 +196,8 @@ static void shapes_and_preservation(void) {
     assert(ui_widget_definition_get(pb_editor.list_children[5].widget_tag.index)==&pb_editor.entry);
     assert(!wcscmp(string_at(&pb_editor.entry,0),L"PERFORMANCE"));
     assert(!memcmp(&pb_editor.entry.text_font,&stock.defs[ENTRY_TAG].text_font,sizeof(struct tag_reference)));
-    assert(unicode_string_list_definition_get(pb_editor.heading.text_label_string_list.index)->strings.count==10);
-    assert(pb_editor.heading.string_list_index==9);
+    assert(unicode_string_list_definition_get(pb_editor.heading.text_label_string_list.index)->strings.count==11);
+    assert(pb_editor.heading.string_list_index==10);
     assert(!wcscmp(string_at(&pb_editor.heading,pb_editor.heading.string_list_index),L"PERFORMANCE"));
     assert(pb_editor.entry.bounds.y0==243 && pb_editor.entry.bounds.y1==275);
     assert(pb_editor.list_children[6].widget_tag.index==stock_id(SAVE_TAG) && pb_editor.list_children[6].vertical_offset==53);
@@ -208,14 +208,14 @@ static void shapes_and_preservation(void) {
     }
     assert(pb_editor.menu_events[0].event_type==24 && pb_editor.menu_events[0].function==_pb_editor_initialize);
     for(unsigned i=1;i<3;i++) assert(pb_editor.menu_events[i].event_type==(i==1 ? 0:12) && pb_editor.menu_events[i].flags==0x280 && pb_editor.menu_events[i].function==_pb_editor_accept);
-    assert(pb_editor.menu.child_widgets.count==8);
+    assert(pb_editor.menu.child_widgets.count==9);
     assert(!performance_editor_is_spinner(NULL));
-    for(unsigned i=0;i<8;i++) {
+    for(unsigned i=0;i<9;i++) {
         struct widget_instance spinner={0}; spinner.definition_tag_index=pb_editor.spinner_tag[i];
         assert(performance_editor_is_spinner(&spinner));
         spinner.definition_tag_index=pb_editor.menu_children[i].widget_tag.index;
         assert(!performance_editor_is_spinner(&spinner));
-        assert(pb_editor.menu_children[i].vertical_offset==(short)(73+30*i) && pb_editor.menu_children[i].horizontal_offset==54);
+        assert(pb_editor.menu_children[i].vertical_offset==(short)(73+27*i) && pb_editor.menu_children[i].horizontal_offset==54);
         assert(pb_editor.row[i].child_widgets.count==2 && pb_editor.spinner[i].type==2 && pb_editor.spinner[i].list_flags==2);
         assert(pb_editor.label[i].text_font.index==stock.defs[LABEL_TAG].text_font.index);
         assert(!memcmp(&pb_editor.label[i].text_color,&stock.defs[LABEL_TAG].text_color,sizeof(real_argb_color)));
@@ -230,7 +230,9 @@ static void shapes_and_preservation(void) {
     assert(!wcscmp(string_at(&pb_editor.spinner[6],0),L"OFF") && !wcscmp(string_at(&pb_editor.spinner[6],1),L"33MS"));
     assert(!wcscmp(string_at(&pb_editor.label[7],8),L"HARDCORE:"));
     assert(!wcscmp(string_at(&pb_editor.spinner[7],0),L"OFF") && !wcscmp(string_at(&pb_editor.spinner[7],1),L"ON"));
-    assert(pb_editor.menu_children[7].vertical_offset+28<321); /* Clear of stock help. */
+    assert(!wcscmp(string_at(&pb_editor.label[8],9),L"CAMO:"));
+    assert(!wcscmp(string_at(&pb_editor.spinner[8],0),L"NORMAL") && !wcscmp(string_at(&pb_editor.spinner[8],1),L"HARDCORE"));
+    assert(pb_editor.menu_children[8].vertical_offset+28<321); /* Clear of stock help. */
     for(unsigned i=0;i<7;i++) {
         if(i==5) assert(!wcscmp(string_at(&pb_editor.preview_text,i),
             L"Performance options like\r\ntimers, spawn markers,\r\nand more.\r\n\r\nThis gametype:"));
@@ -250,7 +252,8 @@ static void selection_and_staging(void) {
         assert(pb_editor_spinner(menu,4)->parameters.list.selected_index==!!(flags&8));
         assert(pb_editor_spinner(menu,5)->parameters.list.selected_index==!!(flags&16));
         assert(pb_editor_spinner(menu,6)->parameters.list.selected_index==!!(flags&32));
-        assert(pb_editor_spinner(menu,7)->parameters.list.selected_index==!!(flags&64)); dispose(menu);
+        assert(pb_editor_spinner(menu,7)->parameters.list.selected_index==!!(flags&64));
+        assert(pb_editor_spinner(menu,8)->parameters.list.selected_index==!!(flags&256)); dispose(menu);
     }
     struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL); edited.flags=0;
     assert(performance_editor_event(menu,_pb_editor_initialize));
@@ -318,7 +321,7 @@ static void preview_and_help(void) {
     dispose(list);
     struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL); assert(performance_editor_event(menu,_pb_editor_initialize));
     entry=menu->child;
-    for(short row=0;row<8;row++,entry=entry->next) {
+    for(short row=0;row<9;row++,entry=entry->next) {
         menu->focused_child=entry;
         struct widget_instance *spinner=pb_editor_spinner(menu,row);
         for(short selected=0;selected<(row ? 2:3);selected++) {
@@ -326,7 +329,7 @@ static void preview_and_help(void) {
             assert(menu->parameters.list.extended_description->parameters.text_box.string_list_index==(row==0 ? selected:1+2*row+selected));
         }
     }
-    assert(help_calls==17); menu->focused_child=NULL; performance_editor_input(menu,32001); assert(help_calls==17);
+    assert(help_calls==19); menu->focused_child=NULL; performance_editor_input(menu,32001); assert(help_calls==19);
     dispose(menu);
 }
 static void independent_match_start_delay(void) {
@@ -371,6 +374,31 @@ static void independent_hardcore_rule(void) {
         assert(pb_editor_spinner(menu,7)->parameters.list.selected_index==1 && edited.flags==(64|timing|7));
         pb_editor_spinner(menu,7)->parameters.list.selected_index=0;
         assert(performance_editor_event(menu,_pb_editor_accept) && edited.flags==(timing|7) && mutation_calls==2);
+        dispose(menu);
+    }
+}
+static void independent_camo_rule(void) {
+    setup(); assert(pb_editor_build());
+    assert(!wcscmp(string_at(&pb_editor.help,17),L"Original active camouflage blue tint.\r\nDistortion and visibility timing are unchanged."));
+    assert(!wcscmp(string_at(&pb_editor.help,18),L"Remove the blue tint from active camouflage.\r\nDistortion and visibility timing are unchanged."));
+    for(unsigned extras=0;extras<=224;extras+=32) {
+        edited.flags=256|extras|8; mutation_calls=0;
+        struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL);
+        assert(performance_editor_event(menu,_pb_editor_initialize));
+        struct widget_instance *preset=pb_editor_spinner(menu,0),*camo=pb_editor_spinner(menu,8);
+        assert(camo->parameters.list.number_of_items==2 && camo->parameters.list.selected_index==1);
+        preset->parameters.list.selected_index=0; performance_editor_input(menu,32001);
+        assert(pb_editor.last_flags==(256|extras) && camo->parameters.list.selected_index==1 && !mutation_calls);
+        preset->parameters.list.selected_index=1; performance_editor_input(menu,32001);
+        assert(pb_editor.last_flags==(256|extras|7) && camo->parameters.list.selected_index==1);
+        assert(performance_editor_event(menu,_pb_editor_accept) && edited.flags==(256|extras|7) && mutation_calls==1);
+        camo->parameters.list.selected_index=0; performance_editor_input(menu,32001);
+        assert(pb_editor.last_flags==(extras|7) && preset->parameters.list.selected_index==1);
+        dispose(menu); menu=instantiate(pb_editor.menu_tag,NULL);
+        assert(performance_editor_event(menu,_pb_editor_initialize));
+        assert(pb_editor_spinner(menu,8)->parameters.list.selected_index==1 && edited.flags==(256|extras|7));
+        pb_editor_spinner(menu,8)->parameters.list.selected_index=0;
+        assert(performance_editor_event(menu,_pb_editor_accept) && edited.flags==(extras|7) && mutation_calls==2);
         dispose(menu);
     }
 }
@@ -422,7 +450,7 @@ static void registration_and_reload(void) {
     assert(pb_editor.entry.text_font.index==stock.defs[ENTRY_TAG].text_font.index);
 }
 int main(void) {
-    shapes_and_preservation(); selection_and_staging(); sound_rules_and_presets(); preview_and_help(); independent_match_start_delay(); independent_hardcore_rule(); independent_fiesta_equipment(); registration_and_reload();
+    shapes_and_preservation(); selection_and_staging(); sound_rules_and_presets(); preview_and_help(); independent_match_start_delay(); independent_hardcore_rule(); independent_camo_rule(); independent_fiesta_equipment(); registration_and_reload();
     puts("native PB editor tests passed"); return 0;
 }
 '''
@@ -467,7 +495,7 @@ def fixture_source():
 
 class NativePerformanceEditorTests(unittest.TestCase):
     def test_shipped_font_widths(self):
-        """Check the regular-size editor label and Hardcore help against cache fonts."""
+        """Check the regular-size editor label and Camo values/help against cache fonts."""
         from tools.verify_performance_sound_samples import Cache
         paths = [ROOT / f"assets/maps/{name}.map" for name in ("ui", "bloodgulch")]
         paths = [path for path in paths if path.exists()]
@@ -475,14 +503,15 @@ class NativePerformanceEditorTests(unittest.TestCase):
             self.skipTest("owned Xbox cache assets required for font metrics")
         source = (ROOT / "source/interface/performance_editor_menu.inc").read_text()
         arrays = {}
-        for name in ("labels", "help"):
+        for name in ("labels", "help", "camo"):
             array = source.split(f"static char const *const {name}[] = {{", 1)[1].split("};", 1)[0]
             arrays[name] = [ast.literal_eval(value) for value in re.findall(r'"(?:\\.|[^"\\])*"', array)]
         for path in paths:
             cache = Cache(path)
             for font_path, strings, limit in (
                 (r"ui\large_ui", arrays["labels"][:1], 219),
-                (r"ui\large_ui", arrays["help"][-2:], 482),
+                (r"ui\large_ui", arrays["help"][-4:], 482),
+                (r"ui\large_ui", arrays["camo"], 140),
             ):
                 font = cache.by_path[font_path]
                 count, address, _ = cache.unpack("<3I", font["address"] + 0x7C)

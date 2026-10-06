@@ -826,7 +826,7 @@ player is asked for as it joins) */
 static unsigned long network_game_server_client_machine_join_times[MAXIMUM_NETWORK_MACHINE_COUNT];
 
 /* A capability is attached to a connection slot, never a player or address. */
-static byte network_game_server_performance_capabilities[MAXIMUM_NETWORK_MACHINE_COUNT];
+static word network_game_server_performance_capabilities[MAXIMUM_NETWORK_MACHINE_COUNT];
 
 void platform_show_message(char const *title, char const *message);
 
@@ -836,7 +836,7 @@ void network_game_server_performance_capability(
 {
 	if (machine && VALID_INDEX(machine->machine_index, MAXIMUM_NETWORK_MACHINE_COUNT))
 		network_game_server_performance_capabilities[machine->machine_index] =
-			(byte)(flags & NETWORK_PERFORMANCE_SUPPORTED_FLAGS);
+			(word)(flags & NETWORK_PERFORMANCE_SUPPORTED_FLAGS);
 }
 
 boolean network_game_server_performance_supported(
@@ -896,7 +896,7 @@ static boolean network_game_server_performance_peers_support(
 	if (flags & PERFORMANCE_MATCH_RULE_FLAGS)
 	{
 		platform_show_message("Halo: match rules unavailable",
-			"This build does not support Input Delay, Hardcore, or Fiesta. Turn these options off, or use a compatible build.");
+			"This build does not support Input Delay, Hardcore, Fiesta, or Hardcore Camo. Turn these options off, or use a compatible build.");
 		return FALSE;
 	}
 #endif
@@ -926,6 +926,14 @@ static boolean network_game_server_performance_peers_support(
 			!network_game_server_client_machine_is_local(server, machine) &&
 			!network_game_server_performance_supported(machine, flags))
 		{
+			if ((flags & _performance_option_hardcore_camo) &&
+				!network_game_server_performance_supported(machine, _performance_option_hardcore_camo))
+			{
+				platform_show_message("Halo: Hardcore Camo unavailable",
+					"A connected player does not support Hardcore Camo. Select Normal under Camo, "
+					"or have that player update before starting.");
+				return FALSE;
+			}
 			if ((flags & _performance_option_fiesta) &&
 				!network_game_server_performance_supported(machine, _performance_option_fiesta))
 			{
@@ -963,6 +971,13 @@ static boolean network_game_server_input_delay_change_allowed(
 	struct network_game_server *server,
 	unsigned flags)
 {
+	if (((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_hardcore_camo) &&
+		(server->state != _network_game_server_state_pregame || server->sent_start_game_message))
+	{
+		platform_show_message("Halo: Hardcore Camo locked",
+			"Camo is fixed for the match. Choose Normal or Hardcore in the game type before starting the next match.");
+		return FALSE;
+	}
 	if (((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_fiesta) &&
 		(server->state != _network_game_server_state_pregame || server->sent_start_game_message))
 	{

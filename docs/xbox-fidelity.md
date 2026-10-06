@@ -142,6 +142,13 @@ and a host acknowledgement; active match rules are locked. Local map filters
 do not restrict joining, and Join In Progress defaults On to retain the prior
 host behavior. These are requested options, not reference-Xbox corrections.
 
+Camo: Normal / Hardcore is a separate requested gametype rule, default Normal.
+Hardcore neutralizes the interpolated active-camouflage RGB tint in the shared
+ANGLE/Native Metal draw path; refraction, visibility, duration, reveal and
+regrowth retain their existing behavior. Campaign remains unchanged. Saved
+variants use a version-2 extension only when Hardcore camo is selected, and
+enabled matches require camo capability confirmation from every player.
+
 The requested pistol hollow-metal effect and dirt-only overshield material
 changes are intentional content refinements of retail quirks. Loaded native
 tags are changed selectively; source caches and custom authored effects remain
@@ -150,7 +157,7 @@ for exact boundaries, evidence and remaining work.
 
 Performance Options permits host-selected match timers, timer announcements,
 spawn markers, silent movement/weapon-ready sounds, fixed 33ms input delay
-and Hardcore precision spread.
+and Hardcore precision spread and camo.
 All modifications default off; sounds default Normal. Timer audio/display
 preferences are local. These limited
 options do not authorize other Performance Build mechanics, weapon changes or

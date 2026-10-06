@@ -18,6 +18,7 @@ from macos_benchmark import Console, FAULT
 from macos_multiplayer_smoke import ROOT, BUILD, prepare, read_log
 
 STATUS = re.compile(r'^performance options: flags=(\d+) ticks=(-?\d+) markers=(\d+)/(\d+)\s*$', re.M)
+MATCH_RULE_FLAGS = 32 | 64 | 128 | 256
 
 
 def free_port():
@@ -37,13 +38,16 @@ def wait_for(predicate, description, timeout=40):
 
 
 def main():
+    global BUILD
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--map', required=True)
     parser.add_argument('--map-source', type=Path,
                         help='Converted v5 cache; omit for a map already in assets/maps')
     parser.add_argument('--markers', type=int, required=True)
-    parser.add_argument('--flags', type=int, choices=range(32), default=3,
-                        help='Requested bits: timer=1, markers=2, audio=4, silent movement=8, silent weapons=16')
+    parser.add_argument('--flags', type=int, choices=range(512), default=3,
+                        help='Requested bits: timer=1, markers=2, audio=4, silent movement=8, '
+                             'silent weapons=16, input delay=32, precision Hardcore=64, '
+                             'Fiesta=128, Hardcore camo=256')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--late-join', action='store_true')
     parser.add_argument('--hold-seconds', type=int, default=0,
@@ -52,7 +56,10 @@ def main():
                         help='Show the isolated host window; the other peer stays hidden')
     parser.add_argument('--host-app', type=Path,
                         help='Run the host from this app bundle with native menus; guest must match build/macos')
+    parser.add_argument('--renderer', choices=('angle', 'metal'), default='angle',
+                        help='Use the matching native host/guest pair for this renderer')
     args = parser.parse_args()
+    BUILD = ROOT / ('build/macos-metal' if args.renderer == 'metal' else 'build/macos')
     if not re.fullmatch(r'[A-Za-z0-9_ -]{1,31}', args.map) or args.markers < 1:
         parser.error('Provide a safe map name and its expected positive marker count')
     if not 0 <= args.hold_seconds <= 3600:
@@ -73,6 +80,11 @@ def main():
         args.host_app = args.host_app.resolve(strict=True)
         host_executable = args.host_app / 'Contents/MacOS/halo'
         host_guest = args.host_app / 'Contents/Resources/halo_guest.elf'
+        if args.renderer == 'metal':
+            metal_executable = args.host_app / 'Contents/MacOS/halo-metal'
+            if metal_executable.is_file():
+                host_executable = metal_executable
+                host_guest = args.host_app / 'Contents/Resources/halo_guest-metal.elf'
         if not host_executable.is_file() or not host_guest.is_file():
             parser.error('--host-app must be a complete Halo app bundle')
         if hashlib.sha256(host_guest.read_bytes()).hexdigest() != guest_hash:
@@ -86,6 +98,7 @@ def main():
         raise RuntimeError('A LAN address and loopback are required')
     processes, streams, sockets, consoles, folders = {}, [], [], {}, {}
     result = {'map': args.map, 'map_source': str(map_path), 'late_join': args.late_join,
+              'renderer': args.renderer,
               'requested_flags': args.flags, 'hold_seconds': args.hold_seconds,
               'host_app': str(args.host_app) if args.host_app else None,
               'audio_pack': str(sounds.resolve()) if sounds.is_dir() else None,
@@ -246,10 +259,18 @@ def main():
                 status('client')['flags'] != args.flags):
             raise AssertionError('Joining client changed host settings')
         result['client_change_refused'] = True
-        # Test each selected bit combination. For the default flags=3 this is
-        # exactly the original sequence: 1, 2, 0, 3, 0.
-        toggles = [flags for flags in range(1, args.flags) if not flags & ~args.flags]
-        toggles += [0, args.flags, 0] if args.flags else [0]
+        # Match rules are fixed before start; exercise every selected aid
+        # combination while retaining those rules on both machines.
+        match_rules = args.flags & MATCH_RULE_FLAGS
+        aids = args.flags & ~MATCH_RULE_FLAGS
+        if match_rules:
+            response = native_command('host', args.flags & ~match_rules)
+            if 'change refused' not in response:
+                raise AssertionError('Host changed locked match rules: ' + response.strip())
+            check_flags(args.flags)
+            result['host_match_rule_change_refused'] = True
+        toggles = [match_rules | flags for flags in range(1, aids) if not flags & ~aids]
+        toggles += [match_rules, args.flags, match_rules] if aids else [match_rules]
         for flags in toggles:
             native_command('host', flags)
             check_flags(flags)
