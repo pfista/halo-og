@@ -372,6 +372,17 @@ class ReleaseArtifactIdentityTests(unittest.TestCase):
                         path = root / "port/third_party" / license
                         path.parent.mkdir(parents=True, exist_ok=True)
                         path.write_text("Authored license fixture")
+                    notices = {
+                        "port/assets/fonts/Overpass-OFL.txt": "Overpass-OFL.txt",
+                        "port/assets/fonts/OpenCE-OFL.txt": "OpenCE-OFL.txt",
+                        "port/assets/fonts/Newtown-LICENSE.txt": "Newtown-LICENSE.txt",
+                        "port/assets/fonts/README.md": "fonts-README.md",
+                        "port/third_party/stb/LICENSE": "stb-LICENSE.txt",
+                    }
+                    for source, name in notices.items():
+                        notice = root / source
+                        notice.parent.mkdir(parents=True, exist_ok=True)
+                        notice.write_text("Authored notice fixture: " + name)
                     with patch.object(ci_build, "ROOT", root), patch.object(ci_build, "run") as run, \
                             patch.object(identity, "required_ci_source_identity", return_value={"source_sha": SHA, "source_date": DATE}), \
                             patch.object(sys, "argv", ["ci_build.py", platform, "release"]), \
@@ -379,6 +390,9 @@ class ReleaseArtifactIdentityTests(unittest.TestCase):
                         if complete:
                             self.assertEqual(ci_build.main(), 0)
                             self.assertIn("Verified Halo OG release discovery", output.getvalue())
+                            for name in notices.values():
+                                self.assertEqual((root / f"dist/halo-{platform}-release" / name).read_text(),
+                                                 "Authored notice fixture: " + name)
                         else:
                             with self.assertRaisesRegex(RuntimeError, "release discovery is missing"):
                                 ci_build.main()
