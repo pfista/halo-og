@@ -43,11 +43,15 @@ HOST_METRICS = re.compile(
     r"packet-copy (\d+) us, prepare (\d+) us, encode (\d+) us, drawable-wait (\d+) us, commit (\d+) us, "
     r"completion-wait (\d+) us, gpu (\d+) us/(\d+) samples; packet-buffers (\d+), sampler-hits (\d+), "
     r"sampler-misses (\d+), sampler-allocations (\d+), sampler-cache (\d+), upload-buffers (\d+), visibility-buffers (\d+)"
-    r"(?:[,;] render-passes (\d+))?")
+    r"(?:[,;] render-passes (\d+))?"
+    r"(?:, shader-compile-hits (\d+), shader-compile-misses (\d+), shader-compile-us (\d+), "
+    r"shader-function-cache (\d+), shader-function-source-bytes (\d+))?")
 HOST_KEYS = ("frames", "submissions", "draws", "bytes", "packet_copy_us", "prepare_us", "encode_us",
              "drawable_wait_us", "commit_us", "completion_wait_us", "gpu_us", "gpu_samples", "packet_buffers",
              "sampler_hits", "sampler_misses", "sampler_allocations", "sampler_cache", "upload_buffers",
-             "visibility_buffers", "render_passes")
+             "visibility_buffers", "render_passes", "shader_compile_hits", "shader_compile_misses",
+             "shader_compile_us", "shader_function_cache", "shader_function_source_bytes")
+HOST_GAUGES = ("sampler_cache", "shader_function_cache", "shader_function_source_bytes")
 SUBMISSIONS = re.compile(r"Native submissions frames (\d+)-(\d+): (\d+) batches, (\d+) commands, "
                          r"(\d+) bytes, (\d+) host-submit us, largest (\d+) bytes")
 FAULT = re.compile(r"Validation Error|failed assertion|ASSERTION FAILED|Assertion failed|EXCEPTION halt in|"
@@ -181,13 +185,19 @@ def aggregate_host_metrics(rows, timings):
     if not eligible:
         return None
     totals = {key: sum(row[key] for row in eligible) for key in HOST_KEYS
-              if key != "sampler_cache" and all(row[key] is not None for row in eligible)}
+              if key not in HOST_GAUGES and all(row[key] is not None for row in eligible)}
+    for key in HOST_GAUGES:
+        values = [row[key] for row in eligible if row[key] is not None]
+        if values:
+            totals[key + "_last"] = values[-1]
+            totals[key + "_max"] = max(values)
     totals["blocks"] = len(eligible)
     for key in ("submissions", "draws", "bytes", "packet_copy_us", "prepare_us", "encode_us", "drawable_wait_us",
-                "completion_wait_us", "gpu_us", "upload_buffers", "visibility_buffers", "render_passes"):
+                "completion_wait_us", "gpu_us", "upload_buffers", "visibility_buffers", "render_passes",
+                "shader_compile_hits", "shader_compile_misses", "shader_compile_us"):
         if key in totals:
             totals[key + "_per_frame"] = totals[key] / totals["frames"]
-    totals["scope"] = "Host 60-frame blocks with a complete preceding 60-frame window beyond original tick 150; CPU/GPU phases may overlap."
+    totals["scope"] = "Host 60-frame blocks with a complete preceding 60-frame window beyond original tick 150; CPU/GPU phases may overlap. Shader compile counters include attempted preflight stage requests, and compile time includes new-library failures. Cache entries/source bytes are last/max gauges, not interval totals."
     return totals
 
 

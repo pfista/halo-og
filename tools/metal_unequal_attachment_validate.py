@@ -131,7 +131,7 @@ def fixture():
     return f
 
 SOURCES=['port/macos/host/host_memory.c','port/macos/host/host.h','port/macos/host/host_metal.mm',
- 'port/macos/host/metal_draw_encoder.h','port/macos/host/metal_draw_encoder.mm','port/macos/include/halo_metal_abi.h',
+ 'port/macos/host/metal_function_cache.h','port/macos/host/metal_draw_encoder.h','port/macos/host/metal_draw_encoder.mm','port/macos/include/halo_metal_abi.h',
  'port/android/include/halo_android_abi.h','port/macos/tests/host_metal_frame.mm','port/macos/tests/guest_metal_unequal_attachments.c',
  'port/linux/src/metal_guest_transport.h','port/linux/src/metal_guest_transport.c','port/macos/metal_imports.list',
  'tools/metal_unequal_attachment_validate.py','tools/test_metal_unequal_attachments.py','tools/metal_host_frame_validate.py',

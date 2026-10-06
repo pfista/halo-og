@@ -134,6 +134,52 @@ class SamplingTests(unittest.TestCase):
         self.assertEqual(parsed["angle_sizes"][0]["logical_height"], 480)
         self.assertEqual(parsed["guest_exit_records"], [0])
 
+    def test_optional_shader_metrics_preserve_old_prefix_and_render_pass_suffix(self):
+        prefix = ("Native Metal host metrics: 60 frames, 180 submits, 300 draws, 400 bytes; "
+                  "packet-copy 5 us, prepare 6 us, encode 7 us, drawable-wait 8 us, commit 9 us, "
+                  "completion-wait 10 us, gpu 11 us/12 samples; packet-buffers 13, sampler-hits 14, "
+                  "sampler-misses 15, sampler-allocations 16, sampler-cache 17, upload-buffers 18, visibility-buffers 19")
+        suffix = (", shader-compile-hits 21, shader-compile-misses 22, shader-compile-us 23, "
+                  "shader-function-cache 24, shader-function-source-bytes 2500")
+        parsed = benchmark.parse_log("\n".join((prefix, prefix + ", render-passes 20", prefix + ", render-passes 20" + suffix)))
+        self.assertEqual(parsed["parse_errors"], [])
+        self.assertEqual(len(parsed["host_metrics"]), 3)
+        for row in parsed["host_metrics"][:2]:
+            self.assertIsNone(row["shader_compile_hits"])
+            self.assertIsNone(row["shader_function_cache"])
+        row = parsed["host_metrics"][2]
+        self.assertEqual(row["render_passes"], 20)
+        self.assertEqual(row["shader_compile_hits"], 21)
+        self.assertEqual(row["shader_compile_misses"], 22)
+        self.assertEqual(row["shader_compile_us"], 23)
+        self.assertEqual(row["shader_function_cache"], 24)
+        self.assertEqual(row["shader_function_source_bytes"], 2500)
+
+    def test_shader_counters_sum_intervals_while_cache_gauges_keep_last_and_max(self):
+        timings = [dict(frame=frame, ns=frame * 16_666_667, tick=frame, initialized=True)
+                   for frame in range(1, 401)]
+        rows = []
+        for frame, hits, misses, compile_us, entries, source_bytes in (
+                (250, 3, 1, 100, 40, 4000), (350, 5, 2, 300, 20, 2500)):
+            row = {key: 60 for key in benchmark.HOST_KEYS}
+            row.update(preceding_timing=timings[frame - 1], shader_compile_hits=hits,
+                       shader_compile_misses=misses, shader_compile_us=compile_us,
+                       shader_function_cache=entries, shader_function_source_bytes=source_bytes)
+            rows.append(row)
+        totals = benchmark.aggregate_host_metrics(rows, timings)
+        self.assertEqual(totals["shader_compile_hits"], 8)
+        self.assertEqual(totals["shader_compile_misses"], 3)
+        self.assertEqual(totals["shader_compile_us"], 400)
+        self.assertAlmostEqual(totals["shader_compile_hits_per_frame"], 8 / 120)
+        self.assertAlmostEqual(totals["shader_compile_us_per_frame"], 400 / 120)
+        self.assertEqual(totals["shader_function_cache_last"], 20)
+        self.assertEqual(totals["shader_function_cache_max"], 40)
+        self.assertEqual(totals["shader_function_source_bytes_last"], 2500)
+        self.assertEqual(totals["shader_function_source_bytes_max"], 4000)
+        self.assertNotIn("shader_function_cache", totals)
+        self.assertNotIn("shader_function_source_bytes", totals)
+        self.assertNotIn("shader_function_cache_per_frame", totals)
+
     def test_malformed_timings_and_faults_survive_collection(self):
         result = benchmark.parse_log("Native timing: broken\nNative unsupported opcode\nGame exited (1)\n")
         self.assertEqual(len(result["parse_errors"]), 1)

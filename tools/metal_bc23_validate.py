@@ -30,7 +30,7 @@ def descriptor(folder,name,data):
 
 BRIDGE_FILES=('port/macos/tests/guest_metal_draw.c','port/macos/tests/host_metal.mm',
     'port/macos/include/halo_metal_abi.h','port/macos/host/host_metal.mm','port/macos/host/host_memory.c',
-    'port/macos/host/host.h','port/macos/host/metal_draw_encoder.mm','port/macos/host/metal_draw_encoder.h',
+    'port/macos/host/host.h','port/macos/host/metal_draw_encoder.mm','port/macos/host/metal_function_cache.h','port/macos/host/metal_draw_encoder.h',
     'port/android/include/halo_android_abi.h')
 
 def sources(folder):

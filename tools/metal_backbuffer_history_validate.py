@@ -163,7 +163,7 @@ def fixture():
 
 def snapshot(out):
     names=['port/macos/host/host_memory.c','port/macos/host/host.h','port/macos/host/host_metal.mm',
-           'port/macos/host/metal_draw_encoder.h','port/macos/host/metal_draw_encoder.mm','port/macos/include/halo_metal_abi.h',
+           'port/macos/host/metal_function_cache.h','port/macos/host/metal_draw_encoder.h','port/macos/host/metal_draw_encoder.mm','port/macos/include/halo_metal_abi.h',
            'port/android/include/halo_android_abi.h','port/macos/tests/host_metal_frame.mm',
            'port/macos/tests/guest_metal_backbuffer_history.c','port/linux/src/metal_guest_transport.h',
            'port/linux/src/metal_guest_transport.c','port/linux/src/d3d8_metal.c','port/linux/src/metal_draw_state.c',

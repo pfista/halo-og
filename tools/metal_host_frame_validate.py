@@ -266,7 +266,7 @@ def build_host(out):
 
 def snapshot_backend(out):
     names=['port/macos/host/host_memory.c','port/macos/host/host.h','port/macos/host/host_metal.mm',
-        'port/macos/host/metal_draw_encoder.mm','port/macos/host/metal_draw_encoder.h','port/macos/include/halo_metal_abi.h',
+        'port/macos/host/metal_draw_encoder.mm','port/macos/host/metal_draw_encoder.h','port/macos/host/metal_function_cache.h','port/macos/include/halo_metal_abi.h',
         'port/android/include/halo_android_abi.h','port/macos/tests/host_metal_frame.mm']
     records={}
     for name in names:
