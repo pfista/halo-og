@@ -189,6 +189,9 @@ class ReleaseDiscoveryTests(unittest.TestCase):
     def test_versioned_changelog_notes_are_readable_by_existing_clients(self):
         from tools.testing_release import release_notes
         record = {"repository": "pfista/halo-og", "tag": "v0.3.1", "sha": OTHER, "network_protocol": 11,
+                  "overview": {"summary": "This release improves spawning and teleporter behavior during matches.",
+                               "highlights": ["Fix spawning and teleporters",
+                                              "Keep desktop update notices linked to the selected release"]},
                   "changelog": {"previous_tag": "test-v0.3.0-net11-setup2", "previous_sha": "c" * 40,
                                 "commits": [{"sha": "d" * 40, "subject": "Fix spawning and teleporters"},
                                             {"sha": OTHER, "subject": f"Document https://github.com/pfista/halo-og/commit/{SHA})"}]}}

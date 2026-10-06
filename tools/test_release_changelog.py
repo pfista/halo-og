@@ -13,6 +13,10 @@ def sha(number):
 
 
 LEGACY = "test-v0.3.0-net11-setup2"
+OVERVIEW = {"summary": "This release improves combat feedback and player controls.",
+            "highlights": ["Add an optional hardcore camo mode.",
+                           "Correct the Overshield drain sound.",
+                           "Improve control settings."]}
 
 
 def published(tag, *, draft=False, date="2026-10-04T12:00:00Z"):
@@ -161,7 +165,8 @@ class ReleaseChangelogTests(unittest.TestCase):
                                  "commits": [{"sha": sha(2), "subject": "Change 2"},
                                              {"sha": api.head, "subject": "Change 3"}]})
         self.assertFalse(any(path.startswith("git/") for path in api.calls))
-        record = {"repository": changelog.REPOSITORY, "sha": api.head, "tag": "v0.3.0", "changelog": result}
+        record = {"repository": changelog.REPOSITORY, "sha": api.head, "tag": "v0.3.0",
+                  "changelog": result, "overview": copy.deepcopy(OVERVIEW)}
         for markdown in (False, True):
             output = changelog.format_changelog(record, markdown=markdown)
             self.assertIn("All commits since baseline commit " + changelog.FIRST_RELEASE_BASELINE[:12], output)
@@ -286,13 +291,38 @@ class ReleaseChangelogTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Duplicate published"):
             self.generate(api)
 
-    def test_formatter_has_complete_commits_latest_unique_nonmerge_changes_and_safe_text(self):
-        subjects = ["Old change", "Same change", "Same change", "Fix <xml> [link] `code` & text",
-                    "Change four", "Change five", "Merge branch 'main'", "Change six"]
+    def test_overview_requires_a_paragraph_and_one_to_six_unique_highlights(self):
+        for highlights in (["One change"], [f"Change {index}" for index in range(6)]):
+            overview = {"summary": "A short release overview.", "highlights": highlights}
+            original = copy.deepcopy(overview)
+            changelog.validate_overview(overview)
+            self.assertEqual(overview, original)
+        invalid = [None, [], {}, {"summary": "Summary"},
+                   {**OVERVIEW, "extra": "Not part of the release overview"},
+                   {**OVERVIEW, "summary": None}, {**OVERVIEW, "summary": ""},
+                   {**OVERVIEW, "summary": " \t "}, {**OVERVIEW, "summary": "First\nSecond"},
+                   {**OVERVIEW, "summary": "Summary\r"},
+                   {**OVERVIEW, "highlights": "One change"},
+                   {**OVERVIEW, "highlights": []},
+                   {**OVERVIEW, "highlights": [f"Change {index}" for index in range(7)]},
+                   {**OVERVIEW, "highlights": [None]}, {**OVERVIEW, "highlights": [""]},
+                   {**OVERVIEW, "highlights": [" \t "]},
+                   {**OVERVIEW, "highlights": ["First\nSecond"]},
+                   {**OVERVIEW, "highlights": ["Change\r"]},
+                   {**OVERVIEW, "highlights": ["Same change", "Same change"]}]
+        for overview in invalid:
+            with self.subTest(overview=overview), self.assertRaisesRegex(RuntimeError, "overview"):
+                changelog.validate_overview(overview)
+
+    def test_formatter_keeps_curated_older_features_ahead_of_latest_ci_and_merge_commits(self):
+        subjects = ["Add hardcore camo mode", "Correct Overshield drain sound", "Improve controls",
+                    "Fix <xml> [link] `code` & text", "Update CI cache", "Merge branch 'main'",
+                    "Retry Windows CI", "Update build packaging"]
         result = {"previous_tag": LEGACY, "previous_sha": sha(1),
                   "commits": [{"sha": sha(number), "subject": subject}
                               for number, subject in enumerate(subjects, 2)]}
-        record = {"repository": changelog.REPOSITORY, "sha": sha(9), "tag": "v0.3.0", "changelog": result}
+        record = {"repository": changelog.REPOSITORY, "sha": sha(9), "tag": "v0.3.0",
+                  "changelog": result, "overview": copy.deepcopy(OVERVIEW)}
         plain = changelog.format_changelog(record)
         markdown = changelog.format_changelog(record, markdown=True)
         for output in (plain, markdown):
@@ -300,10 +330,15 @@ class ReleaseChangelogTests(unittest.TestCase):
             self.assertIn(f"https://github.com/{changelog.REPOSITORY}/compare/{sha(1)}...{sha(9)}", output)
             for item in result["commits"]:
                 self.assertIn(item["sha"][:12], output)
-            key_changes = output.split("All commits since", 1)[0]
-            self.assertNotIn("Old change", key_changes)
-            self.assertNotIn("Merge branch", key_changes)
-            self.assertEqual(key_changes.count("Same change"), 1)
+            overview = output.split("All commits since", 1)[0]
+            self.assertIn("Overview\n\n", overview)
+            self.assertIn(OVERVIEW["summary"].rstrip("."), overview)
+            for highlight in OVERVIEW["highlights"]:
+                self.assertIn(highlight.rstrip("."), overview)
+            self.assertNotIn("Update CI cache", overview)
+            self.assertNotIn("Merge branch", overview)
+            self.assertNotIn("Update build packaging", overview)
+            self.assertNotIn("Key changes", output)
         self.assertIn(r"Fix \<xml\> \[link\] \`code\` \& text", markdown)
         self.assertNotIn("<xml>", markdown)
         result["commits"][0]["subject"] = f"See [source](https://github.com/pfista/halo-og/commit/{sha(2)})"
@@ -311,6 +346,24 @@ class ReleaseChangelogTests(unittest.TestCase):
             output = changelog.format_changelog(record, markdown=markdown_mode)
             self.assertNotIn("https://github.com/pfista/halo-og/commit/", output)
             self.assertNotIn("/commit/", output.split("Full comparison", 1)[-1])
+
+    def test_overview_uses_the_same_safe_text_rendering_as_commit_subjects(self):
+        text = "Fix <xml> [link] `code` & text"
+        url = f"See [source](https://github.com/pfista/halo-og/commit/{sha(2)})"
+        record = {"repository": changelog.REPOSITORY, "sha": sha(2), "tag": "v0.3.0",
+                  "changelog": {"previous_tag": LEGACY, "previous_sha": sha(1),
+                                "commits": [{"sha": sha(2), "subject": text}]},
+                  "overview": {"summary": text, "highlights": [url]}}
+        plain = changelog.format_changelog(record)
+        markdown = changelog.format_changelog(record, markdown=True)
+        self.assertIn(text, plain)
+        self.assertEqual(markdown.count(r"Fix \<xml\> \[link\] \`code\` \& text"), 2)
+        for output in (plain, markdown):
+            self.assertNotIn("https://github.com/pfista/halo-og/commit/", output)
+        self.assertNotIn("<xml>", markdown)
+        del record["overview"]
+        with self.assertRaisesRegex(RuntimeError, "overview"):
+            changelog.format_changelog(record)
 
 
 if __name__ == "__main__":

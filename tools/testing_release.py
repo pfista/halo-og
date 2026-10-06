@@ -21,7 +21,7 @@ from urllib.parse import quote, urlencode
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.release_changelog import format_changelog, generate_changelog, version_tuple
+from tools.release_changelog import format_changelog, generate_changelog, validate_overview, version_tuple
 
 
 REPOSITORY = "pfista/halo-og"
@@ -93,6 +93,18 @@ def check_source_version(api, sha, tag):
 
 def release_title(record):
     return "Halo OG " + record["tag"]
+
+
+def source_overview(api, sha, tag):
+    path = "docs/releases/" + tag + ".json"
+    source = api.get("contents/" + path + "?ref=" + sha, missing_ok=True)
+    if source is None:
+        raise RuntimeError("Missing release overview: author and commit " + path + " before building the release")
+    try:
+        overview = json.loads(base64.b64decode(source["content"]).decode("utf-8"))
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError("Invalid release overview JSON in " + path) from error
+    return validate_overview(overview)
 
 
 def tag_message(record):
@@ -258,6 +270,7 @@ def prepare(api, repository, sha, tag, directory):
     validate_inputs(repository, sha, tag)
     check_main_and_tag(api, sha, tag)
     check_source_version(api, sha, tag)
+    overview = source_overview(api, sha, tag)
     if directory.exists():
         raise RuntimeError("Candidate directory already exists; choose a fresh path")
     selected = []
@@ -269,6 +282,7 @@ def prepare(api, repository, sha, tag, directory):
     record = {"repository": repository, "sha": sha, "tag": tag,
               "network_protocol": source_protocol(api, sha), "source_date": source_date(api, sha),
               "changelog": generate_changelog(api, repository, sha, tag),
+              "overview": overview,
               "artifacts": [], "files": {}}
     # Check note compatibility before downloading the build assets.
     notes = release_notes(record)
@@ -303,6 +317,8 @@ def verify_candidate(api, repository, sha, tag, directory):
         raise RuntimeError("Prepared source or release tag changed")
     if record.get("changelog") != generate_changelog(api, repository, sha, tag):
         raise RuntimeError("Prepared changelog or previous release tag changed")
+    if record.get("overview") != source_overview(api, sha, tag):
+        raise RuntimeError("Prepared release overview does not match selected source")
     if record.get("network_protocol") != source_protocol(api, sha):
         raise RuntimeError("Prepared network protocol does not match selected source")
     if record.get("source_date") != source_date(api, sha):
