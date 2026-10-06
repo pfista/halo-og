@@ -1,6 +1,7 @@
 /* Local device preferences, staged until Accept. Main-menu pages clone
  * retail widgets; gameplay uses the smaller, resident pause-menu assets. */
 #include "../../port/linux/include/halo_contributors.h"
+#include "../../port/linux/include/halo_original_credits.h"
 #define DEVICE_SETTINGS_ENTRY "ui\\shell\\main_menu\\main_menu_item_settings"
 #define DEVICE_PROFILE_PICKER "ui\\shell\\main_menu\\settings_select\\player_setup\\player_profile_select_screen"
 #define DEVICE_OPTIONS_PREFIX "ui\\shell\\main_menu\\settings_select\\multiplayer_setup\\indicator_options_edit\\"
@@ -144,30 +145,46 @@ static void device_settings_text(short index, char const *text)
 }
 
 #define DEVICE_ABOUT_CREDITS_PER_PAGE 8
-static unsigned device_settings_about_page_count(void)
+static unsigned device_settings_about_contributor_page_count(void)
 {
     unsigned pages = (HALO_OG_CONTRIBUTOR_COUNT + DEVICE_ABOUT_CREDITS_PER_PAGE - 1) / DEVICE_ABOUT_CREDITS_PER_PAGE;
     return pages ? pages : 1;
+}
+
+static unsigned device_settings_about_page_count(void)
+{
+    return device_settings_about_contributor_page_count() + HALO_OG_ORIGINAL_CREDIT_PAGE_COUNT;
 }
 
 static void device_settings_refresh_about(void)
 {
     char text[NUMBEROF(device_settings.about_text)];
     unsigned i, first = device_settings.about_page * DEVICE_ABOUT_CREDITS_PER_PAGE;
-    unsigned last = first + DEVICE_ABOUT_CREDITS_PER_PAGE, used;
-    if (last > HALO_OG_CONTRIBUTOR_COUNT) last = HALO_OG_CONTRIBUTOR_COUNT;
-    used = (unsigned)snprintf(text, sizeof(text),
-        "Based on Xbox build " HALO_OG_ENGINE_BUILD_NUMBER "\r\n"
-        "Original Xbox NTSC gameplay target\r\n30 Hz simulation\r\nhttps://oghalo.com\r\n\r\n"
-        "Contributors (%u/%u)", device_settings.about_page + 1, device_settings_about_page_count());
-    for (i = first; i < last && used < sizeof(text); i++)
+    unsigned last = first + DEVICE_ABOUT_CREDITS_PER_PAGE, used, contributor_pages;
+    contributor_pages = device_settings_about_contributor_page_count();
+    if (device_settings.about_page < contributor_pages)
     {
-        struct halo_contributor_credit const *credit = &halo_contributor_credits[i];
-        int added = snprintf(text + used, sizeof(text) - used, "\r\n%s%s - %u %s, %u LOC added",
-            credit->github ? "@" : "", credit->github ? credit->github : credit->name,
-            credit->commits, credit->commits == 1 ? "commit" : "commits", credit->added_lines);
-        if (added < 0) break;
-        used += (unsigned)added;
+        if (last > HALO_OG_CONTRIBUTOR_COUNT) last = HALO_OG_CONTRIBUTOR_COUNT;
+        used = (unsigned)snprintf(text, sizeof(text),
+            "Based on Xbox build " HALO_OG_ENGINE_BUILD_NUMBER "\r\n"
+            "Original Xbox NTSC gameplay target\r\n30 Hz simulation\r\nhttps://oghalo.com\r\n\r\n"
+            "Contributors (%u/%u)", device_settings.about_page + 1, contributor_pages);
+        for (i = first; i < last && used < sizeof(text); i++)
+        {
+            struct halo_contributor_credit const *credit = &halo_contributor_credits[i];
+            int added = snprintf(text + used, sizeof(text) - used, "\r\n%s%s - %u %s, %u LOC added",
+                credit->github ? "@" : "", credit->github ? credit->github : credit->name,
+                credit->commits, credit->commits == 1 ? "commit" : "commits", credit->added_lines);
+            if (added < 0) break;
+            used += (unsigned)added;
+        }
+    }
+    else
+    {
+        unsigned page = device_settings.about_page - contributor_pages;
+        used = (unsigned)snprintf(text, sizeof(text),
+            "Original Halo: Combat Evolved\r\nXbox (2001) - Credits (%u/%u)\r\n\r\n%s",
+            page + 1, HALO_OG_ORIGINAL_CREDIT_PAGE_COUNT, halo_original_credit_pages[page].text);
     }
     if (used < sizeof(text)) snprintf(text + used, sizeof(text) - used,
         "\r\nSelect: Next page    Left/Right: Page");

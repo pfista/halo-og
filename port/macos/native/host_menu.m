@@ -6,6 +6,7 @@
 #import "HaloReleaseUpdates.h"
 #include "../../linux/include/halo_og_version.h"
 #include "../../linux/include/halo_contributors.h"
+#include "../../linux/include/halo_original_credits.h"
 #include <SDL3/SDL.h>
 #include "host_menu.h"
 #include "../host/host_renderer.h"
@@ -293,6 +294,24 @@ static void migrationProgress(void *context, const char *file, unsigned long lon
                 credit->commits, credit->commits == 1 ? @"commit" : @"commits", credit->added_lines]
             attributes:attributes]];
     }
+    NSMutableDictionary *headingAttributes = [attributes mutableCopy];
+    headingAttributes[NSFontAttributeName] = [NSFont boldSystemFontOfSize:11];
+    [details appendAttributedString:[[NSAttributedString alloc]
+        initWithString:@"\n\n" HALO_OG_ORIGINAL_CREDITS_TITLE @"\n" attributes:headingAttributes]];
+    for (unsigned index = 0; index < HALO_OG_ORIGINAL_CREDIT_SECTION_COUNT; index++) {
+        const struct halo_original_credit_section *section = &halo_original_credit_sections[index];
+        [details appendAttributedString:[[NSAttributedString alloc]
+            initWithString:[NSString stringWithFormat:@"\n%@\n", @(section->role)]
+            attributes:headingAttributes]];
+        for (unsigned nameIndex = 0; nameIndex < section->count; nameIndex++) {
+            [details appendAttributedString:[[NSAttributedString alloc]
+                initWithString:[NSString stringWithFormat:@"%@\n", @(section->names[nameIndex])]
+                attributes:attributes]];
+        }
+    }
+    linkAttributes[NSLinkAttributeName] = [NSURL URLWithString:@HALO_OG_ORIGINAL_CREDITS_SOURCE_URL];
+    [details appendAttributedString:[[NSAttributedString alloc]
+        initWithString:@"\nOriginal Xbox credits source\n" attributes:linkAttributes]];
     [NSApp orderFrontStandardAboutPanelWithOptions:@{
         NSAboutPanelOptionApplicationName:@"Halo OG v" HALO_OG_VERSION @" by @pfista",
         NSAboutPanelOptionCredits:details}];

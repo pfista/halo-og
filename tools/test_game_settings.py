@@ -572,6 +572,11 @@ static rectangle2d settings_rendered_text_bounds(struct widget_instance *widget)
     /* PRODUCTION TEXT BOUNDS */
     return bounds;
 }
+static boolean settings_about_line_matches(const wchar_t *line,size_t length,const char *expected) {
+    if(length!=strlen(expected)) return FALSE;
+    for(size_t i=0;i<length;i++) if(line[i]!=(unsigned char)expected[i]) return FALSE;
+    return TRUE;
+}
 static void settings_about(void) {
     settings_setup(0); assert(device_settings_build());
     struct device_settings_draft before[4]; memcpy(before,device_settings_drafts,sizeof(before));
@@ -600,29 +605,97 @@ static void settings_about(void) {
     assert(wcsstr(body,L"Select: Next page") && wcsstr(body,L"Left/Right: Page"));
     about_back_calls=0;
     unsigned seen[HALO_OG_CONTRIBUTOR_COUNT]={0},pages=device_settings_about_page_count();
+    unsigned contributor_pages=device_settings_about_contributor_page_count();
+    unsigned original_section=0,original_name=0,original_names=0,expected_names=0;
+    unsigned original_headings[HALO_OG_ORIGINAL_CREDIT_SECTION_COUNT]={0};
+    assert(HALO_OG_ORIGINAL_CREDIT_SECTION_COUNT && HALO_OG_ORIGINAL_CREDIT_PAGE_COUNT);
+    assert(contributor_pages==(HALO_OG_CONTRIBUTOR_COUNT+DEVICE_ABOUT_CREDITS_PER_PAGE-1)/DEVICE_ABOUT_CREDITS_PER_PAGE);
+    assert(pages==contributor_pages+HALO_OG_ORIGINAL_CREDIT_PAGE_COUNT);
+    for(unsigned i=0;i<HALO_OG_ORIGINAL_CREDIT_SECTION_COUNT;i++) {
+        assert(halo_original_credit_sections[i].count);
+        expected_names+=halo_original_credit_sections[i].count;
+    }
     for(unsigned page=0;page<pages;page++) {
         assert(device_settings.about_page==page);
         body=string_at(&device_settings.about_body,_ds_about_info);
+        assert(wcslen(body)<NUMBEROF(device_settings.about_text));
         const wchar_t *cursor=body;
-        unsigned first=page*DEVICE_ABOUT_CREDITS_PER_PAGE,last=first+DEVICE_ABOUT_CREDITS_PER_PAGE;
-        if(last>HALO_OG_CONTRIBUTOR_COUNT) last=HALO_OG_CONTRIBUTOR_COUNT;
-        for(unsigned i=first;i<last;i++) {
-            const struct halo_contributor_credit *credit=&halo_contributor_credits[i];
-            char entry[256]; wchar_t wide[256];
-            int length=snprintf(entry,sizeof(entry),"\r\n%s%s - %u %s, %u LOC added",
-                credit->github ? "@":"",credit->github ? credit->github:credit->name,
-                credit->commits,credit->commits==1 ? "commit":"commits",credit->added_lines);
-            assert(length>=0 && length<(int)NUMBEROF(wide));
-            for(int j=0;j<=length;j++) wide[j]=(unsigned char)entry[j];
-            cursor=wcsstr(cursor,wide); assert(cursor); cursor+=wcslen(wide); seen[i]++;
+        if(page<contributor_pages) {
+            char heading[64]; wchar_t wide_heading[64];
+            int length=snprintf(heading,sizeof(heading),"Contributors (%u/%u)",page+1,contributor_pages);
+            assert(length>=0 && length<(int)NUMBEROF(wide_heading));
+            for(int j=0;j<=length;j++) wide_heading[j]=(unsigned char)heading[j];
+            assert(wcsstr(body,wide_heading) && !wcsstr(body,L"Xbox (2001) - Credits"));
+            unsigned first=page*DEVICE_ABOUT_CREDITS_PER_PAGE,last=first+DEVICE_ABOUT_CREDITS_PER_PAGE;
+            if(last>HALO_OG_CONTRIBUTOR_COUNT) last=HALO_OG_CONTRIBUTOR_COUNT;
+            for(unsigned i=first;i<last;i++) {
+                const struct halo_contributor_credit *credit=&halo_contributor_credits[i];
+                char entry[256]; wchar_t wide[256];
+                length=snprintf(entry,sizeof(entry),"\r\n%s%s - %u %s, %u LOC added",
+                    credit->github ? "@":"",credit->github ? credit->github:credit->name,
+                    credit->commits,credit->commits==1 ? "commit":"commits",credit->added_lines);
+                assert(length>=0 && length<(int)NUMBEROF(wide));
+                for(int j=0;j<=length;j++) wide[j]=(unsigned char)entry[j];
+                cursor=wcsstr(cursor,wide); assert(cursor); cursor+=wcslen(wide); seen[i]++;
+            }
+        } else {
+            char heading[128];
+            int length=snprintf(heading,sizeof(heading),"Original Halo: Combat Evolved\r\nXbox (2001) - Credits (%u/%u)\r\n\r\n",
+                page-contributor_pages+1,HALO_OG_ORIGINAL_CREDIT_PAGE_COUNT);
+            assert(length>=0 && length<(int)sizeof(heading));
+            assert(settings_about_line_matches(body,(size_t)length,heading));
+            cursor+=length;
+            const wchar_t *footer=wcsstr(cursor,L"\r\nSelect: Next page    Left/Right: Page");
+            assert(footer && !wcscmp(footer,L"\r\nSelect: Next page    Left/Right: Page"));
+            unsigned lines=0,page_names=0;
+            boolean has_heading=FALSE,last_was_heading=FALSE;
+            /* Compare the rendered line stream with the section roster, so
+             * dropped, duplicated, reordered, or orphaned credits fail even
+             * when the generated page table contains the same mistake. */
+            while(cursor<footer) {
+                const wchar_t *end=wcsstr(cursor,L"\r\n");
+                if(!end || end>footer) end=footer;
+                size_t line_length=(size_t)(end-cursor); lines++;
+                if(line_length) {
+                    assert(original_section<HALO_OG_ORIGINAL_CREDIT_SECTION_COUNT);
+                    const struct halo_original_credit_section *section=&halo_original_credit_sections[original_section];
+                    if(!has_heading) {
+                        char role[256];
+                        int role_length=snprintf(role,sizeof(role),"%s:",section->role);
+                        assert(role_length>=0 && role_length<(int)sizeof(role));
+                        assert(settings_about_line_matches(cursor,line_length,role));
+                        original_headings[original_section]++; has_heading=TRUE; last_was_heading=TRUE;
+                    } else {
+                        assert(original_name<section->count);
+                        assert(settings_about_line_matches(cursor,line_length,section->names[original_name]));
+                        original_name++; original_names++; page_names++; last_was_heading=FALSE;
+                        if(original_name==section->count) { original_section++; original_name=0; has_heading=FALSE; }
+                    }
+                }
+                cursor=end<footer ? end+2:footer;
+            }
+            assert(lines<=8 && page_names && !last_was_heading);
         }
         assert(settings_about_send(root,_gamepad_analog_button_a));
         assert(!about_back_calls);
     }
     for(unsigned i=0;i<HALO_OG_CONTRIBUTOR_COUNT;i++) assert(seen[i]==1);
+    assert(original_section==HALO_OG_ORIGINAL_CREDIT_SECTION_COUNT && !original_name && original_names==expected_names);
+    for(unsigned i=0;i<HALO_OG_ORIGINAL_CREDIT_SECTION_COUNT;i++) assert(original_headings[i]);
     assert(!device_settings.about_page); /* Select wraps after the last page. */
     assert(settings_about_send(root,_gamepad_binary_button_dpad_left) && device_settings.about_page==pages-1);
+    assert(wcsstr(string_at(&device_settings.about_body,_ds_about_info),L"Xbox (2001) - Credits"));
     assert(settings_about_send(root,_gamepad_binary_button_dpad_right) && !device_settings.about_page);
+    assert(wcsstr(string_at(&device_settings.about_body,_ds_about_info),L"Contributors (1/"));
+    /* Reverse navigation crosses the original/contributor boundary and wraps
+     * exactly once, with each cursor position rendered as the right section. */
+    for(unsigned step=1;step<=pages;step++) {
+        assert(settings_about_send(root,_gamepad_binary_button_dpad_left));
+        unsigned page=(pages-step)%pages;
+        assert(device_settings.about_page==page);
+        body=string_at(&device_settings.about_body,_ds_about_info);
+        assert(wcsstr(body,page<contributor_pages ? L"Contributors (":L"Xbox (2001) - Credits ("));
+    }
     assert(settings_about_send(root,_gamepad_binary_button_start) && device_settings.about_page==1%pages);
     assert(settings_about_send(root,_widget_event_created) && !device_settings.about_page); /* Reopening resets the cursor. */
     assert(!settings_about_send(root,_gamepad_binary_button_dpad_up));
