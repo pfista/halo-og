@@ -59,3 +59,23 @@ of the same fresh B30 intro with Smooth Motion off at 30 FPS and on at 60 FPS,
 for each renderer, should correlate observed jumps with frame intervals and
 simulation tick gaps. They also do not establish original Xbox cinematic or
 pixel parity, sustained frame rate or an actual ILP32/GPU execution result.
+
+## Installed content checks
+
+The dual app rebuilt at `7ad3151071a23565ae38d41b9de1ddda6519558e` after
+merging main passes four isolated 30-second B30 loading checks: Metal and ANGLE,
+each with Smooth Motion off and on. The selected settings and original map
+hashes are bound in the records; all four hosts and guests exit successfully,
+with original draw activity and no recorded runtime faults. Native runs use
+3600x2338 storage/drawables with Metal API validation and advancing gameplay
+ticks. Metal caps are 30 off and 60 on; ANGLE uses its original 30 FPS pacing
+off and existing VSync pacing on.
+
+Evidence:
+`build/macos-metal/performance-pass-attempt1/final-motion-content-smoke-attempt1/motion-content-smoke.json`,
+SHA256 `b1791f4ba8c8e2a42609b9c518e8873f8a26ae6f16bc738c3ba23238b6fb5edb`.
+These are actual installed ILP32 guest executions, but only content, settings,
+draw activity and exit checks. They have no foreground, FPS, visual-motion or
+image-parity gate, and do not confirm that the reported Pelican jump is fixed.
+The preceding attempted foreground motion comparison lost focus and remains
+failed; its timings are discarded.

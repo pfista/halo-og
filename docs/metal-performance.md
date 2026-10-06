@@ -78,6 +78,11 @@ environment overrides also bind OS relaunches to the isolated run directory.
 CPU tests check the private identity, executable metadata, omitted URL handlers,
 relative dependencies and unchanged binary hashes.
 
+The optional `--interpolation on|off` argument uses the existing Smooth Motion
+setting, defaulting to on. Native frame caps apply only to native Metal. ANGLE
+with interpolation off retains original 30 FPS pacing; ANGLE with it on uses
+its existing VSync pacing rather than the native cap.
+
 ## Rendering checks
 
 `tools/test_metal_render_pass_reuse.py` compares intermediate color, depth,
@@ -157,3 +162,26 @@ and input-latency validation. Original map/UI hashes are bound in each record;
 the player-readiness check confirms a player, rather than a complete scenario
 or all participants. Idle physical controllers are assumed. The private launcher
 identity correction is commit `de52b60a`; its 16 focused CPU tests pass.
+
+### Final merged-main validation
+
+The dual renderer build succeeds at
+`7ad3151071a23565ae38d41b9de1ddda6519558e` after merging current main. All 95
+targeted renderer/transport/benchmark/interpolation CPU checks pass, as do 36
+presentation, controller/input, camouflage, Overshield and solo-start
+compatibility checks. The installed app passes strict signature verification;
+its BuildInfo source and both guest hashes match the build. An initial personal
+settings checksum changed during installation, so that comparison is not
+reported as unchanged. The subsequent isolated content checks leave the current
+personal configuration untouched.
+
+Four 30-second original Silent Cartographer loading checks pass with Metal and
+ANGLE, each with Smooth Motion off/on. All use isolated settings/saves and exit
+cleanly with original draw activity and no recorded runtime faults. Metal API
+validation is observed, including native 3600x2338 storage/drawables and
+advancing gameplay ticks. Evidence:
+`build/macos-metal/performance-pass-attempt1/final-motion-content-smoke-attempt1/motion-content-smoke.json`,
+SHA256 `b1791f4ba8c8e2a42609b9c518e8873f8a26ae6f16bc738c3ba23238b6fb5edb`.
+These have no foreground, FPS, visual-motion or image-parity gate. The earlier
+foreground motion attempt lost focus and remains failed, with its timings
+discarded. The reported Pelican jump still needs a focused visual playtest.

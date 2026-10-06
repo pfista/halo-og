@@ -509,13 +509,37 @@ object accessor with 32-bit-normalized counters and ASan/UBSan. A negative
 control reproduces the camera/object separation. Tests cover tracking across
 1/2/1/3-tick gaps, zero-tick frames, resets/toggles, cuts, teleports, direct
 facing, network corrections and wrap. The final targeted CPU union passes 94
-tests. Runtime confirmation of the reported Pelican jump remains separate.
+tests at the initial motion implementation, increasing to 95 after the
+benchmark's explicit interpolation setting. Runtime confirmation of the
+reported Pelican jump remains separate.
 During fallback, a new camera cut may wait for the next advancing tick; see
 [presentation tradeoff and test scope](render-interpolation-catch-up.md).
 
 Implementation commit: `19743f0a33363c3db4d82e1f43cffde28f98bf62`. Local and
 unreleased; this fixes the optional interpolation path rather than establishing
 retail cinematic parity. Upstream reviewed-through is unchanged.
+
+### Performance pass merged-main build (October 5, 2026)
+
+Local source `7ad3151071a23565ae38d41b9de1ddda6519558e` merges main into
+`codex/metal-performance-pass`; it does not merge these changes into main or
+publish a release. The dual Mac build, all 95 targeted renderer/motion CPU tests
+and 36 main compatibility tests pass. Installed signature, BuildInfo source and
+ANGLE/native guest hashes match. The initial personal settings checksum changed
+during installation; that comparison is retained as failed rather than claimed
+unchanged. The isolated content tests leave the current personal settings intact.
+
+All four installed original B30 content checks pass: each renderer with Smooth
+Motion off/on, original map hashes, advancing native ticks/draws, API validation
+and clean host/guest exits. Matrix:
+`build/macos-metal/performance-pass-attempt1/final-motion-content-smoke-attempt1/motion-content-smoke.json`
+(SHA256 `b1791f4ba8c8e2a42609b9c518e8873f8a26ae6f16bc738c3ba23238b6fb5edb`).
+These are bounded loading checks with no foreground, FPS, visual-motion or
+retail-parity gate. A preceding motion timing attempt lost foreground and remains
+failed, with its timings discarded. Full-resolution campaign 60 FPS, reported
+multiplayer Chill Out drops and visual resolution of the Pelican jump remain
+unverified. ANGLE remains the default; the original assets and 30 Hz schedule
+remain intact.
 
 ### Original target
 
