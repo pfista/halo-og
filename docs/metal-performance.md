@@ -29,6 +29,16 @@ It verifies map/player readiness, the actual foreground game PID, requested
 settings and a clean game exit. Native sampling excludes the first 150 gameplay
 ticks. ANGLE excludes startup and five seconds after player readiness.
 
+New renderer benchmarks, Mac benchmark/multiplayer/map-collection checks and Metal playtest
+profiles enable the original on-screen FPS counter with `display_framerate true`
+in their isolated `init.txt`. Display runtime and native benchmark runs inherit
+the profile startup script. The counter appears at the bottom right and averages
+rendered frames over half a second; it is separate from the 30 Hz gameplay tick.
+Use the same command for any ad-hoc visible game test. Existing frozen evidence
+and pixel-comparison fixtures retain their recorded startup scripts. Earlier
+performance measurements below did not include this counter; new measurements
+include its small HUD rendering cost.
+
 ```sh
 python3 tools/macos_renderer_benchmark.py \
   --assets /path/to/original/assets \

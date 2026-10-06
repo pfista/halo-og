@@ -201,6 +201,12 @@ def aggregate_host_metrics(rows, timings):
     return totals
 
 
+def startup_commands(level):
+    init = "display_framerate true\n"
+    init += "game_variant slayer\n" if level == "chillout" else "game_difficulty_set normal\n"
+    return init + "map_name " + LEVELS[level] + "\n"
+
+
 def controlled_config(renderer, seconds, port, render_height, cap, vsync, aa, scripted_input, interpolation=True):
     bindings = re.findall(r"^BINDING\((\w+),", (ROOT / "port/linux/src/input_bindings.def").read_text(), re.M)
     return f'''[network]
@@ -439,9 +445,7 @@ def run(args):
                 (output / "data" / name).symlink_to(assets / name, target_is_directory=True)
         record["assets"] = {"root": str(assets), "maps": [descriptor(assets / "maps" / (level + ".map"))
                                                                for level in ("ui", args.level)]}
-        init = ("game_variant slayer\n" if args.level == "chillout" else "game_difficulty_set normal\n")
-        init += "map_name " + LEVELS[args.level] + "\n"
-        (output / "data/init.txt").write_text(init)
+        (output / "data/init.txt").write_text(startup_commands(args.level))
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]

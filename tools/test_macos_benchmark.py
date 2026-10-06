@@ -61,6 +61,8 @@ class WorkloadVerification(unittest.TestCase):
                 self.assertEqual(config['debug']['telnet_console_port'], 43210)
                 self.assertNotIn('HALO_NETWORK_TEST', env)
                 self.assertFalse(config['network']['online'])
+                self.assertEqual((output / 'data/init.txt').read_text(),
+                                 'display_framerate true\nmap_name levels\\a30\\a30\n')
                 self.assertFalse((output / 'data/maps').is_symlink())
                 with self.assertRaises(FileExistsError):
                     prepare(output, ['a30'], 70, False, True, 43210)

@@ -227,7 +227,7 @@ def verify_prepared(output, plan, after_execution=False):
     initial = tomllib.loads(Path(plan['initial_config']['file']).read_text())
     additions = validate_saved_config(initial, config, compiled_defaults(plan['build']))
     validate_config(config, plan['values'], output, plan['duration_seconds'], plan.get('timing_only', False))
-    require((output / 'data/init.txt').read_text() == 'game_variant slayer\nmap_name ' + plan['values']['map'] + '\n',
+    require((output / 'data/init.txt').read_text() == profiles.playtest_init(plan['values']['map']),
             'Runtime initialization changed')
     for name in ('maps', 'sounds'):
         link = output / 'data' / name

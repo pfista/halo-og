@@ -88,7 +88,7 @@ def prepare(folder, source, stock, port, args):
     for stock_source, _ in stock.values():
         (maps / stock_source.name).symlink_to(stock_source)
     (maps / source.name).symlink_to(source)
-    (folder / "data/init.txt").write_text('game_variant slayer\nmap_name "' + source.stem + '"\n')
+    (folder / "data/init.txt").write_text('display_framerate true\ngame_variant slayer\nmap_name "' + source.stem + '"\n')
     screenshots = folder / "screenshots"
     if args.screenshot_every:
         screenshots.mkdir()
