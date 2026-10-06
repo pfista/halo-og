@@ -218,7 +218,12 @@ static void testArsenals(NSURL *root, NSURL *game, NSDictionary *config) {
     before = requests;
     holdMapResponses = YES;
     assert(requestArsenal(onDemand, approved, approved[@"cache_sha256"]) == HALO_MAP_DOWNLOAD_PENDING);
-    waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
+    waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) {
+        int state = requestArsenal(onDemand, approved, approved[@"cache_sha256"]);
+        return heldMapResponses.count == 1 || state == HALO_MAP_DOWNLOAD_FAILED || state == HALO_MAP_DOWNLOAD_UNAVAILABLE;
+    } });
+    if (heldMapResponses.count != 1) fprintf(stderr, "Arsenal demand status: %s\n", onDemand.statusText.UTF8String);
+    assert(heldMapResponses.count == 1);
     assert(requests == before + 3); // catalog, requested manifest, requested cache
     assert(requestArsenal(onDemand, approved, approved[@"cache_sha256"]) == HALO_MAP_DOWNLOAD_PENDING);
     NSURL *destination = [onDemand.mapsDirectory URLByAppendingPathComponent:@"arsenal/v1/_fiesta_prisoner.map"];

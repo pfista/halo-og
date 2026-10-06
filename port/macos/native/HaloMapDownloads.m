@@ -370,7 +370,8 @@ static BOOL arsenalManifestMatches(NSDictionary *manifest, NSDictionary *entry) 
     NSURL *_maps, *_library, *_partials, *_directory, *_stage, *_cachedCatalog;
     NSDictionary *_configuration, *_entries, *_activeQuery, *_activeEntry;
     NSURLSession *_session; dispatch_queue_t _work;
-    NSMutableDictionary *_queries, *_states;
+    NSMutableDictionary<NSString *, NSDictionary *> *_queries;
+    NSMutableDictionary<NSString *, NSNumber *> *_states;
     NSMutableOrderedSet *_pending;
     HaloMapTransfer *_transfer;
     NSString *_activeKey, *_statusText;
@@ -508,7 +509,7 @@ static BOOL arsenalManifestMatches(NSDictionary *manifest, NSDictionary *entry) 
     if (entry && (![_activeQuery[@"expected"] length] || [_activeQuery[@"expected"] isEqual:entry[@"cache_sha256"]])) {
         _activeEntry = entry;
         NSNumber *capacity = nil;
-        [_directory getResourceValue:&capacity forKey:NSURLVolumeAvailableCapacityForImportantUsageKey error:nil];
+        [_directory getResourceValue:&capacity forKey:NSURLVolumeAvailableCapacityKey error:nil];
         if (capacity && capacity.unsignedLongLongValue < [entry[@"cache_file_bytes"] unsignedLongLongValue] + 16781312ULL) {
             [self finish:HALO_MAP_DOWNLOAD_FAILED message:@"Not enough disk space for this Fiesta arsenal. Use Check Maps to retry."]; return;
         }
