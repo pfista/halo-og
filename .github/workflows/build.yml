@@ -92,6 +92,12 @@ jobs:
           tools.test_map_lifecycle tools.test_network_client_lifecycle tools.test_solo_multiplayer_start tools.test_stale_player_references
           tools.test_input_delay tools.test_performance_variants tools.test_performance_network tools.test_network_v11 tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_meeting_gameplay tools.test_refined_tag_effects
 
+      - name: Expanded Fiesta cache lifecycle and authoring
+        run: >-
+          python -m unittest tools.test_expanded_cache tools.test_fiesta_menu_preflight
+          tools.test_texture_cache_budget tools.test_weapon_pack_maps tools.test_android_asm_convert
+          tools.test_arsenal_catalog tools.test_publish_map_catalog tools.test_desktop_arsenal_downloads
+
       - name: Compile cache
         run: ccache --show-stats
 
@@ -268,6 +274,12 @@ jobs:
 
       - name: Compile cache
         run: ccache --show-stats
+
+      - name: Expanded Fiesta cache inspection and shared assembly conversion
+        run: >-
+          python -m unittest tools.test_weapon_pack_maps.XboxCacheInspectionTests
+          tools.test_weapon_pack_maps.AnimationPayloadAuditTests tools.test_android_asm_convert
+          tools.test_desktop_arsenal_downloads
 
       - uses: actions/upload-artifact@v4
         with:
