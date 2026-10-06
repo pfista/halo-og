@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <CommonCrypto/CommonDigest.h>
+#include "../../linux/include/halo_expanded_cache.h"
 
 static NSError *failure(NSString *message) {
     return [NSError errorWithDomain:@"HaloGameData" code:1
@@ -200,7 +201,167 @@ NSURL *HaloImportDiscImage(NSURL *image, NSURL *supportDirectory,
     return validated;
 }
 
-/* Copy only regular map files in the known game-data directories. External
+static NSString *copyHash(CC_SHA256_CTX *context);
+
+/* The importer checks the generation contract and immutable cache bytes.
+   Gameplay additionally validates the expanded tag catalog before loading. */
+static NSString *arsenalFileHash(NSURL *file, unsigned long long minimum, unsigned long long maximum,
+                               NSData **header) {
+    int descriptor = open(file.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW);
+    struct stat before, after;
+    BOOL valid = descriptor >= 0 && !fstat(descriptor, &before) && S_ISREG(before.st_mode) &&
+        before.st_size >= 0 && (unsigned long long)before.st_size >= minimum && (unsigned long long)before.st_size <= maximum;
+    CC_SHA256_CTX hash; CC_SHA256_Init(&hash);
+    unsigned char bytes[65536]; ssize_t count = 0;
+    unsigned long long total = 0;
+    while (valid && (count = read(descriptor, bytes, sizeof(bytes))) > 0) {
+        if ((unsigned long long)count > (unsigned long long)before.st_size - total) { valid = NO; break; }
+        if (header && !total) *header = [NSData dataWithBytes:bytes length:MIN((size_t)count, (size_t)2048)];
+        total += (unsigned long long)count;
+        CC_SHA256_Update(&hash, bytes, (CC_LONG)count);
+    }
+    valid = valid && count == 0 && !fstat(descriptor, &after) && total == (unsigned long long)before.st_size &&
+        before.st_size == after.st_size && before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec &&
+        before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec;
+    if (descriptor >= 0) close(descriptor);
+    return valid ? copyHash(&hash) : nil;
+}
+
+static void arsenalJSONSpace(const unsigned char **cursor, const unsigned char *end) {
+    while (*cursor < end && (**cursor == ' ' || **cursor == '\t' || **cursor == '\r' || **cursor == '\n')) ++*cursor;
+}
+static BOOL arsenalJSONToken(const unsigned char **cursor, const unsigned char *end, unsigned char token) {
+    arsenalJSONSpace(cursor, end);
+    if (*cursor == end || **cursor != token) return NO;
+    ++*cursor;
+    return YES;
+}
+static NSString *arsenalJSONString(const unsigned char **cursor, const unsigned char *end) {
+    if (!arsenalJSONToken(cursor, end, '"')) return nil;
+    const unsigned char *start = *cursor;
+    while (*cursor < end && **cursor != '"') {
+        if (**cursor < 32 || **cursor > 126 || **cursor == '\\') return nil;
+        ++*cursor;
+    }
+    if (*cursor == end) return nil;
+    NSString *result = [[NSString alloc] initWithBytes:start length:*cursor - start encoding:NSASCIIStringEncoding];
+    ++*cursor;
+    return result;
+}
+static NSDictionary *arsenalManifest(NSURL *file) {
+    int descriptor = open(file.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW);
+    struct stat info;
+    unsigned char bytes[4097]; ssize_t count = 0;
+    BOOL valid = descriptor >= 0 && !fstat(descriptor, &info) && S_ISREG(info.st_mode) && info.st_size > 0 && info.st_size <= 4096;
+    if (valid) count = read(descriptor, bytes, sizeof(bytes));
+    if (descriptor >= 0) close(descriptor);
+    if (!valid || count != info.st_size) return nil;
+    const unsigned char *cursor = bytes, *end = bytes + count;
+    NSMutableDictionary *fields = [NSMutableDictionary dictionary];
+    if (!arsenalJSONToken(&cursor, end, '{')) return nil;
+    do {
+        NSString *key = arsenalJSONString(&cursor, end);
+        if (!key || fields[key] || !arsenalJSONToken(&cursor, end, ':')) return nil;
+        arsenalJSONSpace(&cursor, end);
+        id value;
+        if (cursor < end && *cursor == '"') value = arsenalJSONString(&cursor, end);
+        else {
+            const unsigned char *start = cursor;
+            unsigned long long integer = 0;
+            while (cursor < end && *cursor >= '0' && *cursor <= '9') {
+                unsigned digit = *cursor++ - '0';
+                if (integer > (128ULL * 1024 * 1024 - digit) / 10) return nil;
+                integer = integer * 10 + digit;
+            }
+            if (cursor == start || (cursor - start > 1 && *start == '0')) return nil;
+            value = @(integer);
+        }
+        if (!value) return nil;
+        fields[key] = value;
+        if (fields.count > 9) return nil;
+        if (arsenalJSONToken(&cursor, end, '}')) break;
+        if (!arsenalJSONToken(&cursor, end, ',')) return nil;
+    } while (YES);
+    arsenalJSONSpace(&cursor, end);
+    NSSet *expected = [NSSet setWithArray:@[@"schema_version", @"generation", @"logical_map", @"physical_map", @"cache_sha256",
+        @"base_sha256", @"weapon_list_sha256", @"cache_file_bytes", @"cache_declared_bytes"]];
+    return cursor == end && [expected isEqualToSet:[NSSet setWithArray:fields.allKeys]] ? fields : nil;
+}
+static BOOL arsenalDigest(id value) {
+    if (![value isKindOfClass:NSString.class] || [value length] != 64) return NO;
+    return [value rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"].invertedSet].location == NSNotFound;
+}
+static BOOL arsenalMapName(id value) {
+    if (![value isKindOfClass:NSString.class] || ![value length] || [value length] >= HALO_EXPANDED_CACHE_NAME_SIZE) return NO;
+    return [value rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyz0123456789_- "].invertedSet].location == NSNotFound;
+}
+static NSString *arsenalPhysicalName(NSString *logical) {
+    if (logical.length <= 23) return [@"_fiesta_" stringByAppendingString:logical];
+    NSData *bytes = [logical dataUsingEncoding:NSASCIIStringEncoding];
+    CC_SHA256_CTX hash; CC_SHA256_Init(&hash); CC_SHA256_Update(&hash, bytes.bytes, (CC_LONG)bytes.length);
+    return [@"_fiestah_" stringByAppendingString:[copyHash(&hash) substringToIndex:16]];
+}
+static uint32_t arsenalU32(const unsigned char *bytes) {
+    return (uint32_t)bytes[0] | (uint32_t)bytes[1] << 8 | (uint32_t)bytes[2] << 16 | (uint32_t)bytes[3] << 24;
+}
+static BOOL arsenalHeader(NSData *header, NSString *name, unsigned long long declared, BOOL expanded) {
+    if (header.length != 2048) return NO;
+    const unsigned char *bytes = header.bytes;
+    const unsigned char *nameEnd = memchr(bytes + 32, 0, 32), *buildEnd = memchr(bytes + 64, 0, 32);
+    if (!nameEnd || !buildEnd) return NO;
+    NSString *cacheName = [[NSString alloc] initWithBytes:bytes + 32 length:nameEnd - bytes - 32 encoding:NSASCIIStringEncoding];
+    NSString *build = [[NSString alloc] initWithBytes:bytes + 64 length:buildEnd - bytes - 64 encoding:NSASCIIStringEncoding];
+    uint32_t length = arsenalU32(bytes + 8), offset = arsenalU32(bytes + 16), size = arsenalU32(bytes + 20);
+    BOOL valid = !memcmp(bytes, "daeh", 4) && !memcmp(bytes + 2044, "toof", 4) && arsenalU32(bytes + 4) == 5 &&
+        bytes[96] == 1 && bytes[97] == 0 && [cacheName isEqual:name] && length >= 2048 && length <= 128ULL * 1024 * 1024 &&
+        ([@"01.01.14.2342" isEqual:build] || [@"01.10.12.2276" isEqual:build]);
+    return valid && (!expanded || (length == declared && offset >= 2048 && offset <= length && size >= 40 &&
+        size <= 22ULL * 1024 * 1024 && size <= length - offset));
+}
+static BOOL arsenalInvalid(NSError **error) {
+    if (error) *error = failure(@"This folder has incomplete or changed Fiesta arsenal files. Restore the matching map and manifest before managing a copy. Your original files are unchanged.");
+    return NO;
+}
+static BOOL arsenalSources(NSDictionary<NSString *, NSURL *> *maps, NSMutableArray *sources, NSError **error) {
+    NSURL *arsenal = maps[@"arsenal"];
+    if (!arsenal) return YES;
+    struct stat info;
+    if (lstat(arsenal.fileSystemRepresentation, &info) || !S_ISDIR(info.st_mode)) return arsenalInvalid(error);
+    NSDictionary *generations = entries(arsenal, error);
+    if (!generations) return NO;
+    NSURL *generation = generations[@"v1"];
+    if (!generation) return YES;
+    if (lstat(generation.fileSystemRepresentation, &info) || !S_ISDIR(info.st_mode)) return arsenalInvalid(error);
+    NSDictionary *files = entries(generation, error);
+    if (!files) return NO;
+    for (NSString *name in [[files allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
+        if (![name.pathExtension isEqual:@"map"] && ![name.pathExtension isEqual:@"json"]) continue;
+        NSString *physical = name.stringByDeletingPathExtension;
+        NSURL *cache = files[[physical stringByAppendingPathExtension:@"map"]], *manifestFile = files[[physical stringByAppendingPathExtension:@"json"]];
+        if (!cache || !manifestFile || (![physical hasPrefix:@"_fiesta_"] && ![physical hasPrefix:@"_fiestah_"])) return arsenalInvalid(error);
+        if (![name.pathExtension isEqual:@"json"]) continue;
+        NSDictionary *manifest = arsenalManifest(manifestFile);
+        NSString *logical = manifest[@"logical_map"];
+        if (!manifest || ![manifest[@"schema_version"] isEqual:@1] || ![manifest[@"generation"] isEqual:@(HALO_EXPANDED_CACHE_GENERATION)] ||
+            !arsenalMapName(logical) || ![physical isEqual:arsenalPhysicalName(logical)] ||
+            ![manifest[@"physical_map"] isEqual:physical] || !arsenalDigest(manifest[@"base_sha256"]) || !arsenalDigest(manifest[@"cache_sha256"]) ||
+            ![manifest[@"weapon_list_sha256"] isEqual:@HALO_EXPANDED_CACHE_WEAPON_LIST_SHA256] ||
+            ![manifest[@"cache_file_bytes"] isKindOfClass:NSNumber.class] || ![manifest[@"cache_declared_bytes"] isKindOfClass:NSNumber.class]) return arsenalInvalid(error);
+        unsigned long long fileBytes = [manifest[@"cache_file_bytes"] unsignedLongLongValue], declared = [manifest[@"cache_declared_bytes"] unsignedLongLongValue];
+        if (fileBytes < 2048 || declared < 2048) return arsenalInvalid(error);
+        NSURL *base = maps[[logical stringByAppendingPathExtension:@"map"]];
+        NSData *baseHeader = nil, *cacheHeader = nil;
+        if (!base || ![arsenalFileHash(base, 2048, 128ULL * 1024 * 1024, &baseHeader) isEqual:manifest[@"base_sha256"]] ||
+            !arsenalHeader(baseHeader, logical, 0, NO) ||
+            ![arsenalFileHash(cache, fileBytes, fileBytes, &cacheHeader) isEqual:manifest[@"cache_sha256"]] ||
+            !arsenalHeader(cacheHeader, physical, declared, YES)) return arsenalInvalid(error);
+        [sources addObject:cache];
+        [sources addObject:manifestFile];
+    }
+    return YES;
+}
+
+/* Copy regular maps and verified generation-1 arsenal pairs only. External
    folder mode remains available for deliberate symlink-based developer data. */
 static NSArray<NSURL *> *copySources(NSURL *selection, NSError **error) {
     NSURL *root = HaloValidateGameData(selection, error);
@@ -228,12 +389,12 @@ static NSArray<NSURL *> *copySources(NSURL *selection, NSError **error) {
             }
             [sources addObject:file];
         }
+        if (!arsenalSources(files, sources, error)) return nil;
     }
     return sources;
 }
 
-unsigned long long HaloGameDataCopySize(NSURL *root, NSError **error) {
-    NSArray<NSURL *> *sources = copySources(root, error);
+static unsigned long long copySourcesSize(NSArray<NSURL *> *sources, NSError **error) {
     unsigned long long size = 0;
     for (NSURL *source in sources) {
         struct stat info;
@@ -244,6 +405,9 @@ unsigned long long HaloGameDataCopySize(NSURL *root, NSError **error) {
         size += (unsigned long long)info.st_size;
     }
     return size;
+}
+unsigned long long HaloGameDataCopySize(NSURL *root, NSError **error) {
+    return copySourcesSize(copySources(root, error), error);
 }
 
 static NSString *copyHash(CC_SHA256_CTX *context) {
@@ -268,7 +432,7 @@ NSURL *HaloCopyGameData(NSURL *selection, NSURL *supportDirectory, xiso_progress
     NSURL *root = HaloValidateGameData(selection, error);
     NSArray<NSURL *> *sources = root ? copySources(root, error) : nil;
     if (!sources) return nil;
-    unsigned long long total = HaloGameDataCopySize(root, error), done = 0;
+    unsigned long long total = copySourcesSize(sources, error), done = 0;
     if (!total) return nil;
     NSURL *destination = [[supportDirectory URLByAppendingPathComponent:@"Game Data" isDirectory:YES]
                           URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES];
@@ -277,9 +441,10 @@ NSURL *HaloCopyGameData(NSURL *selection, NSURL *supportDirectory, xiso_progress
     NSMutableArray *records = [NSMutableArray array];
     for (NSURL *source in sources) {
         if (!success) break;
-        NSURL *folder = [destination URLByAppendingPathComponent:source.URLByDeletingLastPathComponent.lastPathComponent isDirectory:YES];
+        NSString *relative = [source.path substringFromIndex:root.path.length + 1];
+        NSURL *target = [destination URLByAppendingPathComponent:relative];
+        NSURL *folder = target.URLByDeletingLastPathComponent;
         success = [NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:error];
-        NSURL *target = [folder URLByAppendingPathComponent:source.lastPathComponent];
         int input = success ? open(source.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW) : -1;
         struct stat before, after;
         int output = -1;
@@ -310,10 +475,11 @@ NSURL *HaloCopyGameData(NSURL *selection, NSURL *supportDirectory, xiso_progress
         if (output >= 0) close(output);
         NSString *sourceDigest = copyHash(&sourceHash);
         if (success) success = [sourceDigest isEqual:copiedFileHash(target)];
-        if (success) [records addObject:@{@"path": [NSString stringWithFormat:@"%@/%@", folder.lastPathComponent, target.lastPathComponent],
+        if (success) [records addObject:@{@"path": relative,
                                          @"bytes": @(copied), @"sha256": sourceDigest}];
     }
     NSURL *validated = success ? HaloValidateGameData(destination, error) : nil;
+    if (validated && !copySources(validated, error)) validated = nil;
     if (validated) {
         NSDictionary *record = @{@"schema_version": @1, @"source_kind": @"copied-folder", @"source_path": root.path,
                                   @"files": records, @"completed": @YES};

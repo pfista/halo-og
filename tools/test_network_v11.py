@@ -24,6 +24,7 @@ PREFIX = r'''
 #include <string.h>
 #include "halo_port_limits.h"
 #include "networking/network_performance_protocol.h"
+#include "networking/network_expanded_cache_protocol.h"
 typedef unsigned char byte, boolean;
 typedef unsigned short word;
 typedef float real;
@@ -32,10 +33,12 @@ typedef float real;
 #define NONE (-1)
 #define FLAG(bit) (1U<<(bit))
 #define TEST_FLAG(value,bit) ((value)&FLAG(bit))
+#define SET_FLAG(value,bit,on) ((value)=(on)?((value)|FLAG(bit)):((value)&~FLAG(bit)))
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #define csmemset memset
 #define csmemcpy memcpy
 #define csstrcmp strcmp
+#define _stricmp strcmp
 #define csprintf(destination,...) snprintf(destination,sizeof(destination),__VA_ARGS__)
 #define VALID_INDEX(i,n) ((i)>=0 && (i)<(n))
 #define MAXIMUM_ODDBALLS 16
@@ -49,27 +52,109 @@ typedef float real;
 enum { _game_variant_draw_object_in_motion_sensor_bit=0, _game_variant_infinite_grenades_bit=2 };
 enum { _performance_option_input_delay=32, _performance_option_hardcore=64, _performance_option_fiesta=128,
        _performance_option_hardcore_camo=256, PERFORMANCE_MATCH_RULE_FLAGS=480,
+       _starting_equipment_fiesta=2, _starting_equipment_generic=1, _starting_equipment_custom=0,
        _network_game_client_state_joining=1, _network_game_client_state_pregame=2,
-       _network_game_client_state_ingame=3, _network_game_client_state_postgame=4 };
+       _network_game_client_state_ingame=3, _network_game_client_state_postgame=4,
+       _network_game_server_state_pregame=1, _network_game_server_state_ingame=2, _network_game_server_state_postgame=3,
+       _network_client_machine_precached_bit=3, _message_client_loaded=10,
+       NETWORK_GAME_MESSAGE_VERSION=1, _network_game_packet_class_client_ingame=2 };
+/* WEAPON SET IDS */
 /* DECLARATIONS */
 #include "game/game_variant_options.h"
 struct network_player { byte wire[32]; };
 /* RECORD */
-struct network_game_client { struct network_game game; int state; };
-struct network_game_server_client_machine { unsigned supported; boolean joined,loading_late,closed,acknowledged; };
-struct network_game_server { struct network_game game; struct network_game_server_client_machine machines[MAXIMUM_NETWORK_MACHINE_COUNT]; };
+struct network_game_client { struct network_game game; int state; void *connection; };
+struct network_game_server_client_machine { unsigned supported; boolean joined,loading_late,closed,acknowledged,local,offered,loaded; word flags; };
+struct network_game_server { struct network_game game; struct network_game_server_client_machine machines[MAXIMUM_NETWORK_MACHINE_COUNT]; int state; };
 static struct network_game_client client;
 static struct network_game_server *active_server;
 static unsigned network_game_client_performance_host_capabilities;
 static struct network_game network_game_client_settings_staging;
 static int32_t network_game_client_settings_staging_size;
 static unsigned precaches, dialogs, applied, applied_flags, errors;
-static unsigned sent_capabilities, sent_settings_pieces;
+static unsigned sent_capabilities, sent_settings_pieces, sent_offers, sent_ready;
+static struct native_map_cache_selection selected_cache, server_cache;
+static struct network_expanded_cache_identity network_game_client_cache_offer;
+static boolean network_game_client_cache_offer_valid;
+static struct network_game network_game_client_cache_settings;
+static struct network_expanded_cache_identity network_game_client_cache_settings_offer;
+static boolean network_game_client_cache_settings_pending, network_game_client_cache_begin_pending;
+static unsigned long network_game_client_cache_wait_started, network_game_client_cache_retry_time, network_game_client_cache_heartbeat_time;
+static unsigned pending_packets, resumed_starts, matching_heartbeats;
+static int download_status, prepare_status;
+static unsigned char requested_digest[32];
+static unsigned long fixture_now=999;
+static boolean network_game_client_defer_cache_begin(void);
+#define network_game_server_cache_selection server_cache
+static unsigned asset_digest=42;
+static unsigned load_decodes, normal_loaded, late_loaded;
+struct message_client_loaded { word unused; };
+static short network_game_server_get_state(struct network_game_server *server,void *data) { (void)data;return (short)server->state; }
+static boolean network_game_server_client_machine_is_loaded(struct network_game_server *server,
+    struct network_game_server_client_machine *machine) { (void)server;return machine->loaded; }
+static boolean decode_network_game_message(void *record,word *message,short *size,short *kind,short *version,int packet) {
+    (void)record;(void)message;(void)size;assert(*kind==_message_client_loaded && *version==NETWORK_GAME_MESSAGE_VERSION && packet==2);
+    load_decodes++;return TRUE;
+}
+static void network_game_server_client_machine_game_loading_complete(struct network_game_server *s,
+    struct network_game_server_client_machine *m) { (void)s;m->loaded=TRUE;normal_loaded++; }
+static void network_game_server_late_joiner_loaded(struct network_game_server *s,
+    struct network_game_server_client_machine *m) { (void)s;m->loaded=TRUE;late_loaded++; }
+static char const *main_get_multiplayer_map_name(void) { return "chillout"; }
+static boolean missing_cache, cache_loaded=TRUE;
+static unsigned char ready_packet[NETWORK_EXPANDED_CACHE_MESSAGE_SIZE];
+int native_map_cache_prepare(char const *map,struct game_variant const *variant,
+    struct native_map_cache_selection *selection,int show) {
+    (void)show;memset(selection,0,sizeof(*selection));
+    snprintf(selection->logical_name,32,"%s",map);snprintf(selection->physical_name,32,"%s",map);
+    if(native_map_cache_uses_global_arsenal(variant)) {
+        if(missing_cache) return FALSE;
+        selection->expanded=1;selection->generation=HALO_EXPANDED_CACHE_GENERATION;
+        snprintf(selection->physical_name,32,"_fiesta_%s",map);
+        memset(selection->sha256,(int)asset_digest,32);memset(selection->weapon_list_sha256,23,32);
+    }
+    return TRUE;
+}
+int native_map_cache_prepare_expected(char const *map,struct game_variant const *variant,
+    unsigned char const *expected,struct native_map_cache_selection *selection,int show) {
+    if(expected)memcpy(requested_digest,expected,32);
+    int ready=native_map_cache_prepare(map,variant,selection,show);
+    if(ready && expected && memcmp(expected,selection->sha256,32))ready=FALSE;
+    prepare_status=ready?1:download_status;return ready;
+}
+int native_map_cache_download_status(void) { return prepare_status; }
+static char const *native_map_basename(char const *map) {
+    char const *name=map;for(char const *p=map;*p;p++)if(*p=='/' || *p=='\\')name=p+1;return name;
+}
+static boolean network_game_client_game_has_started(struct network_game_client *c) {
+    if(network_game_client_defer_cache_begin())return TRUE;
+    assert(!network_game_client_cache_settings_pending && selected_cache.expanded);
+    assert(native_map_cache_selection_equal(&selected_cache,&network_game_client_cache_offer.selection));
+    resumed_starts++;c->state=_network_game_client_state_ingame;return TRUE;
+}
+static void network_game_server_client_machine_heard(struct network_game_server *s,
+    struct network_game_server_client_machine *m) { (void)s;(void)m;matching_heartbeats++; }
+void native_map_cache_select(struct native_map_cache_selection const *s) { selected_cache=*s; }
+struct native_map_cache_selection const *native_map_cache_current(void) { return &selected_cache; }
+static struct native_map_cache_selection const *network_game_server_get_cache_selection(struct network_game_server *s) {
+    (void)s;return &server_cache;
+}
+static boolean network_game_server_client_machine_is_local(struct network_game_server *s,
+    struct network_game_server_client_machine *m) { (void)s;return m->local; }
+static boolean cache_files_precache_map_loaded(char const *name) { (void)name;return cache_loaded; }
+static boolean network_game_client_receive_cache_identity(struct network_game_client *,const byte *,unsigned,boolean);
+static boolean network_game_client_write(void *connection,void const *packet,unsigned size,void *context,int reliable) {
+    (void)connection;(void)context;assert(reliable && size==sizeof(ready_packet));
+    memcpy(ready_packet,packet,size);
+    if(((byte const *)packet)[13]==NETWORK_EXPANDED_CACHE_DOWNLOAD_PENDING)pending_packets++;
+    else sent_ready++;
+    return TRUE;
+}
 static boolean fail_capability_send;
 static struct network_game_server_client_machine *capability_failure_target;
 static boolean network_game_settings_update_pending;
 static unsigned long network_game_settings_update_time;
-static unsigned long system_milliseconds(void) { return 999; }
+static unsigned long system_milliseconds(void) { return fixture_now; }
 static struct message_server_game_settings_update encoded_settings_piece;
 enum { _message_server_game_settings_update=8 };
 static boolean network_game_client_receive_performance_capability(
@@ -102,10 +187,15 @@ static boolean network_game_server_send_message_to_client_machine(
     (void)server; (void)machine;
     if(message==&encoded_settings_piece) {
         assert(!(machine->supported & PERFORMANCE_MATCH_RULE_FLAGS) || machine->acknowledged);
+        if(native_map_cache_uses_global_arsenal(&server->game.variant)) assert(machine->offered);
         sent_settings_pieces++;
         return network_game_client_receive_game_settings_piece(&client,&encoded_settings_piece);
     }
     assert(!sent_settings_pieces);
+    if(((byte const *)message)[2]==NETWORK_EXPANDED_CACHE_MESSAGE_TYPE) {
+        assert(machine->acknowledged);sent_offers++;machine->offered=TRUE;
+        return network_game_client_receive_cache_identity(&client,message,NETWORK_EXPANDED_CACHE_MESSAGE_SIZE,TRUE);
+    }
     sent_capabilities++;
     if(fail_capability_send && (!capability_failure_target || machine==capability_failure_target)) {
         machine->closed=TRUE;return FALSE;
@@ -133,10 +223,13 @@ static int cache_files_map_plays_multiplayer(const char *map,char *build) {
 static void cache_files_show_multiplayer_unavailable(const char *map,const char *build) {
     (void)map; (void)build; assert(0);
 }
-static void main_set_multiplayer_map_name(const char *map) { (void)map; precaches++; }
+static void main_set_multiplayer_map_name(const char *map) { (void)map; precaches++;cache_loaded=TRUE; }
 static struct network_game_server *global_network_game_server_get(void) { return active_server; }
 static struct network_game *network_game_server_get_game(struct network_game_server *s) { return &s->game; }
 static unsigned performance_variant_get_flags(const struct game_variant *v) { return v->flags; }
+static void platform_show_message(char const *title,char const *message) {
+    (void)title;(void)message;dialogs++;
+}
 static void performance_variant_set_flags(struct game_variant *v, unsigned flags) { v->flags=flags; }
 static void performance_options_apply_host_flags(unsigned flags) { applied_flags=flags; applied++; }
 static void display_error_when_main_menu_loaded(unsigned error) {
@@ -189,7 +282,14 @@ static void reset(void) {
     memset(&client,0,sizeof(client));
     network_game_client_performance_host_capabilities=0;
     precaches=dialogs=applied=applied_flags=errors=0; active_server=NULL;
-    sent_capabilities=sent_settings_pieces=0; fail_capability_send=FALSE;
+    sent_capabilities=sent_settings_pieces=sent_offers=sent_ready=0; fail_capability_send=FALSE;
+    memset(&selected_cache,0,sizeof(selected_cache));memset(&server_cache,0,sizeof(server_cache));
+    memset(&network_game_client_cache_offer,0,sizeof(network_game_client_cache_offer));
+    network_game_client_cache_offer_valid=FALSE;missing_cache=FALSE;cache_loaded=TRUE;asset_digest=42;
+    network_game_client_cache_settings_pending=network_game_client_cache_begin_pending=FALSE;
+    pending_packets=resumed_starts=matching_heartbeats=0;download_status=prepare_status=0;fixture_now=999;
+    memset(requested_digest,0,sizeof(requested_digest));
+    load_decodes=normal_loaded=late_loaded=0;
     capability_failure_target=NULL;
     network_game_settings_update_pending=FALSE;network_game_settings_update_time=0;
     network_game_client_settings_staging_size=0;
@@ -229,11 +329,11 @@ static void options(void) {
     game.variant.universal_variant.flags=1;
     game_variant_options_default(&game.variant,&game.variant_options);
     assert(game.variant_options.radar_players==0);
-    for(int set=0;set<=10;set++) {
+    for(int set=0;set<=12;set++) {
         game.variant.universal_variant.weapon_set=set;
         assert(!game_variant_options_unsupported(&game.variant,&game.variant_options));
     }
-    game.variant.universal_variant.weapon_set=11;
+    game.variant.universal_variant.weapon_set=13;
     assert(strstr(game_variant_options_unsupported(&game.variant,&game.variant_options),"weapon set"));
 }
 static void admission(void) {
@@ -432,6 +532,208 @@ static void normal_start_delay_acknowledgement(void) {
     assert(sent_capabilities==2 && sent_settings_pieces>1 && applied==1 && applied_flags==32);
     assert(host.machines[0].closed && !host.machines[1].closed && network_game_settings_update_pending);
 }
+static void expanded_weapon_acknowledgement(void) {
+    for(int set=GAME_WEAPON_SET_UNCUT;set<=GAME_WEAPON_SET_ALL;set++) {
+        for(unsigned flags=0;flags<=128;flags+=128) {
+            struct network_game_server host={.game=defaults()};
+            host.game.variant.universal_variant.weapon_set=set;host.game.variant.flags=flags;
+            unsigned required=flags|512|(flags?1024:0), supported=flags?2047:1023;
+            assert(network_game_variant_required_capabilities(&host.game.variant)==required);
+            assert(!network_performance_can_join(required,511));
+            assert(network_performance_can_join(required,supported));
+            assert(!flags || !network_performance_can_join(required,1023));
+            assert(network_performance_advertised_version(required,11)==0x800B);
+            reset();client.state=_network_game_client_state_pregame;
+            assert(!network_game_client_game_settings_updated(&client,&host.game));
+            assert(!precaches && !applied && errors==1 && dialogs==1);
+            network_game_client_performance_host_capabilities=511;
+            assert(!network_game_client_game_settings_updated(&client,&host.game));
+            assert(!precaches && !applied && errors==2 && dialogs==2);
+            struct network_game_server_client_machine peer={.supported=supported};
+            reset();client.state=_network_game_client_state_pregame;
+            assert(native_map_cache_prepare(host.game.map.name,&host.game.variant,&server_cache,1));
+            assert(network_game_server_send_game_settings_to_client_machine(&host,&peer,&host.game,sizeof(host.game)));
+            assert(sent_capabilities==1 && sent_offers==(flags?1U:0U) && sent_settings_pieces>1 && precaches==1 && applied==1);
+            assert(network_game_client_performance_host_capabilities==supported);
+            assert(client.game.variant.flags==flags && client.game.variant.universal_variant.weapon_set==set);
+            host.machines[1]=(struct network_game_server_client_machine){.supported=supported,.joined=TRUE};
+            reset();client.state=_network_game_client_state_pregame;
+            assert(native_map_cache_prepare(host.game.map.name,&host.game.variant,&server_cache,1));
+            assert(network_game_server_send_game_settings_to_all_machines(&host,&host.game,sizeof(host.game)));
+            assert(sent_capabilities==1 && sent_offers==(flags?1U:0U) && sent_settings_pieces>1 && precaches==1 && applied==1);
+            assert(network_game_client_performance_host_capabilities==supported);
+            assert(client.game.variant.flags==flags && client.game.variant.universal_variant.weapon_set==set);
+            reset();client.state=_network_game_client_state_pregame;fail_capability_send=TRUE;
+            assert(!network_game_server_send_game_settings_to_all_machines(&host,&host.game,sizeof(host.game)));
+            assert(sent_capabilities==1 && !sent_offers && !sent_settings_pieces && !precaches && !applied);
+        }
+    }
+    struct network_game game=defaults();reset();client.game=game;
+    client.state=_network_game_client_state_ingame;
+    network_game_client_performance_host_capabilities=1023;
+    client.game.variant.universal_variant.weapon_set=GAME_WEAPON_SET_ALL;
+    game.variant.universal_variant.weapon_set=GAME_WEAPON_SET_UNCUT;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(client.game.variant.universal_variant.weapon_set==GAME_WEAPON_SET_ALL);
+    game.variant.universal_variant.weapon_set=0;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(client.game.variant.universal_variant.weapon_set==GAME_WEAPON_SET_ALL);
+}
+static void global_cache_identity(void) {
+    struct network_game game=defaults();game.variant.flags=128;
+    game.variant.universal_variant.weapon_set=GAME_WEAPON_SET_ALL;
+    reset();client.state=_network_game_client_state_pregame;
+    network_game_client_performance_host_capabilities=1023;
+    assert(!network_game_client_game_settings_updated(&client,&game));
+    assert(!precaches && !selected_cache.expanded);
+    network_game_client_performance_host_capabilities=2047;
+    assert(!network_game_client_game_settings_updated(&client,&game));
+    assert(!precaches && !selected_cache.expanded);
+    assert(native_map_cache_prepare(game.map.name,&game.variant,&server_cache,1));
+    byte offer[160];network_expanded_cache_encode(offer,NETWORK_EXPANDED_CACHE_OFFER,&server_cache,12);
+    assert(!network_game_client_receive_cache_identity(&client,offer,160,FALSE));
+    assert(network_game_client_receive_cache_identity(&client,offer,160,TRUE));
+    struct network_game before=client.game;
+    asset_digest=43;
+    assert(!network_game_client_game_settings_updated(&client,&game));
+    assert(!precaches && !memcmp(&before,&client.game,sizeof(before)) && !selected_cache.expanded);
+    asset_digest=42;missing_cache=TRUE;
+    assert(!network_game_client_game_settings_updated(&client,&game));assert(!precaches);
+    missing_cache=FALSE;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(precaches==1 && native_map_cache_selection_equal(&selected_cache,&server_cache));
+    cache_loaded=FALSE;assert(!network_game_client_send_cache_ready(&client));assert(!sent_ready);
+    cache_loaded=TRUE;assert(network_game_client_send_cache_ready(&client));assert(sent_ready==1);
+    struct network_expanded_cache_identity ready;
+    assert(network_expanded_cache_decode(ready_packet,160,NETWORK_EXPANDED_CACHE_READY,&ready));
+    assert(ready.weapon_set==12 && native_map_cache_selection_equal(&ready.selection,&server_cache));
+    client.state=_network_game_client_state_ingame;
+    struct native_map_cache_selection changed=server_cache;changed.sha256[0]++;
+    network_expanded_cache_encode(offer,NETWORK_EXPANDED_CACHE_OFFER,&changed,11);
+    assert(network_game_client_receive_cache_identity(&client,offer,160,TRUE));
+    assert(network_game_client_cache_offer.weapon_set==12);
+    strcpy(game.map.name,"prisoner");before=client.game;
+    assert(!network_game_client_game_settings_updated(&client,&game));assert(!memcmp(&before,&client.game,sizeof(before)));
+    /* Shared host resolver already selected global data before its local full
+       record: absent physical cache must still trigger same-map precache. */
+    struct network_game_server host={.game=defaults()};host.game.variant=client.game.variant;
+    client.state=_network_game_client_state_pregame;client.game=defaults();
+    active_server=&host;cache_loaded=FALSE;precaches=0;
+    assert(network_game_client_game_settings_updated(&client,&host.game));
+    assert(precaches==1 && cache_loaded);
+    /* Turning Fiesta off on the same logical map restores original identity. */
+    active_server=NULL;game=host.game;game.variant.flags=0;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(precaches==2 && !selected_cache.expanded && !strcmp(selected_cache.physical_name,"chillout"));
+}
+static void global_cache_download_wait(void) {
+    struct network_game game=defaults(),before;
+    struct network_game_server host={.game=defaults(),.state=_network_game_server_state_ingame};
+    byte offer[160];
+    game.variant.flags=128;game.variant.universal_variant.weapon_set=12;
+    reset();client.state=_network_game_client_state_pregame;client.game=defaults();before=client.game;
+    network_game_client_performance_host_capabilities=4095;
+    assert(native_map_cache_prepare(game.map.name,&game.variant,&server_cache,1));host.game=game;
+    network_expanded_cache_encode(offer,NETWORK_EXPANDED_CACHE_OFFER,&server_cache,12);
+    assert(network_game_client_receive_cache_identity(&client,offer,160,TRUE));
+    missing_cache=TRUE;download_status=2;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(network_game_client_cache_settings_pending && !precaches && !applied && !sent_ready);
+    assert(!memcmp(&client.game,&before,sizeof(before)) && !memcmp(requested_digest,server_cache.sha256,32));
+    assert(network_game_client_defer_cache_begin() && network_game_client_cache_begin_pending && !resumed_starts);
+    assert(!network_game_client_send_cache_ready(&client));
+    assert(network_game_client_retry_cache_settings(&client));assert(pending_packets==1 && !sent_ready);
+    struct network_expanded_cache_identity heartbeat;
+    assert(network_expanded_cache_decode(ready_packet,160,NETWORK_EXPANDED_CACHE_DOWNLOAD_PENDING,&heartbeat));
+    struct network_game_server_client_machine machine={.supported=4095,.joined=TRUE};
+    assert(network_game_server_client_machine_cache_pending(&host,&machine,&heartbeat));
+    assert(matching_heartbeats==1 && !network_game_server_client_machine_has_cache_identity(&host,&machine));
+    heartbeat.selection.sha256[0]++;
+    assert(network_game_server_client_machine_cache_pending(&host,&machine,&heartbeat));assert(matching_heartbeats==1);
+    machine.supported=2047;assert(!network_game_server_client_machine_cache_pending(&host,&machine,&heartbeat));
+    machine.supported=4095;machine.joined=FALSE;assert(!network_game_server_client_machine_cache_pending(&host,&machine,&heartbeat));
+    missing_cache=FALSE;fixture_now+=1000;
+    assert(network_game_client_retry_cache_settings(&client));
+    assert(!network_game_client_cache_settings_pending && !network_game_client_cache_begin_pending && resumed_starts==1);
+    assert(precaches==1 && applied==1 && client.state==_network_game_client_state_ingame);
+    /* A v4 host remains usable with local content, but cannot keep missing-content joins alive. */
+    reset();client.state=_network_game_client_state_pregame;network_game_client_performance_host_capabilities=2047;
+    assert(native_map_cache_prepare(game.map.name,&game.variant,&server_cache,1));
+    network_expanded_cache_encode(offer,NETWORK_EXPANDED_CACHE_OFFER,&server_cache,12);
+    assert(network_game_client_receive_cache_identity(&client,offer,160,TRUE));
+    missing_cache=TRUE;download_status=2;
+    assert(!network_game_client_game_settings_updated(&client,&game));assert(!network_game_client_cache_settings_pending && !precaches);
+    missing_cache=FALSE;assert(network_game_client_game_settings_updated(&client,&game));assert(precaches==1);
+}
+static void global_cache_download_cancellation(void) {
+    struct network_game game=defaults();byte offer[160];
+    game.variant.flags=128;game.variant.universal_variant.weapon_set=11;
+    reset();client.state=_network_game_client_state_pregame;network_game_client_performance_host_capabilities=4095;
+    assert(native_map_cache_prepare(game.map.name,&game.variant,&server_cache,1));
+    network_expanded_cache_encode(offer,NETWORK_EXPANDED_CACHE_OFFER,&server_cache,11);
+    assert(network_game_client_receive_cache_identity(&client,offer,160,TRUE));
+    missing_cache=TRUE;download_status=2;
+    assert(network_game_client_game_settings_updated(&client,&game));assert(network_game_client_defer_cache_begin());
+    unsigned long started=network_game_client_cache_wait_started;
+    fixture_now+=1000;assert(network_game_client_game_settings_updated(&client,&game));
+    assert(network_game_client_cache_wait_started==started);
+    struct native_map_cache_selection replacement=server_cache;replacement.sha256[31]++;
+    network_expanded_cache_encode(offer,NETWORK_EXPANDED_CACHE_OFFER,&replacement,11);
+    assert(network_game_client_receive_cache_identity(&client,offer,160,TRUE));
+    assert(!network_game_client_cache_settings_pending && !network_game_client_cache_begin_pending);
+    assert(network_game_client_retry_cache_settings(&client));assert(!resumed_starts && !precaches);
+    network_expanded_cache_encode(offer,NETWORK_EXPANDED_CACHE_OFFER,&server_cache,11);
+    assert(network_game_client_receive_cache_identity(&client,offer,160,TRUE));
+    assert(network_game_client_game_settings_updated(&client,&game));assert(network_game_client_defer_cache_begin());
+    game.variant.flags=0;assert(network_game_client_game_settings_updated(&client,&game));
+    assert(!network_game_client_cache_settings_pending && !network_game_client_cache_begin_pending && !resumed_starts);
+    game.variant.flags=128;assert(network_game_client_game_settings_updated(&client,&game));assert(network_game_client_defer_cache_begin());
+    fixture_now=network_game_client_cache_wait_started+15*60*1000+1;
+    assert(!network_game_client_retry_cache_settings(&client));
+    assert(!network_game_client_cache_settings_pending && !network_game_client_cache_begin_pending && !resumed_starts);
+    fixture_now+=1;assert(network_game_client_game_settings_updated(&client,&game));
+    assert(network_game_client_defer_cache_begin());download_status=-1;fixture_now+=1000;
+    assert(!network_game_client_retry_cache_settings(&client));
+    assert(!network_game_client_cache_settings_pending && !network_game_client_cache_begin_pending && !resumed_starts);
+}
+static void global_cache_ready_admission(void) {
+    struct network_game_server host={.game=defaults(),.state=_network_game_server_state_pregame};
+    host.game.variant.flags=128;host.game.variant.universal_variant.weapon_set=11;
+    reset();assert(native_map_cache_prepare(host.game.map.name,&host.game.variant,&server_cache,1));
+    struct network_game_server_client_machine machine={.supported=2047,.joined=TRUE};
+    word loaded[2]={0};
+    network_game_server_client_machine_is_precached(&host,&machine,"chillout");
+    assert(!network_game_server_client_machine_has_cache_identity(&host,&machine));
+    assert(!network_game_server_handle_message_client_loaded(&host,&machine,loaded,sizeof(loaded)));
+    assert(!load_decodes && !normal_loaded);
+    struct network_expanded_cache_identity ready={.selection=server_cache,.weapon_set=11};
+    for(unsigned field=0;field<4;field++) {
+        struct network_expanded_cache_identity changed=ready;
+        if(field==0) changed.selection.sha256[31]++;
+        if(field==1) changed.selection.weapon_list_sha256[31]++;
+        if(field==2) changed.weapon_set=12;
+        if(field==3) changed.selection.generation++;
+        assert(!network_game_server_client_machine_cache_ready(&host,&machine,&changed));
+        assert(!network_game_server_client_machine_has_cache_identity(&host,&machine));
+    }
+    machine.supported=1023;
+    assert(!network_game_server_client_machine_cache_ready(&host,&machine,&ready));
+    machine.supported=2047;machine.joined=FALSE;
+    assert(!network_game_server_client_machine_cache_ready(&host,&machine,&ready));
+    machine.joined=TRUE;
+    assert(network_game_server_client_machine_cache_ready(&host,&machine,&ready));
+    assert(network_game_server_handle_message_client_loaded(&host,&machine,loaded,sizeof(loaded)));
+    assert(load_decodes==1 && normal_loaded==1);
+    host.state=_network_game_server_state_ingame;machine.flags=0;machine.loaded=FALSE;
+    assert(!network_game_server_handle_message_client_loaded(&host,&machine,loaded,sizeof(loaded)));
+    assert(!late_loaded);
+    assert(network_game_server_client_machine_cache_ready(&host,&machine,&ready));
+    assert(network_game_server_handle_message_client_loaded(&host,&machine,loaded,sizeof(loaded)));
+    assert(late_loaded==1);
+    host.game.variant.flags=0;machine.flags=0;
+    network_game_server_client_machine_is_precached(&host,&machine,"chillout");
+    assert(network_game_server_client_machine_has_cache_identity(&host,&machine));
+}
 static void host_match_end(void) {
     int32_t state=0;
     game_engine=&state; game_engine_globals.postgame_state=0;
@@ -473,6 +775,7 @@ static void host_authority_options(void) {
     game.variant_options.primary_weapon=5;
     game.variant_options.secondary_weapon=8;
     game.variant.universal_variant.weapon_set=11;
+    network_game_client_performance_host_capabilities=1023;
     assert(network_game_client_game_settings_updated(&client,&game));
     assert(!memcmp(&client.game.variant_options,&game.variant_options,sizeof(game.variant_options)));
     assert(client.game.variant.universal_variant.weapon_set==11 && !dialogs);
@@ -566,6 +869,11 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"active-input-delay")) active_input_delay();
     else if(!strcmp(argv[1],"host-delay-acknowledgement")) host_delay_acknowledgement();
     else if(!strcmp(argv[1],"normal-start-delay-acknowledgement")) normal_start_delay_acknowledgement();
+    else if(!strcmp(argv[1],"expanded-weapon-acknowledgement")) expanded_weapon_acknowledgement();
+    else if(!strcmp(argv[1],"global-cache-identity")) global_cache_identity();
+    else if(!strcmp(argv[1],"global-cache-ready-admission")) global_cache_ready_admission();
+    else if(!strcmp(argv[1],"global-cache-download-wait")) global_cache_download_wait();
+    else if(!strcmp(argv[1],"global-cache-download-cancellation")) global_cache_download_cancellation();
     else if(!strcmp(argv[1],"host-match-end")) host_match_end();
     else if(!strcmp(argv[1],"host-authority-options")) host_authority_options();
     else if(!strcmp(argv[1],"host-team-assignment")) host_team_assignment();
@@ -591,17 +899,39 @@ class NetworkV11Tests(unittest.TestCase):
         client = (ROOT / "source/networking/network_client_manager.c").read_text()
         handler = (ROOT / "source/networking/network_client_message_handler.c").read_text()
         record += "\n" + block(handler, "struct message_server_game_settings_update\n") + ";"
-        functions = block(client, "static boolean network_game_client_receive_performance_capability(\n")
+        weapons = (ROOT / "source/game/weapon_sets.h").read_text()
+        required = (ROOT / "source/networking/network_variant_capabilities.h").read_text()
+        functions = block(weapons, "static inline int game_variant_uses_expanded_weapon_set(\n")
+        functions += "\n" + block(required, "static inline unsigned network_game_variant_required_capabilities(\n")
+        functions += "\n" + block((ROOT / "source/game/starting_equipment.h").read_text(), "static inline short starting_equipment_get(")
+        expanded = (ROOT / "port/linux/game/expanded_cache.c").read_text()
+        functions += "\n" + block(expanded, "int native_map_cache_uses_global_arsenal(")
+        functions += "\n" + block(expanded, "int native_map_cache_selection_equal(")
+        functions += "\n" + block(client, "static boolean network_game_client_receive_performance_capability(\n")
+        functions += "\n" + block(client, "static boolean network_game_client_receive_cache_identity(")
+        functions += "\n" + block(client, "static boolean network_game_client_send_cache_ready(")
+        functions += "\n" + block(client, "static boolean network_game_client_defer_cache_settings(")
+        functions += "\n" + block(client, "static boolean network_game_client_defer_cache_begin(")
         functions += "\n" + block(client, "static unsigned network_game_client_performance_settings_flags(\n")
         functions += "\n" + block(client, "boolean network_game_client_game_settings_updated(\n")
+        functions += "\n" + block(client, "static boolean network_game_client_retry_cache_settings(")
         functions += "\n" + block(handler, "static boolean network_game_client_receive_game_settings_piece(\n")
         server_handler = (ROOT / "source/networking/network_server_message_handler.c").read_text()
         functions += "\n" + block(server_handler, "static boolean network_game_server_send_performance_capability(\n")
+        server_manager = (ROOT / "source/networking/network_server_manager.c").read_text()
+        functions += "\n" + block(server_manager, "boolean network_game_server_client_machine_cache_ready(")
+        functions += "\n" + block(server_manager, "boolean network_game_server_client_machine_cache_pending(")
+        functions += "\n" + block(server_manager, "boolean network_game_server_client_machine_has_cache_identity(")
+        functions += "\n" + block(server_manager, "void network_game_server_client_machine_is_precached(")
+        loaded_signature = "static boolean network_game_server_handle_message_client_loaded("
+        functions += "\n" + block(server_handler[server_handler.rindex(loaded_signature):], loaded_signature)
+        functions += "\n" + block(server_handler, "static boolean network_game_server_send_cache_identity(")
         functions += "\n" + block(server_handler, "boolean network_game_server_send_game_settings_to_client_machine(\n")
         functions += "\n" + block(server_handler, "boolean network_game_server_send_game_settings_to_all_machines(\n")
         functions += "\n" + block((ROOT / "source/game/game_engine.c").read_text(), "void game_engine_read_network_state(\n")
         functions += "\n" + block((ROOT / "source/game/players.c").read_text(), "void network_player_attach_unit(\n")
         source = PREFIX.replace("/* DECLARATIONS */", declarations).replace("/* RECORD */", record)
+        source = source.replace("/* WEAPON SET IDS */", block(weapons, "enum\n") + ";")
         source = source.replace("/* FUNCTIONS */", functions) + HARNESS
         source = re.sub(r"\blong\b", "int32_t", source).replace("unsigned int32_t", "uint32_t")
         source = source.replace("wchar_t", "uint16_t")
@@ -647,6 +977,21 @@ class NetworkV11Tests(unittest.TestCase):
 
     def test_normal_start_broadcast_acknowledges_before_settings(self):
         self.run_case("normal-start-delay-acknowledgement")
+
+    def test_expanded_weapon_sets_require_host_ack_before_loading(self):
+        self.run_case("expanded-weapon-acknowledgement")
+
+    def test_global_cache_offer_readiness_and_same_map_transitions(self):
+        self.run_case("global-cache-identity")
+
+    def test_exact_revision_download_wait_and_nonready_heartbeat(self):
+        self.run_case("global-cache-download-wait")
+
+    def test_download_reoffer_timeout_failure_and_stale_begin_cancellation(self):
+        self.run_case("global-cache-download-cancellation")
+
+    def test_full_cache_ready_echo_precedes_normal_and_late_loaded_admission(self):
+        self.run_case("global-cache-ready-admission")
 
     def test_client_ends_match_on_valid_host_state(self):
         self.run_case("host-match-end")

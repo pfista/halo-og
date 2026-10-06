@@ -19,6 +19,12 @@ client's own objects take the upper half of the object array).
    slots. This is a file capacity, not an increase to the 22 MiB tag arena. */
 #define HALO_PORT_MULTIPLAYER_CACHE_SIZE 0x08000000
 
+/* Original maps retain the Xbox texture budget. Only validated, hidden global
+   Fiesta maps request the larger arena when loading; it is released on the next
+   ordinary map load. Both allocations must fit the native 128 MiB window. */
+#define HALO_PORT_TEXTURE_CACHE_SIZE 0x01600000
+#define HALO_PORT_GLOBAL_FIESTA_TEXTURE_CACHE_SIZE 0x02000000
+
 /* ---------- game state
 
 The Xbox game state is 0x345000 bytes at 0x80061000 and ends where the tag

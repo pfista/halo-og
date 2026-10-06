@@ -87,6 +87,10 @@ symbols in this file:
 #include "memory/data.h"
 #include "network_game_globals.h"
 #include "network_game_manager.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "halo_expanded_cache.h"
+void platform_show_message(char const *title, char const *message);
+#endif
 #include "network_game_ui.h"
 #include "text/unicode.h"
 
@@ -681,6 +685,24 @@ boolean network_game_create_game_objects(
 	game_options_new(&options);
 	csstrncpy(options.map_name, game->map.name, sizeof(game->map.name) - 1);
 	options.difficulty = game->difficulty;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	{
+		struct native_map_cache_selection selection;
+		struct native_map_cache_selection const *accepted = native_map_cache_current();
+		unsigned char const *expected = native_map_cache_uses_global_arsenal(&game->variant) && accepted->expanded ? accepted->sha256 : NULL;
+		if (!native_map_cache_prepare_expected(game->map.name, &game->variant, expected, &selection, TRUE)) return FALSE;
+		/* Settings accepted this exact asset identity before readiness. Replacing
+		   a valid cache on disk cannot change an already accepted match. */
+		if (selection.expanded &&
+			!native_map_cache_selection_equal(&selection, native_map_cache_current()))
+		{
+			platform_show_message("Halo: Fiesta cache changed",
+				"The weapon arsenal changed after this match was selected. Return to the lobby and select the game type again before starting.");
+			return FALSE;
+		}
+		native_map_cache_select(&selection);
+	}
+#endif
 
 	switch (game_connection())
 	{

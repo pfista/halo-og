@@ -65,7 +65,12 @@ static inline char const *game_variant_options_unsupported(
 		options->vehicle_set[1] != defaults.vehicle_set[1]) return "per-team vehicle sets";
 	if (options->loadout) return "custom loadout";
 	if (variant->universal_variant.weapon_set < 0 ||
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* Halo OG's restored-asset sets occupy saved/wire IDs 11 and 12. */
+		variant->universal_variant.weapon_set > 12) return "PC weapon set";
+#else
 		variant->universal_variant.weapon_set > 10) return "PC weapon set";
+#endif
 	/* Counts are inactive unless a vehicle set is custom (already rejected).
 	 * Likewise primary/secondary weapons are inactive in category loadouts.
 	 */

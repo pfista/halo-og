@@ -4,6 +4,7 @@
 #include "cseries.h"
 #include "cache/cache_files.h"
 #include "halo_custom_maps.h"
+#include "halo_expanded_cache.h"
 #include "port_config.h"
 #include <xtl.h>
 
@@ -96,6 +97,22 @@ static int map_can_download(char const *map)
 int native_map_get_path(char const *map, char *path, unsigned int capacity)
 {
     char const *name = native_map_basename(map);
+    /* These private identities are never directory-discovered or advertised.
+       Cache lookup resolves a logical map only after validated selection. */
+    if (native_map_cache_current()->expanded &&
+        !strcmp(name, native_map_cache_current()->physical_name)) {
+        char const *selected_path = native_map_cache_current()->physical_path;
+        unsigned int length = (unsigned int)strlen(selected_path);
+        if (!length || length >= capacity) return FALSE;
+        memcpy(path, selected_path, length + 1);
+        return TRUE;
+    }
+    return native_map_get_original_path(map, path, capacity);
+}
+
+int native_map_get_original_path(char const *map, char *path, unsigned int capacity)
+{
+    char const *name = native_map_basename(map);
     int length = snprintf(path, capacity, "%s%s.map", cache_files_map_directory(), name);
     if (length < 0 || (unsigned int)length >= capacity) return FALSE;
 #ifdef HALO_MACOS
@@ -133,7 +150,7 @@ int native_map_download_pending(char const *map)
     char path[256];
     HANDLE file;
     int status;
-    if (!map_can_download(native_map_basename(map)) || !native_map_get_path(map, path, sizeof(path))) return 0;
+    if (!map_can_download(native_map_basename(map)) || !native_map_get_original_path(map, path, sizeof(path))) return 0;
     file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
     if (file != INVALID_HANDLE_VALUE) {
         CloseHandle(file);

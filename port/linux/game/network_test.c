@@ -41,6 +41,8 @@ Called from the main loop every frame (main.c).
 #include "networking/network_server_manager.h"
 #include "game/game.h"
 #include "game/game_engine.h"
+#include "game/starting_equipment.h"
+#include "game/weapon_sets.h"
 #include "game/players.h"
 #include "objects/objects.h"
 #include "units/units.h"
@@ -946,9 +948,19 @@ void network_test_update(
 				/* the variant, as picking the game settings does */
 				{
 					char variant_name[64];
+					boolean expanded_fiesta;
 
 					network_test_variant(network_test.variant_index, variant_name, sizeof(variant_name));
-					variant = *game_engine_get_variant_by_name(&variant, variant_name);
+					/* Diagnostic aliases use the normal selector/save rules without
+					 * adding built-in player-facing gametypes or config settings. */
+					expanded_fiesta = !csstrcmp(variant_name, "fiesta uncut") || !csstrcmp(variant_name, "fiesta all");
+					variant = *game_engine_get_variant_by_name(&variant, expanded_fiesta ? "slayer" : variant_name);
+					if (expanded_fiesta)
+					{
+						starting_equipment_set(&variant, _starting_equipment_fiesta);
+						variant.universal_variant.weapon_set = !csstrcmp(variant_name, "fiesta uncut") ?
+							GAME_WEAPON_SET_UNCUT : GAME_WEAPON_SET_ALL;
+					}
 					platform_log("network test: game %d, %s", network_test.variant_index + 1, variant_name);
 				}
 				/* debug.network_test_score: a short game, to test the next */

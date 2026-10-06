@@ -130,7 +130,7 @@ class GuestBuildDependencyTests(unittest.TestCase):
 class AppleServiceImportDependencyTests(unittest.TestCase):
     def test_apple_guest_and_host_tables_include_existing_service_symbols(self):
         services = ("host_halo_map_download_directory", "host_halo_map_download_request",
-                    "host_halo_directory_http")
+                    "host_halo_arsenal_download_request", "host_halo_directory_http")
         for platform in ("macos", "ios"):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory(prefix="halo-apple-imports-") as folder:
                 writer = emitted_guest_rules(platform)

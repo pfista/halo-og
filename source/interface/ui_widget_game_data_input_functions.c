@@ -361,6 +361,7 @@ symbols in this file:
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "halo_custom_maps.h"
 #include "game/performance_variant.h"
+#include "game/weapon_sets.h"
 #endif
 
 /* ---------- constants */
@@ -3385,6 +3386,9 @@ static void playlist_profile_append_performance_status(
 	static wchar_t const hardcore_status[] = L"\r\nHardcore: On";
 	static wchar_t const fiesta_status[] = L"\r\nStarting Equipment: Fiesta";
 	static wchar_t const fiesta_hardcore_status[] = L"\r\nFiesta / Hardcore: On";
+	/* Keep the All-only spelling inside the authored narrow game-type cards. */
+	static wchar_t const pfiesta_status[] = L"\r\nEquipment: Pfiesta";
+	static wchar_t const pfiesta_hardcore_status[] = L"\r\nPfiesta/Hardcore: On";
 	static wchar_t const camo_status[] = L"\r\nCamo: Hardcore";
 	unsigned flags;
 	unsigned long length;
@@ -3400,7 +3404,12 @@ static void playlist_profile_append_performance_status(
 	if (flags & _performance_option_hardcore_camo)
 		suffix = camo_status;
 	else if (flags & _performance_option_fiesta)
-		suffix = (flags & _performance_option_hardcore) ? fiesta_hardcore_status : fiesta_status;
+	{
+		if (((struct game_variant const *)profile)->universal_variant.weapon_set == GAME_WEAPON_SET_ALL)
+			suffix = (flags & _performance_option_hardcore) ? pfiesta_hardcore_status : pfiesta_status;
+		else
+			suffix = (flags & _performance_option_hardcore) ? fiesta_hardcore_status : fiesta_status;
+	}
 	else
 		suffix = (flags & _performance_option_hardcore) ? hardcore_status : status;
 	if (!description[0]) suffix += 2;

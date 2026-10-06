@@ -60,8 +60,9 @@ typedef float real;
 #define match_assert(file,line,condition) assert(condition)
 #define match_vassert(file,line,condition,message) assert(condition)
 #define error(...) ((void)0)
+#define HALO_PORT_MAXIMUM_NETWORK_PLAYERS 128
 enum { game_engine_ctf=1, game_engine_slayer, game_engine_oddball, game_engine_king, game_engine_race };
-enum { NUMBER_OF_GAME_ENGINE_WEAPON_SETS=16, NUMBER_OF_GAME_ENGINE_VEHICLE_SETS=8, MAXIMUM_ODDBALLS=16 };
+enum { NUMBER_OF_GAME_ENGINE_VEHICLE_SETS=8, MAXIMUM_ODDBALLS=16 };
 enum { SAVED_GAME_FILE_BLOCK_SIZE=512, PLAYLIST_PROFILE_CHECKSUM_DATA_SIZE=104, MAXIMUM_GAME_VARIANT_NAME_LENGTH=12 };
 enum { _saved_game_file_index_valid_bit=31, _saved_game_file_index_read_only_bit=30,
        _saved_game_file_type_player_profile=0, _saved_game_file_type_game_variant=1,
@@ -70,6 +71,8 @@ enum { _saved_game_file_index_valid_bit=31, _saved_game_file_index_read_only_bit
 #define __GAME_ENGINE_H
 #include "game/performance_variant.h"
 #include "game/starting_equipment.h"
+#include "game/weapon_sets.h"
+/* WEAPON SET DECLARATIONS */
 struct file_reference { unsigned index; };
 struct thread_reference { unsigned complete; };
 typedef struct _XCALCSIG_SIGNATURE { byte value[20]; } XCALCSIG_SIGNATURE;
@@ -315,6 +318,36 @@ static void editor_dirty(void) {
     assert(!player_ui_edit_profile_is_dirty());
 }
 
+static void expanded_weapon_sets(void) {
+    struct game_variant original, loaded;
+    const int32_t profile=(int32_t)FLAG(_saved_game_file_index_valid_bit);
+    assert(NUMBER_OF_GAME_ENGINE_WEAPON_SETS==13);
+    assert(_game_engine_weapons_no_grenades==10 && _game_engine_weapons_uncut==GAME_WEAPON_SET_UNCUT &&
+        _game_engine_weapons_all==GAME_WEAPON_SET_ALL);
+    for(int32_t weapon_set=0;weapon_set<NUMBER_OF_GAME_ENGINE_WEAPON_SETS;weapon_set++) {
+        build_game_variant_slayer(&original);
+        original.universal_variant.weapon_set=weapon_set;
+        assert(starting_equipment_set(&original,_starting_equipment_fiesta));
+        playlist_profile_save(profile,&original);
+        assert(playlist_profile_get(profile,&loaded));
+        assert(!memcmp(&original,&loaded,sizeof(original)));
+        assert(loaded.universal_variant.weapon_set==weapon_set && starting_equipment_get(&loaded)==_starting_equipment_fiesta);
+        selected_file=0;assert(playlist_profile_get_from_path("expanded",&loaded));
+        assert(!memcmp(&original,&loaded,sizeof(original)));
+        player_ui_begin_editing_profile(profile);
+        player_ui_get_edit_playlist_profile()->universal_variant.weapon_set=(weapon_set+1)%NUMBER_OF_GAME_ENGINE_WEAPON_SETS;
+        assert(player_ui_edit_profile_is_dirty());
+        player_ui_end_editing_profile();
+        assert(playlist_profile_get(profile,&loaded) && loaded.universal_variant.weapon_set==weapon_set);
+        player_ui_begin_editing_profile(profile);
+        player_ui_get_edit_playlist_profile()->universal_variant.weapon_set=(weapon_set+1)%NUMBER_OF_GAME_ENGINE_WEAPON_SETS;
+        assert(player_ui_save_profile());
+        assert(playlist_profile_get(profile,&loaded));
+        assert(loaded.universal_variant.weapon_set==(weapon_set+1)%NUMBER_OF_GAME_ENGINE_WEAPON_SETS);
+        assert(starting_equipment_get(&loaded)==_starting_equipment_fiesta);
+    }
+}
+
 static void editor_save_and_cancel(void) {
     struct game_variant original, loaded;
     const int32_t profile=(int32_t)FLAG(_saved_game_file_index_valid_bit);
@@ -389,7 +422,7 @@ static void selecting_game_engine(void) {
     }
 }
 
-int main(void) { format_and_default(); input_delay_duration(); starting_equipment_choices(); persistence(); editor_dirty(); editor_save_and_cancel(); selecting_game_engine(); return 0; }
+int main(void) { format_and_default(); input_delay_duration(); starting_equipment_choices(); persistence(); editor_dirty(); editor_save_and_cancel(); selecting_game_engine(); expanded_weapon_sets(); return 0; }
 '''
 
 
@@ -404,7 +437,8 @@ class PerformanceVariantsTest(unittest.TestCase):
             "union game_engine_variant\n", "struct game_variant\n"))
         playlist_declarations = "\n".join(block(playlist, signature) + ";" for signature in (
             "struct playlist_profile_write_request\n", "struct playlist_profile_runtime_globals_prefix\n"))
-        functions = [block((ROOT / "source/game/game_engine.c").read_text(), "void game_engine_variant_cleanup(\n")]
+        engine_source = (ROOT / "source/game/game_engine.c").read_text()
+        functions = [block(engine_source, "void game_engine_variant_cleanup(\n")]
         functions += [block(playlist_private, name) for name in (
             "static boolean playlist_profile_read(\n",
             "static unsigned long __stdcall playlist_profile_write_thread_proc(\n",
@@ -419,6 +453,7 @@ class PerformanceVariantsTest(unittest.TestCase):
         handlers = (ROOT / "source/interface/ui_widget_event_handler_functions.c").read_text()
         functions += [block(handlers[handlers.index("/* ---------- private code */"):], "static boolean playlist_profile_set_game_engine(\n")]
         generated = PREFIX.replace("/* VARIANT DECLARATIONS */", declarations)
+        generated = generated.replace("/* WEAPON SET DECLARATIONS */", block(engine_source, "enum game_engine_weapons\n") + ";")
         generated = generated.replace("/* PLAYLIST DECLARATIONS */", playlist_declarations)
         generated = generated.replace("/* PRODUCTION FUNCTIONS */", "\n".join(functions))
         generated = re.sub(r"\bunsigned long\b", "uint32_t", generated)

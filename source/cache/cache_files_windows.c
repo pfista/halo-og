@@ -192,8 +192,9 @@ symbols in this file:
 #include "rasterizer/rasterizer.h"
 
 #include <xtl.h>
-#ifdef HALO_MACOS
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "halo_custom_maps.h"
+#include "halo_expanded_cache.h"
 #endif
 
 /* ---------- constants */
@@ -428,6 +429,12 @@ static short cached_map_files_find_map(
 /* ---------- globals */
 
 static struct cache_file_runtime_globals cache_file_globals;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* Invader's header checksum can be unset. Only a cache copied from the
+   currently verified full digest can satisfy this process's arsenal lookup. */
+static struct native_map_cache_selection expanded_cache_slots[NUMBER_OF_CACHED_MAP_FILES];
+static struct native_map_cache_selection expanded_cache_copy;
+#endif
 
 /* ---------- public code */
 
@@ -569,7 +576,11 @@ boolean cache_files_precache_is_copying_map(
 	if (cache_file_globals.copying_to_map_file_index != NONE &&
 		strcmp(
 			cache_file_globals.copying_to_map_file_name,
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			native_map_cache_resolve(map_name)) == 0)
+#else
 			tag_name_strip_path(map_name)) == 0)
+#endif
 	{
 		return TRUE;
 	}
@@ -587,7 +598,11 @@ boolean cache_files_precache_map_begin(
 	const char *map_name,
 	boolean copy_map)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	const char *cache_map_name = native_map_cache_resolve(map_name);
+#else
 	const char *cache_map_name = tag_name_strip_path(map_name);
+#endif
 
 	if (!cache_files_precache_map_loaded(map_name))
 	{
@@ -608,6 +623,10 @@ boolean cache_files_precache_map_begin(
 				0,
 				sizeof(struct cache_file_header));
 			cache_file_globals.copy_in_progress = TRUE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			expanded_cache_copy = *native_map_cache_current();
+			memset(&expanded_cache_slots[map_file_index], 0, sizeof(expanded_cache_slots[map_file_index]));
+#endif
 			cache_file_globals.copying_to_map_file_index = map_file_index;
 			strncpy(
 				cache_file_globals.copying_to_map_file_name,
@@ -644,6 +663,10 @@ void cache_files_initialize(
 	void)
 {
 	cache_file_globals.open_map_file_index = NONE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	memset(expanded_cache_slots, 0, sizeof(expanded_cache_slots));
+	memset(&expanded_cache_copy, 0, sizeof(expanded_cache_copy));
+#endif
 	cache_file_globals.requests = match_malloc(
 		"c:\\halo\\SOURCE\\cache\\cache_files_windows.c",
 		187,
@@ -671,6 +694,11 @@ void cache_files_precache_map_end(
 	texture_cache_return_memory();
 	cached_map_file_set_modification_date(cache_file_globals.copying_to_map_file_index);
 	cached_map_file_read_header(cache_file_globals.copying_to_map_file_index);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (expanded_cache_copy.expanded && !strcmp(expanded_cache_copy.physical_name,
+		cached_map_file_get(cache_file_globals.copying_to_map_file_index)->header.name))
+		expanded_cache_slots[cache_file_globals.copying_to_map_file_index] = expanded_cache_copy;
+#endif
 	cache_file_globals.copy_in_progress = FALSE;
 	cache_file_globals.copying_to_map_file_index = NONE;
 
@@ -1155,7 +1183,7 @@ static void cache_file_get_map_path(
 	const char *map_name,
 	char *path)
 {
-#ifdef HALO_MACOS
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	if (!native_map_get_path(map_name, path, 256)) path[0] = 0;
 #else
 	sprintf(path, "%s%s.map", cache_files_map_directory(), map_name);
@@ -1596,6 +1624,9 @@ static short cached_map_files_find_map(
 	const char *map_name)
 {
 	short map_file_index;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	map_name = native_map_cache_resolve(map_name);
+#endif
 
 	for (map_file_index = 0;
 		map_file_index < NUMBER_OF_CACHED_MAP_FILES;
@@ -1605,6 +1636,15 @@ static short cached_map_files_find_map(
 			map_name,
 			cached_map_file_get(map_file_index)->header.name) == 0)
 		{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			struct native_map_cache_selection const *selection = native_map_cache_current();
+			boolean expanded = selection->expanded && !strcmp(map_name, selection->physical_name);
+			/* A normal custom map may itself use a private-looking name. The
+			   slot certificate, rather than its text prefix, distinguishes it. */
+			if (expanded ? !native_map_cache_selection_equal(selection, &expanded_cache_slots[map_file_index]) :
+				expanded_cache_slots[map_file_index].expanded)
+				continue;
+#endif
 			return map_file_index;
 		}
 	}

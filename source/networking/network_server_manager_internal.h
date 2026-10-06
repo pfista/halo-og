@@ -98,6 +98,17 @@ void network_game_server_client_machine_is_precached(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *client_machine,
 	char const *map_name);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+struct native_map_cache_selection;
+struct network_expanded_cache_identity;
+struct native_map_cache_selection const *network_game_server_get_cache_selection(struct network_game_server *server);
+boolean network_game_server_client_machine_cache_ready(struct network_game_server *server,
+    struct network_game_server_client_machine *machine, struct network_expanded_cache_identity const *identity);
+boolean network_game_server_client_machine_cache_pending(struct network_game_server *server,
+    struct network_game_server_client_machine *machine, struct network_expanded_cache_identity const *identity);
+boolean network_game_server_client_machine_has_cache_identity(struct network_game_server *server,
+    struct network_game_server_client_machine *machine);
+#endif
 void network_game_server_handle_client_update_packet(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *client_machine,

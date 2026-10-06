@@ -4,6 +4,7 @@
 #import "HaloMapDownloads.h"
 #include <CommonCrypto/CommonDigest.h>
 #include <assert.h>
+#include "../../linux/include/halo_expanded_cache.h"
 
 static NSMutableDictionary<NSString *, NSData *> *responses;
 static unsigned requests;
@@ -108,6 +109,230 @@ static HaloMapDownloads *manager(NSURL *support, NSURL *data, NSDictionary *conf
     [downloads setGameDataRoot:data];
     return downloads;
 }
+static NSData *arsenalJSON(id value) {
+    return [NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingWithoutEscapingSlashes error:nil];
+}
+static NSString *arsenalPhysical(NSString *logical) {
+    return logical.length <= 23 ? [@"_fiesta_" stringByAppendingString:logical] :
+        [@"_fiestah_" stringByAppendingString:[hash([logical dataUsingEncoding:NSASCIIStringEncoding]) substringToIndex:16]];
+}
+static NSDictionary *arsenalEntry(NSString *name, NSString *base, NSData *cache, NSData **manifestData) {
+    NSString *physical = arsenalPhysical(name), *cacheSHA = hash(cache);
+    NSDictionary *manifest = @{@"schema_version":@1, @"generation":@1, @"logical_map":name, @"physical_map":physical,
+        @"base_sha256":base, @"cache_sha256":cacheSHA, @"weapon_list_sha256":@HALO_EXPANDED_CACHE_WEAPON_LIST_SHA256,
+        @"cache_file_bytes":@(cache.length), @"cache_declared_bytes":@4096};
+    NSData *bytes = arsenalJSON(manifest);
+    if (manifestData) *manifestData = bytes;
+    return @{@"logical_map":name, @"physical_map":physical, @"base_sha256":base, @"cache_sha256":cacheSHA,
+        @"cache_file_bytes":@(cache.length), @"cache_declared_bytes":@4096, @"manifest_sha256":hash(bytes), @"manifest_bytes":@(bytes.length),
+        @"cache_object_key":[NSString stringWithFormat:@"arsenals/v1/sha256/%@/%@.map", cacheSHA, physical],
+        @"manifest_object_key":[NSString stringWithFormat:@"arsenals/v1/sha256/%@/%@.json", hash(bytes), physical]};
+}
+static NSData *arsenalCatalog(NSArray *entries) {
+    return arsenalJSON(@{@"schema_version":@1, @"profile":@"fiesta-arsenal-v1", @"generation":@1,
+        @"weapon_list_sha256":@HALO_EXPANDED_CACHE_WEAPON_LIST_SHA256, @"arsenals":entries});
+}
+static void serveArsenal(NSDictionary *entry, NSData *cache, NSData *manifest) {
+    @synchronized(FixtureHTTPS.class) {
+        responses[[@"/" stringByAppendingString:entry[@"cache_object_key"]]] = cache;
+        responses[[@"/" stringByAppendingString:entry[@"manifest_object_key"]]] = manifest;
+    }
+}
+static NSURL *pairDirectory(HaloMapDownloads *downloads) { return folder(downloads.mapsDirectory, @"arsenal/v1"); }
+static void installFixturePair(HaloMapDownloads *downloads, NSDictionary *entry, NSData *cache, NSData *manifest) {
+    NSURL *directory = pairDirectory(downloads); NSString *physical = entry[@"physical_map"];
+    assert([cache writeToURL:[directory URLByAppendingPathComponent:[physical stringByAppendingPathExtension:@"map"]] atomically:YES]);
+    assert([manifest writeToURL:[directory URLByAppendingPathComponent:[physical stringByAppendingPathExtension:@"json"]] atomically:YES]);
+}
+static int requestArsenal(HaloMapDownloads *downloads, NSDictionary *entry, NSString *expected) {
+    return [downloads requestArsenal:entry[@"logical_map"] baseSHA256:entry[@"base_sha256"] expectedSHA256:expected];
+}
+static void testArsenals(NSURL *root, NSURL *game, NSDictionary *config) {
+    NSString *base = hash([@"original prisoner revision" dataUsingEncoding:NSASCIIStringEncoding]);
+    NSData *cache = fixtureMap(@"_fiesta_prisoner", @"01.10.12.2276"), *manifest;
+    NSDictionary *approved = arsenalEntry(@"prisoner", base, cache, &manifest);
+    NSData *otherCache = fixtureMap(@"_fiesta_bloodgulch", @"01.10.12.2276"), *otherManifest;
+    NSDictionary *other = arsenalEntry(@"bloodgulch", base, otherCache, &otherManifest);
+    NSError *error = nil;
+    assert(HaloValidateArsenalCatalog(arsenalCatalog(@[approved, other]), config, &error).count == 2);
+    assert(!HaloValidateArsenalCatalog(arsenalCatalog(@[]), config, &error));
+    assert(!HaloValidateArsenalCatalog(arsenalCatalog(@[approved, approved]), config, &error));
+    NSMutableDictionary *revision = [approved mutableCopy]; revision[@"base_sha256"] = hash(cache);
+    assert(HaloValidateArsenalCatalog(arsenalCatalog(@[approved, revision]), config, &error).count == 2);
+    for (NSDictionary *replacement in @[@{@"physical_map":@"prisoner"}, @{@"cache_file_bytes":@YES}, @{@"manifest_bytes":@4097},
+        @{@"cache_declared_bytes":@134217729}, @{@"base_sha256":@"bad"}, @{@"extra":@1},
+        @{@"cache_object_key":@"../unsafe"}, @{@"manifest_object_key":@"https://maps.test/unsafe"}]) {
+        NSMutableDictionary *bad = [approved mutableCopy]; [bad addEntriesFromDictionary:replacement];
+        assert(!HaloValidateArsenalCatalog(arsenalCatalog(@[bad]), config, &error));
+    }
+    for (NSString *name in @[@"_private", @"prisoner ", @"ui", @"a10", @"nul", @"com1", @"../bad", @"Prisoner"]) {
+        NSMutableDictionary *bad = [approved mutableCopy]; bad[@"logical_map"] = name;
+        bad[@"physical_map"] = arsenalPhysical(name);
+        assert(!HaloValidateArsenalCatalog(arsenalCatalog(@[bad]), config, &error));
+    }
+    NSString *longName = @"a123456789012345678901234567890";
+    NSData *longCache = fixtureMap(arsenalPhysical(longName), @"01.10.12.2276");
+    assert(HaloValidateArsenalCatalog(arsenalCatalog(@[arsenalEntry(longName, base, longCache, NULL)]), config, &error));
+    NSString *json = [[NSString alloc] initWithData:arsenalCatalog(@[approved]) encoding:NSASCIIStringEncoding];
+    for (NSString *bad in @[[json stringByReplacingOccurrencesOfString:@"\"schema_version\":1" withString:@"\"schema_version\":1,\"schema_version\":1"],
+        [json stringByReplacingOccurrencesOfString:@"\"generation\":1" withString:@"\"generation\":true"],
+        [json stringByReplacingOccurrencesOfString:@"4096" withString:@"4096.0"], [json stringByAppendingString:@"{}"],
+        [json stringByReplacingOccurrencesOfString:@"fiesta-arsenal-v1" withString:@"fiesta-arsenal-v2"],
+        [json stringByReplacingOccurrencesOfString:@"prisoner" withString:@"pris\\u006fner"]]) {
+        assert(!HaloValidateArsenalCatalog([bad dataUsingEncoding:NSASCIIStringEncoding], config, &error));
+    }
+    NSMutableArray *overBudget = [NSMutableArray array];
+    for (unsigned i = 0; i < 17; i++) {
+        NSMutableDictionary *large = [approved mutableCopy]; large[@"base_sha256"] = hash([@(i).stringValue dataUsingEncoding:NSASCIIStringEncoding]);
+        large[@"cache_file_bytes"] = @134217728; [overBudget addObject:large];
+    }
+    assert(!HaloValidateArsenalCatalog(arsenalCatalog(overBudget), config, &error));
+    @synchronized(FixtureHTTPS.class) {
+        responses[@"/catalog.json"] = catalog(@[]);
+        responses[@"/arsenals.json"] = arsenalCatalog(@[approved, other]);
+    }
+    serveArsenal(approved, cache, manifest); serveArsenal(other, otherCache, otherManifest);
+
+    // Missing local pair is checked off-thread, even with downloads disabled.
+    unsigned before = requests;
+    HaloMapDownloads *offline = manager(folder(root, @"arsenal-offline"), game, config);
+    [offline startEnabled:NO];
+    assert(requestArsenal(offline, approved, nil) == HALO_MAP_DOWNLOAD_PENDING);
+    waitFor(^BOOL{ return requestArsenal(offline, approved, nil) == HALO_MAP_DOWNLOAD_UNAVAILABLE; });
+    assert(requests == before);
+    // Predownloaded pairs need neither catalog history nor HTTP consent.
+    installFixturePair(offline, approved, cache, manifest);
+    [offline checkForMaps];
+    waitFor(^BOOL{ return requestArsenal(offline, approved, nil) == HALO_MAP_DOWNLOAD_READY; });
+    assert(requests == before);
+    [offline activateForHost];
+    assert(halo_arsenal_download_request("prisoner", base.UTF8String, NULL) == HALO_MAP_DOWNLOAD_READY);
+    assert(halo_arsenal_download_request("prisoner", "invalid", NULL) == HALO_MAP_DOWNLOAD_UNAVAILABLE);
+    assert(requestArsenal(offline, approved, approved[@"cache_sha256"]) == HALO_MAP_DOWNLOAD_PENDING);
+    waitFor(^BOOL{ return requestArsenal(offline, approved, approved[@"cache_sha256"]) == HALO_MAP_DOWNLOAD_READY; });
+    assert(requests == before);
+
+    HaloMapDownloads *onDemand = manager(folder(root, @"arsenal-demand"), game, config);
+    [onDemand startEnabled:YES];
+    waitFor(^BOOL{ return [onDemand.statusText containsString:@"0 approved maps available"]; });
+    before = requests;
+    holdMapResponses = YES;
+    assert(requestArsenal(onDemand, approved, approved[@"cache_sha256"]) == HALO_MAP_DOWNLOAD_PENDING);
+    waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
+    assert(requests == before + 3); // catalog, requested manifest, requested cache
+    assert(requestArsenal(onDemand, approved, approved[@"cache_sha256"]) == HALO_MAP_DOWNLOAD_PENDING);
+    NSURL *destination = [onDemand.mapsDirectory URLByAppendingPathComponent:@"arsenal/v1/_fiesta_prisoner.map"];
+    assert(![NSFileManager.defaultManager fileExistsAtPath:destination.path]);
+    assert(![NSFileManager.defaultManager fileExistsAtPath:[onDemand.mapsDirectory URLByAppendingPathComponent:@"arsenal/v1/_fiesta_bloodgulch.map"].path]);
+    releaseMapResponse();
+    waitFor(^BOOL{ return requestArsenal(onDemand, approved, approved[@"cache_sha256"]) == HALO_MAP_DOWNLOAD_READY; });
+    holdMapResponses = NO;
+    [onDemand setDownloadsEnabled:NO];
+    assert(requestArsenal(onDemand, approved, approved[@"cache_sha256"]) == HALO_MAP_DOWNLOAD_READY);
+    HaloMapDownloads *freshOffline = manager(folder(root, @"arsenal-demand"), game, config);
+    [freshOffline startEnabled:NO];
+    before = requests;
+    waitFor(^BOOL{ return requestArsenal(freshOffline, approved, nil) == HALO_MAP_DOWNLOAD_READY; });
+    assert(requests == before);
+    // Check Maps invalidates a READY memo if its pair was manually removed.
+    NSURL *readyDirectory = pairDirectory(freshOffline);
+    assert([NSFileManager.defaultManager removeItemAtURL:[readyDirectory URLByAppendingPathComponent:@"_fiesta_prisoner.map"] error:nil]);
+    assert([NSFileManager.defaultManager removeItemAtURL:[readyDirectory URLByAppendingPathComponent:@"_fiesta_prisoner.json"] error:nil]);
+    [freshOffline checkForMaps];
+    waitFor(^BOOL{ return requestArsenal(freshOffline, approved, nil) == HALO_MAP_DOWNLOAD_UNAVAILABLE; });
+    assert(requests == before); // disabled revalidation did not contact HTTP
+    [freshOffline setDownloadsEnabled:YES];
+    waitFor(^BOOL{ return requestArsenal(freshOffline, approved, nil) == HALO_MAP_DOWNLOAD_READY; });
+    assert([[NSData dataWithContentsOfURL:[readyDirectory URLByAppendingPathComponent:@"_fiesta_prisoner.map"]] isEqual:cache]);
+
+    // Different complete installs and symlink leaves are never overwritten.
+    HaloMapDownloads *conflict = manager(folder(root, @"arsenal-conflict"), game, config);
+    installFixturePair(conflict, approved, cache, manifest);
+    [conflict startEnabled:YES];
+    waitFor(^BOOL{ return [conflict.statusText containsString:@"0 approved maps available"]; });
+    before = requests;
+    waitFor(^BOOL{ return requestArsenal(conflict, approved, hash(manifest)) == HALO_MAP_DOWNLOAD_FAILED; });
+    assert(requests == before);
+    assert([[NSData dataWithContentsOfURL:[pairDirectory(conflict) URLByAppendingPathComponent:@"_fiesta_prisoner.map"]] isEqual:cache]);
+    HaloMapDownloads *linked = manager(folder(root, @"arsenal-link"), game, config);
+    NSURL *linkedMap = [pairDirectory(linked) URLByAppendingPathComponent:@"_fiesta_prisoner.map"];
+    NSURL *victim = [root URLByAppendingPathComponent:@"arsenal-link-target"];
+    assert([cache writeToURL:victim atomically:YES]);
+    assert([NSFileManager.defaultManager createSymbolicLinkAtURL:linkedMap withDestinationURL:victim error:nil]);
+    [linked startEnabled:NO];
+    waitFor(^BOOL{ return requestArsenal(linked, approved, nil) == HALO_MAP_DOWNLOAD_FAILED; });
+    assert([[NSData dataWithContentsOfURL:victim] isEqual:cache]);
+
+    // A matching interrupted half is completed only after full verification.
+    HaloMapDownloads *half = manager(folder(root, @"arsenal-half"), game, config);
+    assert([cache writeToURL:[pairDirectory(half) URLByAppendingPathComponent:@"_fiesta_prisoner.map"] atomically:YES]);
+    [half startEnabled:YES];
+    waitFor(^BOOL{ return requestArsenal(half, approved, nil) == HALO_MAP_DOWNLOAD_READY; });
+    assert([[NSData dataWithContentsOfURL:[pairDirectory(half) URLByAppendingPathComponent:@"_fiesta_prisoner.json"]] isEqual:manifest]);
+
+    HaloMapDownloads *cancelled = manager(folder(root, @"arsenal-cancel"), game, config);
+    [cancelled startEnabled:YES];
+    waitFor(^BOOL{ return [cancelled.statusText containsString:@"0 approved maps available"]; });
+    holdMapResponses = YES;
+    assert(requestArsenal(cancelled, approved, nil) == HALO_MAP_DOWNLOAD_PENDING);
+    waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
+    [cancelled cancelDownloads];
+    waitFor(^BOOL{ return [cancelled.statusText containsString:@"Fiesta downloads cancelled"]; });
+    assert(requestArsenal(cancelled, approved, nil) == HALO_MAP_DOWNLOAD_UNAVAILABLE);
+    releaseMapResponse();
+    [cancelled checkForMaps];
+    waitFor(^BOOL{ @synchronized(FixtureHTTPS.class) { return heldMapResponses.count == 1; } });
+    assert(requestArsenal(cancelled, approved, nil) == HALO_MAP_DOWNLOAD_PENDING);
+    releaseMapResponse();
+    waitFor(^BOOL{ return requestArsenal(cancelled, approved, nil) == HALO_MAP_DOWNLOAD_READY; });
+    holdMapResponses = NO;
+
+    // An authenticated manifest cannot authorize a truncated/tampered cache.
+    NSMutableData *tampered = [cache mutableCopy]; ((unsigned char *)tampered.mutableBytes)[3000] ^= 1;
+    serveArsenal(approved, tampered, manifest);
+    HaloMapDownloads *corrupt = manager(folder(root, @"arsenal-corrupt"), game, config);
+    [corrupt startEnabled:YES];
+    waitFor(^BOOL{ return requestArsenal(corrupt, approved, nil) == HALO_MAP_DOWNLOAD_FAILED; });
+    NSURL *corruptDirectory = pairDirectory(corrupt);
+    assert(![NSFileManager.defaultManager fileExistsAtPath:[corruptDirectory URLByAppendingPathComponent:@"_fiesta_prisoner.map"].path]);
+    assert(![NSFileManager.defaultManager fileExistsAtPath:[corruptDirectory URLByAppendingPathComponent:@"_fiesta_prisoner.json"].path]);
+    serveArsenal(approved, cache, manifest);
+    [corrupt checkForMaps];
+    waitFor(^BOOL{ return requestArsenal(corrupt, approved, nil) == HALO_MAP_DOWNLOAD_READY; });
+
+    // Authenticated file bytes still require exact physical/declared headers.
+    NSMutableData *badDeclared = [cache mutableCopy]; uint32_t declared = 6000;
+    memcpy((unsigned char *)badDeclared.mutableBytes + 8, &declared, 4);
+    NSArray *badHeaders = @[fixtureMap(@"prisoner", @"01.10.12.2276"), badDeclared,
+        fixtureMap(@"_fiesta_prisoner", @"01.01.14.2342")];
+    unsigned index = 0;
+    for (NSData *badCache in badHeaders) {
+        NSData *badManifest;
+        NSDictionary *badEntry = arsenalEntry(@"prisoner", base, badCache, &badManifest);
+        @synchronized(FixtureHTTPS.class) { responses[@"/arsenals.json"] = arsenalCatalog(@[badEntry]); }
+        serveArsenal(badEntry, badCache, badManifest);
+        HaloMapDownloads *badHeader = manager(folder(root, [NSString stringWithFormat:@"arsenal-bad-header-%u", index++]), game, config);
+        [badHeader startEnabled:YES];
+        waitFor(^BOOL{ return requestArsenal(badHeader, badEntry, nil) == HALO_MAP_DOWNLOAD_FAILED; });
+        assert(![NSFileManager.defaultManager fileExistsAtPath:[badHeader.mapsDirectory URLByAppendingPathComponent:@"arsenal/v1/_fiesta_prisoner.map"].path]);
+    }
+    NSMutableDictionary *wrongManifest = [[NSJSONSerialization JSONObjectWithData:manifest options:0 error:nil] mutableCopy];
+    wrongManifest[@"base_sha256"] = hash(cache);
+    NSData *wrongManifestBytes = arsenalJSON(wrongManifest);
+    NSMutableDictionary *wrongManifestEntry = [approved mutableCopy];
+    wrongManifestEntry[@"manifest_sha256"] = hash(wrongManifestBytes);
+    wrongManifestEntry[@"manifest_bytes"] = @(wrongManifestBytes.length);
+    wrongManifestEntry[@"manifest_object_key"] = [NSString stringWithFormat:@"arsenals/v1/sha256/%@/_fiesta_prisoner.json", hash(wrongManifestBytes)];
+    @synchronized(FixtureHTTPS.class) { responses[@"/arsenals.json"] = arsenalCatalog(@[wrongManifestEntry]); }
+    serveArsenal(wrongManifestEntry, cache, wrongManifestBytes);
+    HaloMapDownloads *wrongPair = manager(folder(root, @"arsenal-manifest-mismatch"), game, config);
+    [wrongPair startEnabled:YES];
+    waitFor(^BOOL{ return [wrongPair.statusText containsString:@"0 approved maps available"]; });
+    before = requests;
+    waitFor(^BOOL{ return requestArsenal(wrongPair, approved, nil) == HALO_MAP_DOWNLOAD_FAILED; });
+    assert(requests == before + 2); // catalog + rejected manifest, no cache transfer
+    puts("Fiesta HTTPS fixtures: strict catalog/pin/identity/bounds, demand-only exact-SHA pairs, disabled offline reuse, partial completion, link/conflict preservation, cancellation and retry passed");
+}
 
 int main(int argc, const char **argv) {
     @autoreleasepool {
@@ -117,6 +342,7 @@ int main(int argc, const char **argv) {
         assert(HaloDownloadConfigurationIsValid(unconfigured));
         NSMutableDictionary *config = [unconfigured mutableCopy];
         config[@"catalog_url"] = @"https://maps.test/catalog.json";
+        config[@"arsenal_catalog_url"] = @"https://maps.test/arsenals.json";
         config[@"objects_base_url"] = @"https://maps.test/";
         config[@"allowed_origins"] = @[@"https://maps.test"];
         assert(HaloDownloadConfigurationIsValid(config));
@@ -126,6 +352,12 @@ int main(int argc, const char **argv) {
         badConfig[@"catalog_url"] = @"https://evil.test/catalog.json";
         assert(!HaloDownloadConfigurationIsValid(badConfig));
         badConfig[@"catalog_url"] = @"https://person:password@maps.test/catalog.json";
+        assert(!HaloDownloadConfigurationIsValid(badConfig));
+        badConfig = [config mutableCopy]; badConfig[@"arsenal_catalog_url"] = @"http://maps.test/arsenals.json";
+        assert(!HaloDownloadConfigurationIsValid(badConfig));
+        badConfig[@"arsenal_catalog_url"] = @"https://evil.test/arsenals.json";
+        assert(!HaloDownloadConfigurationIsValid(badConfig));
+        badConfig[@"arsenal_catalog_url"] = @"https://maps.test/arsenals.json?profile=other";
         assert(!HaloDownloadConfigurationIsValid(badConfig));
         NSData *map = fixtureMap(@"downrush", @"01.10.12.2276");
         NSDictionary *approved = entry(@"downrush", map);
@@ -402,6 +634,7 @@ int main(int argc, const char **argv) {
         releaseMapResponse();
         waitFor(^BOOL{ return [rapidRetry requestMap:@"downrush"] == HALO_MAP_DOWNLOAD_READY; });
         holdMapResponses = NO;
+        testArsenals(root, game, config);
         puts("Native HTTPS fixtures: forty-map launch downloads despite prefetch=false, demand priority without duplicate transfers, disabled-network gating, async pending/ready, catalog bounds, SHA/header checks, atomic install, offline reuse, collision preservation, retry and PAL gating passed");
     }
     return 0;

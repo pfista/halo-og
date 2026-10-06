@@ -33,6 +33,7 @@ enum { UNICODE_STRING_LIST_TAG='ustr', _ui_widget_type_text_box=1,_ui_widget_typ
 /* VARIANT DECLARATIONS */
 #define __GAME_ENGINE_H
 #include "game/performance_variant.h"
+#include "game/weapon_sets.h"
 /* PLAYLIST DECLARATION */
 struct widget_instance { long definition_tag_index; struct widget_instance *child,*next;
     boolean visible; union { struct { wchar_t *text; } text_box; struct { void *list_items; } list; } parameters;
@@ -82,11 +83,12 @@ static void setup(void) {
 static void check_cards(void) {
     wchar_t expected[256];
     for(int engine=game_engine_ctf;engine<=game_engine_race;engine++) for(int teams=0;teams<2;teams++)
-    for(unsigned flags=0;flags<=PERFORMANCE_OPTIONS_MASK;flags++) {
+    for(unsigned flags=0;flags<=PERFORMANCE_OPTIONS_MASK;flags++) for(int weapon_set=0;weapon_set<=GAME_WEAPON_SET_ALL;weapon_set++) {
         for(int i=0;i<3;i++) {
             struct playlist_profile *p=&cached_variant_profile[i].profile;
             p->engine_type=engine; p->teams=teams;
             performance_variant_set_flags((struct game_variant *)p,i==1 ? flags:0);
+            ((struct game_variant *)p)->universal_variant.weapon_set=weapon_set;
         }
         mutliplayer_settings_select_list_update_displayed_items(&list);
         unsigned index=2*(engine-1)+teams;
@@ -95,6 +97,8 @@ static void check_cards(void) {
         ustrncpy(expected,descriptions[index],256);
         if(flags) {
             const wchar_t *status=flags&256 ? L"\r\nCamo: Hardcore" : flags&128 ? (flags&64 ? L"\r\nFiesta / Hardcore: On":L"\r\nStarting Equipment: Fiesta") : flags&64 ? L"\r\nHardcore: On":L"\r\nPerformance options active";
+            if((flags&128) && !(flags&256) && weapon_set==GAME_WEAPON_SET_ALL)
+                status=flags&64 ? L"\r\nPfiesta/Hardcore: On":L"\r\nEquipment: Pfiesta";
             ustrncpy(expected+ustrlen(expected),status,ustrlen(status)+1);
         }
         assert(equal(labels[1].parameters.text_box.text,expected));

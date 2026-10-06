@@ -16,6 +16,13 @@ u32 guest_test(u32 unused)
     if (halo_map_download_directory(0, 0) != 0) return 2;
     if (halo_map_download_request((char *)0x02000200) != 2) return 3;
     if (halo_map_download_request(0) != 0) return 4;
+    /* Every string argument, including an optional NULL expected digest,
+       crosses the host import with the guest address bias applied once. */
+    if (halo_arsenal_download_request((char *)0x02001000,
+            (char *)0x02001100, (char *)0x02001200) != 2) return 10;
+    if (halo_arsenal_download_request(0, 0, 0) != 0) return 11;
+    if (halo_arsenal_download_request((char *)0x02001000,
+            (char *)0x02001100, 0) != 2) return 12;
     if (halo_directory_http((char *)0x02000100, (char *)0x02000300,
             (char *)0x02000500, (char *)0x02000600, response, 1024, status, retry_after_seconds) != 3) return 5;
     if (*status != 201 || *retry_after_seconds != 30 || response[0] != 'o' || response[1] != 'k' || response[2]) return 6;

@@ -587,6 +587,7 @@ symbols in this file:
 #include "units/units.h"
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "game/starting_equipment.h"
+#include "game/fiesta_weapon_pool.h"
 #endif
 
 /* network_game_globals.c's */
@@ -681,6 +682,10 @@ enum game_engine_weapons
 	_game_engine_weapons_short_range,
 	_game_engine_weapons_human,
 	_game_engine_weapons_no_grenades,
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	_game_engine_weapons_uncut = GAME_WEAPON_SET_UNCUT,
+	_game_engine_weapons_all = GAME_WEAPON_SET_ALL,
+#endif
 	NUMBER_OF_GAME_ENGINE_WEAPON_SETS,
 };
 
@@ -854,7 +859,6 @@ static void game_engine_predict_resources(
 	void);
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-static short game_engine_fiesta_collect_weapons(long *weapon_indices);
 static void handle_fiesta_starting_equipment(long unit_index);
 #endif
 
@@ -6128,9 +6132,15 @@ static void game_engine_predict_resources(
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	if (starting_equipment_get(&global_variant) == _starting_equipment_fiesta)
 	{
-		short fiesta_weapon_count = game_engine_fiesta_collect_weapons(weapon_indices);
-		for (weapon_index = 0; weapon_index < fiesta_weapon_count; weapon_index++)
-			object_definition_predict(weapon_indices[weapon_index]);
+		struct fiesta_weapon_iterator iterator;
+		long definition_index;
+		fiesta_weapon_iterator_new(&iterator, global_variant.universal_variant.weapon_set);
+		/* A global arsenal can lock the texture cache by prewarming every
+		 * candidate in one frame. Ordinary object/first-person prediction
+		 * loads the actual spawned pair. Keep the original pool's prewarm. */
+		if (!iterator.global_arsenal)
+			while ((definition_index = fiesta_weapon_iterator_next(&iterator)) != NONE)
+				object_definition_predict(definition_index);
 	}
 #endif
 
@@ -7498,47 +7508,11 @@ static void game_engine_update_item_spawn(
 }
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-/* Use exact original multiplayer tag identities. A community map's extra
- * weapons or replacement globals slots must never extend the Fiesta pool. */
-static short game_engine_fiesta_collect_weapons(long *weapon_indices)
-{
-	static char const *weapon_names[] =
-	{
-		"weapons\\assault rifle\\assault rifle",
-		"weapons\\needler\\needler",
-		"weapons\\pistol\\pistol",
-		"weapons\\plasma pistol\\plasma pistol",
-		"weapons\\plasma rifle\\plasma rifle",
-		"weapons\\rocket launcher\\rocket launcher",
-		"weapons\\shotgun\\shotgun",
-		"weapons\\sniper rifle\\sniper rifle",
-	};
-	short count = 0;
-	short name_index;
-	for (name_index = 0; name_index < NUMBEROF(weapon_names); name_index++)
-	{
-		long definition_index = tag_loaded('weap', weapon_names[name_index]);
-		short existing_index;
-		if (definition_index == NONE ||
-			object_definition_get(definition_index)->object.type != _object_type_weapon)
-			continue;
-		/* Objective behavior is tag-authored. Even a canonical-name community
-		 * replacement must not enter a pool whose failed creations are deleted. */
-		if (TEST_FLAG(weapon_definition_get(definition_index)->weapon.flags,
-			_weapon_must_be_readied_bit))
-			continue;
-		for (existing_index = 0; existing_index < count; existing_index++)
-			if (weapon_indices[existing_index] == definition_index)
-				break;
-		if (existing_index == count)
-			weapon_indices[count++] = definition_index;
-	}
-	return count;
-}
-
 static void handle_fiesta_starting_equipment(long unit_index)
 {
-	long definitions[8];
+	struct fiesta_weapon_iterator iterator;
+	long definition_index;
+	long definitions[2] = {NONE, NONE};
 	long weapons[2] = {NONE, NONE};
 	long previous_weapons[MAXIMUM_WEAPONS_PER_UNIT];
 	long previous_last_used[MAXIMUM_WEAPONS_PER_UNIT];
@@ -7548,13 +7522,16 @@ static void handle_fiesta_starting_equipment(long unit_index)
 	short count;
 	short first;
 	short second;
+	short index;
 	short slot;
 	short weapon_number;
 
 	if (!game_engine_running() || network_game_distributed_client() || unit_index == NONE ||
 		starting_equipment_get(&global_variant) != _starting_equipment_fiesta)
 		return;
-	count = game_engine_fiesta_collect_weapons(definitions);
+	count = 0;
+	fiesta_weapon_iterator_new(&iterator, global_variant.universal_variant.weapon_set);
+	while (fiesta_weapon_iterator_next(&iterator) != NONE) count++;
 	if (count < 2)
 		return; /* Keep the map's generic equipment when a pair is unavailable. */
 	unit = unit_get(unit_index);
@@ -7571,11 +7548,21 @@ static void handle_fiesta_starting_equipment(long unit_index)
 	second = seed_random_range(get_global_random_seed_address(), 0, count - 1);
 	if (second >= first)
 		second++;
+	/* Walk the same stable pool again to resolve the two chosen ordinals.
+	 * This avoids a fixed-size array truncating All on larger custom maps. */
+	fiesta_weapon_iterator_new(&iterator, global_variant.universal_variant.weapon_set);
+	index = 0;
+	while ((definition_index = fiesta_weapon_iterator_next(&iterator)) != NONE)
+	{
+		if (index == first) definitions[0] = definition_index;
+		if (index == second) definitions[1] = definition_index;
+		index++;
+	}
 	for (weapon_number = 0; weapon_number < 2; weapon_number++)
 	{
 		struct object_placement_data placement_data;
 		object_placement_data_new(&placement_data,
-			definitions[weapon_number ? second : first], unit_index);
+			definitions[weapon_number], unit_index);
 		SET_FLAG(placement_data.flags, _new_object_skip_variant_remap_bit, TRUE);
 		weapons[weapon_number] = object_new(&placement_data);
 		if (weapons[weapon_number] == NONE ||

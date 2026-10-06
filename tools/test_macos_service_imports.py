@@ -70,7 +70,7 @@ class MacServiceImportTests(unittest.TestCase):
                 "port/macos/host/host_services.c", out / "imports.c", "-o", out / "service_host")
             output = run(out / "service_host", out / "guest.elf", symbols["__host_import_names"],
                          symbols["__host_import_table"], symbols["__host_import_count"])
-            self.assertIn("guest service result=93 expected=93; native calls=8 expected=8", output)
+            self.assertIn("guest service result=93 expected=93; native calls=11 expected=11", output)
 
 
 @unittest.skipUnless(shutil.which("clang"), "clang required")
@@ -82,6 +82,7 @@ class IOSServiceStubTests(unittest.TestCase):
 #include <string.h>
 int host_halo_map_download_directory(char *, size_t);
 int host_halo_map_download_request(const char *);
+int host_halo_arsenal_download_request(const char *, const char *, const char *);
 int host_halo_directory_http(const char *, const char *, const char *, const char *, char *, int, int *, int *);
 int main(void) {
     char output[32] = "unchanged";
@@ -91,6 +92,8 @@ int main(void) {
     assert(host_halo_map_download_directory(NULL, 0) == 0);
     assert(host_halo_map_download_request("downrush") == 0);
     assert(host_halo_map_download_request(NULL) == 0);
+    assert(host_halo_arsenal_download_request("prisoner", "base", "cache") == 0);
+    assert(host_halo_arsenal_download_request(NULL, NULL, NULL) == 0);
     assert(host_halo_directory_http("GET", "https://fixture.invalid", NULL, NULL,
                                    output, sizeof(output), &status, &retry_after_seconds) == -1);
     assert(status == 0 && retry_after_seconds == 0 && !strcmp(output, "unchanged"));

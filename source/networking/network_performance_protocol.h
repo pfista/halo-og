@@ -5,11 +5,18 @@
 
 #define NETWORK_PERFORMANCE_MESSAGE_TYPE 0xE0
 #define NETWORK_PERFORMANCE_MESSAGE_SIZE 16
-#define NETWORK_PERFORMANCE_VERSION 2
+#define NETWORK_PERFORMANCE_VERSION 5
+#define NETWORK_PERFORMANCE_GLOBAL_ARSENAL_VERSION 4
+#define NETWORK_PERFORMANCE_EXPANDED_WEAPONS_VERSION 3
+#define NETWORK_PERFORMANCE_CAMO_VERSION 2
 #define NETWORK_PERFORMANCE_LEGACY_VERSION 1
 #define NETWORK_PERFORMANCE_CAPABILITY 1
 #define NETWORK_PERFORMANCE_SETTINGS 2
 #define NETWORK_PERFORMANCE_SUPPORTED_FLAGS 511
+#define NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY 512
+#define NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY 1024
+#define NETWORK_PERFORMANCE_DOWNLOAD_WAIT_CAPABILITY 2048
+#define NETWORK_PERFORMANCE_SUPPORTED_CAPABILITIES 4095
 #define NETWORK_PERFORMANCE_TIMER_AUDIO_FLAG 4
 #define NETWORK_PERFORMANCE_INPUT_DELAY_FLAG 32
 #define NETWORK_PERFORMANCE_HARDCORE_FLAG 64
@@ -24,9 +31,13 @@
 static inline unsigned network_performance_runtime_supported_flags(
     int queue_supported, int timer_audio_available)
 {
-    unsigned flags = NETWORK_PERFORMANCE_SUPPORTED_FLAGS &
-        ~(NETWORK_PERFORMANCE_TIMER_AUDIO_FLAG | NETWORK_PERFORMANCE_MATCH_RULE_FLAGS);
-    if (queue_supported) flags |= NETWORK_PERFORMANCE_MATCH_RULE_FLAGS;
+    unsigned flags = NETWORK_PERFORMANCE_SUPPORTED_CAPABILITIES &
+        ~(NETWORK_PERFORMANCE_TIMER_AUDIO_FLAG | NETWORK_PERFORMANCE_MATCH_RULE_FLAGS |
+          NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY | NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY |
+          NETWORK_PERFORMANCE_DOWNLOAD_WAIT_CAPABILITY);
+    if (queue_supported) flags |= NETWORK_PERFORMANCE_MATCH_RULE_FLAGS |
+        NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY | NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY |
+        NETWORK_PERFORMANCE_DOWNLOAD_WAIT_CAPABILITY;
     if (timer_audio_available) flags |= NETWORK_PERFORMANCE_TIMER_AUDIO_FLAG;
     return flags;
 }
@@ -34,10 +45,14 @@ static inline unsigned network_performance_runtime_supported_flags(
 /* A newer host must send a capability frame an older peer can decode. The
  * extension generations deliberately reject every unknown bit as a whole. */
 static inline unsigned network_performance_capability_for_peer(unsigned supported,
-    int peer_hardcore_supported, int peer_fiesta_supported, int peer_camo_supported)
+    int peer_hardcore_supported, int peer_fiesta_supported, int peer_camo_supported,
+    int peer_expanded_weapons_supported, int peer_global_arsenal_supported,
+    int peer_download_wait_supported)
 {
-    return peer_camo_supported ? supported :
-        supported & (peer_fiesta_supported ? 255u : (peer_hardcore_supported ? 127u : 63u));
+    return supported & (peer_download_wait_supported ? 4095u : (peer_global_arsenal_supported ? 2047u :
+        (peer_expanded_weapons_supported ? 1023u :
+        (peer_camo_supported ? 511u :
+         (peer_fiesta_supported ? 255u : (peer_hardcore_supported ? 127u : 63u))))));
 }
 
 /* An older host preserves unknown saved padding, but decodes that entire
@@ -52,7 +67,7 @@ static inline unsigned network_performance_host_settings_flags(
 
 static inline int network_performance_can_join(unsigned required, unsigned supported)
 {
-    return !(required & ~NETWORK_PERFORMANCE_SUPPORTED_FLAGS) &&
+    return !(required & ~NETWORK_PERFORMANCE_SUPPORTED_CAPABILITIES) &&
         (required & supported) == required;
 }
 
@@ -81,9 +96,12 @@ static inline void network_performance_encode(unsigned char *message,
     message[2] = NETWORK_PERFORMANCE_MESSAGE_TYPE;
     message[3] = 1;
     message[8] = 'H'; message[9] = 'P'; message[10] = 'F'; message[11] = 'O';
-    /* Keep every version-1 frame byte-identical for older peers. Version 2
-     * uses the final reserved payload byte for the high flags byte. */
-    message[12] = flags > 255 ? NETWORK_PERFORMANCE_VERSION : NETWORK_PERFORMANCE_LEGACY_VERSION;
+    /* Every previous frame remains byte-identical. Version 5 adds download wait;
+     * version 4 retains global identity. Aid settings stay version 1/2. */
+    message[12] = flags > 2047 ? NETWORK_PERFORMANCE_VERSION :
+        (flags > 1023 ? NETWORK_PERFORMANCE_GLOBAL_ARSENAL_VERSION :
+        (flags > 511 ? NETWORK_PERFORMANCE_EXPANDED_WEAPONS_VERSION :
+        (flags > 255 ? NETWORK_PERFORMANCE_CAMO_VERSION : NETWORK_PERFORMANCE_LEGACY_VERSION)));
     message[13] = (unsigned char)flags;
     message[14] = (unsigned char)kind;
     message[15] = (unsigned char)(flags >> 8);
@@ -100,12 +118,20 @@ static inline int network_performance_decode(unsigned char const *message,
         message[8] != 'H' || message[9] != 'P' || message[10] != 'F' || message[11] != 'O' ||
         message[14] != kind ||
         !((message[12] == NETWORK_PERFORMANCE_LEGACY_VERSION && message[15] == 0) ||
-          (message[12] == NETWORK_PERFORMANCE_VERSION && message[15] == 1)))
+          (message[12] == NETWORK_PERFORMANCE_CAMO_VERSION && message[15] == 1) ||
+          (message[12] == NETWORK_PERFORMANCE_EXPANDED_WEAPONS_VERSION &&
+           kind == NETWORK_PERFORMANCE_CAPABILITY &&
+           (message[15] == 2 || message[15] == 3)) ||
+          (message[12] == NETWORK_PERFORMANCE_GLOBAL_ARSENAL_VERSION &&
+           kind == NETWORK_PERFORMANCE_CAPABILITY && message[15] >= 4 && message[15] <= 7) ||
+          (message[12] == NETWORK_PERFORMANCE_VERSION &&
+           kind == NETWORK_PERFORMANCE_CAPABILITY && message[15] >= 8 && message[15] <= 15)))
         return 0;
     for (index = 4; index < 8; ++index)
         if (message[index] != 0) return 0;
     decoded = message[13] | ((unsigned)message[15] << 8);
-    if (decoded & ~NETWORK_PERFORMANCE_SUPPORTED_FLAGS) return 0;
+    if (decoded & ~(kind == NETWORK_PERFORMANCE_CAPABILITY ?
+        NETWORK_PERFORMANCE_SUPPORTED_CAPABILITIES : NETWORK_PERFORMANCE_SUPPORTED_FLAGS)) return 0;
     *flags = decoded;
     return 1;
 }

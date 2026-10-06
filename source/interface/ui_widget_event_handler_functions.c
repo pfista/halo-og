@@ -929,7 +929,9 @@ symbols in this file:
 #include "text/unicode.h"
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "halo_custom_maps.h"
+#include "halo_expanded_cache.h"
 #include "game/starting_equipment.h"
+#include "game/weapon_sets.h"
 #endif
 
 /* ---------- constants */
@@ -2217,7 +2219,17 @@ static boolean network_game_server_allow_game_start(
 {
 	void *server = global_network_game_server_get();
 	if (server)
+	{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		struct network_game *game = network_game_get_game();
+		struct native_map_cache_selection selection;
+		/* This callback can run repeatedly while the countdown is paused;
+		   map/profile proposals already present the downloading/retry action. */
+		if (game && !native_map_cache_prepare(game->map.name, &game->variant, &selection, FALSE))
+			return FALSE;
+#endif
 		network_game_server_pause_countdown(server, FALSE);
+	}
 	return TRUE;
 }
 
@@ -3556,7 +3568,14 @@ static boolean playlist_profile_change_item_options(
 		case 7: *(long *)(profile + 0x44) = 7; break;
 		case 8: *(long *)(profile + 0x44) = 8; break;
 		case 9: *(long *)(profile + 0x44) = 9; break;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* Retail has ten authored choices; ID 10 remains the hidden Xbox
+		 * No Grenades set. New UI indices append without changing saved IDs. */
+		case 10: *(long *)(profile + 0x44) = GAME_WEAPON_SET_UNCUT; break;
+		case 11: *(long *)(profile + 0x44) = GAME_WEAPON_SET_ALL; break;
+#else
 		case 10: *(long *)(profile + 0x44) = 10; break;
+#endif
 		default:
 			error(2, "unknown option selected in 'weapon set' option spinner list");
 			break;
@@ -4562,9 +4581,20 @@ static boolean playlist_profile_initialize_item_options(
 		case 7: option_spinner->data3C.selected_index = 7; break;
 		case 8: option_spinner->data3C.selected_index = 8; break;
 		case 9: option_spinner->data3C.selected_index = 9; break;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		case GAME_WEAPON_SET_UNCUT: option_spinner->data3C.selected_index = 10; break;
+		case GAME_WEAPON_SET_ALL: option_spinner->data3C.selected_index = 11; break;
+#else
 		case 10: option_spinner->data3C.selected_index = 10; break;
+#endif
 		default: option_spinner->data3C.selected_index = 0; break;
 		}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* A cache that cannot clone the native selector retains retail values. */
+		if (option_spinner->data3C.selected_index >= option_spinner->generated_count &&
+			option_spinner->generated_count > 0)
+			option_spinner->data3C.selected_index = 0;
+#endif
 
 		list_item = list_item->next;
 		match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 3421, list_item, "expected 'starting equipment' item");
@@ -5568,6 +5598,46 @@ static boolean playlist_profile_change_player_options(
 	return result;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* Stage the proposed choice before selection callbacks change lobby state.
+ * The active lobby is authoritative; profile/stage data covers local menus. */
+static boolean multiplayer_prepare_cache_selection(
+	char const *map_name,
+	struct game_variant const *variant,
+	struct native_map_cache_selection *selection)
+{
+	struct network_game *game = network_game_get_game();
+	struct game_variant current_variant;
+	struct game_variant stage_variant;
+	char stage_map[128];
+
+	stage_map[0] = 0;
+	if (!variant)
+	{
+		if (game)
+			variant = &game->variant;
+		else
+		{
+			if (!player_ui_game_variant_specified(&current_variant) &&
+				!game_engine_get_current_stage(&current_variant, stage_map))
+				return FALSE;
+			variant = &current_variant;
+		}
+	}
+	if (!map_name || !map_name[0])
+	{
+		map_name = game ? game->map.name : main_get_multiplayer_map_name();
+		if (!map_name || !map_name[0])
+		{
+			if (!stage_map[0] && !game_engine_get_current_stage(&stage_variant, stage_map))
+				return FALSE;
+			map_name = stage_map;
+		}
+	}
+	return native_map_cache_prepare(map_name, variant, selection, TRUE);
+}
+#endif
+
 static boolean multiplayer_level_select(
 	struct widget_instance *widget,
 	struct event_record *event,
@@ -5580,6 +5650,9 @@ static boolean multiplayer_level_select(
 	struct widget_instance *level_list;
 	struct ui_widget_definition *definition;
 	long level_index;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	struct native_map_cache_selection selection;
+#endif
 
 	definition = ui_widget_definition_get(widget->definition_tag_index);
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1280,
@@ -5620,6 +5693,10 @@ static boolean multiplayer_level_select(
 		map_name = automation_map_name;
 		fclose(file);
 	}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (!multiplayer_prepare_cache_selection(map_name, NULL, &selection))
+		return FALSE;
+#endif
 	/* port: a map of a build this version does not play with others (its
 	objects would not be the same as theirs): said, and the list stays */
 	{
@@ -5632,13 +5709,24 @@ static boolean multiplayer_level_select(
 			return FALSE;
 		}
 	}
-	main_set_multiplayer_map_name(map_name);
-	game_engine_override_map_name(map_name);
 	{
 		void *server = global_network_game_server_get();
 		if (server)
+		{
 			network_game_server_change_map_name(server, map_name);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			struct network_game *game = network_game_get_game();
+			if (!game || _stricmp(game->map.name, map_name))
+				return FALSE;
+#endif
+		}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		else
+			native_map_cache_select(&selection);
+#endif
 	}
+	main_set_multiplayer_map_name(map_name);
+	game_engine_override_map_name(map_name);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	for (level_index = 0; level_index < level_list->generated_count; level_index++)
 	{
@@ -5680,6 +5768,9 @@ static boolean multiplayer_profile_set_for_game(
 	long profile_index;
 	void *server;
 	FILE *file;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	struct native_map_cache_selection selection;
+#endif
 
 	definition = ui_widget_definition_get(widget->definition_tag_index);
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1465,
@@ -5718,8 +5809,6 @@ static boolean multiplayer_profile_set_for_game(
 	if (playlist_profile_get(profile_index, &profile))
 	{
 		server = global_network_game_server_get();
-		if (saved_game_file_get_path_to_enclosing_directory(profile_index, directory_path))
-			saved_game_file_remember_last_used_multiplayer_variant_directory(directory_path);
 		file = fopen("d:\\variant_automation.txt", "r");
 		if (file)
 		{
@@ -5732,9 +5821,26 @@ static boolean multiplayer_profile_set_for_game(
 				profile = automation_profile;
 			fclose(file);
 		}
-		player_ui_set_game_variant(&profile);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (!multiplayer_prepare_cache_selection(NULL, &profile, &selection))
+			return FALSE;
+#endif
 		if (server)
+		{
 			network_game_server_change_game_variant(server, &profile);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			struct network_game *game = network_game_get_game();
+			if (!game || memcmp(&game->variant, &profile, sizeof(profile)))
+				return FALSE;
+#endif
+		}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		else
+			native_map_cache_select(&selection);
+#endif
+		player_ui_set_game_variant(&profile);
+		if (saved_game_file_get_path_to_enclosing_directory(profile_index, directory_path))
+			saved_game_file_remember_last_used_multiplayer_variant_directory(directory_path);
 		return TRUE;
 	}
 	error(2, "failed to retrieve user selected game variant");

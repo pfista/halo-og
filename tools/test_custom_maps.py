@@ -48,7 +48,14 @@ HARNESS = r'''
 #include <string.h>
 #include <sys/stat.h>
 #include "xtl.h"
+#include "halo_expanded_cache.h"
 static char directory[256];
+static struct native_map_cache_selection selected_cache;
+const struct native_map_cache_selection *native_map_cache_current(void) { return &selected_cache; }
+void set_private_cache(const char *physical) {
+    memset(&selected_cache,0,sizeof(selected_cache));
+    if(physical && *physical) { selected_cache.expanded=1; snprintf(selected_cache.physical_name,32,"%s",physical); snprintf(selected_cache.physical_path,256,"%sarsenal\\v1\\%s.map",directory,physical); }
+}
 static char overlay[256];
 static int download_status;
 static int show_og = 1, show_community = 1;
@@ -142,6 +149,7 @@ class NativeMapTests(unittest.TestCase):
         cls.lib.set_overlay.argtypes = [ctypes.c_char_p]
         cls.lib.set_download_status.argtypes = [ctypes.c_int]
         cls.lib.set_map_sets.argtypes = [ctypes.c_int, ctypes.c_int]
+        cls.lib.set_private_cache.argtypes = [ctypes.c_char_p]
         cls.lib.native_map_get_path.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.c_uint]
         cls.lib.native_map_download_pending.argtypes = [ctypes.c_char_p]
 
@@ -154,6 +162,7 @@ class NativeMapTests(unittest.TestCase):
 
     def setUp(self):
         self.lib.set_map_sets(1, 1)
+        self.lib.set_private_cache(b"")
         self.lib.set_overlay(b"")
         self.lib.set_download_status(0)
 
@@ -198,6 +207,20 @@ class NativeMapTests(unittest.TestCase):
             self.assertTrue(self.lib.native_map_get_path(b"bloodgulch", path, len(path)))
             self.assertEqual(path.value, str(base / "bloodgulch.map").encode())
             self.assertFalse(self.lib.native_map_get_path(b"downrush", path, 4))
+
+    def test_only_selected_private_identity_resolves_hidden_arsenal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.lib.set_directory(temporary.encode())
+            path = ctypes.create_string_buffer(256)
+            self.lib.set_private_cache(b"_fiesta_prisoner")
+            self.assertTrue(self.lib.native_map_get_path(b"_fiesta_prisoner", path, len(path)))
+            self.assertEqual(path.value, (temporary + "/arsenal\\v1\\_fiesta_prisoner.map").encode())
+            for original in (b"prisoner", b"_fiesta_other", b"_fiestah_0123456789abcdef"):
+                self.assertTrue(self.lib.native_map_get_path(original, path, len(path)))
+                self.assertEqual(path.value, (temporary + "/").encode() + original + b".map")
+            self.lib.set_private_cache(b"")
+            self.assertTrue(self.lib.native_map_get_path(b"_fiesta_prisoner", path, len(path)))
+            self.assertEqual(path.value, (temporary + "/_fiesta_prisoner.map").encode())
 
     def test_missing_map_waits_only_for_catalog_download_and_failure(self):
         with tempfile.TemporaryDirectory() as temporary:

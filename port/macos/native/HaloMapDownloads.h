@@ -13,9 +13,14 @@ enum halo_map_download_status {
 /* Only guest calls cross the rebase ABI; native callers keep the native API. */
 #define halo_map_download_directory host_halo_map_download_directory
 #define halo_map_download_request host_halo_map_download_request
+#define halo_arsenal_download_request host_halo_arsenal_download_request
 #endif
 int halo_map_download_directory(char *out, size_t capacity);
 int halo_map_download_request(const char *map_name);
+/* Empty expected SHA chooses the current compatible catalog revision; clients
+   pass the host's exact offered SHA. This also schedules local offline checks. */
+int halo_arsenal_download_request(const char *logical_map, const char *base_sha256_hex,
+                                const char *cache_sha256_hex);
 
 #ifdef __OBJC__
 #import <Foundation/Foundation.h>
@@ -34,6 +39,7 @@ int halo_map_download_request(const char *map_name);
 - (void)checkForMaps;
 - (void)cancelDownloads;
 - (int)requestMap:(NSString *)name;
+- (int)requestArsenal:(NSString *)name baseSHA256:(NSString *)base expectedSHA256:(NSString *)expected;
 - (void)activateForHost;
 /* Local reconstruction is usable offline, independently of HTTP consent. */
 - (void)registerAssembledMap:(NSURL *)file manifest:(NSDictionary *)manifest
@@ -41,6 +47,7 @@ int halo_map_download_request(const char *map_name);
 @end
 BOOL HaloDownloadConfigurationIsValid(NSDictionary *configuration);
 NSDictionary *HaloValidateMapCatalog(NSData *data, NSDictionary *configuration, NSError **error);
+NSDictionary *HaloValidateArsenalCatalog(NSData *data, NSDictionary *configuration, NSError **error);
 BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *configuration, NSError **error);
 #endif
 #endif

@@ -13,6 +13,8 @@ char const *native_map_basename(char const *map);
 int native_map_header_valid(unsigned char const *header, char const *filename);
 /* User-supplied files take precedence over the read-only managed-map overlay. */
 int native_map_get_path(char const *map, char *path, unsigned int capacity);
+/* Resolve original geometry even if its name collides with a hidden identity. */
+int native_map_get_original_path(char const *map, char *path, unsigned int capacity);
 /* 2 while downloading, -1 on a visible download failure, 0 otherwise. */
 int native_map_download_pending(char const *map);
 #ifdef HALO_MACOS
@@ -20,9 +22,14 @@ int native_map_download_pending(char const *map);
 #ifdef __ILP32__
 #define halo_map_download_directory host_halo_map_download_directory
 #define halo_map_download_request host_halo_map_download_request
+#define halo_arsenal_download_request host_halo_arsenal_download_request
 #endif
 int halo_map_download_directory(char *path, unsigned long capacity);
 int halo_map_download_request(char const *map);
 #endif
+/* Nonblocking host service; expected digest empty/NULL means latest compatible.
+   -1 failed, 0 unavailable, 1 installed, 2 queued/downloading. */
+int halo_arsenal_download_request(char const *logical_map, char const *base_sha256_hex,
+    char const *cache_sha256_hex);
 
 #endif

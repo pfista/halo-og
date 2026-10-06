@@ -111,12 +111,26 @@ static boolean decode_network_game_message(void *record, word *message, short *s
     return TRUE;
 }
 static unsigned performance_variant_get_flags(struct game_variant const *v) { (void)v; return 0; }
+static unsigned network_game_variant_required_capabilities(struct game_variant const *v) { (void)v; return 0; }
 static boolean network_game_server_performance_peers_support(struct network_game_server *s,unsigned flags) {
     (void)s; assert(!flags); return TRUE;
 }
 static boolean network_game_server_original_grenade_peers_support(struct network_game_server *s,
     struct game_variant *v,short count) { (void)s; (void)v; (void)count; return TRUE; }
 static void performance_options_apply_host_flags(unsigned flags) { assert(!flags); }
+/* This readiness fixture uses ordinary maps. Expanded identities are covered
+ * separately by the capability/cache protocol fixtures. */
+struct native_map_cache_selection { int expanded; };
+static struct native_map_cache_selection network_game_server_cache_selection;
+static boolean native_map_cache_prepare(char const *map,struct game_variant const *v,
+    struct native_map_cache_selection *selection,int show) { (void)map;(void)v;(void)show;selection->expanded=0;return TRUE; }
+static boolean native_map_cache_selection_equal(struct native_map_cache_selection const *a,
+    struct native_map_cache_selection const *b) { return a->expanded==b->expanded; }
+static boolean network_game_server_prepare_cache(struct network_game_server *s,char const *map,
+    struct game_variant const *v,struct native_map_cache_selection *selection) { (void)s;return native_map_cache_prepare(map,v,selection,1); }
+static void network_game_server_select_cache(struct network_game_server *s,
+    struct native_map_cache_selection const *selection,boolean changed) { (void)s;(void)changed;network_game_server_cache_selection=*selection; }
+static void platform_show_message(char const *title,char const *message) { (void)title;(void)message;assert(0); }
 static boolean game_engine_get_current_stage(struct game_variant *v,char *map) {
     *v=playlist_variant; strcpy(map,"levels\\test\\bloodgulch\\bloodgulch"); return TRUE;
 }

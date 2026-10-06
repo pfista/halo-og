@@ -5,6 +5,14 @@
 
 #if defined(HALO_ANDROID) || defined(HALO_MACOS)
 void community_maps_download_start(void) {}
+#ifdef HALO_ANDROID
+int halo_arsenal_download_request(const char *logical_map,
+    const char *base_sha256_hex, const char *cache_sha256_hex)
+{
+    (void)logical_map; (void)base_sha256_hex; (void)cache_sha256_hex;
+    return 0;
+}
+#endif
 #else
 
 #include "port_config.h"
@@ -16,6 +24,7 @@ void community_maps_download_start(void) {}
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../include/halo_sha256.h"
 #ifdef _WIN32
 #include <windows.h>
 #include <aclapi.h>
@@ -373,7 +382,9 @@ static int stock_profile(const char *maps)
     return 1;
 }
 
-static int verify_map(const char *path, const struct map_entry *entry)
+static int verify_payload(const char *path, const char *name,
+    unsigned long long expected_bytes, const char *expected_sha256,
+    unsigned long long declared_bytes)
 {
     unsigned char bytes[65536], digest[32]; char hex[65]; unsigned long long size, received = 0;
     file_handle file = read_open(path); int okay = 0, count;
@@ -387,11 +398,15 @@ static int verify_map(const char *path, const struct map_entry *entry)
     if (file == BAD_FILE) { mbedtls_sha256_free(&hash); return 0; }
     if (mbedtls_sha256_starts(&hash, 0)) goto done;
 #endif
-    if (!file_size(file, &size) || size != entry->bytes) goto done;
-    count = read_bytes(file, bytes, 2048);
-    if (count != 2048 || !valid_header(bytes, entry->id, 1, 1)) goto done;
+    if (!file_size(file, &size) || !size || size > MAX_MAP_BYTES ||
+        (expected_bytes && size != expected_bytes)) goto done;
+    if (!expected_bytes) expected_bytes = size;
+    count = read_bytes(file, bytes, name ? 2048 : sizeof(bytes));
+    if (name && (count != 2048 || !valid_header(bytes, name, 1, 1) ||
+        (declared_bytes && (little32(bytes + 8) != declared_bytes ||
+                            strcmp((const char *)bytes + 32, name))))) goto done;
     for (;;) {
-        if (count < 0 || (received += (unsigned)count) > entry->bytes) goto done;
+        if (count < 0 || (received += (unsigned)count) > expected_bytes) goto done;
 #ifdef _WIN32
         if (BCryptHashData(hash, bytes, (ULONG)count, 0) < 0) goto done;
 #else
@@ -400,14 +415,14 @@ static int verify_map(const char *path, const struct map_entry *entry)
         count = read_bytes(file, bytes, sizeof(bytes));
         if (!count) break;
     }
-    if (received != entry->bytes || !file_size(file, &size) || size != received) goto done;
+    if (received != expected_bytes || !file_size(file, &size) || size != received) goto done;
 #ifdef _WIN32
     if (BCryptFinishHash(hash, digest, sizeof(digest), 0) < 0) goto done;
 #else
     if (mbedtls_sha256_finish(&hash, digest)) goto done;
 #endif
     for (unsigned i = 0; i < sizeof(digest); i++) snprintf(hex + i * 2, 3, "%02x", digest[i]);
-    okay = !strcmp(hex, entry->sha256);
+    okay = !strcmp(hex, expected_sha256);
 done:
 #ifdef _WIN32
     if (hash) BCryptDestroyHash(hash); if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
@@ -416,6 +431,8 @@ done:
 #endif
     file_close(file); return okay;
 }
+static int verify_map(const char *path, const struct map_entry *entry)
+{ return verify_payload(path, entry->id, entry->bytes, entry->sha256, 0); }
 static void map_progress(void *context, unsigned long long received, unsigned long long total)
 {
     unsigned *last = context; unsigned percent = total ? (unsigned)(received * 100 / total) : 0;
@@ -433,6 +450,7 @@ static int object_url(char *out, size_t capacity, const char *key)
     }
     out[length] = 0; return 1;
 }
+#include "community_arsenal_download.inc"
 static int prefetch(void *unused)
 {
     char maps[PATH_BYTES], partial[PATH_BYTES], catalog_path[PATH_BYTES] = "", map_partial[PATH_BYTES] = "", error[256] = "";

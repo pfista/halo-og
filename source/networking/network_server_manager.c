@@ -472,6 +472,11 @@ symbols in this file:
 #include "networking/network_game_ui.h"
 #include "networking/network_messages.h"
 #include "networking/network_performance_protocol.h"
+#include "networking/network_variant_capabilities.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "halo_expanded_cache.h"
+#include "networking/network_expanded_cache_protocol.h"
+#endif
 #include "networking/network_server_manager.h"
 #include "networking/network_server_manager_internal.h"
 #include "networking/network_server_message_handler.h"
@@ -831,6 +836,72 @@ static unsigned long network_game_server_client_machine_join_times[MAXIMUM_NETWO
 
 /* A capability is attached to a connection slot, never a player or address. */
 static word network_game_server_performance_capabilities[MAXIMUM_NETWORK_MACHINE_COUNT];
+void platform_show_message(char const *title, char const *message);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static struct native_map_cache_selection network_game_server_cache_selection;
+
+static boolean network_game_server_prepare_cache(struct network_game_server *server,
+	char const *map, struct game_variant const *variant, struct native_map_cache_selection *selection)
+{
+	if (!native_map_cache_prepare(map, variant, selection, TRUE)) return FALSE;
+	if (server->sent_start_game_message &&
+		!native_map_cache_selection_equal(selection, &network_game_server_cache_selection))
+	{
+		platform_show_message("Halo: Fiesta cache locked", "The match's map and weapon arsenal are fixed. Select a different map or arsenal for the next match.");
+		return FALSE;
+	}
+	return TRUE;
+}
+static void network_game_server_select_cache(struct network_game_server *server,
+	struct native_map_cache_selection const *selection, boolean rules_changed)
+{
+	long i;
+	if (rules_changed || !native_map_cache_selection_equal(selection, &network_game_server_cache_selection))
+		for (i = 0; i < MAXIMUM_NETWORK_MACHINE_COUNT; i++)
+			SET_FLAG(server->client_machines[i].flags, _network_client_machine_precached_bit, FALSE);
+	network_game_server_cache_selection = *selection;
+	native_map_cache_select(selection);
+}
+struct native_map_cache_selection const *network_game_server_get_cache_selection(struct network_game_server *server)
+{
+	(void)server;
+	return &network_game_server_cache_selection;
+}
+boolean network_game_server_client_machine_cache_ready(struct network_game_server *server,
+	struct network_game_server_client_machine *machine, struct network_expanded_cache_identity const *identity)
+{
+	if (!native_map_cache_uses_global_arsenal(&server->game.variant) ||
+		!network_game_server_client_machine_is_joined_to_game(server, machine) ||
+		(!network_game_server_client_machine_is_local(server, machine) &&
+		 !network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY)) ||
+		identity->weapon_set != (unsigned)server->game.variant.universal_variant.weapon_set ||
+		!native_map_cache_selection_equal(&identity->selection, &network_game_server_cache_selection)) return FALSE;
+	SET_FLAG(machine->flags, _network_client_machine_precached_bit, TRUE);
+	return TRUE;
+}
+boolean network_game_server_client_machine_has_cache_identity(struct network_game_server *server,
+	struct network_game_server_client_machine *machine)
+{
+	return !native_map_cache_uses_global_arsenal(&server->game.variant) ||
+		TEST_FLAG(machine->flags, _network_client_machine_precached_bit);
+}
+/* Only an exact current offer refreshes liveness. The receive loop excludes
+   pending from its generic timestamp update; this never creates readiness. */
+boolean network_game_server_client_machine_cache_pending(struct network_game_server *server,
+	struct network_game_server_client_machine *machine, struct network_expanded_cache_identity const *identity)
+{
+	if (!network_game_server_client_machine_is_joined_to_game(server, machine) ||
+		!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY |
+			NETWORK_PERFORMANCE_DOWNLOAD_WAIT_CAPABILITY)) return FALSE;
+	if (native_map_cache_uses_global_arsenal(&server->game.variant) &&
+		identity->weapon_set == (unsigned)server->game.variant.universal_variant.weapon_set &&
+		native_map_cache_selection_equal(&identity->selection, &network_game_server_cache_selection))
+		network_game_server_client_machine_heard(server, machine);
+	/* Ignore a preceding offer's in-flight heartbeat after a lobby change.
+	   It never certifies readiness or extends the current offer's deadline. */
+	return TRUE;
+}
+#endif
 
 void platform_show_message(char const *title, char const *message);
 
@@ -840,7 +911,7 @@ void network_game_server_performance_capability(
 {
 	if (machine && VALID_INDEX(machine->machine_index, MAXIMUM_NETWORK_MACHINE_COUNT))
 		network_game_server_performance_capabilities[machine->machine_index] =
-			(word)(flags & NETWORK_PERFORMANCE_SUPPORTED_FLAGS);
+			(word)(flags & NETWORK_PERFORMANCE_SUPPORTED_CAPABILITIES);
 }
 
 boolean network_game_server_performance_supported(
@@ -897,10 +968,10 @@ static boolean network_game_server_performance_peers_support(
 	long index;
 
 #ifndef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-	if (flags & PERFORMANCE_MATCH_RULE_FLAGS)
+	if (flags & (PERFORMANCE_MATCH_RULE_FLAGS | NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY | NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY))
 	{
 		platform_show_message("Halo: match rules unavailable",
-			"This build does not support Input Delay, Hardcore, Fiesta, or Hardcore Camo. Turn these options off, or use a compatible build.");
+			"This build does not support Input Delay, Hardcore, Fiesta, Hardcore Camo, or expanded weapon sets. Turn these options off, or use a compatible build.");
 		return FALSE;
 	}
 #endif
@@ -930,6 +1001,21 @@ static boolean network_game_server_performance_peers_support(
 			!network_game_server_client_machine_is_local(server, machine) &&
 			!network_game_server_performance_supported(machine, flags))
 		{
+			if ((flags & NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY) &&
+				!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY))
+			{
+				platform_show_message("Halo: full Fiesta arsenal unavailable",
+					"A connected player needs an updated build for the full Uncut or All Fiesta arsenal. Update that player, or choose another Starting Equipment or Weapon Set.");
+				return FALSE;
+			}
+			if ((flags & NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY) &&
+				!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY))
+			{
+				platform_show_message("Halo: expanded weapon sets unavailable",
+					"A connected player does not support Uncut or All weapons. Choose another Weapon Set, "
+					"or have that player update before starting.");
+				return FALSE;
+			}
 			if ((flags & _performance_option_hardcore_camo) &&
 				!network_game_server_performance_supported(machine, _performance_option_hardcore_camo))
 			{
@@ -1012,11 +1098,18 @@ boolean performance_options_set_host_flags(
 {
 	struct network_game_server *server = global_network_game_server_get();
 	long index;
+	struct game_variant proposed;
+	struct native_map_cache_selection selection;
 
-	if (!server || (flags & ~((unsigned long)PERFORMANCE_OPTIONS_MASK)) ||
-		!network_game_server_input_delay_change_allowed(server, (unsigned)flags) ||
-		!network_game_server_performance_peers_support(server, (unsigned)flags))
+	if (!server || (flags & ~((unsigned long)PERFORMANCE_OPTIONS_MASK))) return FALSE;
+	proposed = server->game.variant;
+	performance_variant_set_flags(&proposed, (unsigned)flags);
+	if (!network_game_server_input_delay_change_allowed(server, (unsigned)flags) ||
+		!network_game_server_performance_peers_support(server, network_game_variant_required_capabilities(&proposed)) ||
+		!network_game_server_prepare_cache(server, server->game.map.name, &proposed, &selection))
 		return FALSE;
+	network_game_server_select_cache(server, &selection,
+		((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_fiesta) != 0);
 
 	performance_variant_set_flags(&server->game.variant, (unsigned)flags);
 	performance_variant_set_flags(game_engine_get_variant(), (unsigned)flags);
@@ -1564,7 +1657,7 @@ boolean network_game_server_idle(
 		name[index] = 0;
 		game_directory_publish(name, server->game.map.name, server->game.variant.game_engine_index,
 			server->game.player_count, server->game.maximum_players,
-			network_performance_advertised_version(performance_variant_get_flags(&server->game.variant), HALO_PORT_NETWORK_VERSION),
+			network_performance_advertised_version(network_game_variant_required_capabilities(&server->game.variant), HALO_PORT_NETWORK_VERSION),
 			open, state != _network_game_server_state_pregame, server->game.variant.universal_variant.teams,
 			(short)server->game.variant.universal_variant.score_to_win,
 			server->game.variant.game_engine_index == game_engine_oddball &&
@@ -1831,7 +1924,23 @@ boolean network_game_server_start_network_game(
 	boolean success = TRUE;
 
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x2DE, server);
-	if (!network_game_server_performance_peers_support(server, performance_variant_get_flags(&server->game.variant)) ||
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	{
+		struct native_map_cache_selection selection;
+		if (!network_game_server_prepare_cache(server, server->game.map.name, &server->game.variant, &selection)) return FALSE;
+		/* Readiness belongs to the identity offered with the lobby settings.
+		   An updated file requires an explicit selection and fresh readiness. */
+		if (selection.expanded &&
+			!native_map_cache_selection_equal(&selection, &network_game_server_cache_selection))
+		{
+			platform_show_message("Halo: Fiesta cache changed",
+				"The weapon arsenal changed after players prepared this match. Select the game type again before starting.");
+			return FALSE;
+		}
+		network_game_server_select_cache(server, &selection, FALSE);
+	}
+#endif
+	if (!network_game_server_performance_peers_support(server, network_game_variant_required_capabilities(&server->game.variant)) ||
 		!network_game_server_original_grenade_peers_support(server, &server->game.variant, server->game.player_count))
 		return FALSE;
 
@@ -2021,6 +2130,10 @@ void network_game_server_client_machine_is_precached(
 	char const *map_name)
 {
 	char const *multiplayer_map_name = main_get_multiplayer_map_name();
+	/* A name alone cannot certify the global cache's datum ordering. */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (native_map_cache_uses_global_arsenal(&server->game.variant)) return;
+#endif
 
 	if (!csstrcmp(multiplayer_map_name, map_name))
 		SET_FLAG(client_machine->flags, _network_client_machine_precached_bit, TRUE);
@@ -3333,6 +3446,9 @@ void network_game_server_change_map_name(
 	char const *map_name)
 {
 	long client_machine_index;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	struct native_map_cache_selection selection;
+#endif
 
 	match_assert(
 		NETWORK_SERVER_MANAGER_FILE,
@@ -3340,6 +3456,10 @@ void network_game_server_change_map_name(
 		server && map_name && map_name[0]);
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x79C,
 		server->state == _network_game_server_state_pregame);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (!network_game_server_prepare_cache(server, map_name, &server->game.variant, &selection)) return;
+	network_game_server_select_cache(server, &selection, FALSE);
+#endif
 
 	for (client_machine_index = 0;
 		client_machine_index < MAXIMUM_NETWORK_MACHINE_COUNT;
@@ -3377,13 +3497,31 @@ void network_game_server_change_game_variant(
 	struct network_game_server *server,
 	struct game_variant *variant)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	struct native_map_cache_selection selection;
+#endif
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x7BE, server && variant);
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x7BF,
 		server->state == _network_game_server_state_pregame);
+	if ((server->game.variant.universal_variant.weapon_set != variant->universal_variant.weapon_set ||
+		((performance_variant_get_flags(&server->game.variant) ^ performance_variant_get_flags(variant)) & _performance_option_fiesta)) &&
+		server->sent_start_game_message)
+	{
+		platform_show_message("Halo: weapon set locked",
+			"Weapon Set is fixed for the match. Choose it in the game type before starting the next match.");
+		return;
+	}
 	if (!network_game_server_input_delay_change_allowed(server, performance_variant_get_flags(variant)) ||
-		!network_game_server_performance_peers_support(server, performance_variant_get_flags(variant)) ||
+		!network_game_server_performance_peers_support(server, network_game_variant_required_capabilities(variant)) ||
 		!network_game_server_original_grenade_peers_support(server, variant, server->game.player_count))
 		return;
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (!network_game_server_prepare_cache(server, server->game.map.name, variant, &selection)) return;
+	network_game_server_select_cache(server, &selection,
+		server->game.variant.universal_variant.weapon_set != variant->universal_variant.weapon_set ||
+		((performance_variant_get_flags(&server->game.variant) ^ performance_variant_get_flags(variant)) & _performance_option_fiesta));
+#endif
 
 	csmemcpy(&server->game.variant, variant, sizeof(server->game.variant));
 	game_variant_options_default(&server->game.variant, &server->game.variant_options);
@@ -4036,15 +4174,28 @@ static boolean network_game_server_setup_game_from_playlist(
 	struct network_game_server *server)
 {
 	boolean success = FALSE;
+	struct game_variant variant;
+	char map_name[sizeof(server->game.map.name)] = { 0 };
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	struct native_map_cache_selection selection;
+#endif
 
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x961, server);
 
 	network_event("setting up a net game");
-	if (game_engine_get_current_stage(&server->game.variant, server->game.map.name))
+	if (game_engine_get_current_stage(&variant, map_name))
 	{
 		wchar_t machine_name[MAXIMUM_MACHINE_NAME_LENGTH] = L"<unknown>";
-		if (!network_game_server_performance_peers_support(server, performance_variant_get_flags(&server->game.variant)))
+		if (!network_game_server_performance_peers_support(server, network_game_variant_required_capabilities(&variant)))
 			return FALSE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* Playlist setup starts a new match; the previous frozen cache may change. */
+		if (!native_map_cache_prepare(map_name, &variant, &selection, TRUE)) return FALSE;
+		network_game_server_select_cache(server, &selection, TRUE);
+#endif
+		/* A refused saved selection must not replace the current lobby. */
+		csmemcpy(&server->game.variant, &variant, sizeof(variant));
+		csmemcpy(server->game.map.name, map_name, sizeof(map_name));
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		performance_options_apply_host_flags(performance_variant_get_flags(&server->game.variant));
@@ -4293,7 +4444,15 @@ static boolean network_game_server_handle_client_machines(
 					/* (a connection that has not joined is timed from when it
 					connected: what it sends before its join does not count) */
 					if (network_game_server_client_machine_is_joined_to_game(server, client_machine))
-						network_game_server_client_machine_heard(server, client_machine);
+					{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+						struct network_expanded_cache_identity pending_identity;
+						/* Pending has its own exact-identity liveness check. */
+						if (!network_expanded_cache_decode((byte const *)message, message_buffer_size,
+							NETWORK_EXPANDED_CACHE_DOWNLOAD_PENDING, &pending_identity))
+#endif
+							network_game_server_client_machine_heard(server, client_machine);
+					}
 					message_buffer_size = sizeof(message_buffer);
 				}
 				else

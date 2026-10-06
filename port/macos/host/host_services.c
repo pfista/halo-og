@@ -22,6 +22,16 @@ int host_halo_map_download_request(const char *map_name)
 #endif
 }
 
+int host_halo_arsenal_download_request(const char *logical_map,
+    const char *base_sha256_hex, const char *cache_sha256_hex)
+{
+#ifdef HALO_IOS
+    return HALO_MAP_DOWNLOAD_UNAVAILABLE;
+#else
+    return halo_arsenal_download_request(logical_map, base_sha256_hex, cache_sha256_hex);
+#endif
+}
+
 int host_halo_directory_http(const char *method, const char *url, const char *lease,
     const char *body, char *response, int capacity, int *status, int *retry_after_seconds)
 {

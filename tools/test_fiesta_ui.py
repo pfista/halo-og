@@ -23,8 +23,8 @@ enum { ITEM_SCREEN,ITEM_MENU,ITEM_ROW,ITEM_SPINNER,ITEM_HELP,ITEM_LABEL,
 static const char *item_names[ITEM_COUNT]={
  ITEM_PREFIX "item_options_screen",ITEM_PREFIX "item_options_menu",ITEM_PREFIX "op_starting_equipment",
  ITEM_PREFIX "item_options_starting_equipment_spinner",ITEM_PREFIX "item_options_help",
- ITEM_PREFIX "item_options_starting_equipment_label","fixture\\row0","fixture\\row1","fixture\\row2",
- "fixture\\spinner0","fixture\\spinner1","fixture\\spinner2","fixture\\other",
+ ITEM_PREFIX "item_options_starting_equipment_label","fixture\\row0","fixture\\row1",ITEM_PREFIX "op_weapon_set",
+ "fixture\\spinner0","fixture\\spinner1",ITEM_PREFIX "item_options_weapon_set_spinner","fixture\\other",
  ITEM_PREFIX "var_starting_equipment",ITEM_PREFIX "cap_item_options","fixture\\strings0","fixture\\strings1","fixture\\strings2"};
 static struct {
  struct ui_widget_definition defs[ITEM_WIDGET_COUNT];
@@ -118,40 +118,61 @@ static void free_item(struct widget_instance *w) {
 static void clone_and_help(void) {
  mutation_calls=help_calls=0;
  setup_items(); long mapped=fiesta_item_options_remap_tag(item_id(ITEM_SCREEN));
- assert(mapped!=item_id(ITEM_SCREEN) && register_calls==7);
- assert(fiesta_item_options_remap_tag(item_id(ITEM_SCREEN))==mapped && register_calls==7);
+ assert(mapped!=item_id(ITEM_SCREEN) && register_calls==10);
+ assert(fiesta_item_options_remap_tag(item_id(ITEM_SCREEN))==mapped && register_calls==10);
  assert(fiesta_item_options_remap_tag(item_id(ITEM_MENU))==item_id(ITEM_MENU));
  assert(!memcmp(&authored,&original,sizeof(authored)));
  assert(fiesta_item_options.screen.child_widgets.count==3 && fiesta_item_options.menu.child_widgets.count==4);
  assert(fiesta_item_options.menu.event_handlers.address==authored.events);
  assert(fiesta_item_options.menu.game_data_inputs.address==&authored.input);
- assert(!memcmp(fiesta_item_options.menu_children,authored.menu,3*sizeof(authored.menu[0])));
+ assert(!memcmp(fiesta_item_options.menu_children,authored.menu,2*sizeof(authored.menu[0])));
  assert(fiesta_item_options.row_children[0].widget_tag.index==item_id(ITEM_LABEL));
+ assert(fiesta_item_options.weapon_row_children[0].widget_tag.index==item_id(ITEM_LABEL));
  assert(!memcmp(&fiesta_item_options.spinner.bounds,&authored.defs[ITEM_SPINNER].bounds,sizeof(rectangle2d)));
  assert(fiesta_item_options.spinner.text_font.index==authored.defs[ITEM_SPINNER].text_font.index);
- assert(fiesta_item_options.values.strings.count==3 && fiesta_item_options.descriptions.strings.count==20);
+ assert(fiesta_item_options.values.strings.count==3 && fiesta_item_options.weapon_values.strings.count==12 && fiesta_item_options.descriptions.strings.count==22);
  assert(!memcmp(fiesta_item_options.value_entries,authored.values,sizeof(authored.values)));
- assert(!memcmp(fiesta_item_options.description_entries,authored.descriptions,sizeof(authored.descriptions)));
+ assert(!memcmp(fiesta_item_options.weapon_value_entries,authored.other_values[2],sizeof(authored.other_values[2])));
+ assert(!memcmp(fiesta_item_options.description_entries,authored.descriptions,17*sizeof(authored.descriptions[0])));
+ assert(!memcmp(&fiesta_item_options.description_entries[19],&authored.descriptions[17],2*sizeof(authored.descriptions[0])));
  assert(!wcscmp(fiesta_item_options.value_entries[2].string.address,L"FIESTA"));
  assert(fiesta_item_options.value_entries[2].string.size==7*sizeof(wchar_t));
- assert(!wcscmp(fiesta_item_options.description_entries[19].string.address,L"Respawn with two random original Xbox weapons.\r\nA new pair is chosen each time you spawn."));
+ assert(!wcscmp(fiesta_item_options.weapon_value_entries[10].string.address,L"UNCUT"));
+ assert(!wcscmp(fiesta_item_options.weapon_value_entries[11].string.address,L"ALL"));
+ assert(!wcscmp(fiesta_item_options.description_entries[17].string.address,L"Fiesta uses all restored pre-release weapons,\r\neven those absent from the original map."));
+ assert(!wcscmp(fiesta_item_options.description_entries[18].string.address,L"Pfiesta uses the full playable weapon arsenal.\r\nIncludes restored and community weapons."));
+ assert(!wcscmp(fiesta_item_options.description_entries[21].string.address,L"Respawn with two random weapons from this set.\r\nA new pair is chosen each time you spawn."));
  struct widget_instance *menu=item_widget(tag_loaded('DeLa',"ui\\native_fiesta\\item_options_menu"),NULL),*row=menu->child;
- for(unsigned i=0;i<3;i++) row=row->next;
+ for(unsigned i=0;i<2;i++) row=row->next;
+ menu->focused_child=row;
+ for(short selection=0;selection<12;selection++) {
+   row->child->next->parameters.list.selected_index=selection; game_options_menu_update_text_desc(menu);
+   fiesta_item_options_update_name(menu);
+   assert(!wcscmp(fiesta_item_options.value_entries[2].string.address,selection==11 ? L"PFIESTA":L"FIESTA"));
+   assert(fiesta_item_options.value_entries[2].string.size==(selection==11 ? 8:7)*sizeof(wchar_t));
+   assert(menu->parameters.list.extended_description->parameters.text_box.string_list_index==7+selection);
+ }
+ row->child->next->parameters.list.selected_index=10; fiesta_item_options_update_name(menu);
+ assert(!wcscmp(fiesta_item_options.value_entries[2].string.address,L"FIESTA"));
+ assert(!memcmp(&authored,&original,sizeof(authored)));
+ row=row->next;
  menu->focused_child=row;
  for(short selection=0;selection<3;selection++) {
    row->child->next->parameters.list.selected_index=selection; game_options_menu_update_text_desc(menu);
-   assert(menu->parameters.list.extended_description->parameters.text_box.string_list_index==17+selection);
+   assert(menu->parameters.list.extended_description->parameters.text_box.string_list_index==19+selection);
  }
  free_item(menu);
  long old=mapped; scenario_tags_unload(); cache_file_globals.tags_loaded=TRUE; global_tag_instances=item_tags;
  assert(fiesta_item_options_remap_tag(item_id(ITEM_SCREEN))!=old && !tag_index_is_group(old,'DeLa'));
- for(unsigned fail=1;fail<=7;fail++) {
+ for(unsigned fail=1;fail<=10;fail++) {
    setup_items(); fail_registration=fail;
    assert(fiesta_item_options_remap_tag(item_id(ITEM_SCREEN))==item_id(ITEM_SCREEN));
    assert(!memcmp(&authored,&original,sizeof(authored)));
    fail_registration=0; assert(fiesta_item_options_remap_tag(item_id(ITEM_SCREEN))!=item_id(ITEM_SCREEN));
  }
  setup_items(); authored.lists[0].strings.count=1;
+ assert(fiesta_item_options_remap_tag(item_id(ITEM_SCREEN))==item_id(ITEM_SCREEN) && !register_calls);
+ setup_items(); authored.lists[4].strings.count=11;
  assert(fiesta_item_options_remap_tag(item_id(ITEM_SCREEN))==item_id(ITEM_SCREEN) && !register_calls);
  /* Cloning tags and selecting help text must not apply playlist edits/events. */
  assert(mutation_calls==0 && help_calls==0);
@@ -178,6 +199,7 @@ enum { game_engine_ctf=1,game_engine_slayer,game_engine_oddball,game_engine_king
 /* VARIANTS */
 #define __GAME_ENGINE_H
 #include "game/starting_equipment.h"
+#include "game/weapon_sets.h"
 /* CALLBACK TYPES */
 static struct game_variant edited;
 static boolean editing=TRUE;
@@ -189,7 +211,7 @@ static void setup_callbacks(unsigned flags,short mode) {
  performance_variant_set_flags(&edited,flags); assert(starting_equipment_set(&edited,mode));
  edited.universal_variant.flags|=0x4004;edited.universal_variant.vehicle_set=3;edited.universal_variant.weapon_set=7;
  menu.type=3;menu.child=rows;errors=0;editing=TRUE;
- for(unsigned i=0;i<4;i++) {rows[i].child=&spinners[i];rows[i].next=i<3 ? &rows[i+1]:NULL;spinners[i].type=2;spinners[i].generated_count=i==3 ? 3:11;}
+ for(unsigned i=0;i<4;i++) {rows[i].child=&spinners[i];rows[i].next=i<3 ? &rows[i+1]:NULL;spinners[i].type=2;spinners[i].generated_count=i==3 ? 3:i==2 ? 12:11;}
 }
 int main(void) {
  assert(sizeof(struct game_variant)==104);
@@ -209,6 +231,32 @@ int main(void) {
      assert(edited.universal_variant.vehicle_set==3 && edited.universal_variant.weapon_set==7);
      assert((edited.universal_variant.flags&~0x20u)==0x4004u);
    }
+ }
+ /* UI order omits hidden Xbox No Grenades ID 10. Signed saves and network
+  * variants retain the original 104-byte layout and appended IDs 11/12. */
+ for(short mode=0;mode<3;mode++) for(short selection=0;selection<12;selection++) {
+   setup_callbacks(7,mode);
+   edited.universal_variant.weapon_set=selection<10 ? selection:selection==10 ? GAME_WEAPON_SET_UNCUT:GAME_WEAPON_SET_ALL;
+   struct game_variant before=edited;
+   assert(playlist_profile_initialize_item_options(&menu,NULL,NULL));
+   assert(spinners[2].data3C.selected_index==selection && !memcmp(&before,&edited,sizeof(edited)));
+   assert(playlist_profile_change_item_options(&menu,NULL,NULL) && !errors);
+   assert(!memcmp(&before,&edited,sizeof(edited)));
+   spinners[2].data3C.selected_index=(selection+1)%12;
+   assert(playlist_profile_change_item_options(&menu,NULL,NULL) && !errors);
+   short next=(selection+1)%12;
+   assert(edited.universal_variant.weapon_set==(next<10 ? next:next==10 ? GAME_WEAPON_SET_UNCUT:GAME_WEAPON_SET_ALL));
+   assert(starting_equipment_get(&edited)==mode && edited.universal_variant.vehicle_set==3);
+ }
+ setup_callbacks(7,2);edited.universal_variant.weapon_set=10;
+ struct game_variant hidden_before=edited;
+ assert(playlist_profile_initialize_item_options(&menu,NULL,NULL) && spinners[2].data3C.selected_index==0);
+ assert(!memcmp(&hidden_before,&edited,sizeof(edited)));
+ for(short saved=GAME_WEAPON_SET_UNCUT;saved<=GAME_WEAPON_SET_ALL;saved++) {
+   setup_callbacks(7,2);edited.universal_variant.weapon_set=saved;spinners[2].generated_count=10;
+   struct game_variant saved_before=edited;
+   assert(playlist_profile_initialize_item_options(&menu,NULL,NULL) && spinners[2].data3C.selected_index==0);
+   assert(!memcmp(&saved_before,&edited,sizeof(edited)));
  }
  setup_callbacks(128|64|7,2);assert(playlist_profile_initialize_item_options(&menu,NULL,NULL));
  struct game_variant before=edited;spinners[3].data3C.selected_index=3;
@@ -270,9 +318,12 @@ class FiestaUiTests(unittest.TestCase):
         for path in paths:
             cache = Cache(path)
             for name, texts, limit in (
-                (r"ui\large_ui", ("FIESTA",), 106),
-                (r"ui\large_ui", ("Respawn with two random original Xbox weapons.", "A new pair is chosen each time you spawn."), 482),
+                (r"ui\large_ui", ("FIESTA", "PFIESTA", "UNCUT", "ALL"), 106),
+                (r"ui\large_ui", ("Respawn with two random weapons from this set.", "A new pair is chosen each time you spawn.",
+                                     "Fiesta uses all restored pre-release weapons,", "even those absent from the original map.",
+                                     "Pfiesta uses the full playable weapon arsenal.", "Includes restored and community weapons."), 482),
                 (r"ui\small_ui", ("Starting Equipment: Fiesta", "Fiesta / Hardcore: On"), 183),
+                (r"ui\small_ui", ("Equipment: Pfiesta", "Pfiesta/Hardcore: On"), 144),
             ):
                 font = cache.by_path[name]
                 _, _, _, inset = cache.unpack("<4h", font["address"] + 4)
@@ -283,7 +334,7 @@ class FiestaUiTests(unittest.TestCase):
                     cursor = ink_right = inset
                     for character in value:
                         advance, width, origin_x = glyphs[character]
-                        ink_right = max(ink_right, cursor + origin_x + width)
+                        ink_right = max(ink_right, cursor - origin_x + width)
                         cursor += advance
                     self.assertLessEqual(max(cursor, ink_right), limit, f"{path.stem}: {value!r} clips")
 

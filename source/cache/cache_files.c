@@ -137,6 +137,10 @@ symbols in this file:
 #ifdef HALO_MACOS
 #include "halo_custom_maps.h"
 #endif
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "halo_custom_maps.h"
+#include "halo_expanded_cache.h"
+#endif
 
 /* ---------- constants */
 
@@ -765,8 +769,8 @@ boolean cache_files_map_plays_multiplayer(
 	build[0] = 0;
 	if (!map_name || !map_name[0])
 		return TRUE;
-#ifdef HALO_MACOS
-	if (!native_map_get_path(map_name, path, sizeof(path))) return FALSE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (!native_map_get_path(native_map_cache_resolve(map_name), path, sizeof(path))) return FALSE;
 #else
 	snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), tag_name_strip_path(map_name));
 #endif
@@ -887,6 +891,11 @@ long scenario_tags_load(
 	result = NONE;
 	texture_cache_open();
 	sound_cache_open();
+	if (!texture_cache_set_map(stripped_scenario_name))
+	{
+		error(_error_delayed, "Cannot allocate the texture cache for this map.");
+		return NONE;
+	}
 	if (cache_file_open(stripped_scenario_name, &cache_file_globals.header))
 	{
 		tag_cache_base_address = physical_memory_get_tag_cache_base_address();

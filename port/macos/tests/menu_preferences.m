@@ -2,6 +2,8 @@
 #import "HaloPreferences.h"
 #include <assert.h>
 #include <sys/stat.h>
+#include <CommonCrypto/CommonDigest.h>
+#include "../../linux/include/halo_expanded_cache.h"
 
 static unsigned progressCalls;
 static void progress(void *context, const char *name, unsigned long long done, unsigned long long total) {
@@ -30,6 +32,129 @@ static NSDictionary *snapshot(NSURL *root) {
         }
     }
     return result;
+}
+static NSString *fixtureSHA(NSData *data) {
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
+    NSMutableString *result = [NSMutableString string];
+    for (unsigned i = 0; i < sizeof(digest); i++) [result appendFormat:@"%02x", digest[i]];
+    return result;
+}
+static NSData *arsenalMapFixture(NSData *template, NSString *name, BOOL expanded) {
+    NSMutableData *result = [template mutableCopy];
+    if (expanded) result.length = 2112;
+    unsigned char *bytes = result.mutableBytes;
+    memset(bytes + 32, 0, 32);
+    memcpy(bytes + 32, name.UTF8String, name.length);
+    bytes[96] = 1;
+    uint32_t length = (uint32_t)result.length, offset = 2048, tagSize = 64;
+    memcpy(bytes + 8, &length, 4);
+    if (expanded) { memcpy(bytes + 16, &offset, 4); memcpy(bytes + 20, &tagSize, 4); }
+    return result;
+}
+static NSDictionary *writeArsenalFixture(NSURL *maps, NSData *template, NSString *logical) {
+    NSString *physical = logical.length <= 23 ? [@"_fiesta_" stringByAppendingString:logical] :
+        [@"_fiestah_" stringByAppendingString:[fixtureSHA([logical dataUsingEncoding:NSASCIIStringEncoding]) substringToIndex:16]];
+    NSData *base = arsenalMapFixture(template, logical, NO), *cache = arsenalMapFixture(template, physical, YES);
+    NSDictionary *manifest = @{@"schema_version":@1, @"generation":@(HALO_EXPANDED_CACHE_GENERATION), @"logical_map":logical,
+        @"physical_map":physical, @"base_sha256":fixtureSHA(base), @"cache_sha256":fixtureSHA(cache),
+        @"weapon_list_sha256":@HALO_EXPANDED_CACHE_WEAPON_LIST_SHA256, @"cache_file_bytes":@(cache.length), @"cache_declared_bytes":@(cache.length)};
+    writeFixture(base, [maps URLByAppendingPathComponent:[logical stringByAppendingPathExtension:@"map"]]);
+    NSURL *hidden = [maps URLByAppendingPathComponent:@"arsenal/v1"];
+    writeFixture(cache, [hidden URLByAppendingPathComponent:[physical stringByAppendingPathExtension:@"map"]]);
+    writeFixture([NSJSONSerialization dataWithJSONObject:manifest options:0 error:nil],
+        [hidden URLByAppendingPathComponent:[physical stringByAppendingPathExtension:@"json"]]);
+    return manifest;
+}
+static void changeArsenalDuringCopy(void *context, const char *name, unsigned long long done, unsigned long long total) {
+    (void)name; (void)done; (void)total;
+    NSURL *file = (__bridge NSURL *)context;
+    NSMutableDictionary *manifest = [[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:file] options:0 error:nil] mutableCopy];
+    manifest[@"cache_sha256"] = [@"0" stringByPaddingToLength:64 withString:@"0" startingAtIndex:0];
+    writeFixture([NSJSONSerialization dataWithJSONObject:manifest options:0 error:nil], file);
+}
+static void arsenalCopyFixtures(NSURL *test, NSURL *valid) {
+    NSURL *root = [test URLByAppendingPathComponent:@"arsenal-copy-source"], *support = [test URLByAppendingPathComponent:@"arsenal-copy-support"];
+    assert([NSFileManager.defaultManager copyItemAtURL:valid toURL:root error:nil]);
+    NSData *template = [NSData dataWithContentsOfURL:[valid URLByAppendingPathComponent:@"maps/ui.map"]];
+    NSDictionary *manifest = writeArsenalFixture([root URLByAppendingPathComponent:@"maps"], template, @"prisoner");
+    writeArsenalFixture([root URLByAppendingPathComponent:@"maps"], template, @"long_community_map_identity");
+    writeArsenalFixture([root URLByAppendingPathComponent:@"maps_de"], template, @"prisoner");
+    NSURL *hidden = [root URLByAppendingPathComponent:@"maps/arsenal/v1"], *manifestFile = [hidden URLByAppendingPathComponent:@"_fiesta_prisoner.json"];
+    writeFixture([@"original unrelated file" dataUsingEncoding:NSUTF8StringEncoding], [hidden URLByAppendingPathComponent:@"notes.txt"]);
+    writeFixture([@"existing managed file" dataUsingEncoding:NSUTF8StringEncoding], [support URLByAppendingPathComponent:@"Game Data/existing/keep.txt"]);
+    NSDictionary *original = snapshot(root), *existing = snapshot(support);
+    NSError *error = nil;
+    unsigned long long expectedSize = 0;
+    for (NSString *name in original) if (![name hasSuffix:@"notes.txt"]) expectedSize += [original[name] length];
+    assert(HaloGameDataCopySize(root, &error) == expectedSize);
+    NSURL *copied = HaloCopyGameData(root, support, NULL, NULL, &error);
+    assert(copied && [snapshot(root) isEqual:original]);
+    NSDictionary *copiedFiles = snapshot(copied);
+    for (NSString *name in original) if (![name hasSuffix:@"notes.txt"]) assert([original[name] isEqual:copiedFiles[name]]);
+    assert(!copiedFiles[@"maps/arsenal/v1/notes.txt"] && !copiedFiles[@"v1/_fiesta_prisoner.map"]);
+    NSDictionary *record = [NSJSONSerialization JSONObjectWithData:copiedFiles[@"import.json"] options:0 error:nil];
+    BOOL recorded = NO;
+    for (NSDictionary *file in record[@"files"]) if ([file[@"path"] isEqual:@"maps/arsenal/v1/_fiesta_prisoner.json"]) recorded = YES;
+    assert(recorded && [record[@"completed"] boolValue]);
+    for (NSString *name in existing) assert([existing[name] isEqual:snapshot(support)[name]]);
+    NSDictionary *preserved = snapshot(support);
+    NSString *zeros = [@"0" stringByPaddingToLength:64 withString:@"0" startingAtIndex:0];
+    NSArray *changes = @[@{@"schema_version":@2}, @{@"schema_version":@YES}, @{@"generation":@2}, @{@"logical_map":@"../prisoner"},
+        @{@"physical_map":@"_fiesta_other"}, @{@"base_sha256":zeros}, @{@"cache_sha256":zeros}, @{@"weapon_list_sha256":zeros},
+        @{@"cache_file_bytes":@2049}, @{@"cache_declared_bytes":@2113}, @{@"cache_file_bytes":@(128ULL * 1024 * 1024 + 1)}, @{@"extra":@1}];
+    NSMutableArray *badManifests = [NSMutableArray array];
+    for (NSDictionary *change in changes) {
+        NSMutableDictionary *bad = [manifest mutableCopy]; [bad addEntriesFromDictionary:change];
+        [badManifests addObject:[NSJSONSerialization dataWithJSONObject:bad options:0 error:nil]];
+    }
+    NSString *json = [[NSString alloc] initWithData:original[@"maps/arsenal/v1/_fiesta_prisoner.json"] encoding:NSUTF8StringEncoding];
+    [badManifests addObject:[[[json substringToIndex:1] stringByAppendingFormat:@"\"schema_version\":1,%@", [json substringFromIndex:1]] dataUsingEncoding:NSUTF8StringEncoding]];
+    [badManifests addObject:[[json stringByReplacingOccurrencesOfString:@"\"logical_map\"" withString:@"\"logical\\u005fmap\""] dataUsingEncoding:NSUTF8StringEncoding]];
+    [badManifests addObject:[NSMutableData dataWithLength:4097]];
+    for (NSData *bad in badManifests) {
+        writeFixture(bad, manifestFile); NSDictionary *before = snapshot(root); error = nil;
+        assert(!HaloCopyGameData(root, support, NULL, NULL, &error) && error);
+        assert([snapshot(root) isEqual:before] && [snapshot(support) isEqual:preserved]);
+    }
+    writeFixture(original[@"maps/arsenal/v1/_fiesta_prisoner.json"], manifestFile);
+    NSURL *cacheFile = [hidden URLByAppendingPathComponent:@"_fiesta_prisoner.map"];
+    for (unsigned field = 0; field < 4; field++) {
+        NSMutableData *badCache = [original[@"maps/arsenal/v1/_fiesta_prisoner.map"] mutableCopy];
+        unsigned char *bytes = badCache.mutableBytes;
+        if (field == 0) bytes[4] = 7;
+        if (field == 1) bytes[96] = 0;
+        if (field == 2) bytes[32] = 'x';
+        if (field == 3) { uint32_t tagSize = 22U * 1024 * 1024 + 1; memcpy(bytes + 20, &tagSize, 4); }
+        NSMutableDictionary *bad = [manifest mutableCopy]; bad[@"cache_sha256"] = fixtureSHA(badCache);
+        writeFixture(badCache, cacheFile); writeFixture([NSJSONSerialization dataWithJSONObject:bad options:0 error:nil], manifestFile);
+        error = nil; assert(!HaloCopyGameData(root, support, NULL, NULL, &error) && error);
+        assert([snapshot(support) isEqual:preserved]);
+    }
+    writeFixture(original[@"maps/arsenal/v1/_fiesta_prisoner.map"], cacheFile);
+    writeFixture(original[@"maps/arsenal/v1/_fiesta_prisoner.json"], manifestFile);
+    for (NSString *name in @[@"_fiesta_prisoner.map", @"_fiesta_prisoner.json"]) {
+        NSURL *file = [hidden URLByAppendingPathComponent:name]; NSData *bytes = [NSData dataWithContentsOfURL:file];
+        assert([NSFileManager.defaultManager removeItemAtURL:file error:nil]); error = nil;
+        assert(!HaloCopyGameData(root, support, NULL, NULL, &error) && error);
+        assert([NSFileManager.defaultManager createSymbolicLinkAtURL:file withDestinationURL:[copied URLByAppendingPathComponent:[@"maps/arsenal/v1" stringByAppendingPathComponent:name]] error:nil]); error = nil;
+        assert(!HaloCopyGameData(root, support, NULL, NULL, &error) && error);
+        assert([NSFileManager.defaultManager removeItemAtURL:file error:nil]); writeFixture(bytes, file);
+        assert([snapshot(support) isEqual:preserved]);
+    }
+    NSURL *generation = [root URLByAppendingPathComponent:@"maps/arsenal/v1"], *parked = [root URLByAppendingPathComponent:@"parked-generation"];
+    assert([NSFileManager.defaultManager moveItemAtURL:generation toURL:parked error:nil]);
+    assert([NSFileManager.defaultManager createSymbolicLinkAtURL:generation withDestinationURL:parked error:nil]); error = nil;
+    assert(!HaloCopyGameData(root, support, NULL, NULL, &error) && error);
+    assert([NSFileManager.defaultManager removeItemAtURL:generation error:nil]);
+    assert([NSFileManager.defaultManager moveItemAtURL:parked toURL:generation error:nil]);
+    assert([snapshot(support) isEqual:preserved]);
+    error = nil;
+    assert(!HaloCopyGameData(root, support, changeArsenalDuringCopy, (__bridge void *)manifestFile, &error) && error);
+    assert([snapshot(support) isEqual:preserved]); // A changed manifest cannot publish a partial managed import.
+    writeFixture(original[@"maps/arsenal/v1/_fiesta_prisoner.json"], manifestFile);
+    assert([snapshot(root) isEqual:original]);
+    puts("Managed arsenal copying: exact hierarchy/bytes/records, community and long names, language maps, strict manifests, changed-source rollback and originals/existing destination preservation passed");
 }
 static void timerDownloadPreferenceFixtures(NSURL *test, NSURL *valid) {
     NSURL *support = [test URLByAppendingPathComponent:@"timer-download-preferences"];
@@ -193,6 +318,7 @@ int main(int argc, const char **argv) {
             assert(error.localizedDescription.length);
         }
         timerDownloadPreferenceFixtures(test, valid);
+        arsenalCopyFixtures(test, valid);
         if (argc == 3) assert(HaloValidateGameData([NSURL fileURLWithPath:@(argv[2])], &error));
         HaloPreferences *preferences = [[HaloPreferences alloc] initWithSupportDirectory:support];
         assert(preferences.communityDownloadsEnabled);

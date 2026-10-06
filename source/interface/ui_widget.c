@@ -6296,6 +6296,9 @@ static void widget_instance_render_column_list(
 	point2d offset,
 	boolean focus)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	fiesta_item_options_update_name(widget);
+#endif
 	if (widget->parameters.list.extended_description)
 	{
 		widget->parameters.list.extended_description->alpha_modifier =

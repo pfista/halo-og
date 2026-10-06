@@ -34,6 +34,10 @@ void texture_cache_delete(
 	void);
 void texture_cache_open(
 	void);
+/* Configure a just-opened, empty cache for this logical map. Only an accepted
+   matching global Fiesta selection can use the larger native texture budget. */
+boolean texture_cache_set_map(
+	char const *logical_map);
 void texture_cache_idle(
 	void);
 void texture_cache_return_memory(

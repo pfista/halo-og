@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "catalog_url": "https://dl.oghalo.com/catalogs/testing/current.json",
+  "arsenal_catalog_url": "https://dl.oghalo.com/catalogs/testing/arsenals-v1.json",
   "objects_base_url": "https://dl.oghalo.com/",
   "allowed_origins": ["https://dl.oghalo.com"],
   "profile": "stock-xbox-ntsc",

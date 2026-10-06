@@ -51,6 +51,15 @@ int halo_map_download_request(const char *name)
     assert(name == pointer(0x02000200) && !strcmp(name, "downrush"));
     return HALO_MAP_DOWNLOAD_PENDING;
 }
+int halo_arsenal_download_request(const char *name, const char *base, const char *expected)
+{
+    native_calls++;
+    if (!name) { assert(!base && !expected); return HALO_MAP_DOWNLOAD_UNAVAILABLE; }
+    assert(name == pointer(0x02001000) && !strcmp(name, "prisoner"));
+    assert(base == pointer(0x02001100) && strlen(base) == 64 && base[0] == 'b');
+    if (expected) assert(expected == pointer(0x02001200) && strlen(expected) == 64 && expected[0] == 'c');
+    return HALO_MAP_DOWNLOAD_PENDING;
+}
 int halo_directory_http(const char *method, const char *url, const char *lease,
     const char *body, char *response, int capacity, int *status, int *retry_after_seconds)
 {
@@ -83,8 +92,8 @@ static void *map_at(uint64_t address, size_t size)
 static void *run(void *unused)
 {
     uint32_t result = guest(0);
-    printf("guest service result=%u expected=93; native calls=%u expected=8\n", result, native_calls);
-    return (void *)(uintptr_t)(result != 93 || native_calls != 8);
+    printf("guest service result=%u expected=93; native calls=%u expected=11\n", result, native_calls);
+    return (void *)(uintptr_t)(result != 93 || native_calls != 11);
 }
 int main(int argc, char **argv)
 {
@@ -123,6 +132,9 @@ int main(int argc, char **argv)
     strcpy(pointer(0x02000300), "https://fixture.invalid/v1/games");
     strcpy(pointer(0x02000500), "fixture lease");
     strcpy(pointer(0x02000600), "fixture body");
+    strcpy(pointer(0x02001000), "prisoner");
+    memset(pointer(0x02001100), 'b', 64);
+    memset(pointer(0x02001200), 'c', 64);
     guest = pointer((uint32_t)elf->entry);
     void *stack = map_at(BASE + 0x90000000, 0x400000);
     pthread_attr_t attributes;

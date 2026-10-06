@@ -71,6 +71,23 @@ The nonsecret Mac endpoint configuration is
 Upload credentials stay outside the client in the approved 1Password environment.
 See [publishing](map-publishing.md) for the operator workflow.
 
+Uncut Fiesta and All Fiesta request a separate hidden weapon cache for the
+selected logical map. These variants contain the whole map plus the shared
+weapon dependencies because the engine reads one compiled map cache at a time.
+The full generation-one library has 54 variants, about 1.995 GB; Prisoner alone
+is 34 MiB. Mac, Windows and Linux download only requested variants through
+`catalogs/testing/arsenals-v1.json`, under the same download preference as
+community maps. Ordinary modes keep using the original map files.
+
+The downloader verifies the original-map SHA, catalog identity, cache and flat
+manifest before reporting readiness. Mac installs pairs in
+`Community Maps/maps/arsenal/v1/`; Windows/Linux use the active data root's
+`maps/arsenal/v1/`. Different existing files are preserved. Selection waits for
+the download and asks you to select the option again; a compatible joining
+client waits automatically for the host's exact arsenal revision. Android
+continues to install matching pairs manually. See the
+[weapon-cache guide](weapon-pack-maps.md) for preparation and publication.
+
 ## Reproduce the imports
 
 For new cache formats or custom weapon sets, use the separate
