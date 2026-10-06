@@ -598,7 +598,21 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     n.rule(name="android_copy", command="cp $in $out", description="ANDROID STAGE $out")
     n.build(outputs=staged_sdl, rule="android_copy", inputs=libsdl)
     n.build(outputs=staged_image, rule="android_copy", inputs=image)
-    n.build(outputs="android", rule="phony", inputs=[libmain, staged_sdl, staged_image])
+    # Keep the embedded fonts' notices readable inside the APK, alongside the
+    # guest image. Title font provenance travels with its rendered artwork too.
+    staged_notices = []
+    for source, name in (
+        ("port/assets/fonts/Overpass-OFL.txt", "Overpass-OFL.txt"),
+        ("port/assets/fonts/OpenCE-OFL.txt", "OpenCE-OFL.txt"),
+        ("port/assets/fonts/Newtown-LICENSE.txt", "Newtown-LICENSE.txt"),
+        ("port/assets/fonts/README.md", "fonts-README.md"),
+        ("port/third_party/stb/LICENSE", "stb-LICENSE.txt"),
+    ):
+        notice = assets_dir / "Licenses" / name
+        n.build(outputs=notice, rule="android_copy", inputs=Path(source))
+        staged_notices.append(notice)
+    staged_inputs = [libmain, staged_sdl, staged_image, *staged_notices]
+    n.build(outputs="android", rule="phony", inputs=staged_inputs)
 
     apk = PORT_DIR / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
     n.rule(
@@ -609,6 +623,6 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         description="ANDROID GRADLE $out",
         pool="console",
     )
-    n.build(outputs=apk, rule="android_gradle", inputs=[libmain, staged_sdl, staged_image])
+    n.build(outputs=apk, rule="android_gradle", inputs=staged_inputs)
     n.build(outputs="android_apk", rule="phony", inputs=apk)
     n.newline()

@@ -26,6 +26,7 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
     "display.timer_position", "display.timer_scale",
     "maps.show_og", "maps.show_community", "network.join_in_progress",
     "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration",
+    /* Asset Quality retains the legacy key so enabled HUD choices become Upres. */
     "input.fast_menu_repeat", "display.high_res_hud"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
     , "display.renderer", "display.render_height", "display.frame_limit", "display.anti_aliasing"

@@ -317,6 +317,11 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
         (ROOT / "port/third_party/extract-xiso/LICENSE.TXT", "extract-xiso.txt"),
         (ROOT / "port/third_party/tomlc17/LICENSE", "tomlc17.txt"),
         (ROOT / "port/third_party/mbedtls/LICENSE", "mbedtls.txt"),
+        (ROOT / "port/assets/fonts/Overpass-OFL.txt", "Overpass-OFL.txt"),
+        (ROOT / "port/assets/fonts/OpenCE-OFL.txt", "OpenCE-OFL.txt"),
+        (ROOT / "port/assets/fonts/Newtown-LICENSE.txt", "Newtown-LICENSE.txt"),
+        (ROOT / "port/assets/fonts/README.md", "fonts-README.md"),
+        (ROOT / "port/third_party/stb/LICENSE", "stb-LICENSE.txt"),
         (SPARKLE_DIRECTORY / "LICENSE", "Sparkle.txt"),
     ):
         if RENDERER == "metal" and name == "ANGLE.txt":

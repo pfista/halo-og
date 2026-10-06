@@ -20,7 +20,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import metal_shader_validate as shader
-from metal_hud_hires_validate import border_fixtures, hud_fixtures
+from metal_hud_hires_validate import border_fixtures, hud_fixtures, text_fixtures
+from text_glyph_fixtures import real_text_fixtures
 
 ROOT = shader.ROOT
 PORT = ROOT / 'port/linux/src'
@@ -30,7 +31,8 @@ GL = dict(TEXTURE_2D=0x0DE1, RGBA=0x1908, FLOAT=0x1406, RGBA8=0x8058,
           COLOR_ATTACHMENT0=0x8CE0, FRAMEBUFFER_COMPLETE=0x8CD5,
           TEXTURE0=0x84C0, COLOR_BUFFER_BIT=0x4000, TRIANGLES=4,
           VERTEX_SHADER=0x8B31, FRAGMENT_SHADER=0x8B30, COMPILE_STATUS=0x8B81,
-          LINK_STATUS=0x8B82, BLEND=0x0BE2, CONSTANT_COLOR=0x8001, SRC_ALPHA=0x0302)
+          LINK_STATUS=0x8B82, BLEND=0x0BE2, CONSTANT_COLOR=0x8001, SRC_ALPHA=0x0302,
+          ONE_MINUS_SRC_ALPHA=0x0303, TEXTURE_MAX_LEVEL=0x813D)
 VERTEX = '''#version 300 es
 precision highp float;
 uniform vec4 d0,d1,b0,b1,t[4],test_delta;uniform float fog;
@@ -50,8 +52,15 @@ def source_hashes():
     paths=[Path(__file__).resolve(),ROOT/'tools/metal_hud_hires_validate.py',
            ROOT/'tools/metal_shader_validate.py',PORT/'nv2a_psh.c',PORT/'nv2a_vsh.c',
            PORT/'d3d8_gl.c',PORT/'xgpu_shader_standalone.h',PORT/'xgpu_msl.h',
+           PORT/'xbox_textures.c',PORT/'text_hires.c',PORT/'text_hires.h',
+           ROOT/'tools/text_glyph_fixtures.py',ROOT/'tools/test_text_hires.py',
+           ROOT/'port/third_party/stb/stb_truetype.h',
+           ROOT/'source/text/draw_string.c',ROOT/'source/rasterizer/rasterizer_text.c',
+           ROOT/'source/rasterizer/xbox/rasterizer_xbox_text.c',
            ROOT/'port/macos/metal-poc/shader_text.c',
            ROOT/'source/rasterizer/xbox/rasterizer_xbox_dynavobgeom.c']
+    paths += sorted((ROOT/'port/assets/fonts').glob('*.ttf'))
+    paths += [ROOT/'port/assets/fonts/fonts.json']
     return {str(p.relative_to(ROOT)):digest(p) for p in paths}
 
 
@@ -122,6 +131,7 @@ class Gles:
             'Uniform1fv': (None, [I, I, P]), 'Uniform4fv': (None, [I, I, P]),
             'GenTextures': (None, [I, P]), 'BindTexture': (None, [U, U]),
             'TexImage2D': (None, [U, I, I, I, I, I, U, U, P]),
+            'TexParameteri': (None, [U, U, I]), 'ColorMask': (None, [C.c_ubyte] * 4),
             'GenerateMipmap': (None, [U]), 'DeleteTextures': (None, [I, P]),
             'ActiveTexture': (None, [U]), 'GenFramebuffers': (None, [I, P]),
             'BindFramebuffer': (None, [U, U]), 'FramebufferTexture2D': (None, [U, U, U, U, I]),
@@ -247,6 +257,9 @@ def gl_fixtures():
         f['hires']=True;f['forced_border_fallback']=True
         f['test_delta']=[math.exp2(f['textures'][0]['lod'])/8,0,0,0]
         yield key,f
+    for key,f in text_fixtures():
+        f['hires']=True;f['single_mip']=True
+        yield key,f
     colors=([51,102,153,204],[204,153,102,51])
     for hires in (False,True):
         for u in (.25,.375,.5,.75):
@@ -279,7 +292,9 @@ def validate(out, egl=None, gles=None, backend=None):
     try:
         sampler=production_sampler(out,gl);emitter=shader.build_library(out)
         programs={};tests=[];maximum=0.;discarded=0
-        for provider_key,f in gl_fixtures():
+        cases=itertools.chain(gl_fixtures(),real_text_fixtures(out))
+        for provider_key,f in cases:
+            if f.get('real_glyph'):f['hires']=True;f['single_mip']=True
             key=shader.PixelKey.from_buffer_copy(bytes(provider_key))
             texture=f['textures'][0];width,height=texture['width'],texture['height']
             state=(U*32)();state[10]=state[11]=state[12]=3
@@ -287,7 +302,7 @@ def validate(out, egl=None, gles=None, backend=None):
             if f.get('bias_control'):state[13]=state[14]=state[15]=2
             if f.get('forced_border_fallback'):state[10]=state[11]=4;state[29]=0x46000000
             state[16]=struct.unpack('<I',struct.pack('<f',f.get('raw_bias',0.)))[0]
-            levels=texture.get('mipmaps');count=len(levels) if levels else (1+int(math.log2(max(width,height))) if f['hires'] else 1)
+            levels=texture.get('mipmaps');count=1 if f.get('single_mip') else len(levels) if levels else (1+int(math.log2(max(width,height))) if f['hires'] else 1)
             axes,filtering=U(),U()
             bias=sampler.fixture_configure(gl.sampler,state,count,int(f['hires']),0,C.byref(axes),C.byref(filtering))
             key.border_axes[0]=axes.value;key.border_filter[0]=filtering.value
@@ -308,12 +323,16 @@ def validate(out, egl=None, gles=None, backend=None):
             for level,mip in enumerate(levels or [texture]):
                 data=(C.c_ubyte*len(mip['rgba']))(*mip['rgba'])
                 gl.TexImage2D(GL['TEXTURE_2D'],level,GL['RGBA8'],max(1,width>>level),max(1,height>>level),0,GL['RGBA'],GL['UNSIGNED_BYTE'],data)
-            if not levels and f['hires']:gl.GenerateMipmap(GL['TEXTURE_2D'])
+            if f.get('single_mip'):gl.TexParameteri(GL['TEXTURE_2D'],GL['TEXTURE_MAX_LEVEL'],0)
+            elif not levels and f['hires']:gl.GenerateMipmap(GL['TEXTURE_2D'])
             gl.Uniform1i(gl.GetUniformLocation(program,b'tex0'),0)
+            gl.ColorMask(1,1,1,1)
+            clear=f.get('clear_color',[0,0,0,0]);gl.ClearColor(*clear);gl.Clear(GL['COLOR_BUFFER_BIT'])
             if 'meter_blend' in f:
                 gl.Enable(GL['BLEND']);gl.BlendColor(*f['meter_blend']);gl.BlendFunc(GL['CONSTANT_COLOR'],GL['SRC_ALPHA'])
+            elif f.get('text_blend'):
+                gl.Enable(GL['BLEND']);gl.BlendFunc(GL['SRC_ALPHA'],GL['ONE_MINUS_SRC_ALPHA']);gl.ColorMask(1,1,1,0)
             else:gl.Disable(GL['BLEND'])
-            clear=f.get('clear_color',[0,0,0,0]);gl.ClearColor(*clear);gl.Clear(GL['COLOR_BUFFER_BIT'])
             gl.DrawArrays(GL['TRIANGLES'],0,3);actual=(F*4)();gl.ReadPixels(2,2,1,1,GL['RGBA'],GL['FLOAT'],actual)
             error_code=gl.GetError()
             if error_code:raise RuntimeError(f'{f["name"]}: GL error 0x{error_code:04x}')
@@ -330,10 +349,11 @@ def validate(out, egl=None, gles=None, backend=None):
             compiled_programs=len(programs),discard_cases=discarded,max_float_error=maximum,
             forced_hires_mip_border_cases=77,original_point_controls=4,hires_filter_controls=4,
             bias_controls=2,production_sampler=True,native_border_available=gl.border_clamp,
+            synthetic_text_cases=30,real_glyph_cases=24,
             source_sha256=before,
             shader_sha256={name:digest(out/name) for _,name in programs.values()},
             sampler_source_sha256=digest(out/'sampler.c'),sampler_library_sha256=digest(out/'sampler.dylib'),
-            limits=['Synthetic HUD texels and original meter shader/sampler only; no live HUD placement or retail Xbox parity proof',
+            limits=['Synthetic HUD texels and real font coverage through original meter/text shaders and sampler; no live placement or retail Xbox parity proof',
                     'This result covers the named EGL driver; other platforms require their own GPU run'])
         (out/'fixtures.json').write_text(json.dumps(tests,indent=2)+'\n')
         (out/'result.json').write_text(json.dumps(proof,indent=2)+'\n')

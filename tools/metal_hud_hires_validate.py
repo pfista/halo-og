@@ -19,6 +19,7 @@ import metal_shader_validate as shader
 
 ROOT = shader.ROOT
 METER = ROOT / 'source/rasterizer/xbox/rasterizer_xbox_dynavobgeom.c'
+TEXT = ROOT / 'source/rasterizer/xbox/rasterizer_xbox_text.c'
 HARNESS = ROOT / 'port/macos/metal-poc/shader_validate.mm'
 CLEAR = [.11, .22, .33, .2]
 MINIMUM = [51 / 255, 89 / 255, 127 / 255, 115 / 255]
@@ -163,9 +164,51 @@ def border_fixtures():
                 yield key, f
 
 
+def text_key():
+    """Literal stock text combiners; white RGB and ordinary alpha coverage."""
+    source = TEXT.read_text().split('csmemset(&pixel_shader, 0, sizeof(pixel_shader));', 1)[1]
+    key = shader.PixelKey()
+    key.texture_modes = key.sampler_type[0] = 1
+    for field, base in (('combiner_count', 53), ('rgb_inputs', 34), ('alpha_inputs', 0),
+                        ('rgb_outputs', 45), ('alpha_outputs', 26),
+                        ('final_combiner_inputs_abcd', 8), ('final_combiner_inputs_efg', 9)):
+        for match in re.finditer(r'pixel_shader\.' + field + r'(?:\[(\d+)\])?\s*=\s*(0x[0-9A-Fa-f]+|\d+)\s*;', source):
+            key.combiner_state[base + int(match[1] or 0)] = int(match[2], 0)
+    if key.combiner_state[53] != 0x11102 or key.combiner_state[8:10] != [12, 0x1C00]:
+        raise RuntimeError('Original text state changed; review independent arithmetic')
+    return key
+
+
+def text_fixtures():
+    """Glyph/shadow tint and filtered transparent edges through stock text.
+
+    This checks the new atlas's RGBA interpretation without a high-res meter
+    coverage transform. Layout/line wrapping is checked by the text-core tests.
+    """
+    for tint in ([.4, .7, 1., 1.], [.4, .7, 1., .5], [0., 0., 0., .8]):
+        for u in (.25, .375, .5, .625, .75):
+            coverage = min(1., max(0., u * 2 - .5))
+            for blended in (False, True):
+                key = text_key()
+                f = copy.deepcopy(shader.fixture(f'text-alpha-{tint}-{u}-{int(blended)}'))
+                f['inputs']['d0'] = tint
+                f['inputs']['t'][0] = [u, .5, 0, 1]
+                f['textures'][0] = dict(kind=1, width=2, height=1, linear=True,
+                    clamp_axes=3, rgba=[255, 255, 255, 0, 255, 255, 255, 255])
+                f['uniforms']['c0'][0] = [1, 1, 1, 1]
+                source = tint[:3] + [tint[3] * coverage]
+                f['text_blend'] = blended
+                f['clear_color'] = CLEAR
+                f['expected'] = ([a * source[3] + b * (1 - source[3])
+                    for a, b in zip(source[:3], CLEAR[:3])] + [CLEAR[3]] if blended else source)
+                f['source_expected'] = source
+                f['coverage'] = coverage
+                yield key, f
+
+
 def sources():
     return {str(p.relative_to(ROOT)): sha(p) for p in
-        (Path(__file__).resolve(), METER, HARNESS, ROOT / 'port/linux/src/nv2a_psh.c',
+        (Path(__file__).resolve(), METER, TEXT, HARNESS, ROOT / 'port/linux/src/nv2a_psh.c',
          ROOT / 'port/linux/src/xgpu_msl.h', ROOT / 'port/linux/src/xgpu_shader_standalone.h',
          ROOT / 'port/macos/metal-poc/shader_text.c', ROOT / 'tools/metal_shader_validate.py')}
 
@@ -185,7 +228,7 @@ def consume(out, result):
         result['compiled'] != len(manifest['compile'])):
         raise RuntimeError('HUD GPU result does not match prepared fixture')
     result.update(passed=True, source_sha256=manifest['source_sha256'],
-        limits=['Synthetic filtered texels and original meter shader/blend only; no live HUD placement or retail Xbox visual parity proof'])
+        limits=['Synthetic filtered texels with original meter/text shaders and blends; no live HUD placement, text layout or retail Xbox visual parity proof'])
     (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result, indent=2))
 
@@ -206,7 +249,7 @@ def main():
     library = shader.build_library(out)
     names, compiled, tests = {}, [], []
     library.nv2a_pixel_shader_to_msl_with_options.argtypes = [C.POINTER(shader.PixelKey), C.c_void_p]
-    for key, f in itertools.chain(hud_fixtures(), border_fixtures()):
+    for key, f in itertools.chain(hud_fixtures(), border_fixtures(), text_fixtures()):
         mask = f.get('native_alpha_border_mask', 0)
         identity = (bytes(key), mask)
         if identity not in names:

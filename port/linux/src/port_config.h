@@ -14,6 +14,10 @@ Settings are named "section.key", as in the file: "display.vsync".
 #define PORT_CONFIG_H
 
 int config_boolean(const char *name);
+/* One optional replacement set: HUD, font glyphs and faithful menu titles.
+ * Retains the legacy HUD preference so existing choices survive the UI rename.
+ * Snapshots the launch choice; saving the option applies on relaunch. */
+int asset_quality_upres(void);
 long config_integer(const char *name);
 double config_real(const char *name);
 /* never NULL; "" when unset */

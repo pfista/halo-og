@@ -95,7 +95,8 @@ int main(int argc,const char **argv) { @autoreleasepool {
     for (NSDictionary *f in manifest[@"pixel_tests"]) {
         NSString *name=f[@"shader"]; id<MTLLibrary> fl=libraries[name];require(fl!=nil,name);
         bool meterBlend=f[@"meter_blend"]!=nil;
-        NSString *pipelineKey=[name stringByAppendingString:meterBlend?@":meter":@":opaque"];
+        bool textBlend=[f[@"text_blend"] boolValue];
+        NSString *pipelineKey=[name stringByAppendingString:meterBlend?@":meter":textBlend?@":text":@":opaque"];
         id<MTLRenderPipelineState> pipeline=pipelines[pipelineKey];
         if (!pipeline) {
             MTLRenderPipelineDescriptor *pd=[MTLRenderPipelineDescriptor new];
@@ -108,6 +109,13 @@ int main(int argc,const char **argv) { @autoreleasepool {
                 auto color=pd.colorAttachments[0];color.blendingEnabled=YES;
                 color.sourceRGBBlendFactor=color.sourceAlphaBlendFactor=MTLBlendFactorBlendColor;
                 color.destinationRGBBlendFactor=color.destinationAlphaBlendFactor=MTLBlendFactorSourceAlpha;
+            } else if(textBlend) {
+                // Original text blends ordinary coverage alpha and writes
+                // RGB only; the framebuffer's authored alpha is preserved.
+                auto color=pd.colorAttachments[0];color.blendingEnabled=YES;
+                color.sourceRGBBlendFactor=color.sourceAlphaBlendFactor=MTLBlendFactorSourceAlpha;
+                color.destinationRGBBlendFactor=color.destinationAlphaBlendFactor=MTLBlendFactorOneMinusSourceAlpha;
+                color.writeMask=MTLColorWriteMaskRed|MTLColorWriteMaskGreen|MTLColorWriteMaskBlue;
             }
             pd.depthAttachmentPixelFormat=MTLPixelFormatDepth32Float;
             NSError *e=nil;pipeline=[device newRenderPipelineStateWithDescriptor:pd error:&e];

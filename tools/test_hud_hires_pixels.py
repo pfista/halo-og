@@ -1,6 +1,6 @@
 """Check the shared HUD decoder with bundled zlib on any host.
 
-Pillow is an independent oracle for the 69 embedded PNGs. No system zlib,
+Pillow is an independent oracle for all HUD and menu title PNGs. No system zlib,
 DLL exports, game data or graphics context is needed by this fixture.
 """
 import json
@@ -30,10 +30,12 @@ void platform_log(const char *format, ...) { (void)format; }
 int config_boolean(const char *name) {
     assert(!strcmp(name, "display.high_res_hud")); return enabled;
 }
+int asset_quality_upres(void) { return config_boolean("display.high_res_hud"); }
 long hud_hires_asset_at(unsigned long address, long width, long height) {
     (void)address; (void)width; (void)height; lookups++; return 0;
 }
 #include "hud_hires.c"
+#include "text_hires.h"
 int main(int argc, char **argv) {
     assert(argc == 3);
     if (!strcmp(argv[1], "decode")) {
@@ -46,7 +48,23 @@ int main(int argc, char **argv) {
             FILE *file = fopen(path, "wb"); assert(file);
             assert(fwrite(pixels, 1, width * height * 4, file) == width * height * 4);
             assert(!fclose(file)); free(pixels);
-            printf("%ld %lu %lu\n", asset, width, height);
+            printf("%ld %lu %lu %d %d\n", asset, width, height,
+                hud_hires_embedded[asset].title, hud_hires_embedded[asset].coverage);
+        }
+    } else if (!strcmp(argv[1], "fonts")) {
+        for (unsigned int i = 0; i < text_hires_embedded_count; i++) {
+            const struct text_hires_embedded *font = &text_hires_embedded[i];
+            const unsigned char *data = (const unsigned char *)font->data;
+            assert(font->size > 12 && data[0] == 0 && data[1] == 1 && data[2] == 0 && data[3] == 0);
+            for (unsigned int j = 0; j < i; j++)
+                if (!strcmp(font->file, text_hires_embedded[j].file))
+                    assert(font->data == text_hires_embedded[j].data);
+            char path[4096];
+            assert(snprintf(path, sizeof(path), "%s/font%u.ttf", argv[2], i) > 0);
+            FILE *file = fopen(path, "wb"); assert(file);
+            assert(fwrite(font->data, 1, font->size, file) == font->size);
+            assert(!fclose(file));
+            printf("%s %s %u\n", font->tag, font->file, font->size);
         }
     } else if (!strcmp(argv[1], "invalid")) {
         const long invalid[] = {-1, (long)hud_hires_embedded_count, 1L << 30};
@@ -102,7 +120,10 @@ class HudHiresPixelsTests(unittest.TestCase):
         result = subprocess.run(command, text=True, capture_output=True)
         if result.returncode:
             raise RuntimeError(result.stdout + result.stderr)
-        cls.assets = json.loads((ROOT / "port/assets/hud/layout.json").read_text())["assets"]
+        cls.assets = [("port/assets/hud", asset, 0) for asset in
+            json.loads((ROOT / "port/assets/hud/layout.json").read_text())["assets"]]
+        cls.assets += [("port/assets/titles", asset, 1) for asset in
+            json.loads((ROOT / "port/assets/titles/titles.json").read_text())["assets"]]
 
     @classmethod
     def tearDownClass(cls):
@@ -117,13 +138,26 @@ class HudHiresPixelsTests(unittest.TestCase):
     def test_all_embedded_redraws_decode_to_exact_rgba(self):
         decoded = [tuple(map(int, line.split())) for line in self.run_fixture("decode").splitlines()]
         self.assertEqual(len(decoded), len(self.assets))
-        for index, width, height in decoded:
-            asset = self.assets[index]
+        for index, width, height, title, coverage in decoded:
+            folder, asset, expected_title = self.assets[index]
             with self.subTest(asset=asset["name"]):
-                with Image.open(ROOT / "port/assets/hud" / (asset["name"] + ".png")) as image:
+                self.assertEqual(title, expected_title)
+                self.assertEqual(coverage, int(any(cell["kind"] == "meter" for cell in asset.get("cells", []))))
+                self.assertEqual((width, height), (asset["width"] * asset["scale"], asset["height"] * asset["scale"]))
+                with Image.open(ROOT / folder / (asset["name"] + ".png")) as image:
                     self.assertEqual((width, height), image.size)
                     self.assertEqual((Path(self.directory.name) / f"{index}.rgba").read_bytes(),
                                      image.convert("RGBA").tobytes())
+
+    def test_embedded_fonts_use_real_ttf_data_and_share_reused_font_files(self):
+        fonts = json.loads((ROOT / "port/assets/fonts/fonts.json").read_text())["fonts"]
+        expected = [(font["tag"], font["file"],
+            str((ROOT / "port/assets/fonts" / font["file"]).stat().st_size)) for font in fonts]
+        self.assertEqual([tuple(line.split()) for line in self.run_fixture("fonts").splitlines()], expected)
+        for index, font in enumerate(fonts):
+            with self.subTest(font=font["tag"]):
+                self.assertEqual((Path(self.directory.name) / f"font{index}.ttf").read_bytes(),
+                                 (ROOT / "port/assets/fonts" / font["file"]).read_bytes())
 
     def test_invalid_asset_and_missing_dimensions_are_rejected(self):
         self.run_fixture("invalid")

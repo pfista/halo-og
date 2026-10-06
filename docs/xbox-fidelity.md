@@ -24,7 +24,7 @@ were diff-reviewed and remain unintegrated; their runtime behavior is unvalidate
 
 | Upstream commit | Decision and current boundary |
 | --- | --- |
-| `0182da817285b67eee8264663ca79f7c32d66b5e` | Exclude replacement fonts and OpenCE titles; retain original presentation. |
+| `0182da817285b67eee8264663ca79f7c32d66b5e` | Selectively adopt fonts and 34 faithful menu title replacements at the user's explicit request, behind Asset Quality: Original / Upres (Original default). Preserve tag-based layout/navigation and original postgame panel. Add a backend-neutral glyph atlas and Native Metal adapter; retain unsupported-font/character and bitmap-CRC fallbacks. See [Upres scope and validation](high-resolution-hud.md). |
 | `f2ba71d9af4c6fc65d7419cc22e8f4899b16da88` | Exclude overhead player names. |
 | `9f3e8c92de7569a577c3044d05288dbd6590c5bf` | Exclude replacement postgame title/panel. |
 | `f0dfb58c94fa1a8f0f46cbd7df97dfda91a3dcb3`, `ab96597321eb50ccb499e5cec540cfdd5aca2d84` | Defer the desktop frame limiter and build fix pending a deliberate platform adaptation. |
@@ -229,12 +229,15 @@ New configurations set `display.high_res_hud`, `display.interpolation` and
 stays at 30 Hz; high-refresh rendering can be appropriate, with interpolation
 and input response assessed separately.
 
-At the user's explicit request, Video exposes the existing HUD redraws as
-**Original / High Resolution**, with Original as the default. Native Metal now
+At the user's explicit request, Video exposes optional replacements as
+**Asset Quality: Original / Upres**, with Original as the default. Native Metal now
 supports the same optional assets as ANGLE, including meter coverage blending.
 These are hand-authored PC-derived reconstructions in Xbox layout, not a new
-stock-artwork baseline. Original fonts and localized/modified bitmap fallbacks
-remain. See [HUD provenance and comparison](high-resolution-hud.md).
+stock-artwork baseline. Upres also enables font substitutes and 34 menu title
+images from the selectively ported upstream font work. Menu layout/navigation
+and postgame panel artwork remain original. Original mode and unsupported-text
+or localized/modified bitmap fallbacks remain available. See
+[asset provenance and comparison](high-resolution-hud.md).
 
 ### Native Metal presentation experiment
 

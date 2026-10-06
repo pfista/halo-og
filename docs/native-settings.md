@@ -129,12 +129,15 @@ playing. Changing Menu Music during a match affects the next main-menu visit.
 
 ## Video
 
-Video includes **HUD: Original / High Resolution**, with Original as the default.
-Accept saves `display.high_res_hud`; relaunch Halo to apply the texture choice.
+Video includes **Asset Quality: Original / Upres**, with Original as the default.
+Accept saves `display.high_res_hud`; relaunch Halo to apply the asset choice.
+The legacy key retains existing high-resolution HUD preferences and now controls
+HUD redraws, scalable font glyphs and faithful menu title replacements together.
 Both Mac renderers and the Linux, Windows, Android and iOS ports support it.
-The redraws preserve HUD placement and size;
-original bitmap fonts and message artwork remain. See
-[high-resolution HUD](high-resolution-hud.md) for asset provenance and coverage.
+The replacements preserve tag-based placement, text advances and menu structure.
+Postgame panel artwork remains original. Unsupported text and localized/modified
+bitmap artwork fall back to the maps' own assets. See
+[optional Upres assets](high-resolution-hud.md) for provenance and coverage.
 
 Video contains **Fullscreen**, **VSync**, **Smooth Motion**, **Timer Position**
 and **Timer Size**. Smooth Motion enables render interpolation while simulation remains

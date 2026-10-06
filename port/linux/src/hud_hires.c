@@ -72,7 +72,7 @@ long hud_hires_override_find(unsigned long address, unsigned long width, unsigne
 	long asset;
 
 	if (enabled < 0)
-		enabled = config_boolean("display.high_res_hud");
+		enabled = asset_quality_upres();
 	if (!enabled)
 		return -1;
 	asset = hud_hires_asset_at(address, (long)width, (long)height);

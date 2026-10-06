@@ -125,6 +125,16 @@ def main() -> int:
     # internet play's UPnP (port/third_party/miniupnpc), in every build,
     # whose BSD license asks binaries to carry its notice
     shutil.copy2(ROOT / "port/third_party/miniupnpc/LICENSE", dist / "miniupnpc-LICENSE.txt")
+    # Runtime text uses Overpass; OpenCE/Newtown produce the title pictures.
+    # Carry their licenses and the imported font provenance with each build.
+    for source, name in (
+        ("port/assets/fonts/Overpass-OFL.txt", "Overpass-OFL.txt"),
+        ("port/assets/fonts/OpenCE-OFL.txt", "OpenCE-OFL.txt"),
+        ("port/assets/fonts/Newtown-LICENSE.txt", "Newtown-LICENSE.txt"),
+        ("port/assets/fonts/README.md", "fonts-README.md"),
+        ("port/third_party/stb/LICENSE", "stb-LICENSE.txt"),
+    ):
+        shutil.copy2(ROOT / source, dist / name)
     return 0
 
 

@@ -17,6 +17,7 @@ memory_watch.c detects that by write-protecting the pages.
 #include "xgpu.h"
 #ifndef HALO_MACOS_NATIVE_METAL
 #include "hud_hires.h"
+#include "text_hires.h"
 #include "port_config.h"
 #endif
 
@@ -1005,6 +1006,60 @@ static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 	return entry->texture;
 }
 
+/* The core supplies RGBA8 and revisions without depending on GL. This adapter
+ * uploads only rows changed since its own last bind, independently of Metal. */
+static GLuint text_atlas_gl_texture;
+static uint64_t text_atlas_uploaded_revision;
+
+static void text_atlas_dispose(void)
+{
+	if (text_atlas_gl_texture)
+	{
+		glDeleteTextures(1, &text_atlas_gl_texture);
+		xgpu_gl_state_invalidate();
+	}
+	text_atlas_gl_texture = 0;
+	text_atlas_uploaded_revision = 0;
+}
+
+static GLuint text_atlas_texture(unsigned long data)
+{
+	static int logged;
+	struct text_hires_atlas_pixels pixels;
+	if (!text_hires_atlas_pixels_since(data, text_atlas_gl_texture ? text_atlas_uploaded_revision : 0, &pixels))
+		return 0;
+	if (!text_atlas_gl_texture)
+	{
+		glGenTextures(1, &text_atlas_gl_texture);
+		if (!text_atlas_gl_texture)
+			return 0;
+		text_hires_set_atlas_dispose_proc(text_atlas_dispose);
+		glBindTexture(GL_TEXTURE_2D, text_atlas_gl_texture);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)pixels.width, (GLsizei)pixels.height,
+			0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+		pixels.dirty_top = 0;
+		pixels.dirty_bottom = pixels.height;
+	}
+	if (pixels.dirty_top < pixels.dirty_bottom)
+	{
+		glBindTexture(GL_TEXTURE_2D, text_atlas_gl_texture);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, (GLint)pixels.dirty_top,
+			(GLsizei)pixels.width, (GLsizei)(pixels.dirty_bottom - pixels.dirty_top),
+			GL_RGBA, GL_UNSIGNED_BYTE, pixels.rgba + (size_t)pixels.dirty_top * pixels.width * 4);
+		xgpu_gl_state_invalidate();
+		if (!logged)
+		{
+			platform_log("high-res text: GL atlas %lux%lu RGBA8", pixels.width, pixels.height);
+			logged = 1;
+		}
+	}
+	text_atlas_uploaded_revision = pixels.revision;
+	return text_atlas_gl_texture;
+}
+
 GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *target,
 	struct xgpu_texture_description *description)
 {
@@ -1020,6 +1075,18 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 	static int no_cache = -1;
 	unsigned long recent = bucket_index(data, format_word, size_word) % RECENT_TEXTURE_COUNT;
 	unsigned long watch_serial = memory_watch_serial();
+	GLuint text_texture = text_atlas_texture(data);
+	if (text_texture)
+	{
+		/* Retain the placeholder's logical size: glyph UVs are expressed in
+		 * its texels. The actual texture is the larger single-mip atlas. */
+		xgpu_texture_describe(format_word, size_word, description);
+		*target = GL_TEXTURE_2D;
+		description->levels = 1;
+		description->hires = TRUE;
+		description->hires_coverage = FALSE;
+		return text_texture;
+	}
 
 	if (!palettized && recent_textures[recent].entry && recent_textures[recent].data == data &&
 		recent_textures[recent].format_word == format_word && recent_textures[recent].size_word == size_word &&

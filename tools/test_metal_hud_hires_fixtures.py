@@ -1,7 +1,7 @@
 """Check independent original-meter/coverage reference cases before GPU use."""
 import unittest
 
-from metal_hud_hires_validate import CLEAR, border_fixtures, hud_fixtures, meter_reference
+from metal_hud_hires_validate import CLEAR, border_fixtures, hud_fixtures, meter_reference, text_fixtures
 
 
 class HudFixtureTests(unittest.TestCase):
@@ -40,6 +40,18 @@ class HudFixtureTests(unittest.TestCase):
         self.assertTrue(any(f['textures'][0]['lod'] == 1.5 for _, f in cases))
         self.assertTrue(any(not f['textures'][0]['trilinear'] for _, f in cases))
         self.assertTrue(all(f['native_alpha_border_mask'] == 1 for _, f in cases))
+
+    def test_text_cases_preserve_ordinary_alpha_and_rgb_only_blending(self):
+        cases = list(text_fixtures())
+        self.assertEqual(len(cases), 30)
+        self.assertEqual(len({f['name'] for _, f in cases}), 30)
+        self.assertTrue(all(key.coverage_alpha == 0 for key, _ in cases))
+        transparent = [f for _, f in cases if f['text_blend'] and f['coverage'] == 0]
+        self.assertEqual(len(transparent), 3)
+        self.assertTrue(all(f['expected'] == CLEAR for f in transparent))
+        self.assertTrue(all(f['expected'][3] == CLEAR[3] for _, f in cases if f['text_blend']))
+        self.assertTrue(any(f['coverage'] == .5 for _, f in cases))
+        self.assertTrue(any(f['source_expected'][:3] == [0, 0, 0] for _, f in cases))
 
 
 if __name__ == '__main__':

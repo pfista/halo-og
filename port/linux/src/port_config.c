@@ -111,9 +111,9 @@ static const struct config_setting config_settings[] =
 		"where the last tick left it: the view turns the frame the mouse moves,\n"
 		"not up to two ticks (66 ms) later." },
 	{ "display.high_res_hud", _config_boolean, "false", "HALO_HIGH_RES_HUD", _environment_value, _platform_all,
-		"Draw the HUD (meters, counters, panels, motion sensor, reticles,\n"
-		"waypoints, scopes) from the high-res assets (8x the maps' bitmaps);\n"
-		"false draws the maps' own bitmaps." },
+		"Asset Quality: false keeps Original; true enables Upres HUD, font\n"
+		"glyphs and faithful menu title redraws. Layout and gameplay stay\n"
+		"the same. This legacy key preserves existing HUD preferences." },
 
 	{ "audio.enabled", _config_boolean, "true", "HALO_NO_AUDIO", _environment_set_is_false, _platform_all,
 		"Play sound." },
@@ -1361,6 +1361,16 @@ int config_write_boolean(const char *name, int value)
 int config_boolean(const char *name)
 {
 	return config_value(name, _config_boolean).boolean;
+}
+
+int asset_quality_upres(void)
+{
+	/* Renderers and font caches share one launch choice. Accept updates the
+	 * saved draft, while replacements stay consistent until the next launch. */
+	static int enabled = -1;
+	if (enabled < 0)
+		enabled = config_boolean("display.high_res_hud") != 0;
+	return enabled;
 }
 
 long config_integer(const char *name)

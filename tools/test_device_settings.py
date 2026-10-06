@@ -168,29 +168,29 @@ static void check_menu_repeat_settings(double values[NUMBER_OF_DEVICE_SETTINGS])
     assert(saved[21]==0 && saved[6]==1 && halo_menu_repeat_milliseconds()==250 && writes==2);
 }
 static void check_hud_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) {
-    unsigned long hud=1UL<<_device_setting_high_res_hud;
+    unsigned long hud=1UL<<_device_setting_asset_quality;
     const double bad[]={-1,2,0.5,NAN,INFINITY,-INFINITY};
     reset(values);
-    assert(values[_device_setting_high_res_hud]==0);
+    assert(values[_device_setting_asset_quality]==0);
     assert(device_settings_apply(hud,values) && !writes);
     for(unsigned i=0;i<sizeof(bad)/sizeof(bad[0]);i++) {
-        values[_device_setting_high_res_hud]=bad[i];
+        values[_device_setting_asset_quality]=bad[i];
         assert(!device_settings_apply(hud,values));
     }
     assert(!writes && !audio_applies && !video_applies && !switches);
-    values[_device_setting_high_res_hud]=1;write_ok=0;
+    values[_device_setting_asset_quality]=1;write_ok=0;
     assert(!device_settings_apply(hud,values));
     assert(saved[22]==0 && writes==1);
     write_ok=1;
     assert(device_settings_apply(hud,values));
-    assert(saved[22]==1 && device_settings_get(_device_setting_high_res_hud)==1 && writes==2);
+    assert(saved[22]==1 && device_settings_get(_device_setting_asset_quality)==1 && writes==2);
     /* Texture choice takes effect on relaunch, without live display/audio work. */
     assert(!audio_applies && !video_applies && !switches && !starts && !stops);
     assert(device_settings_apply(hud,values) && writes==2);
-    values[_device_setting_high_res_hud]=0;
+    values[_device_setting_asset_quality]=0;
     assert(device_settings_apply(hud,values) && saved[22]==0 && writes==3);
     /* A rejected live video row rolls back the entire saved draft. */
-    reset(values);values[_device_setting_high_res_hud]=1;values[_device_setting_vsync]=0;
+    reset(values);values[_device_setting_asset_quality]=1;values[_device_setting_vsync]=0;
     apply_fail_on=1;
     assert(!device_settings_apply(hud|(1UL<<_device_setting_vsync),values));
     assert(saved[22]==0 && saved[6]==1 && writes==2 && video_applies==2);

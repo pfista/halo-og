@@ -26,6 +26,15 @@ add_executable(Halo MACOSX_BUNDLE ${HOST_SOURCES} ${MINIUPNPC_SOURCES} host/host
     "${HALO_BUILD}/embed/guest_image.s")
 target_sources(Halo PRIVATE Assets.xcassets)
 set_source_files_properties(Assets.xcassets PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+# Runtime font licenses and provenance remain readable in the signed bundle.
+set(HALO_FONT_NOTICES
+    "${HALO_ROOT}/port/assets/fonts/Overpass-OFL.txt"
+    "${HALO_ROOT}/port/assets/fonts/OpenCE-OFL.txt"
+    "${HALO_ROOT}/port/assets/fonts/Newtown-LICENSE.txt"
+    "${HALO_ROOT}/port/assets/fonts/README.md"
+    "${HALO_ROOT}/port/third_party/stb/LICENSE")
+target_sources(Halo PRIVATE ${HALO_FONT_NOTICES})
+set_source_files_properties(${HALO_FONT_NOTICES} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/Licenses")
 target_compile_definitions(Halo PRIVATE HALO_IOS=1 HALO_MACOS=1 _DARWIN_C_SOURCE=1)
 target_compile_definitions(Halo PRIVATE MINIUPNP_STATICLIB MINIUPNPC_SET_SOCKET_TIMEOUT
     MINIUPNPC_GET_SRC_ADDR _BSD_SOURCE _DEFAULT_SOURCE)

@@ -1,4 +1,4 @@
-"""Verify every supported native target embeds and links the shared HUD.
+"""Verify every supported native target embeds and links the shared Upres assets.
 
 Exercise the real Ninja generators without downloads, compilation, SDKs or
 repository writes. This checks build inclusion; GPU/device behavior is tested
@@ -66,11 +66,16 @@ class HudPlatformBuildTests(unittest.TestCase):
                 os.chdir(previous)
         return writer.edges
 
-    def test_each_target_embeds_all_authored_sheets_and_links_shared_hud(self):
+    def test_each_target_embeds_all_authored_sheets_fonts_and_links_shared_renderers(self):
         assets = json.loads((ROOT / "port/assets/hud/layout.json").read_text())["assets"]
+        titles = json.loads((ROOT / "port/assets/titles/titles.json").read_text())["assets"]
         expected_inputs = {"tools/embed_assets.py", "port/assets/hud/layout.json",
-            *("port/assets/hud/" + asset["name"] + ".png" for asset in assets)}
+            "port/assets/titles/titles.json", "port/assets/fonts/fonts.json",
+            *("port/assets/hud/" + asset["name"] + ".png" for asset in assets),
+            *("port/assets/titles/" + asset["name"] + ".png" for asset in titles),
+            "port/assets/fonts/Overpass-750.ttf", "port/assets/fonts/Overpass-900.ttf"}
         self.assertEqual(len(assets), 69)
+        self.assertEqual(len(titles), 34)
         for target in ("linux", "windows", "android", "ios", "macos-angle", "macos-metal"):
             with self.subTest(target=target):
                 edges = self.graph(target)
@@ -84,6 +89,7 @@ class HudPlatformBuildTests(unittest.TestCase):
                     ("linux_link", "windows_link", "android_guest_link"))
                 sources = (generated, "source/interface/ui_widget.c", "port/linux/game/device_settings.c",
                     "port/linux/game/hud_hires_tags.c", "port/linux/src/port_config.c", "port/linux/src/hud_hires.c",
+                    "port/linux/src/text_hires.c",
                     "port/linux/src/d3d8_metal.c" if target == "macos-metal" else "port/linux/src/d3d8_gl.c")
                 for source in sources:
                     self.assertIn(source, compiled)
@@ -93,6 +99,13 @@ class HudPlatformBuildTests(unittest.TestCase):
                         edge["inputs"] == link["outputs"])
                     apk = next(edge for edge in edges if edge["rule"] == "android_gradle")
                     self.assertIn(staged["outputs"][0], apk["inputs"])
+                    for notice in ("Overpass-OFL.txt", "OpenCE-OFL.txt", "Newtown-LICENSE.txt",
+                                   "fonts-README.md", "stb-LICENSE.txt"):
+                        output = "build/android/assets/Licenses/" + notice
+                        self.assertIn(output, apk["inputs"])
+                        copied = next(edge for edge in edges if edge["outputs"] == [output])
+                        self.assertEqual(copied["rule"], "android_copy")
+                        self.assertTrue((ROOT / copied["inputs"][0]).is_file())
 
     def test_asset_manifest_changes_reconfigure_each_platform_graph(self):
         previous = Path.cwd()
@@ -104,6 +117,10 @@ class HudPlatformBuildTests(unittest.TestCase):
                     inputs = generator()
                     self.assertIn(Path("port/assets/hud"), inputs)
                     self.assertIn(Path("port/assets/hud/layout.json"), inputs)
+                    self.assertIn(Path("port/assets/titles"), inputs)
+                    self.assertIn(Path("port/assets/titles/titles.json"), inputs)
+                    self.assertIn(Path("port/assets/fonts"), inputs)
+                    self.assertIn(Path("port/assets/fonts/fonts.json"), inputs)
         finally:
             os.chdir(previous)
 

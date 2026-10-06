@@ -56,6 +56,10 @@ void draw_string_get_color(
 	real_argb_color *color);
 void draw_string_set_font(
 	long font_index);
+/* Native glyph adapters resolve the actual styled tag without changing the
+ * original parser's layout. NONE when the header is outside this font set. */
+long draw_string_get_font_index(struct font_header const *font);
+void draw_string_get_character_clip(struct parse_string_state const *state, rectangle2d *clip);
 void draw_string_set_format(
 	short style,
 	short justification,
@@ -90,6 +94,14 @@ void draw_unicode_string(
 	rectangle2d const *clip,
 	short height_adjust,
 	wchar_t const *string);
+/* A layout-only pass retains highlight state for the real draw. The caller
+ * supplies its own cursor copy when it wants the resulting position. */
+void draw_string_preflight(draw_character_proc draw_character,
+	rectangle2d const *bounds, point2d *cursor_reference,
+	rectangle2d const *clip, short height_adjust, char const *string);
+void draw_unicode_string_preflight(draw_character_proc draw_character,
+	rectangle2d const *bounds, point2d *cursor_reference,
+	rectangle2d const *clip, short height_adjust, wchar_t const *string);
 void draw_string_compute_bounds(
 	rectangle2d const *bounds,
 	char const *string,

@@ -18,6 +18,7 @@
 #include "metal_hud_mipmap.h"
 #include "metal_render_scale.h"
 #include "hud_hires.h"
+#include "text_hires.h"
 #include "halo_frame_pacing.h"
 #include <errno.h>
 #include <math.h>
@@ -110,6 +111,15 @@ long halo_screen_width(void)
 	return screen_width;
 }
 
+/* The atlas rasterizes at the same physical pixels per logical line as the
+ * native attachment. Fixed-height presets and native drawable mode both keep
+ * the game's text layout in its original 480-line coordinates. */
+float halo_screen_pixel_scale(void)
+{
+	(void)halo_screen_width();
+	return screen_scale[1];
+}
+
 void halo_screen_ui_offset(unsigned char centered)
 {
 	ui_offset = centered ? (halo_screen_width() - 640) / 2 : 0;
@@ -142,9 +152,9 @@ struct native_resource {
     struct xgpu_texture_description description;
     unsigned long generation, palette_hash, hud_generation;
     long hud_asset;
-    uint64_t last_rendered;
+    uint64_t last_rendered, text_revision;
     uint32_t format, usage, storage_width, storage_height, scale_mode;
-    BOOL mip_composite, volume, hud_checked;
+    BOOL mip_composite, volume, hud_checked, text_atlas;
 };
 struct native_program {
     struct native_program *next;
@@ -186,6 +196,7 @@ static struct halo_metal_guest_transport transport;
 static uint64_t sequence;
 static uint32_t next_resource_id = 1, next_program_id = 1, next_query_id = 1;
 static struct native_resource *resources;
+static struct native_resource *text_atlas_resource;
 static struct native_program *programs;
 /* Original rasterizer.h verifies floating_point_zbuffer at byte0x3c in the
    linked ILP32 global. Character access reads that object's representation. */
@@ -1241,7 +1252,7 @@ static unsigned long palette_hash(const D3DCOLOR *palette) {
 static struct native_resource *hud_texture_get(long asset) {
     struct native_resource *entry;
     for (entry=resources;entry;entry=entry->next)
-        if (entry->description.hires && entry->hud_asset==asset) return entry;
+        if (entry->description.hires && !entry->text_atlas && entry->hud_asset==asset) return entry;
     unsigned long width=0,height=0;
     unsigned char *pixels=hud_hires_override_pixels(asset,&width,&height);
     if (!pixels) return NULL;
@@ -1286,7 +1297,61 @@ static struct native_resource *hud_texture_get(long asset) {
         asset,width,height,entry->description.levels);
     return entry;
 }
+/* The registered text placeholder carries the game's logical atlas UVs, not
+ * rasterized glyph pixels. Resolve it before any authored-memory access. Each
+ * revision becomes immutable packet bytes before the draw that samples it;
+ * ordered upload/draw commands also preserve earlier draws if the CPU atlas
+ * is reset or gains more glyphs later in this same frame. */
+static struct native_resource *text_texture_get(unsigned long data) {
+    struct native_resource *entry=text_atlas_resource;
+    struct text_hires_atlas_pixels atlas;
+    if (!text_hires_atlas_pixels_since(data,entry ? entry->text_revision:0,&atlas)) return NULL;
+    if (!atlas.rgba || !atlas.width || !atlas.height || !atlas.revision ||
+        atlas.width>8192 || atlas.height>8192 || atlas.dirty_top>atlas.height ||
+        atlas.dirty_bottom>atlas.height || (atlas.dirty_bottom && atlas.dirty_top>=atlas.dirty_bottom))
+        native_fail("high-res text atlas metadata",HALO_METAL_INVALID);
+    BOOL allocate=!entry || entry->description.width!=atlas.width || entry->description.height!=atlas.height;
+    if (!allocate && entry->text_revision==atlas.revision) return entry;
+    /* The first upload initializes the whole GPU image. Later uploads copy
+     * only rows changed since this resource's revision, without consuming a
+     * second backend's dirty state. Atlas resets stamp every row as changed. */
+    uint32_t top=allocate ? 0:(uint32_t)atlas.dirty_top;
+    uint32_t bottom=allocate ? (uint32_t)atlas.height:(uint32_t)atlas.dirty_bottom;
+    uint32_t size=bottom>top ? (uint32_t)(atlas.width*(bottom-top)*4):0;
+    uint32_t end,payloads[]={size};
+    if (size) require_status("high-res text atlas reservation",halo_metal_packet_room(
+        sizeof(struct halo_metal_packet),transport.capacity,sizeof(struct halo_metal_upload_ex),payloads,1,&end));
+    if (allocate) {
+        entry=calloc(1,sizeof(*entry));
+        if (!entry) native_fail("allocate high-res text cache",HALO_METAL_MEMORY);
+        entry->text_atlas=TRUE;entry->hud_asset=-1;
+        entry->description=(struct xgpu_texture_description){.format=D3DFMT_A8R8G8B8,
+            .width=atlas.width,.height=atlas.height,.depth=1,.levels=1,.hires=TRUE};
+        /* Coverage is already the RGBA alpha channel, as with stock glyphs.
+         * No HUD meter coverage transform or texture-channel swizzle applies. */
+        entry->format=HALO_METAL_RGBA8;entry->usage=HALO_METAL_SHADER_READ;
+        resource_create(entry);entry->next=resources;resources=entry;
+        text_atlas_resource=entry;
+    }
+    if (size) {
+        struct halo_metal_upload_ex upload={0};
+        upload.command.opcode=HALO_METAL_UPLOAD_EX;upload.resource=entry->ref;
+        upload.y=top;upload.width=(uint32_t)atlas.width;upload.height=bottom-top;upload.depth=1;
+        upload.bytes_per_row=upload.width*4;upload.bytes_per_image=size;
+        upload.data_size=size;upload.plane=HALO_METAL_COLOR;
+        packet_begin(sizeof(upload),payloads,1);uint32_t offset=command_append(&upload,sizeof(upload));
+        payload_append(offset,offsetof(struct halo_metal_upload_ex,data_offset),
+            atlas.rgba+(size_t)top*upload.bytes_per_row,size);
+        packet_finish();
+    }
+    entry->text_revision=atlas.revision;
+    if (allocate) platform_log("Native high-res text: atlas %lux%lu uploaded, %.3f pixels per logical unit",
+        atlas.width,atlas.height,halo_screen_pixel_scale());
+    return entry;
+}
 static struct native_resource *texture_get(D3DBaseTexture *texture,D3DPalette *palette,unsigned stage) {
+    struct native_resource *text=text_texture_get(texture->Data);
+    if (text) return text;
     struct native_resource *entry=rendered_alias(texture->Data);
     /* Device-owned indexed history is GPU storage even before its first
        Present. Resolve/initialize it without uploading undefined CPU bytes

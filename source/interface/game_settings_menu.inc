@@ -39,13 +39,13 @@ static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX
      _device_setting_dialogue_volume, NONE, _device_setting_menu_music},
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
     {_device_setting_renderer, _device_setting_fullscreen, _device_setting_vsync, _device_setting_interpolation,
-     _device_setting_high_res_hud, _device_setting_render_height, _device_setting_frame_limit, _device_setting_anti_aliasing},
+     _device_setting_asset_quality, _device_setting_render_height, _device_setting_frame_limit, _device_setting_anti_aliasing},
     {_device_setting_timer_volume, _device_setting_timer_countdown, _device_setting_timer_beeps,
      _device_setting_timer_minutes, _device_setting_timer_items,
      _device_setting_timer_position, _device_setting_timer_scale},
 #else
     {_device_setting_fullscreen, _device_setting_vsync, _device_setting_interpolation,
-     _device_setting_high_res_hud, _device_setting_timer_position, _device_setting_timer_scale},
+     _device_setting_asset_quality, _device_setting_timer_position, _device_setting_timer_scale},
     {_device_setting_timer_volume, _device_setting_timer_countdown, _device_setting_timer_beeps,
      _device_setting_timer_minutes, _device_setting_timer_items},
 #endif
@@ -501,7 +501,6 @@ static boolean device_settings_build_native_pages(long strings, long const *head
         device_settings_native.spinners[row].list_flags = 0;
         device_settings_native.spinners[row].text_label_string_list = device_settings_reference(UNICODE_STRING_LIST_TAG, strings);
         device_settings_native.spinners[row].bounds.x1 = row == _device_setting_timer_position ? 136 : 112;
-        if (row == _device_setting_high_res_hud) device_settings_native.spinners[row].bounds.x1 = 160;
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         if (row == _device_setting_renderer) device_settings_native.spinners[row].bounds.x1 = 144;
 #endif
@@ -585,9 +584,9 @@ static boolean device_settings_build(void)
         "SETTINGS", "PROFILE SETTINGS", "GAME SETTINGS", "ABOUT", "AUDIO", "VIDEO", "ACCEPT",
         "A: Select    B: Back", "Effects includes announcer.\r\nLeft/Right: Adjust    B: Cancel",
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        "Accept saves. B: Cancel\r\nRenderer, resolution, HUD and AA:\r\nRelaunch Halo to apply.",
+        "Accept saves. B: Cancel\r\nRenderer, resolution, assets and AA:\r\nRelaunch Halo to apply.",
 #else
-        "Left/Right: Adjust\r\nAccept saves. B: Cancel\r\nRelaunch Halo for HUD changes.",
+        "Left/Right: Adjust\r\nAccept saves. B: Cancel\r\nRelaunch Halo for asset changes.",
 #endif
         "Could not apply settings.\r\nYour changes remain here.",
         "Could not restore all settings.\r\nReview values and try again.",
@@ -600,7 +599,7 @@ static boolean device_settings_build(void)
         "MASTER VOLUME:", "MUSIC VOLUME:", "EFFECTS VOLUME:", "DIALOGUE VOLUME:", "TIMER VOLUME:",
         "MENU MUSIC:", "FULLSCREEN:", "VSYNC:", "SMOOTH MOTION:",
         "COUNTDOWN:", "BEEPS:", "MINUTE ANNOUNCEMENTS:", "ITEM CUES:", "TIMER POSITION:", "TIMER SIZE:",
-        "OG MAPS:", "COMMUNITY MAPS:", "JOIN IN PROGRESS:", "LEFT STICK DEADZONE:", "RIGHT STICK DEADZONE:", "LOOK ACCELERATION:", "MENU REPEAT:", "HUD:"
+        "OG MAPS:", "COMMUNITY MAPS:", "JOIN IN PROGRESS:", "LEFT STICK DEADZONE:", "RIGHT STICK DEADZONE:", "LOOK ACCELERATION:", "MENU REPEAT:", "ASSET QUALITY:"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "RENDERER:", "RESOLUTION:", "FPS LIMIT:", "ANTI-ALIASING:"
 #endif
@@ -628,7 +627,7 @@ static boolean device_settings_build(void)
         "Ignore small right-stick movements.\r\nXbox keeps the original deadzone.\r\nLower values may allow stick drift.",
         "Xbox builds horizontal turn speed.\r\nOff removes that held-stick speedup.\r\nBase turn speed stays the same.",
         "Menus and on-screen keyboard:\r\nHeld arrows/D-pad/sticks. 250/100ms.\r\nAll local players. Accept saves.",
-        "Choose original HUD artwork or\r\nhigh-resolution redraws.\r\nRelaunch Halo to apply."
+        "Choose original assets or upres\r\nHUD, fonts and menu artwork.\r\nRelaunch Halo to apply."
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "Choose ANGLE or Native Metal.\r\nNative Metal is experimental.\r\nAccept saves for the next launch.",
         "Choose Native Metal render resolution.\r\nOriginal game assets stay the same.\r\nRelaunch Halo to apply.",
@@ -1067,7 +1066,7 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
         "Master", "Music", "Effects", "Dialogue", "Volume",
         "Menu Music", "Fullscreen", "VSync", "Smooth Motion",
         "Countdown", "Beeps", "Minutes", "Item Cues", "Position", "Timer Size",
-        "OG Maps", "Community Maps", "Join In Progress", "Left Deadzone", "Right Deadzone", "Look Acceleration", "Menu Repeat", "HUD"
+        "OG Maps", "Community Maps", "Join In Progress", "Left Deadzone", "Right Deadzone", "Look Acceleration", "Menu Repeat", "Asset Quality"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "Renderer", "Resolution", "FPS Limit", "AA"
 #endif
@@ -1126,8 +1125,8 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Xbox" : "Off");
         else if (row == _device_setting_fast_menu_repeat)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Faster" : "Original");
-        else if (row == _device_setting_high_res_hud)
-            snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "High Resolution" : "Original");
+        else if (row == _device_setting_asset_quality)
+            snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Upres" : "Original");
         else snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "ON" : "OFF");
         if (device_settings.native_pages) snprintf(text, sizeof(text), "%s", value);
         else snprintf(text, sizeof(text), "%s: < %s >", names[row], value);

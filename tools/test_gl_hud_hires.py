@@ -12,11 +12,12 @@ from hud_glsl_validate import gl_fixtures, libraries, validate
 class GlHudFixtureTests(unittest.TestCase):
     def test_required_meter_border_filter_and_bias_controls_are_present(self):
         cases=list(gl_fixtures())
-        self.assertEqual(len(cases),279)
-        self.assertEqual(len({f['name'] for _,f in cases}),279)
+        self.assertEqual(len(cases),309)
+        self.assertEqual(len({f['name'] for _,f in cases}),309)
         self.assertEqual(sum(bool(f.get('forced_border_fallback')) for _,f in cases),77)
         self.assertEqual(sum(bool(f.get('bias_control')) for _,f in cases),2)
         self.assertEqual(sum(bool(f.get('point_control')) for _,f in cases),8)
+        self.assertEqual(sum('text_blend' in f for _,f in cases),30)
 
     def test_production_shaders_and_samplers_on_egl(self):
         if not shutil.which('clang'):self.skipTest('clang required')
@@ -25,7 +26,8 @@ class GlHudFixtureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='halo-gl-hud-') as directory:
             proof=validate(Path(directory))
         self.assertTrue(proof['passed'])
-        self.assertEqual(proof['pixel_cases'],279)
+        self.assertEqual(proof['pixel_cases'],333)
+        self.assertEqual(proof['real_glyph_cases'],24)
         self.assertTrue(proof['production_sampler'])
         print(f"{proof['pixel_cases']} GL HUD cases passed on {proof['renderer']}")
 

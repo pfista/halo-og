@@ -43,7 +43,8 @@ int main(int argc,char **argv) {
     const char *read_setting=numeric || !strcmp(argv[3],"maps.show_og") || !strcmp(argv[3],"maps.show_community") ||
         !strcmp(argv[3],"network.join_in_progress") || !strcmp(argv[3],"input.look_acceleration") ||
         !strcmp(argv[3],"input.fast_menu_repeat") || !strcmp(argv[3],"display.high_res_hud") ? argv[3]:"audio.menu_music";
-    int original=numeric ? (int)config_integer(read_setting):config_boolean(read_setting);
+    int original=numeric ? (int)config_integer(read_setting):
+        !strcmp(read_setting,"display.high_res_hud") ? asset_quality_upres():config_boolean(read_setting);
     if(!strcmp(argv[1],"read")) { printf("%d\n",original); return 0; }
     char path[1024]; snprintf(path,sizeof(path),"%s/config.toml",getenv("HALO_SAVE_ROOT"));
     FILE *input=fopen(argv[1],"rb"),*output=fopen(path,"wb"); assert(input && output);
@@ -400,7 +401,7 @@ static void settings_setup(short mode) {
     settings_values[_device_setting_left_stick_deadzone]=9000;
     settings_values[_device_setting_right_stick_deadzone]=9000;
     settings_values[_device_setting_fast_menu_repeat]=0;
-    settings_values[_device_setting_high_res_hud]=0;
+    settings_values[_device_setting_asset_quality]=0;
 }
 static struct widget_instance *open_settings(short layout,short page,short local) {
     unsigned previous_unloads=unload_calls;
@@ -713,7 +714,7 @@ static void settings_native_options(void) {
         L"MASTER VOLUME:",L"MUSIC VOLUME:",L"EFFECTS VOLUME:",L"DIALOGUE VOLUME:",L"TIMER VOLUME:",
         L"MENU MUSIC:",L"FULLSCREEN:",L"VSYNC:",L"SMOOTH MOTION:",L"COUNTDOWN:",L"BEEPS:",
         L"MINUTE ANNOUNCEMENTS:",L"ITEM CUES:",L"TIMER POSITION:",L"TIMER SIZE:",
-        L"OG MAPS:",L"COMMUNITY MAPS:",L"JOIN IN PROGRESS:",L"LEFT STICK DEADZONE:",L"RIGHT STICK DEADZONE:",L"LOOK ACCELERATION:",L"MENU REPEAT:",L"HUD:"};
+        L"OG MAPS:",L"COMMUNITY MAPS:",L"JOIN IN PROGRESS:",L"LEFT STICK DEADZONE:",L"RIGHT STICK DEADZONE:",L"LOOK ACCELERATION:",L"MENU REPEAT:",L"ASSET QUALITY:"};
     static const short rows_by_page[5][6]={
         {0,1,2,3,NONE,5}, {6,7,8,22,13,14}, {4,9,10,11,12}, {18,19,20,21}, {15,16,17}};
     static const short counts[5]={6,6,5,4,3};
@@ -1240,31 +1241,31 @@ static void settings_hud_staging(void) {
         settings_values[_device_setting_renderer]=0; /* HUD also works with ANGLE. */
 #endif
         struct widget_instance *root=open_settings(layout,_ds_video,local);
-        struct widget_instance *hud=setting_control(root,_device_setting_high_res_hud);
-        short index=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_high_res_hud;
+        struct widget_instance *hud=setting_control(root,_device_setting_asset_quality);
+        short index=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_asset_quality;
         assert(hud && hud->visible && !hud->disabled);
         assert(wcsstr(device_settings.text[index],L"Original"));
-        assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_high_res_hud],L"Relaunch"));
+        assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_asset_quality],L"Relaunch"));
         assert(game_settings_event(hud,_device_settings_next));
-        assert(wcsstr(device_settings.text[index],L"High Resolution"));
-        assert(!writes && settings_values[_device_setting_high_res_hud]==0);
+        assert(wcsstr(device_settings.text[index],L"Upres"));
+        assert(!writes && settings_values[_device_setting_asset_quality]==0);
         assert(game_settings_event(root,_device_settings_cancel));dispose(root);
-        root=open_settings(layout,_ds_video,local);hud=setting_control(root,_device_setting_high_res_hud);
-        assert(device_settings_drafts[local].values[_device_setting_high_res_hud]==0);
+        root=open_settings(layout,_ds_video,local);hud=setting_control(root,_device_setting_asset_quality);
+        assert(device_settings_drafts[local].values[_device_setting_asset_quality]==0);
         assert(game_settings_event(hud,_device_settings_next));
         save_succeeds=FALSE;
         assert(!game_settings_event(root,_device_settings_accept));
-        assert(writes==1 && errors==1 && settings_values[_device_setting_high_res_hud]==0);
+        assert(writes==1 && errors==1 && settings_values[_device_setting_asset_quality]==0);
         save_succeeds=TRUE;
         assert(game_settings_event(root,_device_settings_accept));
-        assert(writes==2 && applied_mask==(1UL<<_device_setting_high_res_hud));
-        assert(settings_values[_device_setting_high_res_hud]==1);
+        assert(writes==2 && applied_mask==(1UL<<_device_setting_asset_quality));
+        assert(settings_values[_device_setting_asset_quality]==1);
         assert(game_settings_event(root,_device_settings_accept) && writes==2);dispose(root);
-        root=open_settings(layout,_ds_video,local);hud=setting_control(root,_device_setting_high_res_hud);
-        assert(wcsstr(device_settings.text[index],L"High Resolution"));
+        root=open_settings(layout,_ds_video,local);hud=setting_control(root,_device_setting_asset_quality);
+        assert(wcsstr(device_settings.text[index],L"Upres"));
         assert(game_settings_event(hud,_device_settings_previous));
         assert(game_settings_event(root,_device_settings_accept));
-        assert(writes==3 && settings_values[_device_setting_high_res_hud]==0);
+        assert(writes==3 && settings_values[_device_setting_asset_quality]==0);
         assert(settings_values[_device_setting_master_volume]==0.125);dispose(root);
     }
 }
@@ -1524,7 +1525,7 @@ static void mac_settings_video(void) {
     struct widget_instance *limit=setting_control(root,_device_setting_frame_limit);
     struct widget_instance *aa=setting_control(root,_device_setting_anti_aliasing);
     assert(mac_visible_rows(column)==5 && !writes);
-    struct widget_instance *hud=setting_control(root,_device_setting_high_res_hud);
+    struct widget_instance *hud=setting_control(root,_device_setting_asset_quality);
     assert(hud && hud->parent->visible && !hud->parent->disabled);
     assert(!TEST_FLAG(device_settings.column[_ds_main][_ds_video].flags,_widget_dpad_updown_tabs_thru_list_items_bit));
     assert(device_settings.column[_ds_main][_ds_video].event_handlers.count==4);
@@ -1626,7 +1627,7 @@ static void mac_settings_pause_layouts(void) {
         assert(column->focused_child==accept && column->parameters.list.selected_index==8);
         assert(game_settings_event(column,_device_settings_previous));
         assert(column->parameters.list.selected_index==4 &&
-            column->focused_child==setting_control(one,_device_setting_high_res_hud));
+            column->focused_child==setting_control(one,_device_setting_asset_quality));
         assert(game_settings_event(column,_device_settings_next));
         assert(column->focused_child==accept);
         assert(game_settings_event(column,_device_settings_next));
@@ -1817,8 +1818,8 @@ class NativeGameSettingsTests(unittest.TestCase):
             widths = [(value, 276) for value in strings]
             widths.extend((value, 202) for value in ("Renderer: < Native Metal >", "Resolution: < 2160p >",
                 "Resolution: < Native >", "FPS Limit: < Uncapped >", "FPS Limit: < 120 FPS >", "AA: < FXAA >",
-                "Position: < Bottom Center >", "Timer Size: < 100% >", "HUD: < High Resolution >"))
-            widths.append(("High Resolution", 160))
+                "Position: < Bottom Center >", "Timer Size: < 100% >", "Asset Quality: < Original >"))
+            widths.append(("Original", 112))
             for value, available in widths:
                 lines = value.splitlines()
                 self.assertLessEqual(len(lines), 3, value)

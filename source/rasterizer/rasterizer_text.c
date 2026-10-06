@@ -76,6 +76,9 @@ symbols in this file:
 #include "text/draw_string.h"
 #include "text/font_group.h"
 #include "text/unicode.h"
+#include "tag_files/tag_files.h"
+#include "port_config.h"
+#include "text_hires.h"
 
 /* ---------- constants */
 
@@ -194,6 +197,17 @@ static pixel32 global_shadow_color = 0;
 static short rasterizer_text_unused = 0;
 static short magic_number= 12;
 
+/* Optional glyph atlas; created only after the user selects higher quality.
+ * The placeholder retains logical texel coordinates on every renderer. */
+static struct bitmap_data *hires_text_atlas;
+static boolean hires_preflight_ok;
+static struct
+{
+	struct font_header *header;
+	long font;
+} hires_batch_fonts[16];
+static short hires_batch_font_count;
+
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 static struct rasterizer_text_transform
 {
@@ -218,6 +232,165 @@ static void rasterizer_text_submit_character(
 	}
 #endif
 	rasterizer_text_draw_character(vertices);
+}
+
+static long hires_text_font_get(struct font_header *font)
+{
+	short index;
+	long tag_index;
+	struct font_character *capital;
+	short first_row, last_row, row, column;
+	long replacement = NONE;
+	for (index = 0; index < hires_batch_font_count; index++)
+		if (hires_batch_fonts[index].header == font)
+			return hires_batch_fonts[index].font;
+	if (hires_batch_font_count >= 16)
+		return NONE;
+	tag_index = draw_string_get_font_index(font);
+	capital = font_get_character_by_ascii_code(font, 'H');
+	first_row = capital ? capital->bitmap_height : 0;
+	last_row = -1;
+	if (tag_index != NONE && capital && capital->bitmap_width > 0 && capital->bitmap_height > 0 &&
+		capital->pixels_offset >= 0 && capital->pixels_offset <= font->pixels.size &&
+		(long)capital->bitmap_width * capital->bitmap_height <= font->pixels.size - capital->pixels_offset)
+	{
+		const byte *pixels = (const byte *)font->pixels.address + capital->pixels_offset;
+		for (row = 0; row < capital->bitmap_height; row++)
+			for (column = 0; column < capital->bitmap_width; column++)
+				if (pixels[(long)row * capital->bitmap_width + column])
+				{
+					if (row < first_row)
+						first_row = row;
+					last_row = row;
+					break;
+				}
+		if (last_row >= first_row)
+			replacement = text_hires_font(tag_get_name(tag_index), (float)(last_row - first_row + 1));
+	}
+	hires_batch_fonts[hires_batch_font_count].header = font;
+	hires_batch_fonts[hires_batch_font_count++].font = replacement;
+	return replacement;
+}
+
+static void rasterizer_preflight_hires_character(
+	struct parse_string_state *state, struct font_header *font,
+	struct font_character *character, unsigned long color,
+	short x0, short y0, short x, short y, short dx, short dy)
+{
+	struct text_hires_glyph glyph;
+	long replacement;
+	if (!hires_preflight_ok)
+		return;
+	replacement = hires_text_font_get(font);
+	if (replacement == NONE || !text_hires_glyph(replacement, character->character, &glyph))
+		hires_preflight_ok = FALSE;
+}
+
+static boolean hires_text_prepare(rectangle2d const *bounds, rectangle2d const *clip,
+	point2d const *cursor_reference, short height_adjust, const void *string, boolean unicode)
+{
+	short attempt;
+	if (!asset_quality_upres())
+		return FALSE;
+	if (!hires_text_atlas)
+	{
+		hires_text_atlas = bitmap_2d_new(256, 256, 0, _bitmap_format_a4r4g4b4);
+		if (hires_text_atlas && !rasterizer_bitmap_new(hires_text_atlas))
+		{
+			bitmap_delete(hires_text_atlas);
+			hires_text_atlas = NULL;
+		}
+		if (hires_text_atlas)
+			text_hires_register_atlas((const unsigned long *)hires_text_atlas->hardware_format, 256, 256);
+	}
+	if (!hires_text_atlas)
+		return FALSE;
+	/* Repack only between draws. If even an empty atlas cannot hold a string,
+	 * draw all of it with the original font instead of losing earlier quads. */
+	for (attempt = 0; attempt < 2; attempt++)
+	{
+		point2d cursor;
+		boolean retry;
+		if (!text_hires_batch_begin(attempt != 0))
+			return FALSE;
+		hires_batch_font_count = 0;
+		hires_preflight_ok = TRUE;
+		if (cursor_reference)
+			cursor = *cursor_reference;
+		if (unicode)
+			draw_unicode_string_preflight(rasterizer_preflight_hires_character, bounds,
+				cursor_reference ? &cursor : NULL, clip, height_adjust, (const wchar_t *)string);
+		else
+			draw_string_preflight(rasterizer_preflight_hires_character, bounds,
+				cursor_reference ? &cursor : NULL, clip, height_adjust, (const char *)string);
+		if (hires_preflight_ok)
+			return TRUE;
+		retry = text_hires_batch_full();
+		text_hires_batch_end();
+		if (!retry)
+			break;
+	}
+	return FALSE;
+}
+
+static void rasterizer_draw_hires_character_quad(
+	struct parse_string_state *state, struct font_header *font, struct font_character *character, unsigned long color,
+	short x0, short y0, short x, short y, boolean drop_shadow)
+{
+	struct text_hires_glyph glyph;
+	struct dynamic_screen_vertex vertices[NUMBER_OF_VERTICES_PER_QUADRILATERAL];
+	real left, top, right, bottom, u0, v0, u1, v1;
+	real pen_x = (real)(x0 - x + character->bitmap_origin_x);
+	real baseline = (real)(y0 - y + character->bitmap_origin_y);
+	short pass;
+	rectangle2d character_clip;
+	if (!text_hires_glyph(hires_text_font_get(font), character->character, &glyph) ||
+		glyph.right <= glyph.left || glyph.bottom <= glyph.top)
+		return;
+	draw_string_get_character_clip(state, &character_clip);
+	/* Preserve the tag's advance; center the substitute within that advance. */
+	pen_x += ((real)character->character_width - glyph.advance) * 0.5f;
+	left = MAX(pen_x + glyph.left, (real)character_clip.x0);
+	right = MIN(pen_x + glyph.right, (real)character_clip.x1);
+	top = MAX(baseline + glyph.top, (real)character_clip.y0);
+	bottom = MIN(baseline + glyph.bottom, (real)character_clip.y1);
+	if (right <= left || bottom <= top)
+		return;
+	u0 = glyph.u0 + (left - pen_x - glyph.left) / (glyph.right - glyph.left) * (glyph.u1 - glyph.u0);
+	u1 = glyph.u0 + (right - pen_x - glyph.left) / (glyph.right - glyph.left) * (glyph.u1 - glyph.u0);
+	v0 = glyph.v0 + (top - baseline - glyph.top) / (glyph.bottom - glyph.top) * (glyph.v1 - glyph.v0);
+	v1 = glyph.v0 + (bottom - baseline - glyph.top) / (glyph.bottom - glyph.top) * (glyph.v1 - glyph.v0);
+	for (pass = drop_shadow ? 0 : 1; pass < 2; pass++)
+	{
+		real offset = pass == 0 ? 1.0f : 0.0f;
+		unsigned long vertex_color = pass == 0 ? (global_shadow_color ? global_shadow_color : color & 0xFF000000) : color;
+		vertices[0].color = vertices[1].color = vertices[2].color = vertices[3].color = vertex_color;
+		vertices[0].position.x = vertices[3].position.x = left + offset;
+		vertices[1].position.x = vertices[2].position.x = right + offset;
+		vertices[0].position.y = vertices[1].position.y = top + offset;
+		vertices[2].position.y = vertices[3].position.y = bottom + offset;
+		vertices[0].texture_coordinates.x = vertices[3].texture_coordinates.x = u0;
+		vertices[1].texture_coordinates.x = vertices[2].texture_coordinates.x = u1;
+		vertices[0].texture_coordinates.y = vertices[1].texture_coordinates.y = v0;
+		vertices[2].texture_coordinates.y = vertices[3].texture_coordinates.y = v1;
+		rasterizer_text_submit_character(vertices);
+	}
+}
+
+static void rasterizer_draw_hires_character(
+	struct parse_string_state *state, struct font_header *font,
+	struct font_character *character, unsigned long color,
+	short x0, short y0, short x, short y, short dx, short dy)
+{
+	rasterizer_draw_hires_character_quad(state, font, character, color, x0, y0, x, y, FALSE);
+}
+
+static void rasterizer_draw_hires_character_with_dropshadow(
+	struct parse_string_state *state, struct font_header *font,
+	struct font_character *character, unsigned long color,
+	short x0, short y0, short x, short y, short dx, short dy)
+{
+	rasterizer_draw_hires_character_quad(state, font, character, color, x0, y0, x, y, TRUE);
 }
 
 /* ---------- public code */
@@ -309,6 +482,12 @@ void
 rasterizer_text_cache_dispose(
 	void)
 {
+	if (hires_text_atlas)
+	{
+		text_hires_dispose();
+		bitmap_delete(hires_text_atlas);
+		hires_text_atlas = NULL;
+	}
 	if (hardware_character_cache.initialized)
 	{
 		rasterizer_text_cache_flush();
@@ -391,6 +570,7 @@ rasterizer_draw_string(
 			long length = strlen(string);
 			long vertex_count;
 			draw_character_proc draw_character;
+			boolean hires;
 
 			if (drop_shadow)
 			{
@@ -434,6 +614,12 @@ rasterizer_draw_string(
 					MIN(render.camera.viewport_bounds.y1 - render.camera.viewport_bounds.y0, clip->y1));
 			}
 
+			hires = hires_text_prepare(&window_bounds, &viewport_bounds, cursor_reference, height_adjust, string, FALSE);
+			if (hires)
+			{
+				bitmap = hires_text_atlas;
+				draw_character = drop_shadow ? rasterizer_draw_hires_character_with_dropshadow : rasterizer_draw_hires_character;
+			}
 			memset(&parameters, 0, sizeof(parameters));
 			parameters.map_texture_scale[0].i = 1.0f / (real)bitmap->width;
 			parameters.map_texture_scale[0].j = 1.0f / (real)bitmap->height;
@@ -452,6 +638,8 @@ rasterizer_draw_string(
 				height_adjust,
 				string);
 			rasterizer_text_end();
+			if (hires)
+				text_hires_batch_end();
 		}
 	}
 
@@ -506,6 +694,7 @@ rasterizer_draw_unicode_string(
 			long length = ustrlen(string);
 			long vertex_count;
 			draw_character_proc draw_character;
+			boolean hires;
 
 			if (drop_shadow)
 			{
@@ -549,6 +738,12 @@ rasterizer_draw_unicode_string(
 					MIN(render.camera.viewport_bounds.y1 - render.camera.viewport_bounds.y0, clip->y1));
 			}
 
+			hires = hires_text_prepare(&window_bounds, &viewport_bounds, cursor_reference, height_adjust, string, TRUE);
+			if (hires)
+			{
+				bitmap = hires_text_atlas;
+				draw_character = drop_shadow ? rasterizer_draw_hires_character_with_dropshadow : rasterizer_draw_hires_character;
+			}
 			memset(&parameters, 0, sizeof(parameters));
 			parameters.map_texture_scale[0].i = 1.0f / (real)bitmap->width;
 			parameters.map_texture_scale[0].j = 1.0f / (real)bitmap->height;
@@ -567,6 +762,8 @@ rasterizer_draw_unicode_string(
 				height_adjust,
 				string);
 			rasterizer_text_end();
+			if (hires)
+				text_hires_batch_end();
 		}
 	}
 

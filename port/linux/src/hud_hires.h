@@ -26,6 +26,8 @@ struct hud_hires_embedded
 	unsigned int width, height;
 	unsigned int crc;
 	int coverage;
+	/* Faithful menu title replacement; uses the same Asset Quality choice. */
+	int title;
 	const unsigned int *png;
 	unsigned int png_size;
 };

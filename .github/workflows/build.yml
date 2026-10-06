@@ -72,8 +72,8 @@ jobs:
 
       - name: Shared HUD assets, settings and GLES rendering
         run: |
-          python -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_device_settings
-          python tools/test_game_settings.py
+          python -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_device_settings tools.test_menu_assets tools.test_text_hires tools.test_metal_text_atlas
+          python -m tools.test_game_settings
           python tools/hud_glsl_validate.py --output build/hud-glsl-validation
 
       - name: Invite URI registration and forwarding
@@ -184,8 +184,8 @@ jobs:
 
       - name: Shared HUD assets and mobile settings
         run: |
-          python3 -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_device_settings
-          python3 tools/test_game_settings.py
+          python3 -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_device_settings tools.test_menu_assets tools.test_text_hires tools.test_metal_text_atlas
+          python3 -m tools.test_game_settings
 
       - name: Compile cache
         run: ccache --show-stats
@@ -247,8 +247,8 @@ jobs:
 
       - name: Shared HUD assets and settings
         run: |
-          python -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_device_settings
-          python tools/test_game_settings.py
+          python -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_device_settings tools.test_menu_assets tools.test_text_hires tools.test_metal_text_atlas
+          python -m tools.test_game_settings
 
       - name: Invite URI registration and forwarding
         run: >-
