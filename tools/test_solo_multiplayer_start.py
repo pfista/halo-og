@@ -240,6 +240,9 @@ static void ordinary_lobbies(void) {
     reset(TRUE,FALSE); player(0,0,0); player(1,0,1); ready();
     network_game_server_update_countdown(&server,_network_game_server_countdown_event_player_joined);
     assert(server.countdown_state.active && server.countdown_state.timer.time_remaining==NETWORK_GAME_SPLITSCREEN_COUNTDOWN_TIME);
+    tick(1001); assert(countdown_sends==1 && flushes==1);
+    assert(!settings_sends && !begin_sends);
+    assert(last_countdown==(NETWORK_GAME_SPLITSCREEN_COUNTDOWN_TIME-1001)/MILLISECONDS_PER_SECOND);
     reset(FALSE,FALSE); player(0,0,0); player(1,0,1);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
     ready();
@@ -251,6 +254,9 @@ static void ordinary_lobbies(void) {
     reset(FALSE,TRUE); player(0,0,0); machine(1,FALSE); player(1,1,1); ready();
     network_game_server_update_countdown(&server,_network_game_server_countdown_event_player_joined);
     assert(server.countdown_state.active && server.countdown_state.timer.time_remaining==NETWORK_GAME_COUNTDOWN_TIME);
+    tick(1001); assert(countdown_sends==1 && flushes==1);
+    assert(!settings_sends && !begin_sends);
+    assert(last_countdown==(NETWORK_GAME_COUNTDOWN_TIME-1001)/MILLISECONDS_PER_SECOND);
     reset(TRUE,TRUE); player(0,0,0); player(1,0,0);
     assert(server_needs_more_teams(&server) && !server_ok_to_countdown(&server));
     request(0,_network_game_server_countdown_event_player_joined); assert(!server.countdown_state.active);
