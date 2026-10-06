@@ -4,8 +4,11 @@ The native AppKit menu runs in the game's process. Its monochrome helmet opens
 Settings, changes fullscreen immediately, selects game data, opens saves and
 controls, checks updates, and quits through the normal game exit path. Settings
 is also available with Command-comma; Control-Command-F toggles fullscreen.
-Release the captured mouse with F12 to reach the menu bar. The existing Dock
-icon is retained; `port/macos/Helmet.svg` generates a vector template PDF.
+Fullscreen hides the menu bar and Dock while the game has focus. Release the
+captured mouse with F12 and move it to the top edge to reveal the menu bar.
+Opening native settings or leaving fullscreen restores normal system controls.
+The existing Dock icon is retained; `port/macos/Helmet.svg` generates a vector
+template PDF.
 
 ## GitHub Actions DMG
 

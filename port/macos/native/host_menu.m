@@ -58,6 +58,52 @@
 
 static HaloMenu *menu;
 
+/* SDL's non-Spaces fullscreen window stays at the normal window level so
+   Cocoa panels can appear above it. Hide system chrome through AppKit instead
+   of raising the game above the menu bar and those panels. SDL owns the window
+   delegate, so follow focus notifications without replacing it. */
+@interface HaloFullscreenPresentation : NSObject
+@property(nonatomic, weak) NSWindow *gameWindow;
+@property(nonatomic) NSApplicationPresentationOptions previousOptions;
+@property(nonatomic) BOOL hiding;
+- (void)update;
+@end
+
+@implementation HaloFullscreenPresentation
+- (instancetype)init {
+    if ((self = [super init])) {
+        for (NSNotificationName name in @[NSWindowDidBecomeKeyNotification,
+                NSWindowDidResignKeyNotification, NSWindowWillCloseNotification,
+                NSApplicationDidBecomeActiveNotification, NSApplicationDidResignActiveNotification])
+            [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(focusChanged:)
+                name:name object:nil];
+    }
+    return self;
+}
+- (void)focusChanged:(NSNotification *)notification {
+    if ([notification.name isEqualToString:NSWindowWillCloseNotification] &&
+        notification.object == self.gameWindow) self.gameWindow = nil;
+    [self update];
+}
+- (void)update {
+    BOOL hide = NSApp.isActive && self.gameWindow.isKeyWindow && host_sdl_is_fullscreen();
+    if (hide == self.hiding) return;
+    if (hide) {
+        self.previousOptions = NSApp.presentationOptions;
+        NSApplicationPresentationOptions chrome = NSApplicationPresentationAutoHideDock |
+            NSApplicationPresentationHideDock | NSApplicationPresentationAutoHideMenuBar |
+            NSApplicationPresentationHideMenuBar;
+        NSApp.presentationOptions = (self.previousOptions & ~chrome) |
+            NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar;
+    } else {
+        NSApp.presentationOptions = self.previousOptions;
+    }
+    self.hiding = hide;
+}
+@end
+
+static HaloFullscreenPresentation *fullscreenPresentation;
+
 static void showError(NSError *error) {
     NSAlert *alert = [[NSAlert alloc] init];
     alert.messageText = @"Halo OG could not use that setting";
@@ -769,6 +815,9 @@ void host_menu_style_window(void *window) {
     [native standardWindowButton:NSWindowCloseButton].hidden = YES;
     [native standardWindowButton:NSWindowMiniaturizeButton].hidden = YES;
     [native standardWindowButton:NSWindowZoomButton].hidden = YES;
+    if (!fullscreenPresentation) fullscreenPresentation = [[HaloFullscreenPresentation alloc] init];
+    fullscreenPresentation.gameWindow = native;
+    [fullscreenPresentation update];
 }
 
 int host_menu_set_fullscreen(int enabled) {
@@ -881,6 +930,8 @@ void host_menu_begin_game(void) { menu.gameRunning = YES; [menu refreshFullscree
 void host_menu_window_changed(void) { [menu refreshFullscreen]; }
 void host_menu_finish_game(int exit_code) {
     @autoreleasepool {
+        fullscreenPresentation.gameWindow = nil;
+        [fullscreenPresentation update];
         menu.quitting = YES;
         [menu.mapDownloads cancelDownloads];
         [menu.timerAudio cancelDownloads];

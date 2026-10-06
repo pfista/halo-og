@@ -158,11 +158,7 @@ int main(int argc, char **argv) {
 #endif
     if (!image_argument) host_menu_initialize_application();
     SDL_SetMainReady();
-    SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0");
-    SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_MENU_VISIBILITY, "1");
-    /* Keep native settings/file panels and the menu bar above borderless video. */
-    SDL_SetHint(SDL_HINT_WINDOW_ALLOW_TOPMOST, "0");
-    if (!SDL_InitSubSystem(SDL_INIT_VIDEO))
+    if (!host_sdl_init(SDL_INIT_VIDEO))
         host_fatal("Cannot initialize display: %s", SDL_GetError());
     const char *root = getenv("HALO_DATA_ROOT");
     if (!root) root = !image_argument ? default_data : "assets";

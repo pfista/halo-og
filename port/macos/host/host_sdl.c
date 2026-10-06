@@ -101,6 +101,10 @@ static int native_metal_owned;
 
 int host_sdl_init(uint32_t flags) {
 #ifndef HALO_IOS
+    /* Native AppKit presentation hides system chrome for the focused game.
+       Keep borderless fullscreen below native settings and file panels. */
+    SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0");
+    SDL_SetHint(SDL_HINT_WINDOW_ALLOW_TOPMOST, "0");
     /* Handle close requests ourselves so Command-W does not also queue
        SDL_EVENT_QUIT while W is being used to move. */
     SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0");

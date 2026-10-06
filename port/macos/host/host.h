@@ -36,6 +36,7 @@ void host_logf(int priority, const char *format, ...) __attribute__((format(prin
 #define HOST_LOG_WARN 5
 #define HOST_LOG_ERROR 6
 /* guest services also used inside the host (host_main.c) */
+int host_sdl_init(uint32_t flags);
 void host_exit(int code) __attribute__((noreturn));
 int host_errno(void);
 /* Queue an OS invite in this instance's save folder for the P2P thread. */

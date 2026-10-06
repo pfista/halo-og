@@ -175,6 +175,15 @@ def native_menu_loop():
         }))
         subprocess.run([executable, directory / 'saves', maps.parent, image],
                        env=environment, check=True, timeout=20)
+        fullscreen_saves = directory / 'fullscreen-saves'
+        fullscreen_saves.mkdir()
+        (fullscreen_saves / 'macos-settings.json').write_text(json.dumps({
+            'timer_audio_downloads': False, 'community_downloads': False,
+            'release_checks': False,
+        }))
+        environment['HALO_WINDOWED'] = '0'
+        subprocess.run([executable, fullscreen_saves, maps.parent, '--fullscreen'],
+                       env=environment, check=True, timeout=20)
 
 
 class ReleaseBoundary(unittest.TestCase):

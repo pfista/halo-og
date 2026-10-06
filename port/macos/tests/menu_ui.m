@@ -9,8 +9,10 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+extern int host_sdl_init(uint32_t);
 extern uint32_t host_sdl_create_window(const char *, int, int, int64_t);
 
 @protocol MenuActions
@@ -22,6 +24,66 @@ extern uint32_t host_sdl_create_window(const char *, int, int, int64_t);
 - (void)importImage:(NSURL *)image completion:(void (^)(BOOL))completion;
 - (void)copyFolder:(NSURL *)folder completion:(void (^)(BOOL))completion;
 @end
+
+static void wait_for_presentation(NSWindow *keyWindow, NSApplicationPresentationOptions options) {
+    Uint64 started = SDL_GetTicks();
+    while (SDL_GetTicks() - started < 2000) {
+        SDL_PumpEvents();
+        if (NSApp.active && NSApp.keyWindow == keyWindow && NSApp.presentationOptions == options)
+            return;
+        SDL_Delay(10);
+    }
+    fprintf(stderr, "Presentation: active=%d key=%s options=%lu expected=%lu\n", NSApp.active,
+        NSApp.keyWindow.title.UTF8String ?: "none", (unsigned long)NSApp.presentationOptions,
+        (unsigned long)options);
+    assert(!"Native window focus did not update fullscreen presentation");
+}
+
+static void check_fullscreen_presentation(NSApplicationPresentationOptions previous) {
+    NSWindow *game = nil;
+    for (NSWindow *window in NSApp.windows) {
+        if ([window.title isEqualToString:@"Halo OG Menu Test"]) game = window;
+    }
+    assert(game);
+    NSApplicationPresentationOptions immersive = previous | NSApplicationPresentationAutoHideDock |
+        NSApplicationPresentationAutoHideMenuBar;
+    [NSApp activateIgnoringOtherApps:YES];
+    host_sdl_show_game();
+    wait_for_presentation(game, immersive);
+    assert(host_sdl_is_fullscreen());
+    assert(NSEqualRects(game.frame, game.screen.frame));
+
+    assert(host_menu_set_fullscreen(0));
+    wait_for_presentation(game, previous);
+    assert(!host_sdl_is_fullscreen());
+    assert(host_menu_set_fullscreen(1));
+    wait_for_presentation(game, immersive);
+    assert(host_sdl_is_fullscreen());
+
+    NSMenuItem *settings = NSApp.mainMenu.itemArray[0].submenu.itemArray[1];
+    id<MenuActions> target = settings.target;
+    [target showSettings:nil];
+    NSWindow *panel = [(id)target valueForKey:@"settingsWindow"];
+    wait_for_presentation(panel, previous);
+    assert(host_sdl_is_fullscreen() && panel.visible);
+    [target closeSettings:nil];
+    wait_for_presentation(game, immersive);
+
+    /* About, updater and other native panels must also restore the menu bar. */
+    NSWindow *auxiliary = [[NSWindow alloc] initWithContentRect:NSMakeRect(100, 100, 300, 100)
+        styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    auxiliary.title = @"Fullscreen presentation focus test";
+    auxiliary.releasedWhenClosed = NO;
+    [auxiliary makeKeyAndOrderFront:nil];
+    wait_for_presentation(auxiliary, previous);
+    [auxiliary close];
+    host_sdl_show_game();
+    wait_for_presentation(game, immersive);
+
+    host_menu_finish_game(0);
+    assert(NSApp.presentationOptions == previous);
+    printf("Fullscreen launch, exit/reentry, native panel focus and game finish restored presentation correctly\n");
+}
 
 static void check_main_loop(const char *image, const char *data) {
     assert([NSApp.mainMenu.itemArray[0].title isEqualToString:@"Halo OG"]);
@@ -137,17 +199,26 @@ int main(int argc, const char **argv) {
         fflush(stdout);
         host_menu_initialize_application();
         SDL_SetMainReady();
-        SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0");
-        SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_MENU_VISIBILITY, "1");
-        SDL_SetHint(SDL_HINT_WINDOW_ALLOW_TOPMOST, "0");
-        assert(SDL_Init(SDL_INIT_VIDEO));
+        assert(host_sdl_init(SDL_INIT_VIDEO));
         char data[4096];
         if (!host_menu_prepare(argv[1], argv[2], data, sizeof(data))) {
             SDL_Quit();
             return 0;
         }
+        BOOL fullscreenCheck = argc == 4 && !strcmp(argv[3], "--fullscreen");
+        NSApplicationPresentationOptions original = NSApp.presentationOptions;
+        if (fullscreenCheck)
+            NSApp.presentationOptions = original | NSApplicationPresentationAutoHideDock |
+                NSApplicationPresentationDisableMenuBarTransparency;
+        NSApplicationPresentationOptions previous = NSApp.presentationOptions;
         assert(host_sdl_create_window("Halo OG Menu Test", 640, 480, 0));
         host_menu_begin_game();
+        if (fullscreenCheck) {
+            check_fullscreen_presentation(previous);
+            NSApp.presentationOptions = original;
+            SDL_Quit();
+            return 0;
+        }
         if (argc == 4) {
             check_main_loop(argv[3], argv[2]);
             host_menu_finish_game(0);
