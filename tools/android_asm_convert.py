@@ -217,6 +217,12 @@ class Converter:
         if op == ".align":
             self.emit(f"\t.p2align {args}")
             return
+        if op in (".ascii", ".asciz", ".string"):
+            # Quoted operands here are bytes, not decorated Darwin symbols.
+            # In particular, arsenal filenames and protocol prefixes need
+            # their leading underscores preserved in the native guest.
+            self.emit(f"\t{op} {args}")
+            return
         if op.startswith("."):
             self.emit(f"\t{op} {self.operands(args)}" if args else f"\t{op}")
             return
