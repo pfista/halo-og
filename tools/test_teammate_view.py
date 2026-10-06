@@ -6,6 +6,7 @@ only accepts current teammates, and leaves existing rule/save bytes intact.
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -163,9 +164,8 @@ int main(void) {
 
 class TeammateViewTests(unittest.TestCase):
     def test_compiled_variant_and_target_selection(self):
-        compiler = shutil.which("cc")
-        if not compiler:
-            self.skipTest("C compiler unavailable")
+        compiler = shutil.which("clang") or shutil.which("cc")
+        self.assertIsNotNone(compiler, "A C compiler (clang or cc) is required")
         helper = (ROOT / "source/main/teammate_view.inc").read_text()
         functions = "\n".join(block(helper, signature) for signature in (
             "static boolean teammate_view_available(", "static boolean teammate_view_valid_player(",
@@ -176,7 +176,7 @@ class TeammateViewTests(unittest.TestCase):
             folder = Path(folder)
             source = folder / "fixture.c"
             source.write_text(PREFIX + functions + "\n" + window_count + "\n" + CASES)
-            binary = folder / "fixture"
+            binary = folder / ("fixture.exe" if sys.platform == "win32" else "fixture")
             subprocess.run([compiler, "-std=c99", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "source"),
                             str(source), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)

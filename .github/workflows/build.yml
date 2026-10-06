@@ -77,6 +77,11 @@ jobs:
           python -m unittest tools.test_gl_hud_hires.GlHudFixtureTests.test_standalone_angle_load_prepares_egl_companion_before_dlopen tools.test_gl_hud_hires.GlHudFixtureTests.test_rgba8_rounding_bounds_keep_point_endpoints_and_discards_strict
           python tools/hud_glsl_validate.py --output build/hud-glsl-validation
 
+      - name: Teammate split-screen selection, menu and rendering
+        run: >-
+          python -m unittest tools.test_teammate_view tools.test_teammate_view_menu
+          tools.test_teammate_view_render
+
       - name: Invite URI registration and forwarding
         run: >-
           python -m unittest tools.test_p2p_invites tools.test_p2p_handoff
@@ -194,6 +199,11 @@ jobs:
           python3 -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_device_settings tools.test_menu_assets tools.test_text_hires tools.test_metal_text_atlas
           python3 -m tools.test_game_settings
 
+      - name: Teammate split-screen selection, menu and rendering
+        run: >-
+          python3 -m unittest tools.test_teammate_view tools.test_teammate_view_menu
+          tools.test_teammate_view_render
+
       - name: Compile cache
         run: ccache --show-stats
 
@@ -256,6 +266,11 @@ jobs:
         run: |
           python -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_device_settings tools.test_menu_assets tools.test_text_hires tools.test_metal_text_atlas
           python -m tools.test_game_settings
+
+      - name: Teammate split-screen selection, menu and rendering
+        run: >-
+          python -m unittest tools.test_teammate_view tools.test_teammate_view_menu
+          tools.test_teammate_view_render
 
       - name: Invite URI registration and forwarding
         run: >-

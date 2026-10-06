@@ -2,6 +2,7 @@
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -203,10 +204,12 @@ class TeammateViewMenuTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="halo-team-view-menu-") as temporary:
             folder = Path(temporary)
             (folder / "fixture.c").write_text(menu_fixture())
+            binary = folder / ("fixture.exe" if sys.platform == "win32" else "fixture")
             subprocess.run(["clang", "-std=c99", "-Wall", "-Wextra", "-Werror", "-Wno-multichar",
                             "-Wno-unused-function", "-Wno-unused-variable", "-Wno-unused-parameter", "-Wno-format",
-                            "-I", str(ROOT / "source"), str(folder / "fixture.c"), "-o", str(folder / "fixture")], check=True)
-            result = subprocess.run([str(folder / "fixture")], capture_output=True, text=True)
+                            "-D_CRT_SECURE_NO_WARNINGS", "-I", str(ROOT / "source"),
+                            str(folder / "fixture.c"), "-o", str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(result.stdout.strip(), "teammate view menu tests passed")
 

@@ -38,7 +38,7 @@ jobs:
           python-version: '3.12'
       - name: Public toolchain
         run: |
-          brew install llvm@22 lld@22 sdl3 ninja
+          brew install llvm@22 lld@22 sdl3 ninja cmake
           printf '%s\n' /opt/homebrew/opt/lld@22/bin >> "$GITHUB_PATH"
       - name: Verify runner and prepare dependencies
         run: |
@@ -55,8 +55,15 @@ jobs:
           python3 -m unittest tools.test_gl_hud_hires.GlHudFixtureTests.test_standalone_angle_load_prepares_egl_companion_before_dlopen tools.test_gl_hud_hires.GlHudFixtureTests.test_rgba8_rounding_bounds_keep_point_endpoints_and_discards_strict
           python3 tools/hud_glsl_validate.py --output build/hud-glsl-validation
           python3 tools/test_texture_border.py
+      - name: Teammate split-screen and interactive runner fixtures
+        run: >-
+          python3 -m unittest tools.test_teammate_view tools.test_teammate_view_menu
+          tools.test_teammate_view_render tools.test_macos_teammate_view_smoke
+          tools.test_macos_teammate_view_runner
       - name: iOS shared game image
         run: python3 tools/ios_build.py --guest-only --jobs 6
+      - name: iOS simulator and unsigned device apps
+        run: python3 tools/ios_build.py --host-only --platform both --no-bundle-maps --jobs 6
       - name: Mac ABI, allocation, networking and audio
         run: python3 tools/test_macos_runtime.py --standalone
       - name: Guest directory and map service imports
