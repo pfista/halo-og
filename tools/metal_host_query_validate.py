@@ -108,7 +108,7 @@ def build_fixture(capture,reference,evidence,out):
 
 def snapshot_sources(out):
     names=['port/macos/host/host_memory.c','port/macos/host/host.h','port/macos/host/host_metal.mm',
-        'port/macos/host/metal_draw_encoder.mm','port/macos/host/metal_draw_encoder.h','port/macos/include/halo_metal_abi.h',
+        'port/macos/host/metal_draw_encoder.mm','port/macos/host/metal_function_cache.h','port/macos/host/metal_draw_encoder.h','port/macos/include/halo_metal_abi.h',
         'port/android/include/halo_android_abi.h','port/macos/tests/host_metal.mm','port/macos/tests/guest_metal_query.c',
         'port/macos/metal_imports.list','tools/android_build.py','tools/android_asm_convert.py','tools/android_imports.py',
         'tools/metal_host_draw_validate.py','tools/metal_draw_replay.py','tools/metal_draw_compare.py','tools/metal_host_query_validate.py']

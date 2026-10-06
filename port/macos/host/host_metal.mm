@@ -22,6 +22,7 @@ extern "C" {
 #include "host.h"
 }
 #include "../include/halo_metal_abi.h"
+#include "metal_function_cache.h"
 #import "metal_draw_encoder.h"
 
 namespace {
@@ -53,11 +54,12 @@ template<typename Value> bool sampler_cache_insert(std::map<SamplerKey,Value> &c
 }
 struct Metrics {
     bool enabled = false;
-    uint64_t submissions = 0, frames = 0, bytes = 0, draws = 0;
+    uint64_t submissions = 0, frames = 0, bytes = 0, draws = 0, render_passes = 0;
     uint64_t packet_copy_ns = 0, prepare_ns = 0, encode_ns = 0;
     uint64_t drawable_wait_ns = 0, commit_ns = 0, completion_wait_ns = 0, gpu_ns = 0, gpu_samples = 0;
     uint64_t packet_buffers = 0, sampler_hits = 0, sampler_misses = 0, sampler_allocations = 0;
     uint64_t upload_buffers = 0, visibility_buffers = 0;
+    uint64_t shader_compile_hits = 0, shader_compile_misses = 0, shader_compile_ns = 0;
 };
 void check_at(const char *file, int line, const char *expression, bool ok,
               int status = HALO_METAL_INVALID, uint32_t index = UINT32_MAX) {
@@ -92,9 +94,13 @@ struct Prepared {
     // Every draw points into this immutable host-owned packet copy. Synchronous
     // completion occurs before Prepared and its strong buffer reference die.
     id<MTLBuffer> input_buffer = nil;
+    // New successful functions remain private until every packet command has
+    // passed validation. A rejected packet cannot publish compiler entries.
+    HaloMetalFunctionCache<id<MTLFunction>> compiled_functions;
 };
 struct Context {
     id<MTLDevice> device;
+    HaloMetalFunctionCache<id<MTLFunction>> compiled_functions;
     id<MTLCommandQueue> queue;
     id<MTLLibrary> clear_library;
     id<MTLRenderPipelineState> present_pipeline;
@@ -135,14 +141,17 @@ void metrics_report(void) {
     host_logf(HOST_LOG_INFO,"Native Metal host metrics: %llu frames, %llu submits, %llu draws, %llu bytes; "
         "packet-copy %llu us, prepare %llu us, encode %llu us, drawable-wait %llu us, commit %llu us, "
         "completion-wait %llu us, gpu %llu us/%llu samples; packet-buffers %llu, sampler-hits %llu, "
-        "sampler-misses %llu, sampler-allocations %llu, sampler-cache %zu, upload-buffers %llu, visibility-buffers %llu",
+        "sampler-misses %llu, sampler-allocations %llu, sampler-cache %zu, upload-buffers %llu, visibility-buffers %llu, render-passes %llu, "
+        "shader-compile-hits %llu, shader-compile-misses %llu, shader-compile-us %llu, shader-function-cache %zu, shader-function-source-bytes %zu",
         (unsigned long long)m.frames,(unsigned long long)m.submissions,(unsigned long long)m.draws,(unsigned long long)m.bytes,
         (unsigned long long)(m.packet_copy_ns/1000),(unsigned long long)(m.prepare_ns/1000),(unsigned long long)(m.encode_ns/1000),
         (unsigned long long)(m.drawable_wait_ns/1000),(unsigned long long)(m.commit_ns/1000),
         (unsigned long long)(m.completion_wait_ns/1000),(unsigned long long)(m.gpu_ns/1000),(unsigned long long)m.gpu_samples,
         (unsigned long long)m.packet_buffers,(unsigned long long)m.sampler_hits,(unsigned long long)m.sampler_misses,
         (unsigned long long)m.sampler_allocations,context.samplers.size(),(unsigned long long)m.upload_buffers,
-        (unsigned long long)m.visibility_buffers);
+        (unsigned long long)m.visibility_buffers,(unsigned long long)m.render_passes,
+        (unsigned long long)m.shader_compile_hits,(unsigned long long)m.shader_compile_misses,
+        (unsigned long long)(m.shader_compile_ns/1000),context.compiled_functions.size(),context.compiled_functions.sourceBytes());
     context.metrics = Metrics{}; context.metrics.enabled = true;
 }
 
@@ -354,11 +363,21 @@ void end_visibility(std::map<uint32_t, Visibility> &queries, halo_metal_ref &act
     query.begun = false; query.ended = true; query.end_sequence = sequence; query.version++;
     active = {};
 }
-id<MTLFunction> compile_function(const std::vector<uint8_t> &packet, uint32_t offset,
+id<MTLFunction> compile_function(Prepared &prepared, const std::vector<uint8_t> &packet, uint32_t offset,
                                uint32_t bytes, bool vertex, bool fast, bool invariant) {
     check(!memchr(packet.data() + offset,0,bytes));
     NSString *source = [[NSString alloc] initWithBytes:packet.data() + offset length:bytes encoding:NSUTF8StringEncoding];
     check(source != nil);
+    HaloMetalFunctionKey key{std::string((const char *)packet.data() + offset,bytes),vertex,fast,invariant};
+    const auto *cached = context.compiled_functions.find(key);
+    if (!cached) cached = prepared.compiled_functions.find(key);
+    if (cached) {
+        check((*cached).device == context.device && (*cached).functionType ==
+            (vertex ? MTLFunctionTypeVertex : MTLFunctionTypeFragment),HALO_METAL_GPU_ERROR);
+        if (context.metrics.enabled) context.metrics.shader_compile_hits++;
+        return *cached;
+    }
+    if (context.metrics.enabled) context.metrics.shader_compile_misses++;
     auto options = [MTLCompileOptions new]; options.preserveInvariance = invariant;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -369,12 +388,27 @@ id<MTLFunction> compile_function(const std::vector<uint8_t> &packet, uint32_t of
         options.mathFloatingPointFunctions = fast ? MTLMathFloatingPointFunctionsFast : MTLMathFloatingPointFunctionsPrecise;
     }
     NSError *error = nil;
+    const uint64_t started = metrics_start();
     auto library = [context.device newLibraryWithSource:source options:options error:&error];
+    context.metrics.shader_compile_ns += metrics_elapsed(started);
     if (!library) host_logf(HOST_LOG_ERROR,"Native original %s compilation: %s",vertex ? "vertex" : "fragment",error.localizedDescription.UTF8String);
     check(library != nil,HALO_METAL_GPU_ERROR);
     auto function = [library newFunctionWithName:vertex ? @"xgpu_vertex" : @"xgpu_fragment"];
     check(function && function.functionType == (vertex ? MTLFunctionTypeVertex : MTLFunctionTypeFragment));
+    prepared.compiled_functions.insert(std::move(key),function);
     return function;
+}
+void remove_unused_program_pipelines(const Program &program, uint32_t deleting_id = 0) {
+    // Exact-source reuse can make two live programs share either stage. A
+    // rejected candidate or deleted variant must not evict the other's PSOs.
+    id<MTLFunction> vertex = program.vertex, fragment = program.fragment;
+    for (const auto &entry : context.programs) {
+        if (entry.first == deleting_id) continue;
+        if (entry.second.vertex == vertex) vertex = nil;
+        if (entry.second.fragment == fragment) fragment = nil;
+        if (!vertex && !fragment) return;
+    }
+    [context.draw_encoder removePipelinesForVertexFunction:vertex fragmentFunction:fragment];
 }
 id<MTLSamplerState> sampler(halo_metal_sampler c,
                           MTLSamplerBorderColor border = MTLSamplerBorderColorTransparentBlack) {
@@ -778,8 +812,8 @@ void validate(const std::vector<uint8_t> &packet, Prepared &prepared) {
                     inline_range(position,command.byte_size,sizeof(c),c.vertex_source_offset,c.vertex_source_size,16);
                     inline_range(position,command.byte_size,sizeof(c),c.fragment_source_offset,c.fragment_source_size,16);
                     check(!programs.count(c.resource.id) && c.resource.generation > program_generations[c.resource.id],HALO_METAL_STALE_RESOURCE);
-                    Program p{compile_function(packet,c.vertex_source_offset,c.vertex_source_size,true,c.vertex_compiler_contract == 1,true),
-                        compile_function(packet,c.fragment_source_offset,c.fragment_source_size,false,c.fragment_compiler_contract == 1,
+                    Program p{compile_function(prepared,packet,c.vertex_source_offset,c.vertex_source_size,true,c.vertex_compiler_contract == 1,true),
+                        compile_function(prepared,packet,c.fragment_source_offset,c.fragment_source_size,false,c.fragment_compiler_contract == 1,
                             c.fragment_compiler_contract == 0),c.resource.generation,c.vertex_compiler_contract,c.fragment_compiler_contract};
                     programs.emplace(c.resource.id,p); prepared.programs.emplace(position,p);
                     program_generations[c.resource.id] = c.resource.generation; break;
@@ -1049,14 +1083,27 @@ void fxaa(id<MTLCommandBuffer> buffer, Texture &source, const halo_metal_fxaa &c
     initialized(source,HALO_METAL_COLOR,false);
 }
 void execute(const std::vector<uint8_t> &packet, const Prepared &prepared) {
+    // A failed packet must close its retained draw pass before command-buffer
+    // ownership is released. Normal execution closes it before every boundary.
+    struct DrawPassScope {
+        HaloMetalDrawEncoder *encoder;
+        ~DrawPassScope() { [encoder endEncoding]; }
+    } draw_scope{context.draw_encoder};
     auto header = record<halo_metal_packet>(packet,0);
     auto buffer = [context.queue commandBuffer]; check(buffer != nil,HALO_METAL_GPU_ERROR);
     buffer.label = [NSString stringWithFormat:@"Halo guest native frame %llu",header.frame_sequence];
     const uint64_t drawable_before = context.metrics.drawable_wait_ns;
+    const NSUInteger passes_before = context.draw_encoder.renderPassCount;
     uint64_t encode_started = metrics_start();
     size_t position = sizeof(header);
     for (uint32_t i = 0; i < header.command_count; i++) {
         auto command = record<halo_metal_command>(packet,position);
+        // Contiguous original draws alone may share a pass. Keep uploads,
+        // clears, copies, queries, resource changes and presentation in their
+        // exact original order with a completed attachment store boundary.
+        if (command.opcode != HALO_METAL_DRAW && command.opcode != HALO_METAL_DRAW_ALPHA_BORDER &&
+            command.opcode != HALO_METAL_DRAW_VOLUME_BORDER)
+            [context.draw_encoder endEncoding];
         switch (command.opcode) {
             case HALO_METAL_CREATE_TEXTURE:
             case HALO_METAL_CREATE_TEXTURE_EX: {
@@ -1137,7 +1184,7 @@ void execute(const std::vector<uint8_t> &packet, const Prepared &prepared) {
             }
             case HALO_METAL_DELETE_PROGRAM: {
                 auto c = record<halo_metal_delete>(packet,position); auto &p = program(context.programs,c.resource);
-                [context.draw_encoder removePipelinesForVertexFunction:p.vertex fragmentFunction:p.fragment];
+                remove_unused_program_pipelines(p,c.resource.id);
                 context.programs.erase(c.resource.id); break;
             }
             case HALO_METAL_DRAW:
@@ -1145,7 +1192,7 @@ void execute(const std::vector<uint8_t> &packet, const Prepared &prepared) {
             case HALO_METAL_DRAW_VOLUME_BORDER: {
                 auto c = record<halo_metal_draw>(packet,position); NSError *error = nil;
                 const auto &draw = prepared.draws.at(position);
-                check([context.draw_encoder encodeDraw:draw commandBuffer:buffer error:&error],HALO_METAL_GPU_ERROR,i);
+                check([context.draw_encoder encodeDraw:draw commandBuffer:buffer reusePass:YES error:&error],HALO_METAL_GPU_ERROR,i);
                 if (context.metrics.enabled) context.metrics.draws++;
                 if (context.active_query.id)
                     visibility(context.queries,context.active_query).words.push_back(draw.visibilityBuffer);
@@ -1175,6 +1222,8 @@ void execute(const std::vector<uint8_t> &packet, const Prepared &prepared) {
         }
         position += command.byte_size;
     }
+    [context.draw_encoder endEncoding];
+    if (context.metrics.enabled) context.metrics.render_passes += context.draw_encoder.renderPassCount - passes_before;
     const uint64_t elapsed = metrics_elapsed(encode_started);
     const uint64_t drawable_elapsed = context.metrics.drawable_wait_ns - drawable_before;
     if (context.metrics.enabled) context.metrics.encode_ns += elapsed >= drawable_elapsed ? elapsed - drawable_elapsed : 0;
@@ -1238,6 +1287,8 @@ extern "C" int host_metal_submit(uint32_t input,uint32_t bytes,uint32_t output,u
             std::vector<uint8_t> packet(bytes); check(copy_guest(input,packet.data(),bytes),HALO_METAL_MEMORY);
             context.metrics.packet_copy_ns += metrics_elapsed(started);
             started = metrics_start(); validate(packet,prepared);
+            for (const auto &entry : prepared.compiled_functions.entries())
+                context.compiled_functions.insert(entry.first,entry.second);
             context.metrics.prepare_ns += metrics_elapsed(started);
             executing = true; execute(packet,prepared);
             if (context.metrics.enabled) { context.metrics.submissions++; context.metrics.bytes += bytes; metrics_report(); }
@@ -1245,12 +1296,12 @@ extern "C" int host_metal_submit(uint32_t input,uint32_t bytes,uint32_t output,u
         } catch (Failure f) {
             if (executing) context.poisoned = true;
             else for (const auto &entry : prepared.programs)
-                [context.draw_encoder removePipelinesForVertexFunction:entry.second.vertex fragmentFunction:entry.second.fragment];
+                remove_unused_program_pipelines(entry.second);
             return reply(output,size,f.status,f.index);
         } catch (const std::bad_alloc &) {
             if (executing) context.poisoned = true;
             else for (const auto &entry : prepared.programs)
-                [context.draw_encoder removePipelinesForVertexFunction:entry.second.vertex fragmentFunction:entry.second.fragment];
+                remove_unused_program_pipelines(entry.second);
             return reply(output,size,HALO_METAL_MEMORY);
         }
     }

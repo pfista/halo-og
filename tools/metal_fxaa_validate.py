@@ -26,7 +26,7 @@ sha, require = wire.sha, wire.require
 REQUIRED = 1 | 2 | 4 | 16 | 64 | 128 | 32768
 SOURCES = [
     'port/macos/host/host_memory.c', 'port/macos/host/host.h',
-    'port/macos/host/host_metal.mm', 'port/macos/host/metal_draw_encoder.h',
+    'port/macos/host/host_metal.mm', 'port/macos/host/metal_function_cache.h','port/macos/host/metal_draw_encoder.h',
     'port/macos/host/metal_draw_encoder.mm', 'port/macos/include/halo_metal_abi.h',
     'port/android/include/halo_android_abi.h', 'port/macos/tests/host_metal_frame.mm',
     'port/macos/tests/guest_metal_fxaa.c', 'port/linux/src/metal_guest_transport.h',

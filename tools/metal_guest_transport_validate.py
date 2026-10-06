@@ -24,7 +24,7 @@ SOURCES = [
     'port/macos/tests/guest_metal_transport.c', 'port/macos/tests/guest_metal_transport_reply.c',
     'port/macos/tests/host_metal.mm',
     'port/macos/host/host_memory.c', 'port/macos/host/host.h',
-    'port/macos/host/host_metal.mm', 'port/macos/host/metal_draw_encoder.h',
+    'port/macos/host/host_metal.mm', 'port/macos/host/metal_function_cache.h','port/macos/host/metal_draw_encoder.h',
     'port/macos/host/metal_draw_encoder.mm', 'port/macos/include/halo_metal_abi.h',
     'port/android/include/halo_android_abi.h', 'port/macos/metal_imports.list',
     'tools/android_build.py', 'tools/android_asm_convert.py', 'tools/android_imports.py',
