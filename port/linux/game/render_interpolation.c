@@ -13,6 +13,12 @@ into the next tick. That puts what is drawn one tick (33 ms) behind the
 simulation, the usual price of interpolation. (A Catmull-Rom spline would
 also need the tick after the pair it spans: two ticks behind.)
 
+If a frame catches up more than one tick, its camera has no snapshot of the
+intermediate tick that the objects do. That entire tick is drawn current,
+including later frames that run no tick, then blending resumes on the next
+tick. A first frame after enabling or resetting also starts current, with
+its object snapshots seeded without advancing the simulation.
+
 Rotations are blended as quaternions (normalised lerp, taking the shorter
 way round), positions and scales linearly. Anything that moves further than
 a tick of motion plausibly allows (teleports, respawns, camera cuts) snaps
@@ -85,7 +91,7 @@ struct interpolation_rotation
 struct interpolated_object
 {
 	long object_index; /* NONE when unused */
-	long tick; /* the tick of the latest snapshot */
+	unsigned long tick; /* the tick of the latest snapshot */
 	short node_count;
 	short node_capacity;
 	boolean has_previous;
@@ -104,7 +110,7 @@ struct interpolated_object
 
 struct interpolated_camera
 {
-	long tick;
+	unsigned long tick;
 	boolean valid;
 	boolean has_previous;
 	struct observer_result previous;
@@ -117,7 +123,7 @@ struct interpolated_camera
 
 struct interpolated_first_person
 {
-	long tick;
+	unsigned long tick;
 	short node_count;
 	boolean has_previous;
 	real_matrix4x3 previous[MAXIMUM_INTERPOLATED_NODES];
@@ -129,10 +135,13 @@ struct interpolated_first_person
 static struct interpolated_object *interpolated_objects;
 static struct interpolated_camera interpolated_cameras[MAXIMUM_LOCAL_PLAYERS];
 static struct interpolated_first_person interpolated_first_person[MAXIMUM_LOCAL_PLAYERS];
-static long interpolation_tick;
+static unsigned long interpolation_tick;
 static long interpolation_frame;
 static boolean interpolation_rendering;
 static real interpolation_fraction = 1.0f;
+static unsigned long interpolation_rendered_tick;
+static boolean interpolation_rendered_tick_valid;
+static boolean interpolation_current_tick;
 
 /* ---------- blending */
 
@@ -378,26 +387,12 @@ static real distance_squared(real_point3d const *a, real_point3d const *b)
 
 /* ---------- ticks */
 
-void render_interpolation_tick(void)
+/* The same raw object snapshot path seeds a first enabled frame and records
+each simulation tick. Seeding starts a new pair, without changing the clock. */
+static void render_interpolation_snapshot_objects(boolean advance, unsigned long previous_tick)
 {
 	struct object_iterator iterator;
 	struct object_datum *object;
-	long previous_tick = interpolation_tick++;
-
-	if (!halo_interpolation_enabled())
-		return;
-	/* the cameras' corrections a tick on, as the objects' (below) */
-	{
-		short local_player_index;
-
-		for (local_player_index = 0; local_player_index < MAXIMUM_LOCAL_PLAYERS; local_player_index++)
-		{
-			struct interpolated_camera *camera = &interpolated_cameras[local_player_index];
-
-			if (camera->valid)
-				correction_advance(&camera->correction, &camera->correction_pending);
-		}
-	}
 	if (!interpolated_objects)
 	{
 		long index;
@@ -446,7 +441,7 @@ void render_interpolation_tick(void)
 			record->node_capacity = node_count;
 			record->object_index = NONE; /* the old snapshots moved */
 		}
-		continuing = record->object_index == iterator.index &&
+		continuing = advance && record->object_index == iterator.index &&
 			record->node_count == node_count &&
 			record->tick == previous_tick;
 		if (continuing)
@@ -472,12 +467,38 @@ void render_interpolation_tick(void)
 	}
 }
 
+void render_interpolation_tick(void)
+{
+	unsigned long previous_tick = interpolation_tick++;
+	short local_player_index;
+
+	if (!halo_interpolation_enabled())
+	{
+		/* A toggle may run ticks before it draws a disabled frame. */
+		if (interpolation_rendered_tick_valid)
+			render_interpolation_reset();
+		return;
+	}
+	/* the cameras' corrections a tick on, as the objects' (below) */
+	for (local_player_index = 0; local_player_index < MAXIMUM_LOCAL_PLAYERS; local_player_index++)
+	{
+		struct interpolated_camera *camera = &interpolated_cameras[local_player_index];
+
+		if (camera->valid)
+			correction_advance(&camera->correction, &camera->correction_pending);
+	}
+	render_interpolation_snapshot_objects(TRUE, previous_tick);
+}
+
 /* a new map (game.c): its objects take the indices of the last one's, and
 nothing of theirs is drawn from */
 void render_interpolation_reset(void)
 {
 	long index;
 
+	interpolation_rendered_tick_valid = FALSE;
+	interpolation_current_tick = FALSE;
+	interpolation_fraction = 1.0f;
 	if (interpolated_objects)
 	{
 		for (index = 0; index < MAXIMUM_INTERPOLATED_OBJECTS; index++)
@@ -495,9 +516,37 @@ void render_interpolation_reset(void)
 
 void render_interpolation_frame_begin(void)
 {
-	interpolation_rendering = halo_interpolation_enabled();
+	boolean enabled = halo_interpolation_enabled();
+
+	if (!enabled && interpolation_rendered_tick_valid)
+		render_interpolation_reset();
+	/* Snapshots must read raw nodes, including when enabling without a tick. */
+	interpolation_rendering = FALSE;
 	interpolation_frame++;
 	interpolation_fraction = game_time_get_tick_fraction();
+	if (enabled)
+	{
+		if (!interpolation_rendered_tick_valid)
+		{
+			render_interpolation_snapshot_objects(FALSE, interpolation_tick);
+			interpolation_current_tick = TRUE;
+		}
+		else if (interpolation_tick - interpolation_rendered_tick > 1)
+		{
+			interpolation_current_tick = TRUE;
+		}
+		else if (interpolation_tick != interpolation_rendered_tick)
+		{
+			interpolation_current_tick = FALSE;
+		}
+		/* Zero-tick frames keep the current-tick choice: allowing their
+		fraction to fall below one would rewind after a catch-up frame. */
+		interpolation_rendered_tick = interpolation_tick;
+		interpolation_rendered_tick_valid = TRUE;
+		if (interpolation_current_tick)
+			interpolation_fraction = 1.0f;
+	}
+	interpolation_rendering = enabled;
 }
 
 void render_interpolation_frame_end(void)
@@ -738,18 +787,19 @@ static struct observer_result const *render_interpolation_blended_camera(
 		camera->valid = TRUE;
 	}
 	/* (so written that a position or direction not a number cuts) */
-	if (!camera->has_previous ||
+	if (!interpolation_current_tick && (!camera->has_previous ||
 		!(distance_squared(&camera->previous.position, &camera->latest.position) <=
 			CAMERA_CUT_DISTANCE * CAMERA_CUT_DISTANCE) ||
 		!(camera->previous.forward.i * camera->latest.forward.i +
 			camera->previous.forward.j * camera->latest.forward.j +
-			camera->previous.forward.k * camera->latest.forward.k >= CAMERA_CUT_COSINE))
+			camera->previous.forward.k * camera->latest.forward.k >= CAMERA_CUT_COSINE)))
 	{
 		return observer;
 	}
 
 	camera->blended = camera->latest;
-	point_lerp(&camera->previous.position, &camera->latest.position, t, &camera->blended.position);
+	if (!interpolation_current_tick)
+		point_lerp(&camera->previous.position, &camera->latest.position, t, &camera->blended.position);
 	if (correction_significant(&camera->correction) || correction_significant(&camera->correction_pending))
 	{
 		real_vector3d drawn;
@@ -759,6 +809,11 @@ static struct observer_result const *render_interpolation_blended_camera(
 		camera->blended.position.y += drawn.j;
 		camera->blended.position.z += drawn.k;
 	}
+	/* Hold the captured current view through this tick's zero-tick frames,
+	with the same correction glide as its objects. The direct facing
+	override still applies to an on-foot player. */
+	if (interpolation_current_tick)
+		return &camera->blended;
 	vector_nlerp(&camera->previous.forward, &camera->latest.forward, t, &camera->blended.forward);
 	vector_nlerp(&camera->previous.up, &camera->latest.up, t, &camera->blended.up);
 	{
