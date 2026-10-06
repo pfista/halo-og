@@ -384,7 +384,7 @@ and native-resolution performance remain separate. Fullscreen follow-up tests
 were blocked when macOS returned to the login screen. See
 [measurement scope and reproducible commands](metal-performance.md).
 
-The implementation is in the commit containing this entry. Integration remains
+Implementation commit: `69deba4f697707d3ac36b6721e1629760d4fb6c0`. Integration remains
 local and unreleased; ANGLE remains the default, and original assets, HUD and
 30 Hz gameplay remain unchanged. This does not certify retail parity or sustained
 60/120 FPS in the reported multiplayer/campaign scenes.
