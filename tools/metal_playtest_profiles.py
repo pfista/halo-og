@@ -291,6 +291,10 @@ def cache_header(path, expected, scenario_type):
     require(struct.unpack_from('<H', raw, 96)[0] == scenario_type, 'Wrong cache scenario type')
 
 
+def playtest_init(map_name):
+    return 'display_framerate true\ngame_variant slayer\nmap_name ' + map_name + '\n'
+
+
 def prepare(output, map_name, cap, height, vsync, assets, template, root=ROOT,
             native_fullscreen=False, native_size=None, anti_aliasing='off'):
     output, assets, template, root = map(lambda p: Path(p).resolve(), (output, assets, template, root))
@@ -310,7 +314,7 @@ def prepare(output, map_name, cap, height, vsync, assets, template, root=ROOT,
     (output / 'saves').mkdir()
     (output / 'data/maps').symlink_to(assets / 'maps', target_is_directory=True)
     (output / 'data/sounds').symlink_to(assets / 'sounds', target_is_directory=True)
-    (output / 'data/init.txt').write_text('game_variant slayer\nmap_name ' + map_name + '\n')
+    (output / 'data/init.txt').write_text(playtest_init(map_name))
     (output / 'saves/config.toml').write_text(configuration)
     (output / 'initial-config.toml').write_text(configuration)
     frozen = output / 'producer.py'
@@ -552,7 +556,7 @@ def verify_profile(folder, require_ready=False):
     initial = tomllib.loads((folder / 'initial-config.toml').read_text())
     validate_config(initial, values)
     validate_config(tomllib.loads(config_path.read_text()), values, initial=initial)
-    require((folder / 'data/init.txt').read_text() == 'game_variant slayer\nmap_name ' + values['map'] + '\n',
+    require((folder / 'data/init.txt').read_text() == playtest_init(values['map']),
             'Unexpected original game initialization')
     assets = Path(manifest['original_assets'])
     require((folder / 'data/maps').is_symlink() and (folder / 'data/maps').resolve() == (assets / 'maps').resolve()

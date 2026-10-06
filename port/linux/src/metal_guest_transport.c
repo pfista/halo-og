@@ -166,7 +166,12 @@ int halo_metal_guest_append_payload(struct halo_metal_guest_transport *t, const 
     uint32_t begin, end; result = align_extent(t, t->size, size, 16, &begin, &end); if (result) return result;
     if (overlaps_storage(t, source, size) || overlaps_storage(t, offset, sizeof(*offset)))
         return fail(t, HALO_METAL_INVALID, "native payload and offset output must not alias packet storage");
-    zero_bytes(t->bytes + t->size, end - t->size); copy_bytes(t->bytes + begin, source, size); t->size = end;
+    /* Only alignment bytes need initialization. Every payload byte is copied
+       below, so clearing it first adds a complete redundant memory write. */
+    zero_bytes(t->bytes + t->size, begin - t->size);
+    copy_bytes(t->bytes + begin, source, size);
+    zero_bytes(t->bytes + begin + size, end - begin - size);
+    t->size = end;
     ((struct halo_metal_command *)(void *)(t->bytes + t->command_offset))->byte_size = end - t->command_offset;
     synchronize_header(t); *offset = begin; return HALO_METAL_OK;
 }

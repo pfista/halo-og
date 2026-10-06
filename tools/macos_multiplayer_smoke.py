@@ -25,6 +25,7 @@ def prepare(folder, role, mode, seconds, host_address, client_address, variants,
     saves.mkdir(parents=True, exist_ok=True)
     data = folder / "data"
     data.mkdir()
+    (data / "init.txt").write_text("display_framerate true\n")
     (data / "maps").mkdir()
     for path in (ROOT / "assets/maps").iterdir():
         if path.is_file():

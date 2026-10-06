@@ -89,7 +89,7 @@ def prepare(output, levels, seconds, fullscreen, hidden, console_port, screensho
         if not (data / 'maps' / (level + '.map')).exists():
             raise RuntimeError('Missing test map: ' + level)
     variant = 'game_variant slayer\n' if levels[0] in MULTIPLAYER_LEVELS else ''
-    (data / 'init.txt').write_text(variant + 'map_name ' + level_path(levels[0]) + '\n')
+    (data / 'init.txt').write_text('display_framerate true\n' + variant + 'map_name ' + level_path(levels[0]) + '\n')
     (saves / 'config.toml').write_text(f'''[network]
 online = false
 allow_upnp = false

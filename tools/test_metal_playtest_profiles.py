@@ -390,7 +390,8 @@ class ProfileTests(unittest.TestCase):
         self.assertFalse(manifest['experiment_ready'])
         self.assertTrue(manifest['profile']['reference_30'])
         self.assertEqual(manifest['simulation_hz'], 30)
-        self.assertEqual((self.folder / 'data/init.txt').read_bytes(), b'game_variant slayer\nmap_name bloodgulch\n')
+        self.assertEqual((self.folder / 'data/init.txt').read_bytes(),
+                         b'display_framerate true\ngame_variant slayer\nmap_name bloodgulch\n')
         self.assertTrue((self.folder / 'data/maps').is_symlink())
         self.assertEqual(before, profiles.sha(self.assets / 'maps/bloodgulch.map'))
         self.assertFalse((self.folder / 'Launch Native Metal.command').exists())

@@ -201,7 +201,7 @@ def main():
     if (out/'prepared.json').exists():raise ValueError('Preserve existing proof; use a new output directory')
     root=args.source_root.resolve();snapshot=out/'source-snapshot';sources={}
     names=['port/macos/host/host.h','port/macos/host/host_memory.c','port/macos/host/host_metal.mm',
-        'port/macos/host/metal_draw_encoder.h','port/macos/host/metal_draw_encoder.mm',
+        'port/macos/host/metal_function_cache.h','port/macos/host/metal_draw_encoder.h','port/macos/host/metal_draw_encoder.mm',
         'port/macos/include/halo_metal_abi.h','port/android/include/halo_android_abi.h']
     for name in names:
         src=root/name;dst=snapshot/name;dst.parent.mkdir(parents=True,exist_ok=True);h=sha(src);shutil.copy2(src,dst)

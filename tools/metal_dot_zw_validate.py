@@ -212,7 +212,7 @@ def fixture(programs):
     return f,cases
 
 def snapshot(out):
-    names=['port/macos/host/host_memory.c','port/macos/host/host.h','port/macos/host/host_metal.mm','port/macos/host/metal_draw_encoder.h','port/macos/host/metal_draw_encoder.mm',
+    names=['port/macos/host/host_memory.c','port/macos/host/host.h','port/macos/host/host_metal.mm','port/macos/host/metal_function_cache.h','port/macos/host/metal_draw_encoder.h','port/macos/host/metal_draw_encoder.mm',
       'port/macos/include/halo_metal_abi.h','port/android/include/halo_android_abi.h','port/macos/tests/host_metal_frame.mm','port/macos/tests/guest_metal_dot_zw.c',
       'port/linux/src/metal_guest_transport.h','port/linux/src/metal_guest_transport.c','port/linux/src/metal_draw_state.h','port/linux/src/metal_draw_state.c',
       'port/linux/src/platform.h','port/linux/src/xgpu.h','port/linux/src/xgpu_msl.h','port/linux/src/xgpu_shader_standalone.h','port/linux/src/nv2a_psh.c','port/linux/src/nv2a_vsh.c',

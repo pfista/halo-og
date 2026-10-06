@@ -77,6 +77,10 @@ struct DepthKey {
     id<MTLDevice> _device;
     NSMutableDictionary<NSData *, HaloMetalPipelineEntry *> *_pipelines;
     NSMutableDictionary<NSData *, id<MTLDepthStencilState>> *_depthStates;
+    id<MTLRenderCommandEncoder> _activeEncoder;
+    id<MTLCommandBuffer> _activeCommandBuffer;
+    id<MTLTexture> _activeColor, _activeDepthStencil;
+    NSUInteger _renderPassCount;
 }
 - (instancetype)initWithDevice:(id<MTLDevice>)device {
     if (!device) return nil;
@@ -86,9 +90,19 @@ struct DepthKey {
     }
     return self;
 }
-- (void)clearCaches { @synchronized(self) { [_pipelines removeAllObjects]; [_depthStates removeAllObjects]; } }
+- (void)endEncoding {
+    @synchronized(self) {
+        if (_activeEncoder) [_activeEncoder endEncoding];
+        _activeEncoder = nil; _activeCommandBuffer = nil;
+        _activeColor = nil; _activeDepthStencil = nil;
+    }
+}
+- (NSUInteger)renderPassCount { @synchronized(self) { return _renderPassCount; } }
+- (void)dealloc { [self endEncoding]; }
+- (void)clearCaches { @synchronized(self) { [self endEncoding]; [_pipelines removeAllObjects]; [_depthStates removeAllObjects]; } }
 - (void)removePipelinesForVertexFunction:(id<MTLFunction>)vertex fragmentFunction:(id<MTLFunction>)fragment {
     @synchronized(self) {
+        [self endEncoding];
         for (NSData *key in [_pipelines.allKeys copy]) {
             HaloMetalPipelineEntry *entry = _pipelines[key];
             if ((vertex && entry.vertex == vertex) || (fragment && entry.fragment == fragment))
@@ -296,30 +310,48 @@ struct DepthKey {
     }
 }
 - (BOOL)encodeDraw:(const HaloMetalDraw &)draw commandBuffer:(id<MTLCommandBuffer>)command error:(NSError **)error {
+    return [self encodeDraw:draw commandBuffer:command reusePass:NO error:error];
+}
+- (BOOL)encodeDraw:(const HaloMetalDraw &)draw commandBuffer:(id<MTLCommandBuffer>)command reusePass:(BOOL)reusePass error:(NSError **)error {
     @synchronized(self) {
         if (error) *error = nil;
-        if (!command || command.commandQueue.device != _device || command.status != MTLCommandBufferStatusNotEnqueued)
+        if (!command || command.commandQueue.device != _device || command.status != MTLCommandBufferStatusNotEnqueued) {
+            [self endEncoding];
             return fail(error, HaloMetalDrawInvalid, @"Draw requires an unsubmitted command buffer on the encoder device");
-        if (![self prepareDraw:draw error:error]) return NO;
+        }
+        if (![self prepareDraw:draw error:error]) { [self endEncoding]; return NO; }
         HaloMetalPipelineEntry *entry = [self pipelineForDraw:draw error:error];
         id<MTLDepthStencilState> depth = [self depthForDraw:draw error:error];
-        MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
-        id<MTLTexture> target = draw.color ?: draw.depthStencil;
-        pass.renderTargetWidth = target.width; pass.renderTargetHeight = target.height;
-        if (draw.color) {
-            pass.colorAttachments[0].texture = draw.color;
-            pass.colorAttachments[0].loadAction = MTLLoadActionLoad; pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        // Query passes keep their fresh result buffer and Reset semantics.
+        // Blended draws keep the original per-draw store boundary: coalescing
+        // them changed captured BGRA8 results despite matching depth/stencil.
+        // Only blend-disabled draws may retain attachment contents in a pass.
+        const BOOL reusable = reusePass && !draw.visibilityBuffer && !draw.state.blend_enabled;
+        id<MTLRenderCommandEncoder> encoder = _activeEncoder;
+        if (!reusable || !encoder || _activeCommandBuffer != command ||
+            _activeColor != draw.color || _activeDepthStencil != draw.depthStencil) {
+            [self endEncoding];
+            MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+            id<MTLTexture> target = draw.color ?: draw.depthStencil;
+            pass.renderTargetWidth = target.width; pass.renderTargetHeight = target.height;
+            if (draw.color) {
+                pass.colorAttachments[0].texture = draw.color;
+                pass.colorAttachments[0].loadAction = MTLLoadActionLoad; pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+            }
+            if (draw.depthStencil) {
+                pass.depthAttachment.texture = pass.stencilAttachment.texture = draw.depthStencil;
+                pass.depthAttachment.loadAction = pass.stencilAttachment.loadAction = MTLLoadActionLoad;
+                pass.depthAttachment.storeAction = pass.stencilAttachment.storeAction = MTLStoreActionStore;
+            }
+            if (draw.visibilityBuffer) pass.visibilityResultBuffer = draw.visibilityBuffer;
+            encoder = [command renderCommandEncoderWithDescriptor:pass];
+            if (!encoder) return fail(error, HaloMetalDrawEncoderFailure, @"Original draw render encoder creation failed");
+            _renderPassCount++;
+            if (reusable) {
+                _activeEncoder = encoder; _activeCommandBuffer = command;
+                _activeColor = draw.color; _activeDepthStencil = draw.depthStencil;
+            }
         }
-        if (draw.depthStencil) {
-            pass.depthAttachment.texture = pass.stencilAttachment.texture = draw.depthStencil;
-            pass.depthAttachment.loadAction = pass.stencilAttachment.loadAction = MTLLoadActionLoad;
-            pass.depthAttachment.storeAction = pass.stencilAttachment.storeAction = MTLStoreActionStore;
-        }
-        // Default Reset semantics: the caller supplies a fresh word per draw.
-        // No visibility buffer is attached to a pass outside an active query.
-        if (draw.visibilityBuffer) pass.visibilityResultBuffer = draw.visibilityBuffer;
-        id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
-        if (!encoder) return fail(error, HaloMetalDrawEncoderFailure, @"Original draw render encoder creation failed");
         const halo_metal_draw_state &s = draw.state;
         [encoder setRenderPipelineState:entry.pipeline]; [encoder setDepthStencilState:depth];
         [encoder setViewport:MTLViewport{s.viewport[0], s.viewport[1], s.viewport[2], s.viewport[3], s.viewport[4], s.viewport[5]}];
@@ -343,7 +375,8 @@ struct DepthKey {
             [encoder setVisibilityResultMode:draw.visibilityMode offset:draw.visibilityOffset];
         [encoder drawIndexedPrimitives:draw.primitive indexCount:draw.indexCount indexType:MTLIndexTypeUInt32
             indexBuffer:draw.indices indexBufferOffset:draw.indexOffset];
-        [encoder endEncoding]; return YES;
+        if (!reusable) [encoder endEncoding];
+        return YES;
     }
 }
 @end

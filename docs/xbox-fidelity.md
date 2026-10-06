@@ -398,6 +398,149 @@ network behavior is therefore unverified;
 these fixtures and build results do not certify original-Xbox parity. Generated
 evidence is under `build/macos/safe-upstream-*`.
 
+### Native Metal packet-copy performance (October 5, 2026)
+
+Decision: adopt on the local `codex/metal-performance-pass` branch. Payload
+appends initialize alignment and trailing padding, then copy every payload byte,
+avoiding the redundant full-payload zero write. Immediate packet ownership,
+resource lifetimes, rejection behavior and all wire bytes remain unchanged.
+The original assets and 30 Hz simulation are unaffected; ANGLE stays the default.
+
+Validation: ten focused CPU tests pass. The actual ILP32 mocked-import fixture
+passes 2,862 room/builder cases and 56 exact payload/padding cases. Its closure is
+`build/metal-poc/payload-padding-ilp32-attempt1/closure.json`
+(SHA256 `da8cab138eed341685b8140bfd157211a8f58525742556a540a5df4b2310d293`).
+This verifies byte preservation and rejection boundaries, not achieved FPS.
+Implementation commit: `08ef504a2f0e99289cd5d5ccdb6c324eccff3580`. It has not been
+integrated into main or released. The upstream reviewed-through remains separate.
+
+### Native Metal draw-pass performance (October 5, 2026)
+
+Decision: adopt conservative reuse on `codex/metal-performance-pass`. Consecutive
+blend-disabled draws share a pass only with identical attachments and no query.
+Every original draw state is rebound; all non-draw operations, attachment
+changes, queries, blended draws, packet end and failures close the pass. Full
+atomic preflight, shader code and synchronous completion remain intact. Broader
+reuse changed 384 captured color bytes and was rejected; blended draws retain
+their original per-draw store boundaries.
+
+Validation: the production ordered replay preserves all 378 color/depth/stencil/
+query checkpoints and the coalesced 126-draw replay preserves all six final
+outputs with Metal API validation. Proofs are
+`build/metal-poc/performance-pass-ordered-frame-attempt2/comparison.json`
+(SHA256 `4419afa815ed140d480dd192bede3a82d9e535272430ff7009fb5ee71db96c00`)
+and `build/metal-poc/performance-pass-coalesced-frame-attempt2/result.json`
+(SHA256 `4fbdb0c7661768bc9907df72ce894fed0f36c52736043d73ce8b0631eeafb313`).
+The focused GPU fixture has 13,608 identical checkpoint bytes and reduces
+32 passes to 25. The final union of targeted CPU suites passes 80 tests;
+the production FXAA regression also passes all 103 readbacks with no failure.
+
+The warmed headless A/B/B/A replay has 5.386 ms median host cost before and
+4.006 ms after (25.6% lower), with exact final bytes in every run. This is one
+captured 640x480 frame; baseline drift, gameplay packet building, presentation
+and native-resolution performance remain separate. All ten subsequent
+fullscreen comparisons passed in
+`build/macos-metal/performance-pass-attempt1/matrix-attempt5/matrix.json`
+(SHA256 `5ee5bb8bb61f94e81c4eba557da49575c7710551a91fc0527f616c86680b2395`).
+At native 3600x2338, the stationary campaign opening averages 35.59 versus
+38.98 FPS with VSync off and 34.48 versus 39.03 with it on. Solo Chill Out
+averages 147.32 versus 153.71 uncapped/off and about 118.7 in both on runs.
+The campaign reproduces long stalls; solo Chill Out does not reproduce the
+multiplayer report. Both native hosts use the same new guest, so this measures
+host pass reuse. ANGLE uses the much smaller original logical picture, and
+stationary/audio-disabled runs exclude combat, traversal and input latency.
+Earlier locked, launcher-identity and lost-focus attempts remain invalid. See
+[measurement scope and reproducible commands](metal-performance.md).
+
+The benchmark now freezes selected binaries inside a private app with a unique
+bundle identifier, the selected executable name, no URL handlers and isolated
+relaunch settings. This prevents activation from opening an extra primary Halo
+copy. Host/guest bytes remain unchanged; whole-app signing is not claimed.
+Launcher correction: `de52b60a7c5de19223de1ed5c2d4a74afe088b88`, with 16 focused
+CPU tests. Later optional shader metrics preserve older log readers.
+
+Implementation commit: `69deba4f697707d3ac36b6721e1629760d4fb6c0`. Integration remains
+local and unreleased; ANGLE remains the default, and original assets, HUD and
+30 Hz gameplay remain unchanged. This does not certify retail parity or sustained
+60/120 FPS in the reported multiplayer/campaign scenes.
+
+### Native Metal shader compilation reuse (October 5, 2026)
+
+Decision: adopt on `codex/metal-performance-pass`. Reuse successfully compiled
+functions only for identical source bytes, shader stage and math/invariance
+contracts, within one Metal device/context. Packet-private candidates publish
+after complete validation; ordinary rejection cannot publish them. Cache
+allocation failure may change cache warmth, but not live resources, queries or
+sequence state. Each cache is bounded by 256 entries and 8 MiB of source keys;
+this is not a bound on driver code memory. Shared-stage cleanup retains other
+live programs' warm pipelines. Shader text, draw order, resource validation and
+synchronous completion remain unchanged.
+
+Validation: the focused CPU/GPU proof passes with API validation and exact
+controlled render bytes. The rebuilt real ILP32 ordered replay preserves all
+378 attachment/query checkpoints, and the coalesced replay preserves all six
+final outputs. Proofs:
+`build/metal-poc/function-cache-ordered-frame-attempt1/comparison.json`
+(SHA256 `9ff3b0db2d4e2b55eadda8e3119f912e2db1e458b9254ab51ee60ade6b76b42b`)
+and `build/metal-poc/function-cache-coalesced-frame-attempt3/result.json`
+(SHA256 `7a9c8bc41f6bef0c1162926557de06364245cc5beaf64cf4ddc18c5931e8bc15`).
+A four-run campaign A/B/B/A avoids 316/400 and 356/440 reported compilation
+requests. Run FPS is 30.52, 38.17, 42.69 and 43.92; substantial baseline drift
+prevents a precise causal FPS claim. Long hitches and the 60 FPS goal remain.
+See [contracts, proofs and timing scope](metal-function-compilation-cache.md).
+
+Implementation commit: `fca76d55c8e3b7e576abc9d677a674d25ec9a845`. Local and
+unreleased; ANGLE remains the default and original assets/gameplay are preserved.
+
+### Coherent catch-up interpolation (October 5, 2026)
+
+Decision: correct a shared ANGLE/Metal Smooth Motion timing mismatch. Object
+snapshots are captured every simulation tick, while camera samples are captured
+on rendered frames. After a frame advances several ticks, their endpoint pairs
+span different durations. The current-tick fallback now applies to camera,
+object nodes, first-person pose and shader time together, persists across
+zero-tick frames, and resumes normal blending on the next tick. First/reset/
+re-enabled frames seed current raw nodes without advancing gameplay. Internal
+unsigned tick comparisons handle wrap. No camera cadence, assets, settings or
+30 Hz simulation changes are introduced; Smooth Motion off keeps raw rendering.
+
+Validation: 11 focused CPU tests compile the production interpolation unit and
+object accessor with 32-bit-normalized counters and ASan/UBSan. A negative
+control reproduces the camera/object separation. Tests cover tracking across
+1/2/1/3-tick gaps, zero-tick frames, resets/toggles, cuts, teleports, direct
+facing, network corrections and wrap. The final targeted CPU union passes 94
+tests at the initial motion implementation, increasing to 95 after the
+benchmark's explicit interpolation setting. Runtime confirmation of the
+reported Pelican jump remains separate.
+During fallback, a new camera cut may wait for the next advancing tick; see
+[presentation tradeoff and test scope](render-interpolation-catch-up.md).
+
+Implementation commit: `19743f0a33363c3db4d82e1f43cffde28f98bf62`. Local and
+unreleased; this fixes the optional interpolation path rather than establishing
+retail cinematic parity. Upstream reviewed-through is unchanged.
+
+### Performance pass merged-main build (October 5, 2026)
+
+Local source `7ad3151071a23565ae38d41b9de1ddda6519558e` merges main into
+`codex/metal-performance-pass`; it does not merge these changes into main or
+publish a release. The dual Mac build, all 95 targeted renderer/motion CPU tests
+and 36 main compatibility tests pass. Installed signature, BuildInfo source and
+ANGLE/native guest hashes match. The initial personal settings checksum changed
+during installation; that comparison is retained as failed rather than claimed
+unchanged. The isolated content tests leave the current personal settings intact.
+
+All four installed original B30 content checks pass: each renderer with Smooth
+Motion off/on, original map hashes, advancing native ticks/draws, API validation
+and clean host/guest exits. Matrix:
+`build/macos-metal/performance-pass-attempt1/final-motion-content-smoke-attempt1/motion-content-smoke.json`
+(SHA256 `b1791f4ba8c8e2a42609b9c518e8873f8a26ae6f16bc738c3ba23238b6fb5edb`).
+These are bounded loading checks with no foreground, FPS, visual-motion or
+retail-parity gate. A preceding motion timing attempt lost foreground and remains
+failed, with its timings discarded. Full-resolution campaign 60 FPS, reported
+multiplayer Chill Out drops and visual resolution of the Pelican jump remain
+unverified. ANGLE remains the default; the original assets and 30 Hz schedule
+remain intact.
+
 ### Original target
 
 The executable target is Xbox build **2342**, `cachebeta.exe`, SHA-256
