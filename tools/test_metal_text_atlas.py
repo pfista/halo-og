@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -162,12 +163,23 @@ class MetalTextAtlasTests(unittest.TestCase):
         folder = Path(cls.directory.name)
         source = folder / 'fixture.c'
         source.write_text(fixture_source())
-        library = folder / 'fixture.dylib'
-        subprocess.run(['clang', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
-                        '-shared', '-fPIC', '-DHALO_MACOS_NATIVE_METAL=1',
-                        '-I', str(ROOT / 'port/linux/src'), '-I', str(ROOT / 'port/macos/include'),
-                        str(source), str(ROOT / 'port/linux/src/metal_packet_room.c'),
-                        '-o', str(library)], check=True, capture_output=True)
+        library = folder / ('fixture.dll' if sys.platform == 'win32' else 'fixture.dylib')
+        command = ['clang', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+                   '-shared', '-DHALO_MACOS_NATIVE_METAL=1']
+        if sys.platform == 'win32':
+            # MSVC-target Clang rejects -fPIC and DLL functions are private
+            # unless exported. Match the existing portable ctypes fixtures.
+            command += ['-Wl,/EXPORT:' + name for name in (
+                'fixture_reset', 'fixture_atlas', 'fixture_dirty', 'fixture_capacity',
+                'fixture_resolve', 'fixture_failure', 'fixture_events', 'fixture_field',
+                'fixture_pixel', 'fixture_metadata', 'fixture_resources', 'fixture_draw')]
+        else:
+            command += ['-fPIC']
+        command += ['-I', str(ROOT / 'port/linux/src'), '-I', str(ROOT / 'port/macos/include'),
+                    str(source), str(ROOT / 'port/linux/src/metal_packet_room.c'), '-o', str(library)]
+        result = subprocess.run(command, text=True, capture_output=True)
+        if result.returncode:
+            raise RuntimeError(result.stdout + result.stderr)
         cls.library = C.CDLL(str(library))
         cls.library.fixture_atlas.argtypes = [C.POINTER(C.c_ubyte), C.c_ulong, C.c_ulong, C.c_uint64, C.c_int]
         cls.library.fixture_resolve.argtypes = [C.c_ulong]

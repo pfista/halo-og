@@ -582,7 +582,11 @@ def build_fixture(directory):
     command = ["clang", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-but-set-variable",
                "-Wno-logical-op-parentheses", "-Wno-sign-compare", "-I", str(PORT), str(source), str(embedded), "-o", str(executable)]
-    if sys.platform != "win32":
+    if sys.platform == "win32":
+        # The fixture's bounded dump uses the standard portable C API. Keep
+        # warnings fatal without treating Windows' fopen_s preference as one.
+        command += ["-D_CRT_SECURE_NO_WARNINGS"]
+    else:
         command += ["-lm"]
     result = subprocess.run(command, text=True, capture_output=True)
     if result.returncode:
