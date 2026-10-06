@@ -188,13 +188,17 @@ static void reset(boolean split,boolean teams) {
     opened=settings_sends=begin_sends=countdown_sends=flushes=0; last_countdown=NONE;
     network_game_server_started_with_five_players=FALSE;
     playlist_variant.universal_variant.teams=teams;
+    /* An ordinary lobby must replace a preceding expanded cache selection. */
+    network_game_server_cache_selection.expanded=1;
     assert(network_game_server_setup_game_from_playlist(&server));
     assert(opened==1 && server.game.maximum_players==MAXIMUM_NETWORK_PLAYER_COUNT);
     assert(server.game.maximum_teams==(teams?2:1));
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
     assert(server.game.minimum_players==1);
+    assert(network_game_server_cache_selection.expanded==0);
 #else
     assert(server.game.minimum_players==2);
+    assert(network_game_server_cache_selection.expanded==1);
 #endif
     machine(0,TRUE);
 }
