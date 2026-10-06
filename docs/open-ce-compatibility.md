@@ -50,6 +50,24 @@ These experimental builds do not use main's automatic release feed. Build
 artifacts remain manual updates. Publishing tags, releases or services requires
 the user's separate explicit authorization.
 
+## Original System Link discovery
+
+The original System Link list combines LAN advertisements, Halo OG's HTTPS
+directory and OpenCE's signed public MQTT listings. Upstream's listing provider
+validates protocol, signature, key hash, sequence and expiry. The menu adapter
+also checks bounded names/maps/player counts and deduplicates by authenticated
+host identity. Hidden lists stop both Internet discovery providers.
+
+Selecting a compatible remote row starts the existing invite connection, then
+waits for the authenticated host's address and actual game advertisement.
+Directory/display metadata never supplies authoritative gameplay settings or
+bypasses protocol, capability or map admission.
+
+Normal Halo OG protocol-11 directory entries remain visible as closed
+`OG v11: ...` rows. Join those with the normal Halo OG app. Password-protected
+OpenCE entries appear as closed `Password: ...` rows; a host-provided standard
+invite can join them. Password entry inside the Xbox list is not implemented.
+
 ## Validation boundary
 
 Compile the Mac guest and host against the actual upstream game code, run
@@ -83,6 +101,12 @@ verification and any unresolved boundary here before distributing this branch.
   Apple, Linux and Windows CI include explicit OpenCE contract fixtures;
   native-only probes skip on unsupported platforms. Linux/Windows/mobile full
   builds and an actual mixed-client game were not executed locally.
+- The 14 OpenCE/discovery/UI fixtures pass, plus the production signed-listing
+  checker (zero failures). They cover provider withdrawal, invalid records,
+  identity/token deduplication, full list capacity, legacy/locked rows,
+  authenticated-address join and timeout. Public listings were verified through
+  production fixtures; a live stock-host listing and mixed-peer join remain
+  part of the interoperability playtest.
 
 Future upstream refreshes can rebase this new patch series from the recorded
 upstream base onto the new upstream head. Fold subsequent `main` changes in as

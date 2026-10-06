@@ -80,7 +80,7 @@ jobs:
       - name: Version 11 network protocol
         run: python3 -m unittest tools.test_network_pings tools.test_network_v11 tools.test_solo_multiplayer_start tools.test_game_directory tools.test_game_directory_worker
       - name: OpenCE protocol 20 compatibility fixtures
-        run: python3 -m unittest tools.test_opence_network tools.test_opence_gameplay tools.test_opence_platform tools.test_game_directory_ui
+        run: python3 -m unittest tools.test_opence_network tools.test_opence_gameplay tools.test_opence_platform tools.test_opence_discovery tools.test_game_directory_ui
       - name: Input timing and fidelity comparison fixtures
         run: python3 -m unittest tools.test_input_delay tools.test_performance_network tools.test_performance_variants tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_halo_fidelity tools.test_meeting_gameplay tools.test_refined_tag_effects
       - name: Expanded Fiesta cache lifecycle and authoring
