@@ -334,7 +334,7 @@ class R2:
         self.config, self.access_key, self.secret_key, self.http = config, access_key, secret_key, http
 
     def request(self, method, key, *, body=None, headers=None, limit=16384):
-        # Keys have already been constrained to catalog or content-addressed map paths.
+        # Keys are constrained by the visible-map or hidden-arsenal validator.
         url = ("https://" + self.config["account_id"] + ".r2.cloudflarestorage.com/"
                + self.config["bucket"] + "/" + quote(key, safe="/-_.~"))
         values = dict(headers or {})
@@ -373,7 +373,7 @@ def publish(prepared, config, r2, http, *, progress=print):
             for attempt in range(1, 4):
                 try:
                     result = r2.request("PUT", key, body=data, headers={"If-None-Match": "*",
-                                        "Content-Type": "application/octet-stream",
+                                        "Content-Type": entry.get("content_type", "application/octet-stream"),
                                         "Cache-Control": "public, max-age=31536000, immutable"})
                 except PublishError:
                     # R2 may have stored the object before losing its response.
@@ -394,7 +394,7 @@ def publish(prepared, config, r2, http, *, progress=print):
                     existing = r2.request("GET", key, limit=len(data))
                 break
         require_exact(existing, data, "Immutable map " + entry["id"])
-        public = http.request("GET", config["public_base_url"] + key,
+        public = http.request("GET", config["public_base_url"] + quote(key, safe="/-_.~"),
                               headers={"Accept-Encoding": "identity", "Cache-Control": "no-cache"}, limit=len(data))
         require_exact(public, data, "Public map " + entry["id"])
         progress("Verified public map " + entry["id"] + " (" + str(len(data)) + " bytes, SHA-256 " + entry["sha256"] + ")")
