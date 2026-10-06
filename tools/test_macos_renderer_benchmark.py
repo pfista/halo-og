@@ -210,6 +210,22 @@ class SamplingTests(unittest.TestCase):
         self.assertTrue(config["bindings"])
         self.assertTrue(all(value == "" for value in config["bindings"].values()))
 
+    def test_original_rendering_reference_can_disable_existing_interpolation_for_either_renderer(self):
+        for renderer in ("metal", "angle"):
+            original = tomllib.loads(benchmark.controlled_config(renderer, 30, 2323, 0, 30,
+                                                                 True, "off", "look:0", interpolation=False))
+            smooth = tomllib.loads(benchmark.controlled_config(renderer, 30, 2323, 0, 60,
+                                                               True, "off", "look:0", interpolation=True))
+            self.assertIs(original["display"]["interpolation"], False)
+            self.assertEqual(original["display"]["frame_limit"], 30)
+            self.assertIs(smooth["display"]["interpolation"], True)
+            self.assertEqual(smooth["display"]["frame_limit"], 60)
+            for config in (original, smooth):
+                self.assertEqual(config["display"]["renderer"], renderer)
+                self.assertFalse(config["network"]["online"])
+                self.assertFalse(config["display"]["high_res_hud"])
+                self.assertEqual(config["debug"]["screenshot_every"], 0)
+
     def test_launch_overrides_remove_inherited_debug_keys_without_recording_secrets(self):
         environment, overrides, removed = benchmark.sanitized_environment(Path("/tmp/bench"), "metal",
             {"HALO_NETWORK_TEST": "inherited", "MTL_DEBUG_LAYER": "1", "DYLD_INSERT_LIBRARIES": "inherited",

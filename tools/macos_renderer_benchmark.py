@@ -201,7 +201,7 @@ def aggregate_host_metrics(rows, timings):
     return totals
 
 
-def controlled_config(renderer, seconds, port, render_height, cap, vsync, aa, scripted_input):
+def controlled_config(renderer, seconds, port, render_height, cap, vsync, aa, scripted_input, interpolation=True):
     bindings = re.findall(r"^BINDING\((\w+),", (ROOT / "port/linux/src/input_bindings.def").read_text(), re.M)
     return f'''[network]
 online = false
@@ -221,7 +221,7 @@ window_scale = 2
 render_height = {render_height}
 frame_limit = {cap}
 vsync = {str(vsync).lower()}
-interpolation = true
+interpolation = {str(interpolation).lower()}
 high_res_hud = false
 direct_camera = false
 anti_aliasing = "{aa}"
@@ -446,7 +446,8 @@ def run(args):
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]
         config = controlled_config(args.renderer, args.seconds, port, args.render_height, args.fps_limit,
-                                   args.vsync == "on", args.anti_aliasing, args.test_input)
+                                   args.vsync == "on", args.anti_aliasing, args.test_input,
+                                   getattr(args, "interpolation", "on") == "on")
         (output / "initial-config.toml").write_text(config)
         (output / "saves/config.toml").write_text(config)
         record["pair"] = freeze_pair(output, args.host, args.guest)
@@ -550,6 +551,8 @@ def main():
     parser.add_argument("--seconds", type=int, default=40)
     parser.add_argument("--render-height", type=int, choices=(0, 480, 720, 1080, 1440, 2160), default=0)
     parser.add_argument("--fps-limit", type=int, choices=(0, 30, 60, 120), default=0)
+    parser.add_argument("--interpolation", choices=("on", "off"), default="on",
+                        help="Existing display interpolation; off supplies the original 30 Hz rendering reference")
     parser.add_argument("--vsync", choices=("on", "off"), default="off")
     parser.add_argument("--anti-aliasing", choices=("off", "fxaa"), default="fxaa")
     parser.add_argument("--test-input", choices=("look:0", "bot:0"), default="look:0")
