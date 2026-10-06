@@ -97,6 +97,12 @@ verification and any unresolved boundary here before distributing this branch.
   updates, with clean exits and no assertion/fault. Metal captures show the
   original Xbox pregame lobby and in-game HUD. These used two compatibility
   builds, not an unmodified stock OpenCE peer.
+- The separate dual-renderer `build/macos/Halo OG OpenCE.app` was packaged with
+  an ad hoc signature and passed deep/strict signature verification. Its bundle
+  ID, private URL handler, source/guest hashes and packaged broker list were
+  checked. A further 45-second encrypted two-instance run through the packaged
+  native menus also passed. No personal profile was imported and the app was
+  not installed or published.
 - Focused gameplay/menu/input/audio/save/invite/transport/asset tests pass.
   Apple, Linux and Windows CI include explicit OpenCE contract fixtures;
   native-only probes skip on unsupported platforms. Linux/Windows/mobile full
