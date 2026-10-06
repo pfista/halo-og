@@ -6,6 +6,7 @@ import subprocess
 from types import SimpleNamespace
 import tempfile
 from pathlib import Path
+import plistlib
 import tomllib
 import unittest
 from unittest.mock import patch
@@ -183,6 +184,11 @@ class SamplingTests(unittest.TestCase):
             for path, data in ((host, b"host"), (library, b"library"), (guest, b"guest")):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(data)
+            primary = host.parent / "halo"
+            primary.write_bytes(b"unselected primary")
+            with (app / "Contents/Info.plist").open("wb") as stream:
+                plistlib.dump(dict(CFBundleIdentifier="original.halo", CFBundleExecutable="halo",
+                                  CFBundleURLTypes=[dict(CFBundleURLSchemes=["halo-og"])]), stream)
             host.chmod(0o755)
             output = folder / "output"
             output.mkdir()
@@ -192,8 +198,43 @@ class SamplingTests(unittest.TestCase):
             self.assertEqual(result["source_host"]["sha256"], result["host"]["sha256"])
             self.assertEqual(result["source_guest"]["sha256"], result["guest"]["sha256"])
             self.assertEqual(len(result["bundled_dependencies"]), 1)
+            info = plistlib.loads((frozen_host.parent.parent / "Info.plist").read_bytes())
+            self.assertEqual(info["CFBundleExecutable"], "halo-metal")
+            self.assertTrue(info["CFBundleIdentifier"].startswith("local.halo.renderer-benchmark."))
+            self.assertNotIn("CFBundleURLTypes", info)
+            self.assertFalse((frozen_host.parent / "halo").exists())
+            self.assertFalse(result["whole_app_signature_preserved"])
+            self.assertFalse(result["binary_resigned"])
+            self.assertEqual(info["LSEnvironment"]["HALO_SAVE_ROOT"], str(output.resolve() / "saves"))
+            self.assertEqual((frozen_host.parent.parent / "Resources/halo_guest-metal.elf").read_bytes(), b"guest")
             host.write_bytes(b"changed")
             self.assertEqual(frozen_host.read_bytes(), b"host")
+
+    def test_raw_hosts_have_distinct_private_identities_and_exact_executable_metadata(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            host, guest = folder / "halo", folder / "halo_guest.elf"
+            host.write_bytes(b"unchanged executable")
+            host.chmod(0o755)
+            guest.write_bytes(b"selected guest")
+            identifiers = []
+            for name in ("before", "after"):
+                output = folder / name
+                output.mkdir()
+                result = benchmark.freeze_pair(output, host, guest)
+                frozen_host = Path(result["host"]["file"])
+                info = plistlib.loads((frozen_host.parent.parent / "Info.plist").read_bytes())
+                self.assertEqual(frozen_host.relative_to(output.resolve()).parts[:3],
+                                 ("frozen", "Halo Renderer Benchmark.app", "Contents"))
+                self.assertEqual(info["CFBundleExecutable"], host.name)
+                self.assertEqual(info["CFBundlePackageType"], "APPL")
+                self.assertTrue(info["NSHighResolutionCapable"])
+                self.assertNotIn("CFBundleURLTypes", info)
+                self.assertEqual(result["source_host"]["sha256"], result["host"]["sha256"])
+                self.assertEqual(result["source_guest"]["sha256"], result["guest"]["sha256"])
+                self.assertIn("External libraries were not frozen", result["dependency_scope"])
+                identifiers.append(info["CFBundleIdentifier"])
+            self.assertNotEqual(identifiers[0], identifiers[1])
 
 
 if __name__ == "__main__":

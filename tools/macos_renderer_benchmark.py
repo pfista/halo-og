@@ -22,6 +22,7 @@ import json
 import math
 import os
 from pathlib import Path
+import plistlib
 import re
 import shutil
 import socket
@@ -252,31 +253,62 @@ def freeze_pair(output, host, guest):
         raise ValueError("An existing executable host and its matching guest are required")
     frozen = output / "frozen"
     frozen.mkdir()
-    # Packaged hosts depend on ../Frameworks and use ../Resources metadata.
-    # Copy their existing complete app bytes, preserving signatures and rpaths.
+    # Give direct CLI launches their own Launch Services identity. Reusing the
+    # normal app's identity/CFBundleExecutable can activate a different copy or
+    # launch its ANGLE executable while a selected native host is running.
+    wrapper = frozen / "Halo Renderer Benchmark.app"
+    contents = wrapper / "Contents"
+    (contents / "MacOS").mkdir(parents=True)
+    resources = contents / "Resources"
+    dependencies = []
+    packaged = False
     if host.parent.name == "MacOS" and host.parent.parent.name == "Contents":
         app = host.parent.parent.parent
         if app.suffix == ".app":
-            destination = frozen / app.name
-            shutil.copytree(app, destination, symlinks=True)
-            frozen_host = destination / host.relative_to(app)
-            dependencies = [descriptor(path) for path in (destination / "Contents/Frameworks").rglob("*")
+            packaged = True
+            for name in ("Frameworks", "Resources"):
+                source = app / "Contents" / name
+                if source.is_dir():
+                    shutil.copytree(source, contents / name, symlinks=True)
+            dependencies = [descriptor(path) for path in (contents / "Frameworks").rglob("*")
                             if path.is_file() and not path.is_symlink()]
         else:
             raise ValueError("Packaged MacOS host must belong to an .app")
-    else:
-        frozen_host = frozen / host.name
-        shutil.copy2(host, frozen_host)
-        dependencies = []
-    frozen_guest = frozen / ("guest-" + guest.name)
+    resources.mkdir(exist_ok=True)
+    frozen_host = contents / "MacOS" / host.name
+    shutil.copy2(host, frozen_host)
+    frozen_guest = resources / "benchmark-guest.elf"
+    if frozen_guest.exists() or frozen_guest.is_symlink():
+        frozen_guest.unlink()
     shutil.copy2(guest, frozen_guest)
+    # Only one selected executable is in this private app. Its normal default
+    # guest names also point to the selected bytes, so any OS relaunch stays on
+    # the same pair instead of opening an unrelated bundled guest.
+    for name in ("halo_guest.elf", "halo_guest-metal.elf"):
+        alias = resources / name
+        if alias.exists() or alias.is_symlink():
+            alias.unlink()
+        alias.hardlink_to(frozen_guest)
+    identifier = "local.halo.renderer-benchmark." + uuid.uuid4().hex
+    isolated_environment = {"HALO_DATA_ROOT": str(Path(output).resolve() / "data"),
+                            "HALO_SAVE_ROOT": str(Path(output).resolve() / "saves"), "HALO_WINDOWED": "0"}
+    info = {"CFBundleIdentifier": identifier, "CFBundleExecutable": host.name,
+            "CFBundleName": "Halo Renderer Benchmark", "CFBundleDisplayName": "Halo Renderer Benchmark",
+            "CFBundlePackageType": "APPL", "CFBundleVersion": "1", "CFBundleShortVersionString": "1.0",
+            "NSHighResolutionCapable": True, "LSEnvironment": isolated_environment}
+    with (contents / "Info.plist").open("wb") as stream:
+        plistlib.dump(info, stream)
     result = {"source_host": descriptor(host), "source_guest": descriptor(guest),
-              "host": descriptor(frozen_host), "guest": descriptor(frozen_guest), "bundled_dependencies": dependencies}
+              "host": descriptor(frozen_host), "guest": descriptor(frozen_guest), "bundled_dependencies": dependencies,
+              "private_wrapper": str(wrapper), "private_bundle_identifier": identifier,
+              "private_bundle_info": descriptor(contents / "Info.plist"), "private_bundle_executable": host.name,
+              "whole_app_signature_preserved": False, "binary_resigned": False,
+              "os_relaunch_isolated_environment": isolated_environment}
     for name in ("host", "guest"):
         if result["source_" + name]["sha256"] != result[name]["sha256"]:
             raise RuntimeError("Selected " + name + " changed while freezing")
-    result["dependency_scope"] = ("Copied app Frameworks, resources and signatures" if dependencies else
-                                  "Raw host retains its existing system/absolute library paths; external libraries were not frozen")
+    result["dependency_scope"] = ("Selected host unchanged in a private app; source Frameworks and Resources copied for relative paths. Whole-app signature is not preserved or claimed." if packaged else
+                                  "Selected raw host unchanged in a private app; existing system/absolute library paths retained. External libraries were not frozen and whole-app signing is not claimed.")
     return result
 
 

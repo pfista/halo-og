@@ -53,6 +53,25 @@ totals. GPU duration overlaps completion wait; do not add them together. The
 optional `render-passes` metric counts original-draw passes, excluding separate
 clear, filter and presentation passes.
 
+### Private benchmark launcher identity
+
+Earlier frozen app copies retained the normal app's bundle identifier and
+`CFBundleExecutable=halo` while a benchmark directly launched `halo-metal`.
+Cocoa activation could open the copied primary executable, creating an extra
+Halo instance and moving foreground ownership away from the measured PID.
+Affected runs cannot establish gameplay performance.
+
+Each frozen pair now uses a private `Halo Renderer Benchmark.app` with a unique
+bundle identifier and `CFBundleExecutable` set to the selected host's exact
+filename. It contains only that selected executable and registers no URL
+handlers. Packaged Frameworks and Resources retain their relative paths; raw
+hosts retain their existing external library paths. Host and guest bytes remain
+identical to their selected sources, with no resigning or claim that the private
+wrapper preserves the original whole-app signature. Existing data/save
+environment overrides also bind OS relaunches to the isolated run directory.
+CPU tests check the private identity, executable metadata, omitted URL handlers,
+relative dependencies and unchanged binary hashes.
+
 ## Rendering checks
 
 `tools/test_metal_render_pass_reuse.py` compares intermediate color, depth,
@@ -95,5 +114,6 @@ path did not reproduce the reported drops. Its original harness record remains
 failed because a focus check raced the natural timer exit; separate recollected
 timing/exit evidence retains that limitation rather than rewriting the result.
 The harness now checks process exit after a foreground observation. Optimized
-fullscreen, VSync-on, ANGLE and campaign comparisons remain pending because the
-Mac returned to the login screen before those measurements could run.
+fullscreen, VSync-on, ANGLE and campaign comparisons require fresh valid
+foreground runs; earlier locked sessions and launcher identity failures did not
+qualify.
