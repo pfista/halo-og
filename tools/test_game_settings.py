@@ -1685,6 +1685,16 @@ def game_settings_fixture_source(*, mac_video=False):
     preview = preview.replace("description_definition->child_count", "description_definition->child_widgets.count")
     source += UI_STUBS.replace("/* NATIVE ENUMS */", "\n".join(enums)).replace("/* NATIVE PREVIEW CALLBACK */", preview).replace(
         "/* PRODUCTION WIDGET PAUSE LIFECYCLE */", pause_lifecycle + focus_lifecycle)
+    # The renderer updates teammate rules for every data input. Keep its real
+    # tag guard so Settings exercises the production path for unrelated menus.
+    teammate = (ROOT / "source/interface/teammate_view_menu.inc").read_text()
+    source += c_block(teammate, "enum { TEAM_VIEW_MENU_COUNT") + ";\n"
+    source += re.search(r"static short const team_view_rule_rows[^;]+;", teammate)[0] + "\n"
+    source += c_block(teammate, "static struct\n{") + " team_view_menus[TEAM_VIEW_MENU_COUNT];\n"
+    source += c_block(ui, "void widget_instance_set_visibility_recursive(\n") + "\n"
+    for signature in ("static short teammate_view_menu_mode(", "static struct widget_instance *teammate_view_rule_spinner(",
+                      "static void teammate_view_menu_update("):
+        source += c_block(teammate, signature) + "\n"
     renderer = ui[ui.index("static void widget_instance_render_recursive(\n", ui.index("#define UI_MOUSE_MAXIMUM_TARGETS")):]
     dispatch = c_block(renderer, "for (input_index = 0;")
     source += """static void settings_render_inputs(struct widget_instance *widget) {
