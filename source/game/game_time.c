@@ -170,6 +170,8 @@ void game_time_set_distributed(
 {
 	match_assert("c:\\halo\\SOURCE\\game\\game_time.c", 0, game_time_globals && game_time_globals->initialized);
 
+	if (time != game_time_globals->local_time)
+		update_queues_reset_input_delays();
 	game_time_globals->local_time = time;
 	game_time_globals->server_time = time;
 	game_time_globals->leftover_dt = 0.f;

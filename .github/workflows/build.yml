@@ -15,10 +15,11 @@ name: Build
 # - Windows, whose minutes cost twice Linux's, builds only Windows;
 # - artifacts are kept for three days.
 #
-# A successful build of main is also published as a GitHub release, the
+# A successful build of upstream's main is also published as a GitHub release, the
 # newest marked latest, so that
 # https://github.com/<repository>/releases/latest/download/<file> always
-# gives the latest build; the last five are kept.
+# gives the latest build; the last five are kept. Forks keep CI artifacts
+# without automatically publishing releases or posting to Discord.
 on:
   push:
     paths-ignore:
@@ -49,8 +50,8 @@ jobs:
       - name: Install the toolchain
         run: |
           printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
-          pacman -Syu --noconfirm --needed git zstd python python-pytest ninja ccache \
-            clang lld gcc lib32-glibc lib32-gcc-libs lib32-sdl3
+          pacman -Syu --noconfirm --needed git zstd python python-pytest python-pillow ninja ccache \
+            clang lld gcc glib2 mesa libglvnd lib32-glibc lib32-gcc-libs lib32-sdl3
 
       - uses: actions/checkout@v4
 
@@ -67,9 +68,44 @@ jobs:
         run: python tools/ci_build.py linux release
 
       - name: Test
+        run: python -m pytest -q tools/test_linux_port.py
+
+      - name: OpenCE protocol 20 compatibility fixtures
+        run: python -m unittest tools.test_opence_network tools.test_opence_gameplay tools.test_opence_platform tools.test_game_directory_ui
+
+      - name: Shared HUD assets, settings and GLES rendering
         run: |
-          python -m pytest -q tools/test_linux_port.py
-          python tools/test_light_storage.py
+          python -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_device_settings tools.test_menu_assets tools.test_text_hires tools.test_metal_text_atlas
+          python -m tools.test_game_settings
+          python -m unittest tools.test_gl_hud_hires.GlHudFixtureTests.test_standalone_angle_load_prepares_egl_companion_before_dlopen tools.test_gl_hud_hires.GlHudFixtureTests.test_rgba8_rounding_bounds_keep_point_endpoints_and_discards_strict
+          python tools/hud_glsl_validate.py --output build/hud-glsl-validation
+
+      - name: Teammate split-screen selection, menu and rendering
+        run: >-
+          python -m unittest tools.test_teammate_view tools.test_teammate_view_menu
+          tools.test_teammate_view_render
+
+      - name: Invite URI registration and forwarding
+        run: >-
+          python -m unittest tools.test_p2p_invites tools.test_p2p_handoff
+          tools.test_url_scheme_registration tools.test_invite_layout tools.test_discord_presence
+
+      - name: Native settings and shared interfaces
+        run: >-
+          python -m unittest tools.test_device_settings tools.test_controller_settings tools.test_menu_repeat tools.test_menu_keyboard tools.test_windows_shared_headers
+          tools.test_game_settings.NativeGameSettingsTests.test_native_menu
+          tools.test_performance_mouse tools.test_save_migration
+          tools.test_desktop_first_run tools.test_release_discovery
+          tools.test_download_transport_limits tools.test_desktop_map_downloads tools.test_desktop_timer_audio tools.test_game_directory tools.test_game_directory_worker
+          tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail tools.test_overshield_hud
+          tools.test_map_lifecycle tools.test_network_client_lifecycle tools.test_solo_multiplayer_start tools.test_stale_player_references
+          tools.test_input_delay tools.test_performance_variants tools.test_performance_network tools.test_network_v11 tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_meeting_gameplay tools.test_refined_tag_effects
+
+      - name: Expanded Fiesta cache lifecycle and authoring
+        run: >-
+          python -m unittest tools.test_expanded_cache tools.test_fiesta_menu_preflight
+          tools.test_texture_cache_budget tools.test_weapon_pack_maps tools.test_android_asm_convert
+          tools.test_arsenal_catalog tools.test_publish_map_catalog tools.test_desktop_arsenal_downloads
 
       - name: Compile cache
         run: ccache --show-stats
@@ -101,6 +137,12 @@ jobs:
           echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
 
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: HUD fixture dependencies
+        run: python3 -m pip install Pillow
 
       - uses: actions/cache@v4
         with:
@@ -147,6 +189,24 @@ jobs:
           HALO_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: python3 tools/ci_build.py android release
 
+      - name: Timer Audio download fixtures
+        run: python3 tools/test_android_timer_audio.py --require-jdk --fetch-json
+
+      - name: Mobile invite registration and delivery
+        run: >-
+          python3 -m unittest tools.test_p2p_invites tools.test_invite_layout
+          tools.test_mobile_invites tools.test_guest_build_dependencies.AppleServiceImportDependencyTests
+
+      - name: Shared HUD assets and mobile settings
+        run: |
+          python3 -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_device_settings tools.test_menu_assets tools.test_text_hires tools.test_metal_text_atlas
+          python3 -m tools.test_game_settings
+
+      - name: Teammate split-screen selection, menu and rendering
+        run: >-
+          python3 -m unittest tools.test_teammate_view tools.test_teammate_view_menu
+          tools.test_teammate_view_render
+
       - name: Compile cache
         run: ccache --show-stats
 
@@ -184,6 +244,9 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: HUD fixture dependencies
+        run: python -m pip install Pillow
+
       - uses: actions/cache@v4
         with:
           path: .ccache
@@ -202,11 +265,46 @@ jobs:
       - name: Release
         run: python tools/ci_build.py windows release
 
-      - name: Test light storage
-        run: python tools/test_light_storage.py
+      - name: OpenCE protocol 20 compatibility fixtures
+        run: python -m unittest tools.test_opence_network tools.test_opence_gameplay tools.test_opence_platform tools.test_game_directory_ui
+
+      - name: Shared HUD assets and settings
+        run: |
+          python -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_device_settings tools.test_menu_assets tools.test_text_hires tools.test_metal_text_atlas
+          python -m tools.test_game_settings
+
+      - name: Teammate split-screen selection, menu and rendering
+        run: >-
+          python -m unittest tools.test_teammate_view tools.test_teammate_view_menu
+          tools.test_teammate_view_render
+
+      - name: Invite URI registration and forwarding
+        run: >-
+          python -m unittest tools.test_p2p_invites tools.test_p2p_handoff
+          tools.test_url_scheme_registration tools.test_invite_layout tools.test_discord_presence
+
+      - name: Native settings and shared interfaces
+        run: >-
+          python -m unittest tools.test_device_settings tools.test_controller_settings tools.test_menu_repeat tools.test_menu_keyboard tools.test_windows_shared_headers
+          tools.test_game_settings.NativeGameSettingsTests.test_native_menu
+          tools.test_performance_mouse tools.test_save_migration
+          tools.test_desktop_first_run tools.test_release_discovery
+          tools.test_download_transport_limits tools.test_desktop_map_downloads tools.test_desktop_timer_audio tools.test_game_directory tools.test_game_directory_worker
+          tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail tools.test_overshield_hud
+          tools.test_map_lifecycle tools.test_network_client_lifecycle tools.test_solo_multiplayer_start tools.test_stale_player_references
+          tools.test_input_delay tools.test_performance_variants tools.test_performance_network tools.test_network_v11 tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_meeting_gameplay tools.test_refined_tag_effects
 
       - name: Compile cache
         run: ccache --show-stats
+
+      - name: Upstream attached-light storage
+        run: python tools/test_light_storage.py
+
+      - name: Expanded Fiesta cache inspection and shared assembly conversion
+        run: >-
+          python -m unittest tools.test_weapon_pack_maps.XboxCacheInspectionTests
+          tools.test_weapon_pack_maps.AnimationPayloadAuditTests tools.test_android_asm_convert
+          tools.test_desktop_arsenal_downloads
 
       - uses: actions/upload-artifact@v4
         with:
@@ -220,27 +318,13 @@ jobs:
           path: dist/halo-windows-release
           retention-days: 3
 
-      # the PDBs, for crash reports' backtraces (tools/ci_build.py)
-      - uses: actions/upload-artifact@v4
-        with:
-          name: halo-windows-debug-symbols
-          path: dist/halo-windows-debug-symbols
-          retention-days: 3
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: halo-windows-release-symbols
-          path: dist/halo-windows-release-symbols
-          retention-days: 3
-
   release:
-    # The six builds (and the Windows builds' PDBs) as a release, tagged
-    # build-<run number> and marked latest
+    # The six builds as a release, tagged build-<run number> and marked latest
     # (every file keeps its name from release to release, for the README's
     # latest/download links); then all but the newest five build-* releases
-    # go, tags and all. Only for main, and only when every platform built.
+    # go, tags and all. Only for upstream's main, and when every platform built.
     needs: [linux, android, windows]
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.repository == 'cybersecurity/halo-ce-universal' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -261,7 +345,10 @@ jobs:
           mkdir release
           for build in artifacts/*/; do
             name="$(basename "$build")"
-            (cd "$build" && zip -qr "$GITHUB_WORKSPACE/release/$name.zip" .)
+            # stored, not deflated: the updater in builds up to 57 waits for
+            # an end of stream the game's zlib 1.1 does not always report,
+            # and fails on a deflated entry that unpacked correctly
+            (cd "$build" && zip -0 -qr "$GITHUB_WORKSPACE/release/$name.zip" .)
           done
           ls -l release
 
@@ -280,36 +367,6 @@ jobs:
             --title "Build $GITHUB_RUN_NUMBER (${GITHUB_SHA:0:7})" --notes-file notes.md
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      # The Windows builds' executables and PDBs to Sentry, which turns the
-      # crash reports of these builds (port/windows/src/win32_crash.c) into
-      # backtraces with function names and lines. Needs the SENTRY_AUTH_TOKEN
-      # secret: an organization auth token of the Sentry organization, which
-      # names the organization and its region itself. The SENTRY_PROJECT
-      # variable can name the project (its slug), else the id in the DSN of
-      # win32_crash.c; SENTRY_ORG and SENTRY_URL (https://de.sentry.io) are
-      # for a personal token instead. A failed upload does not stop the
-      # release.
-      - name: Upload Windows symbols to Sentry
-        continue-on-error: true
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT || '4512207917744208' }}
-          ORG: ${{ vars.SENTRY_ORG }}
-          URL: ${{ vars.SENTRY_URL }}
-          SENTRY_CLI_VERSION: 2.46.0
-        run: |
-          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
-            echo "::warning::no SENTRY_AUTH_TOKEN secret: crash reports of this build will have no function names"
-            exit 0
-          fi
-          if [ -n "$ORG" ]; then export SENTRY_ORG="$ORG"; fi
-          if [ -n "$URL" ]; then export SENTRY_URL="$URL"; fi
-          curl -fsSL -o sentry-cli "https://github.com/getsentry/sentry-cli/releases/download/$SENTRY_CLI_VERSION/sentry-cli-Linux-x86_64"
-          chmod +x sentry-cli
-          ./sentry-cli debug-files upload --wait \
-            artifacts/halo-windows-release artifacts/halo-windows-release-symbols \
-            artifacts/halo-windows-debug artifacts/halo-windows-debug-symbols
-
       - name: Keep the last five
         run: |
           gh release list --limit 100 --json tagName,createdAt \
@@ -324,7 +381,7 @@ jobs:
     # with each platform's result, this run's release (main only), and links
     # to the latest release's builds.
     needs: [linux, android, windows, release]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.repository == 'cybersecurity/halo-ce-universal' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

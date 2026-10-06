@@ -25,6 +25,15 @@ The system side (the HTTPS download, the files, starting the new game) is
 update.h's: posix_update.c on Linux, win32_update.c on Windows.
 */
 
+#if HALO_OG_RELEASE_DISCOVERY && !defined(HALO_ANDROID)
+#include "release_discovery.h"
+
+/* Halo OG CI uses discovery and a browser download only. The upstream
+   executable replacement implementation below is not compiled into this path. */
+void updater_start(void) { halo_release_discovery_start(); }
+void updater_poll(struct SDL_Window *window) { halo_release_discovery_poll(window); }
+
+#else
 #include "platform.h"
 #include "port_config.h"
 #include "update.h"
@@ -42,6 +51,7 @@ update.h's: posix_update.c on Linux, win32_update.c on Windows.
 #ifndef HALO_BUILD_NUMBER
 #define HALO_BUILD_NUMBER 0
 #endif
+
 #ifndef HALO_BUILD_FLAVOR
 #define HALO_BUILD_FLAVOR "release"
 #endif
@@ -417,7 +427,7 @@ static int updater_download_zip(const char *zip_path, char *error, size_t error_
 		snprintf(error, error_size, "could not start the download");
 		return 0;
 	}
-	window = SDL_CreateWindow("Halo", 640, 150, 0);
+	window = SDL_CreateWindow("Halo OG", 640, 150, 0);
 	if (window)
 		renderer = SDL_CreateRenderer(window, SDL_SOFTWARE_RENDERER);
 	while (!finished)
@@ -654,3 +664,5 @@ void updater_start(void)
 }
 
 #endif
+
+#endif /* browser-only Halo OG discovery versus the upstream installer */

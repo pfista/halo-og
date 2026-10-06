@@ -61,6 +61,7 @@ machine (their datum identifiers need not be).
 #include "game/game_engine.h"
 #include "main/main.h"
 #include "game/player_queues_new.h"
+#include "interface/hud_unit.h"
 #include "networking/network_game_globals.h"
 #include "objects/objects.h"
 #include "objects/damage.h"
@@ -481,6 +482,24 @@ static short distributed_pickup_count;
 the host has it */
 static short distributed_seat_disagreements[MAXIMUM_TRACKED_PLAYERS];
 
+/* A client's local HUDs need the original passive-drain compensation.
+Keep host snapshots, rather than the client's locally decaying damage effects. */
+static struct distributed_shield_history
+{
+	boolean valid;
+	boolean hit_pending;
+	long player_index;
+	long unit_index;
+	long host_time;
+	long previous_host_time;
+	long hit_time;
+	real passive_loss;
+	byte flags;
+	word vitality;
+	word current_damage;
+	word recent_damage;
+} distributed_shield_histories[MAXIMUM_LOCAL_PLAYERS];
+
 /* the host: each client's player's latest prediction, taken at the next
 tick, and the client's tick of the one taken last and when */
 static struct
@@ -536,7 +555,9 @@ static struct distributed_own_position
 	long time;
 	long unit_index;
 	real_point3d position;
+	unsigned long teleport_sequence;
 } distributed_own_positions[MAXIMUM_LOCAL_PLAYERS][OWN_POSITION_TICKS];
+static unsigned long distributed_own_teleport_sequences[MAXIMUM_LOCAL_PLAYERS];
 static real distributed_own_round_trip;
 /* the host: the players each machine had when it last told the host that it
 had loaded (a machine new at its index has none of the old one's state) */
@@ -819,6 +840,124 @@ real distributed_vitality_unpack(
 	return (real)value / VITALITY_SCALE;
 }
 
+/* The possible float values behind a rounded snapshot, advanced with the
+same per-tick subtraction as object_damage_update. The upper endpoint is
+exclusive; all native ports use IEEE-754 single-precision real values. */
+static word distributed_decay_bound(
+	word value,
+	real amount,
+	real minimum,
+	real maximum,
+	short ticks,
+	boolean upper)
+{
+	union { real value; unsigned long bits; } bound;
+	short tick;
+
+	bound.value = ((real)value + (upper ? 0.5f : -0.5f)) / VITALITY_SCALE;
+	if (upper)
+		bound.bits--;
+	bound.value = MIN(maximum, bound.value);
+	for (tick = 0; tick < ticks; tick++)
+		bound.value = MAX(minimum, bound.value - amount);
+	return distributed_vitality_pack(bound.value);
+}
+
+/* Real damage evidence wins even when a tiny hit shares a packing interval
+with passive decay. Event and state messages can arrive in either order. */
+void network_distributed_note_shield_damage(
+	long object_index,
+	long host_time)
+{
+	long player_index = player_index_from_unit_index(object_index);
+	short local_player_index;
+	struct distributed_shield_history *history;
+
+	if (player_index == NONE)
+		return;
+	local_player_index = player_get(player_index)->local_player_index;
+	if (local_player_index < 0 || local_player_index >= MAXIMUM_LOCAL_PLAYERS)
+		return;
+	history = &distributed_shield_histories[local_player_index];
+	if (!history->valid || history->player_index != player_index ||
+		history->unit_index != object_index)
+		return;
+	/* An aftermath can follow the snapshot that looked like pure decay.
+Restore that interval's compensation once so the original hit cue still fires. */
+	if (history->passive_loss > 0.f && host_time > history->previous_host_time &&
+		host_time <= history->host_time)
+	{
+		hud_tick_shield(player_index, -history->passive_loss);
+		history->passive_loss = 0.f;
+	}
+	if (host_time > history->host_time)
+	{
+		if (!history->hit_pending || host_time > history->hit_time)
+			history->hit_time = host_time;
+		history->hit_pending = TRUE;
+	}
+}
+
+static real distributed_passive_shield_loss(
+	long player_index,
+	long host_time,
+	struct distributed_unit_state const *state)
+{
+	short local_player_index = player_get(player_index)->local_player_index;
+	struct distributed_shield_history *history;
+	boolean same;
+	real loss = 0.f;
+
+	if (local_player_index < 0 || local_player_index >= MAXIMUM_LOCAL_PLAYERS)
+		return 0.f;
+	history = &distributed_shield_histories[local_player_index];
+	same = history->valid && history->player_index == player_index &&
+		history->unit_index == state->unit_index;
+	if (same && host_time <= history->host_time)
+		return 0.f;
+	/* A short forward interval makes the host's current-damage reset visible.
+Long gaps and ambiguous decreases retain the original damage feedback. */
+	if (same && host_time - history->host_time <= TICKS_PER_SECOND &&
+		!history->hit_pending &&
+		!((history->flags | state->flags) &
+			(FLAG(_distributed_unit_shield_over_charging_bit) |
+			 FLAG(_distributed_unit_shield_charging_bit) |
+			 FLAG(_distributed_unit_shield_depleted_bit))) &&
+		history->vitality > state->shield_vitality &&
+		state->shield_vitality >= (word)VITALITY_SCALE &&
+		object_get(state->unit_index)->object.shield_vitality ==
+			distributed_vitality_unpack(history->vitality))
+	{
+		short ticks = (short)(host_time - history->host_time);
+		word lower = distributed_decay_bound(history->vitality, 0.00074074074f, 1.f, 4.f, ticks, FALSE);
+		word upper = distributed_decay_bound(history->vitality, 0.00074074074f, 1.f, 4.f, ticks, TRUE);
+		word damage_upper = distributed_decay_bound(history->current_damage, 0.016666668f, 0.f, 1.f, ticks, TRUE);
+
+		if (state->shield_vitality >= lower && state->shield_vitality <= upper &&
+			state->current_shield_damage <= damage_upper &&
+			state->recent_shield_damage <= history->recent_damage)
+		{
+			loss = distributed_vitality_unpack(history->vitality) -
+				distributed_vitality_unpack(state->shield_vitality);
+		}
+	}
+	if (!same || (history->hit_pending && host_time >= history->hit_time))
+		history->hit_pending = FALSE;
+	history->valid = TRUE;
+	history->player_index = player_index;
+	history->unit_index = state->unit_index;
+	history->previous_host_time = same ? history->host_time : host_time;
+	history->host_time = host_time;
+	history->passive_loss = loss;
+	history->flags = state->flags;
+	history->vitality = state->shield_vitality;
+	history->current_damage = state->current_shield_damage;
+	history->recent_damage = state->recent_shield_damage;
+	return loss;
+}
+
+/* an angle as a 16-bit fraction of a turn, and back (yaw from 0 to 2 pi,
+pitch from -pi to pi) */
 short distributed_angle_pack(
 	real angle)
 {
@@ -1553,6 +1692,79 @@ static word distributed_unit_state_read(
 	return (word)(cursor - buffer);
 }
 
+/* An actual netgame teleport starts a new prediction segment. The Xbox
+destination latch remains controlled by game_engine_update_teleporter. */
+void network_distributed_player_teleported(
+	long player_index)
+{
+	long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index);
+	struct player_datum *player;
+
+	if (absolute_index < 0 || absolute_index >= MAXIMUM_TRACKED_PLAYERS)
+		return;
+	player = distributed_player((short)absolute_index);
+	if (!player)
+		return;
+	update_queues_reset_local_input_delay(player->local_player_index,
+		player->unit_index != NONE ? &object_get(player->unit_index)->object.forward : NULL);
+	if (game_connection() == _game_connection_network_server)
+	{
+		/* A queued pre-teleport prediction and its echo/height anchor are
+		no longer in the coordinate segment the host occupies. */
+		distributed_predictions[absolute_index].valid = FALSE;
+		distributed_predictions[absolute_index].taken_host_time = NONE;
+		distributed_accepted[absolute_index].valid = FALSE;
+		distributed_host_speeds[absolute_index].unit_index = NONE;
+	}
+	else if (game_connection() == _game_connection_network_client &&
+		player->local_player_index >= 0 && player->local_player_index < MAXIMUM_LOCAL_PLAYERS)
+	{
+		distributed_own_teleport_sequences[player->local_player_index]++;
+	}
+}
+
+/* The host can traverse before this client's copy reaches the trigger.
+Restore the original destination latch only when a correction follows an
+actual scenario source/target pair, never for an unrelated relocation. */
+static void distributed_restore_teleporter_latch(
+	struct distributed_unit_state const *state,
+	long unit_index,
+	real_point3d const *before,
+	real_point3d const *after)
+{
+	struct player_datum *player;
+	struct scenario *scenario;
+	struct scenario_netgame_flag *source;
+	struct scenario_netgame_flag *destination;
+	long source_index;
+	long destination_index;
+
+	if (game_connection() != _game_connection_network_client)
+		return;
+	player = distributed_player(state->player_index);
+	if (!player || player->unit_index != unit_index)
+		return;
+	source_index = find_netgame_flag(before, 0.5f, 0.0f, _netgame_flag_teleporter_source, NONE);
+	if (source_index == NONE)
+		return;
+	scenario = global_scenario_get();
+	source = TAG_BLOCK_GET_ELEMENT(&scenario->netgame_flags, source_index, struct scenario_netgame_flag);
+	destination_index = find_netgame_flag(NULL, 0.0f, 0.0f, _netgame_flag_teleporter_target,
+		source->team_index);
+	if (destination_index == NONE)
+		return;
+	destination = TAG_BLOCK_GET_ELEMENT(&scenario->netgame_flags, destination_index,
+		struct scenario_netgame_flag);
+	if (distance_squared3d(after, &destination->position) <= 1.0f)
+	{
+		player->teleporter_index = find_netgame_flag(after, 1.0f, 0.0f, _netgame_flag_teleporter_source, NONE);
+		/* This client's copy crossed through the host's correction rather
+		than its own trigger update: its old position history also ends. */
+		network_distributed_player_teleported(
+			DATUM_INDEX_NEW(state->player_index, player->identifier));
+	}
+}
+
 /* moves the unit toward the state (at position) if it is further than
 tolerance from it: within blend_distance part of the way, further all of it,
 no faster than maximum_speed across and up and maximum_fall_speed down (0
@@ -1597,8 +1809,17 @@ static boolean distributed_apply_state(
 	error.k = position->z - object->object.position.z;
 	if (error.i * error.i + error.j * error.j + error.k * error.k <= tolerance * tolerance)
 		return TRUE;
-	if (network_objects_reconcile(unit_index, position, &forward, &up, &velocity, NULL, blend_distance))
-		distributed_statistics.corrections++;
+	{
+		real_point3d before = object->object.position;
+
+		if (network_objects_reconcile(unit_index, position, &forward, &up, &velocity, NULL, blend_distance))
+			distributed_statistics.corrections++;
+		if (error.i * error.i + error.j * error.j + error.k * error.k >
+			LOCAL_CORRECTION_TOLERANCE * LOCAL_CORRECTION_TOLERANCE)
+		{
+			distributed_restore_teleporter_latch(state, unit_index, &before, &object->object.position);
+		}
+	}
 	return TRUE;
 }
 
@@ -1621,6 +1842,7 @@ static void distributed_note_own_positions(
 			unit_index = NONE;
 		own->time = game_time_get();
 		own->unit_index = unit_index;
+		own->teleport_sequence = distributed_own_teleport_sequences[local_player_index];
 		if (unit_index != NONE)
 			own->position = object_get(unit_index)->object.position;
 	}
@@ -1661,6 +1883,12 @@ static void distributed_correct_own_unit(
 			real_vector3d error;
 			short index;
 
+			/* A delayed prediction echo describes an earlier teleport
+			segment, even when it differs from that segment's old history.
+			Only a current-segment echo or an authoritative state without
+			the predicted bit can correct this segment. */
+			if (own->teleport_sequence != distributed_own_teleport_sequences[local_player_index])
+				return;
 			/* (how long the host takes to have this machine's players, as
 			the round trip is smoothed on the host) */
 			if (distributed_own_round_trip <= 0.0f)
@@ -1690,7 +1918,8 @@ static void distributed_correct_own_unit(
 				{
 					struct distributed_own_position *noted = &distributed_own_positions[local_player_index][index];
 
-					if (noted->unit_index == unit_index)
+					if (noted->unit_index == unit_index &&
+						noted->teleport_sequence == distributed_own_teleport_sequences[local_player_index])
 					{
 						noted->position.x += error.i;
 						noted->position.y += error.j;
@@ -2134,7 +2363,8 @@ static void distributed_apply_predictions(
 
 /* (a client) the host's word on a player's unit */
 static void distributed_handle_unit_state(
-	struct distributed_unit_state const *state)
+	struct distributed_unit_state const *state,
+	long host_time)
 {
 	struct player_datum *player = distributed_player(state->player_index);
 	long player_index;
@@ -2229,7 +2459,8 @@ static void distributed_handle_unit_state(
 		damage.recent_body_damage = distributed_vitality_unpack(state->recent_body_damage);
 		damage.current_shield_damage = distributed_vitality_unpack(state->current_shield_damage);
 		damage.recent_shield_damage = distributed_vitality_unpack(state->recent_shield_damage);
-		damage_set_network_state(unit_index, &damage);
+		damage_set_network_state(unit_index, &damage,
+			distributed_passive_shield_loss(player_index, host_time, state));
 	}
 	/* the host's powerups (the host decides pickups) */
 	{
@@ -2259,7 +2490,8 @@ static void distributed_handle_unit_state(
 static void distributed_handle_unit_states(
 	byte const *data,
 	byte const *end,
-	short count)
+	short count,
+	long host_time)
 {
 	short index;
 
@@ -2271,7 +2503,7 @@ static void distributed_handle_unit_states(
 		if (!size)
 			break;
 		data += size;
-		distributed_handle_unit_state(&state);
+		distributed_handle_unit_state(&state, host_time);
 	}
 }
 
@@ -3233,6 +3465,7 @@ void network_distributed_new_game(
 	distributed_last_sent_time = NONE;
 	csmemset(distributed_deaths, 0, sizeof(distributed_deaths));
 	csmemset(distributed_seat_disagreements, 0, sizeof(distributed_seat_disagreements));
+	csmemset(distributed_shield_histories, 0, sizeof(distributed_shield_histories));
 	csmemset(distributed_predictions, 0, sizeof(distributed_predictions));
 	csmemset(distributed_accepted, 0, sizeof(distributed_accepted));
 	csmemset(distributed_host_speeds, 0, sizeof(distributed_host_speeds));
@@ -3279,6 +3512,7 @@ void network_distributed_new_game(
 	}
 	for (sender = 0; sender < MAXIMUM_LOCAL_PLAYERS; sender++)
 	{
+		distributed_own_teleport_sequences[sender] = 0;
 		for (type = 0; type < OWN_POSITION_TICKS; type++)
 		{
 			distributed_own_positions[sender][type].time = NONE;
@@ -3383,7 +3617,6 @@ static boolean distributed_message_stale(
 	case _distributed_message_player_prediction:
 	case _distributed_message_unit_states:
 	case _distributed_message_player_statistics:
-	case _distributed_message_inventories:
 	case _distributed_message_object_states:
 	case _distributed_message_vehicle_prediction:
 	case _distributed_message_player_inputs:
@@ -3997,7 +4230,8 @@ void network_distributed_handle_message(
 			(byte const *)message + size, header.count);
 		break;
 	case _distributed_message_unit_states:
-		distributed_handle_unit_states((byte const *)entries, (byte const *)message + size, header.count);
+		distributed_handle_unit_states((byte const *)entries, (byte const *)message + size, header.count,
+			header.game_time);
 		break;
 	case _distributed_message_actor_states:
 		network_actors_handle_states(entries, header.count);
@@ -4066,7 +4300,7 @@ void network_distributed_handle_message(
 		break;
 	}
 	case _distributed_message_inventories:
-		network_objects_handle_inventories(entries, header.count);
+		network_objects_handle_inventories(entries, header.count, header.game_time);
 		break;
 	case _distributed_message_object_changes:
 		network_objects_handle_changes(entries, header.count);
@@ -4134,7 +4368,7 @@ void network_distributed_handle_message(
 		break;
 	}
 	case _distributed_message_damage_events:
-		network_damage_handle_events(entries, header.count);
+		network_damage_handle_events(entries, header.count, header.game_time);
 		break;
 	case _distributed_message_hit_reports:
 		network_damage_handle_reports(machine_index, entries, header.count);

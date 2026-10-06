@@ -199,6 +199,8 @@ struct parse_string_state
 	short result;
 	word pad;
 	pixel32 color;
+	/* The exact column/paragraph clip supplied to the character callback. */
+	rectangle2d character_clip;
 };
 
 /* ---------- prototypes */
@@ -490,6 +492,25 @@ void draw_string_set_draw_mode(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* A menu footer must not leave its font or layout settings on later draws. */
+void draw_string_render_label(
+	long font_index,
+	rectangle2d const *bounds,
+	real_argb_color const *color,
+	char const *string)
+{
+	struct font_drawing_globals saved = font_drawing_globals;
+
+	draw_string_set_draw_mode(font_index, NONE, _text_justification_left, 0, color);
+	draw_string_set_indents(0, 0);
+	draw_string_set_tab_stops(NULL, 0);
+	draw_string_set_highlight(NONE, NONE);
+	rasterizer_draw_string(bounds, NULL, NULL, 0, string);
+	font_drawing_globals = saved;
+}
+#endif
+
 void draw_string_set_highlight(
 	short start,
 	short end)
@@ -633,6 +654,52 @@ static struct font_header *styled_font_get(
 		styled_font_index = font_index;
 
 	return font_definition_get(styled_font_index);
+}
+
+long draw_string_get_font_index(struct font_header const *font)
+{
+	long base = font_drawing_globals.current_font_index;
+	short style;
+	struct font_header *base_font;
+	if (base == NONE || !font)
+		return NONE;
+	base_font = font_definition_get(base);
+	if (font == base_font)
+		return base;
+	for (style = 0; style < NUMBER_OF_TEXT_STYLES; style++)
+	{
+		long index = base_font->style_fonts[style].index;
+		if (index != NONE && font == font_definition_get(index))
+			return index;
+	}
+	return NONE;
+}
+
+void draw_string_get_character_clip(struct parse_string_state const *state, rectangle2d *clip)
+{
+	*clip = state->character_clip;
+}
+
+void draw_string_preflight(draw_character_proc draw_character,
+	rectangle2d const *bounds, point2d *cursor_reference,
+	rectangle2d const *clip, short height_adjust, char const *string)
+{
+	short highlight_start = font_drawing_globals.highlight_start_index;
+	short highlight_stop = font_drawing_globals.highlight_stop_index;
+	draw_string(draw_character, bounds, cursor_reference, clip, height_adjust, string);
+	font_drawing_globals.highlight_start_index = highlight_start;
+	font_drawing_globals.highlight_stop_index = highlight_stop;
+}
+
+void draw_unicode_string_preflight(draw_character_proc draw_character,
+	rectangle2d const *bounds, point2d *cursor_reference,
+	rectangle2d const *clip, short height_adjust, wchar_t const *string)
+{
+	short highlight_start = font_drawing_globals.highlight_start_index;
+	short highlight_stop = font_drawing_globals.highlight_stop_index;
+	draw_unicode_string(draw_character, bounds, cursor_reference, clip, height_adjust, string);
+	font_drawing_globals.highlight_start_index = highlight_start;
+	font_drawing_globals.highlight_stop_index = highlight_stop;
 }
 
 static void parse_string_new(
@@ -838,6 +905,7 @@ static void draw_string_partial(
 			font_drawing_globals.current_justification,
 			&font_drawing_globals.current_color);
 
+		set_rectangle2d(&state.character_clip, clip_left, clip_top, clip_right, clip_bottom);
 		for (state.string_index = string_index; state.string_index < string_length; )
 		{
 			pixel32 character_color =
@@ -943,6 +1011,7 @@ static void draw_unicode_string_partial(
 			font_drawing_globals.current_justification,
 			&font_drawing_globals.current_color);
 
+		set_rectangle2d(&state.character_clip, clip_left, clip_top, clip_right, clip_bottom);
 		for (state.string_index = string_index; state.string_index < string_length; )
 		{
 			pixel32 character_color =

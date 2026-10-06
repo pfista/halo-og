@@ -39,6 +39,11 @@ DWORD WINAPI XLaunchNewImageA(LPCSTR image_path, PLAUNCH_DATA launch_data)
 	(void)launch_data;
 	/* On the Xbox this reboots into another executable and never returns */
 	platform_log("XLaunchNewImage(\"%s\"): exiting", image_path ? image_path : "(dashboard)");
+#if defined(HALO_MACOS_NATIVE_METAL)
+	/* Preserve complete original commands queued before the title exits. */
+	extern void halo_metal_flush_pending(void);
+	halo_metal_flush_pending();
+#endif
 	exit(EXIT_SUCCESS);
 }
 

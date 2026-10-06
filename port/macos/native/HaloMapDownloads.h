@@ -1,0 +1,53 @@
+#ifndef HALO_MAP_DOWNLOADS_H
+#define HALO_MAP_DOWNLOADS_H
+#include <stddef.h>
+enum halo_map_download_status {
+    HALO_MAP_DOWNLOAD_FAILED = -1,
+    HALO_MAP_DOWNLOAD_UNAVAILABLE = 0,
+    HALO_MAP_DOWNLOAD_READY = 1,
+    HALO_MAP_DOWNLOAD_PENDING = 2
+};
+/* These guest-facing hooks consult cached state/schedule work, never read files
+   or wait for HTTP. The directory already includes the maps component. */
+#if defined(HALO_MACOS) && defined(__ILP32__)
+/* Only guest calls cross the rebase ABI; native callers keep the native API. */
+#define halo_map_download_directory host_halo_map_download_directory
+#define halo_map_download_request host_halo_map_download_request
+#define halo_arsenal_download_request host_halo_arsenal_download_request
+#endif
+int halo_map_download_directory(char *out, size_t capacity);
+int halo_map_download_request(const char *map_name);
+/* Empty expected SHA chooses the current compatible catalog revision; clients
+   pass the host's exact offered SHA. This also schedules local offline checks. */
+int halo_arsenal_download_request(const char *logical_map, const char *base_sha256_hex,
+                                const char *cache_sha256_hex);
+
+#ifdef __OBJC__
+#import <Foundation/Foundation.h>
+@interface HaloMapDownloads : NSObject <NSURLSessionDataDelegate>
+@property(nonatomic, readonly) NSURL *mapsDirectory;
+@property(nonatomic, readonly) BOOL configured;
+@property(nonatomic, readonly) BOOL enabled;
+@property(nonatomic, readonly) BOOL compatibleData;
+@property(nonatomic, readonly) NSString *statusText;
+@property(nonatomic, copy) void (^statusChanged)(void);
+- (instancetype)initWithSupportDirectory:(NSURL *)support configuration:(NSDictionary *)configuration
+                    sessionConfiguration:(NSURLSessionConfiguration *)sessionConfiguration;
+- (void)startEnabled:(BOOL)enabled;
+- (void)setGameDataRoot:(NSURL *)root;
+- (void)setDownloadsEnabled:(BOOL)enabled;
+- (void)checkForMaps;
+- (void)cancelDownloads;
+- (int)requestMap:(NSString *)name;
+- (int)requestArsenal:(NSString *)name baseSHA256:(NSString *)base expectedSHA256:(NSString *)expected;
+- (void)activateForHost;
+/* Local reconstruction is usable offline, independently of HTTP consent. */
+- (void)registerAssembledMap:(NSURL *)file manifest:(NSDictionary *)manifest
+                 completion:(void (^)(NSError *error))completion;
+@end
+BOOL HaloDownloadConfigurationIsValid(NSDictionary *configuration);
+NSDictionary *HaloValidateMapCatalog(NSData *data, NSDictionary *configuration, NSError **error);
+NSDictionary *HaloValidateArsenalCatalog(NSData *data, NSDictionary *configuration, NSError **error);
+BOOL HaloVerifyDownloadedMap(NSURL *file, NSDictionary *entry, NSDictionary *configuration, NSError **error);
+#endif
+#endif

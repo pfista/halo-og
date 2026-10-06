@@ -516,7 +516,7 @@ static boolean actor_state_apply(
 	damage.shield_over_charging = TEST_FLAG(state->flags, _distributed_actor_shield_over_charging_bit);
 	damage.body_vitality = distributed_vitality_unpack(state->body_vitality);
 	damage.shield_vitality = distributed_vitality_unpack(state->shield_vitality);
-	damage_set_network_state(state->unit_index, &damage);
+	damage_set_network_state(state->unit_index, &damage, 0.f);
 	SET_FLAG(unit->unit.flags, _unit_active_camouflaged_bit,
 		TEST_FLAG(state->flags, _distributed_actor_camouflaged_bit));
 	SET_FLAG(unit->unit.flags, _unit_super_camouflaged_bit,
@@ -821,7 +821,7 @@ void network_actors_handle_damage(
 		damage.recent_shield_damage = distributed_vitality_unpack(units[index].recent_shield_damage);
 		damage.current_body_damage = distributed_vitality_unpack(units[index].current_body_damage);
 		damage.recent_body_damage = distributed_vitality_unpack(units[index].recent_body_damage);
-		damage_set_network_state(units[index].unit_index, &damage);
+		damage_set_network_state(units[index].unit_index, &damage, 0.f);
 	}
 }
 

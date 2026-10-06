@@ -1,19 +1,11 @@
-/*
-TEXT_HIRES.H
-
-The game's text drawn with fonts at the display's resolution, in place of
-the bitmap fonts of the maps (port/assets/fonts, embedded by
-tools/embed_assets.py). The game lays its text out as before, from its font
-tags' character widths; each character is drawn from a glyph of the font
-that stands for its tag (fonts.json), rasterized with stb_truetype at as
-many pixels as the display gives the 480 lines, into an atlas that the game
-binds as a placeholder bitmap (source/rasterizer/rasterizer_text.c).
-*/
-
+/* Optional display-resolution glyphs. Original font tags still own advances,
+ * wrapping, baselines, colors and clipping. Overpass is an authored substitute
+ * for Interstate, rather than a claim of identical Xbox font outlines. */
 #ifndef TEXT_HIRES_H
 #define TEXT_HIRES_H
 
-/* an embedded font, and the font tag it draws (by name) */
+#include <stdint.h>
+
 struct text_hires_embedded
 {
 	const char *tag;
@@ -21,13 +13,9 @@ struct text_hires_embedded
 	const unsigned int *data;
 	unsigned int size;
 };
-
 extern const struct text_hires_embedded text_hires_embedded[];
 extern const unsigned int text_hires_embedded_count;
 
-/* a glyph: its quad, in units of the 480 lines from the pen on the baseline,
-its texels in the atlas, in texels of the atlas's placeholder bitmap, and
-the font's advance for it, in units */
 struct text_hires_glyph
 {
 	float left, top, right, bottom;
@@ -35,26 +23,35 @@ struct text_hires_glyph
 	float advance;
 };
 
-/* the font standing for a font tag, sized so that its capitals are
-cap_height units tall, its glyphs rasterized with oversample times the
-display's pixels (for text drawn scaled up); -1 if none, or
-display.high_res_text is off */
-long text_hires_font(char const *tag_name, float cap_height, float oversample);
-/* whether the font has a glyph for the character (it draws a string only
-if it has all of its characters) */
+long text_hires_font(const char *tag_name, float cap_height);
 int text_hires_covers(long font, unsigned long code);
-/* the glyph of a character (rasterized into the atlas if it is not yet);
-0 if it has none */
+/* Successful empty glyphs have zero width/height. The caller must preflight a
+ * complete string before submitting quads; glyph lookup never resets an atlas. */
 int text_hires_glyph(long font, unsigned long code, struct text_hires_glyph *glyph);
-/* the atlas's placeholder: the D3D texture of the bitmap the game binds,
-and its size; NULL forgets it */
+int text_hires_batch_begin(int reset);
+int text_hires_batch_full(void);
+void text_hires_batch_end(void);
 void text_hires_register_atlas(const unsigned long *texture, unsigned long width, unsigned long height);
+void text_hires_dispose(void);
+/* An adapter may release its own cache when the placeholder is disposed. */
+void text_hires_set_atlas_dispose_proc(void (*dispose)(void));
 
-/* the GL texture of the atlas when data (a D3D texture's Data) is its
-placeholder's, its rasterized glyphs uploaded; 0 otherwise */
-unsigned int text_hires_atlas_texture(unsigned long data);
+/* Backend-neutral, white RGB with glyph coverage in alpha. The revision is
+ * monotonic, and reading never clears another renderer's pending update. */
+struct text_hires_atlas_pixels
+{
+	const unsigned char *rgba;
+	unsigned long width, height;
+	uint64_t revision;
+	unsigned long dirty_top, dirty_bottom;
+};
+int text_hires_atlas_pixels(unsigned long data, struct text_hires_atlas_pixels *out);
+/* Each adapter keeps its own uploaded revision. Dirty rows are the union of
+ * changes since that revision; no acknowledgement consumes another reader. */
+int text_hires_atlas_pixels_since(unsigned long data, uint64_t uploaded_revision,
+	struct text_hires_atlas_pixels *out);
 
-/* d3d8_gl.c: the display's pixels for each of the 480 lines */
+/* Renderer adapter: physical pixels for each unit of the game's 480 lines. */
 float halo_screen_pixel_scale(void);
 
 #endif

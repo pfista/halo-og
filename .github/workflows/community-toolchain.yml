@@ -1,0 +1,83 @@
+name: Archived native content helper prototype
+
+# Kept for explicit developer review only. Application builds download complete
+# community maps and do not require this cancelled reconstruction prototype.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-helpers:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-26
+            platform: macos-arm64
+            rust: aarch64-apple-darwin
+          - os: ubuntu-24.04
+            platform: linux-x86_64
+            rust: x86_64-unknown-linux-gnu
+          - os: windows-2025
+            platform: windows-x86_64
+            rust: x86_64-pc-windows-gnu
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Native GNU/MSVCRT compiler for Windows
+        id: msys2
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+          path-type: inherit
+      - name: Select Windows compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compilerBin = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'mingw64\bin'
+          if (-not (Test-Path (Join-Path $compilerBin 'gcc.exe'))) { throw 'MSYS2 MINGW64 compiler is missing' }
+          $compilerBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Pinned build tools
+        shell: bash
+        run: |
+          python -m pip install cmake==3.31.10 ninja==1.13.0
+          rustup toolchain install 1.95.0 --profile default --target "${{ matrix.rust }}"
+          rustup default 1.95.0
+      - name: Test source and packaging boundaries
+        run: python -m unittest -v tools.test_community_toolchain tools.test_macos_content_tools
+      - name: Build two native helpers and corresponding source
+        run: python -m tools.community_toolchain --output build/content-tools-${{ matrix.platform }}
+      - name: Upload review candidate only
+        uses: actions/upload-artifact@v4
+        with:
+          name: content-tools-${{ matrix.platform }}-candidate
+          path: |
+            build/content-tools-${{ matrix.platform }}/build/invader-extract*
+            build/content-tools-${{ matrix.platform }}/build/invader-build*
+            build/content-tools-${{ matrix.platform }}/source-manifest.json
+            build/content-tools-${{ matrix.platform }}/halo-content-tools-source.tar.gz
+            build/content-tools-${{ matrix.platform }}/Licenses/
+            build/content-tools-${{ matrix.platform }}/build.log
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Preserve compiler diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: content-tools-${{ matrix.platform }}-diagnostics
+          path: |
+            build/content-tools-${{ matrix.platform }}/build.log
+            build/content-tools-${{ matrix.platform }}/build/invader-extract*
+            build/content-tools-${{ matrix.platform }}/build/invader-build*
+          if-no-files-found: ignore
+          retention-days: 7

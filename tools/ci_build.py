@@ -12,7 +12,9 @@ release build does (profile-guided optimisation needs clang 22 or later,
 and is skipped with an older one). CI_COMPILER_LAUNCHER (ccache, say) is
 passed on as --compiler-launcher. A build of the main branch gets the run's
 number (HALO_BUILD_NUMBER), which its release is named after and the
-self-updater compares.
+self-updater compares, only in the upstream repository. Halo OG main builds
+embed their immutable source identity for browser-only release notices;
+fork builds never enable upstream's executable replacement updater.
 """
 
 import argparse
@@ -23,6 +25,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+if __package__:
+    from . import release_discovery
+else:
+    import release_discovery
 
 # what each port's build leaves, and what goes into dist/
 OUTPUTS = {
@@ -41,11 +48,33 @@ def run(command, cwd=ROOT):
     subprocess.run([str(part) for part in command], cwd=cwd, check=True)
 
 
+def update_build_number(environment):
+    """Only upstream main publishes the build-* releases used by the updater."""
+    number = environment.get("GITHUB_RUN_NUMBER", "")
+    if (environment.get("GITHUB_REPOSITORY") == "cybersecurity/halo-ce-universal"
+            and environment.get("GITHUB_REF") == "refs/heads/main" and number.isdigit()):
+        return number
+    return "0"
+
+
+def android_install_build_number(environment):
+    """Keep APK upgrade ordering independent of the upstream-only updater."""
+    number = environment.get("GITHUB_RUN_NUMBER", "")
+    if number.isascii() and number.isdecimal() and 0 < int(number) <= 2100000000:
+        return number
+    return "0"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("platform", choices=sorted(OUTPUTS))
     parser.add_argument("config", choices=["debug", "release"])
     args = parser.parse_args()
+    discovery_identity = (release_discovery.required_ci_source_identity()
+                          if args.platform in release_discovery.DESKTOP_ASSETS else None)
+    if discovery_identity:
+        print(f"Halo OG release discovery source {discovery_identity['source_sha']} "
+              f"({discovery_identity['source_date']})", flush=True)
 
     configure = [sys.executable, "configure.py", "--portable"]
     if args.config == "release":
@@ -55,12 +84,10 @@ def main() -> int:
     launcher = os.environ.get("CI_COMPILER_LAUNCHER")
     if launcher:
         configure += ["--compiler-launcher", launcher]
-    # a build of main knows its number, which names its release (build-<n>),
-    # for the self-updater (port/linux/src/updater.c, and the Android app);
-    # other builds have none, and never look for updates
-    if os.environ.get("GITHUB_REF") == "refs/heads/main" and os.environ.get("GITHUB_RUN_NUMBER", "").isdigit():
-        os.environ["HALO_BUILD_NUMBER"] = os.environ["GITHUB_RUN_NUMBER"]
-        print(f"build number {os.environ['HALO_BUILD_NUMBER']}", flush=True)
+    # The current updater fetches cybersecurity's build-<n> releases. Never
+    # let a fork build offer to replace itself with that different product.
+    os.environ["HALO_BUILD_NUMBER"] = update_build_number(os.environ)
+    print(f"updater build number {os.environ['HALO_BUILD_NUMBER']}", flush=True)
     run(configure)
 
     if args.platform == "android":
@@ -68,7 +95,9 @@ def main() -> int:
         # same name: release is signed with the debug key, not debuggable)
         run(["ninja", "android"])
         gradlew = "gradlew.bat" if os.name == "nt" else "./gradlew"
-        run([gradlew, "--console=plain", "-q", f"assemble{args.config.capitalize()}"], cwd=ROOT / "port/android")
+        run([gradlew, "--console=plain", "-q",
+             "-PhaloInstallBuildNumber=" + android_install_build_number(os.environ),
+             f"assemble{args.config.capitalize()}"], cwd=ROOT / "port/android")
         outputs = [APKS[args.config]]
     else:
         run(["ninja", args.platform])
@@ -94,6 +123,10 @@ def main() -> int:
         for pdb in [ROOT / "build/windows/halo.pdb", *sorted((ROOT / "build/windows/third_party").glob("SDL3-*/lib/x86/SDL3.pdb"))]:
             shutil.copy2(pdb, symbols)
             print(f"{pdb.relative_to(ROOT)} -> {symbols.relative_to(ROOT)}", flush=True)
+    if discovery_identity:
+        release_discovery.verify_desktop_discovery_artifact(
+            dist / Path(outputs[0]).name, args.platform, discovery_identity)
+        print("Verified Halo OG release discovery in the collected executable", flush=True)
     # the disc image readers (port/linux/src/xiso.c, and the Android app's
     # XisoExtractor.java) follow extract-xiso, whose license asks binaries
     # to carry its notice
@@ -105,9 +138,16 @@ def main() -> int:
     # internet play's UPnP (port/third_party/miniupnpc), in every build,
     # whose BSD license asks binaries to carry its notice
     shutil.copy2(ROOT / "port/third_party/miniupnpc/LICENSE", dist / "miniupnpc-LICENSE.txt")
-    # the text's fonts (port/assets/fonts), embedded in every build, whose
-    # SIL Open Font License asks each copy to carry it
-    shutil.copy2(ROOT / "port/assets/fonts/Overpass-OFL.txt", dist / "Overpass-OFL.txt")
+    # Runtime text uses Overpass; OpenCE/Newtown produce the title pictures.
+    # Carry their licenses and the imported font provenance with each build.
+    for source, name in (
+        ("port/assets/fonts/Overpass-OFL.txt", "Overpass-OFL.txt"),
+        ("port/assets/fonts/OpenCE-OFL.txt", "OpenCE-OFL.txt"),
+        ("port/assets/fonts/Newtown-LICENSE.txt", "Newtown-LICENSE.txt"),
+        ("port/assets/fonts/README.md", "fonts-README.md"),
+        ("port/third_party/stb/LICENSE", "stb-LICENSE.txt"),
+    ):
+        shutil.copy2(ROOT / source, dist / name)
     # the menus' XML parser (port/third_party/expat), in every build, whose
     # MIT license asks copies to carry its notice
     shutil.copy2(ROOT / "port/third_party/expat/COPYING", dist / "expat-COPYING.txt")

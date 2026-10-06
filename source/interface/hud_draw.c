@@ -93,6 +93,11 @@ symbols in this file:
 #include "effects/particles.h"
 #include "game/game.h"
 #include "game/players.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "render/teammate_view.h"
+#else
+#define teammate_view_hud_player_count local_player_count
+#endif
 #include "interface/hud_definitions.h"
 #include "interface/hud_draw.h"
 #include "interface/interface.h"
@@ -675,7 +680,7 @@ static void hud_draw_multitexture_overlay(
 	parameters.map_scale[0].j = 1.0f;
 	parameters.map_scale[0].i = 1.0f;
 	parameters.meter_parameters = NULL;
-	parameters.point_sampled = local_player_count() == 1;
+	parameters.point_sampled = teammate_view_hud_player_count() == 1;
 	parameters.map[0] = bitmap_group_get_bitmap_from_sequence(
 		overlay->map[0].index,
 		0,
@@ -1592,7 +1597,7 @@ static void hud_draw_bitmap_internal(
 	parameters.map_scale[0].j = 1.0f;
 	parameters.map_scale[0].i = 1.0f;
 	parameters.meter_parameters = meter_parameters;
-	parameters.point_sampled = meter_parameters && local_player_count()==1;
+	parameters.point_sampled = meter_parameters && teammate_view_hud_player_count()==1;
 	parameters.framebuffer_blend_function =
 		_shader_framebuffer_blend_function_alpha_multiply_add;
 	parameters.map[0] = (struct bitmap_data *)bitmap;

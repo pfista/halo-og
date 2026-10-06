@@ -73,6 +73,11 @@ symbols in this file:
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/players.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "render/teammate_view.h"
+#else
+#define teammate_view_hud_player_count local_player_count
+#endif
 #include "cache/texture_cache.h"
 #include "interface/hud_definitions.h"
 #include "bitmaps/bitmap_color_conversion.h"
@@ -609,7 +614,7 @@ void hud_render_damage_indicators(
 			&hud_globals->damage_indicators;
 		real theta;
 		real_point2d screen_position;
-		real scale = hud_globals_get_scale(local_player_count() > 1);
+		real scale = hud_globals_get_scale(teammate_view_hud_player_count() > 1);
 		byte damage_indicators[NUMBER_OF_HUD_DAMAGE_INDICATOR_DIRECTIONS];
 		short direction;
 
@@ -686,7 +691,7 @@ void hud_render_damage_indicators(
 				screen_position.x -= (real)render.camera.viewport_bounds.x0;
 				screen_position.y -= (real)render.camera.viewport_bounds.y0;
 				bitmap_group_index = definition->indicator_bitmap.index;
-				if (local_player_count() > 1)
+				if (teammate_view_hud_player_count() > 1)
 					sequence_index = definition->multiplayer_sequence_index;
 				else
 					sequence_index = definition->sequence_index;
@@ -736,10 +741,19 @@ void hud_tick_shield(
 	long player_index,
 	real amount)
 {
-	short local_player_index = player_get(player_index)->local_player_index;
+	short local_player_index;
 
+	if (player_index == NONE)
+		return;
+	local_player_index = player_get(player_index)->local_player_index;
 	if (local_player_index != NONE)
-		get_hud_state(local_player_index)->last_shield_vitality -= amount;
+	{
+		struct unit_hud_state *hud_state = get_hud_state(local_player_index);
+
+		/* A first snapshot can arrive before this HUD has sampled the unit. */
+		if (hud_state->last_shield_vitality != -1.f)
+			hud_state->last_shield_vitality -= amount;
+	}
 
 	return;
 }
@@ -790,7 +804,7 @@ void hud_render_unit_interface(
 		{
 			unit_definition_get_active_hud_index(
 				unit_definition,
-				local_player_count() > 1)
+				teammate_view_hud_player_count() > 1)
 		};
 		long unit_count = 1;
 		unsigned long auxilary_flags;
@@ -817,7 +831,7 @@ void hud_render_unit_interface(
 			get_hud_state(local_player_index);
 			parent_hud_index = unit_definition_get_active_hud_index(
 				parent_unit_definition,
-				local_player_count() > 1);
+				teammate_view_hud_player_count() > 1);
 
 			if (TEST_FLAG(seat->flags, _unit_seat_driver_bit))
 			{
@@ -845,7 +859,7 @@ void hud_render_unit_interface(
 							unit_definition_get_seat_active_hud_index(
 								parent_unit_definition,
 								child_unit->unit.parent_seat_index,
-								local_player_count() > 1);
+								teammate_view_hud_player_count() > 1);
 						unit_count++;
 					}
 
@@ -884,7 +898,7 @@ void hud_render_unit_interface(
 					SET_FLAG(
 						draw_flags,
 						_hud_draw_in_multiplayer_bit,
-						local_player_count() > 1);
+						teammate_view_hud_player_count() > 1);
 					hud_draw_static_element(
 						local_player_index,
 						&hud_definition->absolute_placement,
@@ -911,7 +925,7 @@ void hud_render_unit_interface(
 					SET_FLAG(
 						draw_flags,
 						_hud_draw_in_multiplayer_bit,
-						local_player_count() > 1);
+						teammate_view_hud_player_count() > 1);
 
 					if (unit_count == 0)
 					{
@@ -1032,7 +1046,7 @@ void hud_render_unit_interface(
 					SET_FLAG(
 						draw_flags,
 						_hud_draw_in_multiplayer_bit,
-						local_player_count() > 1);
+						teammate_view_hud_player_count() > 1);
 
 					if (unit_count == 0)
 					{
@@ -1118,7 +1132,7 @@ void hud_render_unit_interface(
 					SET_FLAG(
 						draw_flags,
 						_hud_draw_in_multiplayer_bit,
-						local_player_count() > 1);
+						teammate_view_hud_player_count() > 1);
 					SET_FLAG(
 						draw_flags,
 						_hud_draw_flashing_bit,
@@ -1160,12 +1174,12 @@ void hud_render_unit_interface(
 						&absolute_placement,
 						&hud_definition->blip_placement,
 						NULL,
-						local_player_count() > 1,
+						teammate_view_hud_player_count() > 1,
 						0.0f,
 						&corner);
 					motion_sensor_draw_screen(
 						local_player_index,
-						local_player_count() > 1,
+						teammate_view_hud_player_count() > 1,
 						&corner);
 				}
 
@@ -1178,7 +1192,7 @@ void hud_render_unit_interface(
 					SET_FLAG(
 						draw_flags,
 						_hud_draw_in_multiplayer_bit,
-						local_player_count() > 1);
+						teammate_view_hud_player_count() > 1);
 					for (overlay_index = 0;
 						overlay_index < auxilary_panel->auxilary_overlays.count;
 						overlay_index++)
@@ -1261,7 +1275,7 @@ void hud_render_unit_interface(
 							SET_FLAG(
 								draw_flags,
 								_hud_draw_in_multiplayer_bit,
-								local_player_count() > 1);
+								teammate_view_hud_player_count() > 1);
 							SET_FLAG(
 								draw_flags,
 								_hud_draw_flashing_bit,
@@ -1316,7 +1330,7 @@ void hud_render_unit_interface(
 							SET_FLAG(
 								draw_flags,
 								_hud_draw_in_multiplayer_bit,
-								local_player_count() > 1);
+								teammate_view_hud_player_count() > 1);
 							SET_FLAG(
 								draw_flags,
 								_hud_draw_flashing_bit,

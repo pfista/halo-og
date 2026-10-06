@@ -31,6 +31,12 @@ struct network_player;
 
 /* ---------- prototypes/NETWORK_SERVER_MANAGER.C */
 
+/* Practice capabilities belong to one connection and are reset on slot reuse. */
+void network_game_server_performance_capability(
+	struct network_game_server_client_machine *machine, unsigned flags);
+boolean network_game_server_performance_supported(
+	struct network_game_server_client_machine *machine, unsigned flags);
+
 word network_game_server_get_state(
 	struct network_game_server *server,
 	short *substate);
@@ -93,6 +99,17 @@ void network_game_server_client_machine_is_precached(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *client_machine,
 	char const *map_name);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+struct native_map_cache_selection;
+struct network_expanded_cache_identity;
+struct native_map_cache_selection const *network_game_server_get_cache_selection(struct network_game_server *server);
+boolean network_game_server_client_machine_cache_ready(struct network_game_server *server,
+    struct network_game_server_client_machine *machine, struct network_expanded_cache_identity const *identity);
+boolean network_game_server_client_machine_cache_pending(struct network_game_server *server,
+    struct network_game_server_client_machine *machine, struct network_expanded_cache_identity const *identity);
+boolean network_game_server_client_machine_has_cache_identity(struct network_game_server *server,
+    struct network_game_server_client_machine *machine);
+#endif
 void network_game_server_handle_client_update_packet(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *client_machine,

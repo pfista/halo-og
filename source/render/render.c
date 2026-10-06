@@ -87,6 +87,9 @@ symbols in this file:
 #include "effects/weather_particle_systems.h"
 #include "main/main.h"
 #include "structures/structures.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "render/teammate_view.h"
+#endif
 
 /* ---------- constants */
 
@@ -118,6 +121,10 @@ enum
 /* ---------- structures */
 
 /* ---------- prototypes */
+
+#if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL
+extern void halo_metal_antialias_before_hud(long left, long top, long right, long bottom);
+#endif
 
 static void render_nonplayer_frame(
 	const struct render_window *window,
@@ -310,6 +317,13 @@ static void render_window(
 {
 	struct rasterizer_window_begin_parameters parameters;
 	short rendered_cluster_index;
+	boolean teammate_window = FALSE;
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Community addition: a read-only teammate view has no local control slot. */
+	teammate_window = local_player_index == NONE &&
+		teammate_view_get_player_index(render.window_index) != NONE;
+#endif
 
 	profile_render_window_start(TRUE);
 	render.scene_index++;
@@ -326,14 +340,16 @@ static void render_window(
 	parameters.fog = render.fog;
 
 	structure_visibility_compute();
-	player_effect_get_screen_flash(local_player_index, &parameters.screen_flash);
+	if (!teammate_window)
+		player_effect_get_screen_flash(local_player_index, &parameters.screen_flash);
 	rasterizer_window_begin(&parameters);
 
 	if (!bink_playback_in_progress())
 	{
 		build_sprite_prepare_for_window();
 		render_sky();
-		first_person_weapon_render_update();
+		if (!teammate_window)
+			first_person_weapon_render_update();
 		lights_preprocess_scene();
 		render_objects();
 		structure_render_preprocess();
@@ -387,8 +403,11 @@ static void render_window(
 		structure_render_reflections();
 		structure_render_transparent_geometry();
 		structure_render_fog();
-		game_engine_post_rasterize_objects();
-		weather_particle_systems_render();
+		if (!teammate_window)
+		{
+			game_engine_post_rasterize_objects();
+			weather_particle_systems_render();
+		}
 		render_particles();
 		particle_systems_render();
 		render_contrails_normal();
@@ -408,28 +427,41 @@ static void render_window(
 		rasterizer_transparent_geometry_stop();
 		structure_render_fog_screen();
 		rasterizer_lens_flares_draw();
-		/* port: the 3D view antialiased (display.anti_aliasing), before the
-		HUD and menus are drawn over it */
+#if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL
+		/* Optional native edge filtering happens after the world and before
+		   the original HUD. Reflections and other offscreen targets retain
+		   their original contents and sampling. */
 		if (rasterizer_target == _render_target_primary)
-		{
-			halo_screen_anti_alias(
+			halo_metal_antialias_before_hud(
 				rasterizer_camera->viewport_bounds.x0,
 				rasterizer_camera->viewport_bounds.y0,
 				rasterizer_camera->viewport_bounds.x1,
 				rasterizer_camera->viewport_bounds.y1);
+#endif
+		if (!teammate_window)
+		{
+			interface_draw_screen();
+			rasterizer_screen_flash();
+			halo_screen_ui_offset(TRUE);
+			render_ui_widgets(local_player_index, &rasterizer_camera->viewport_bounds);
+			halo_screen_ui_offset(FALSE);
 		}
-		interface_draw_screen();
-		rasterizer_screen_flash();
-		halo_screen_ui_offset(TRUE);
-		render_ui_widgets(local_player_index, &rasterizer_camera->viewport_bounds);
-		halo_screen_ui_offset(FALSE);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		else if (rasterizer_target == _render_target_primary)
+		{
+			teammate_view_draw_label(render.window_index);
+		}
+#endif
 	}
 
 	bink_playback_render();
-	render_camera_debug_frustum(&render.camera, &render.frustum);
-	render_debug();
-	editor_render();
-	rasterizer_debug_draw();
+	if (!teammate_window)
+	{
+		render_camera_debug_frustum(&render.camera, &render.frustum);
+		render_debug();
+		editor_render();
+		rasterizer_debug_draw();
+	}
 	rasterizer_window_end();
 	profile_render_window_end();
 
@@ -446,17 +478,33 @@ static void render_player_frame(
 	struct render_frustum frustum;
 	struct render_frustum rasterizer_frustum;
 	struct render_mirror mirror;
+	boolean teammate_window = FALSE;
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	teammate_window = window->local_player_index == NONE &&
+		teammate_view_get_player_index(render.window_index) != NONE;
+#endif
 
 	camera = &window->render_camera;
 	has_mirror = FALSE;
 
 	structure_visibility_find_camera(camera);
-	render.fog.runtime_flags = 0;
-	scenario_get_atmospheric_fog(
-		window->local_player_index,
-		(word)render.visible_sky_index,
-		&camera->position,
-		&render.fog);
+	if (teammate_window)
+	{
+		/* The original atmospheric fog history is owned by local players.
+		   This camera-only prototype uses planar fog without borrowing that
+		   history or the original NONE path's uninitialized stack state. */
+		memset(&render.fog, 0, sizeof(render.fog));
+	}
+	else
+	{
+		render.fog.runtime_flags = 0;
+		scenario_get_atmospheric_fog(
+			window->local_player_index,
+			(word)render.visible_sky_index,
+			&camera->position,
+			&render.fog);
+	}
 	structure_get_planar_fog((short)render.cluster_index, &render.fog);
 
 	if (render.fog.atmospheric_maximum_distance != 0.0f &&
@@ -618,7 +666,11 @@ void render_frame(
 		{
 			window_type = 0;
 		}
-		else if (window->local_player_index != NONE)
+		else if (window->local_player_index != NONE
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			|| teammate_view_get_player_index(window_index) != NONE
+#endif
+			)
 		{
 			if (screenshot_index != NULL && screenshot_page_index != NULL)
 			{

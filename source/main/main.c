@@ -392,6 +392,13 @@ symbols in this file:
 #include "text/font_group.h"
 #include "tag_files/files.h"
 #include "custom_edition_cache.h" /* port: custom_edition_level_name */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "camera/first_person_camera.h"
+#include "camera/static_camera.h"
+#include "game/teammate_view_variant.h"
+#include "render/teammate_view.h"
+#include "units/units.h"
+#endif
 
 /* ---------- constants */
 
@@ -660,6 +667,12 @@ typedef char screenshot_and_framerate_globals_size_assert[
 	sizeof(struct _screenshot_and_framerate_globals) == 0x38B ? 1 : -1];
 
 void network_test_update(boolean main_menu_loaded, real seconds);
+
+#if defined(HALO_PORT_MAXIMUM_NETWORK_PLAYERS) && !defined(HALO_MACOS) && !defined(HALO_IOS) && !defined(HALO_ANDROID)
+/* The native desktop update notice may prompt only at the local main menu.
+   Retail, Mac and mobile builds do not acquire a new platform import. */
+void halo_release_discovery_set_main_menu(int safe);
+#endif
 
 /* ---------- prototypes */
 
@@ -1422,11 +1435,19 @@ void compute_window_bounds(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "main/teammate_view.inc"
+#endif
+
 short main_get_window_count(
 	void)
 {
 	boolean single_window = game_engine_force_single_screen() || cinematic_in_progress();
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (!single_window && teammate_view_find_player() != NONE)
+		return 2;
+#endif
 	return single_window ? 1 : PIN(local_player_count(), 1, MAXIMUM_WINDOWS);
 }
 
@@ -1447,6 +1468,8 @@ static void main_new_map(
 	{
 		create_local_players();
 		game_time_start();
+		if (debug_game_save)
+			console_printf(FALSE, "\nloaded map %s\n", options->map_name);
 	}
 	else
 	{
@@ -3104,6 +3127,9 @@ static void main_game_render(
 	long player_window_count;
 	long window_count;
 	short last_local_player_index;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	struct observer_result teammate_observer;
+#endif
 
 	lock_global_random_seed();
 	collision_log_continue_period(TRUE);
@@ -3113,6 +3139,11 @@ static void main_game_render(
 
 	window_count = PIN(local_player_count(), 1, MAXIMUM_LOCAL_PLAYERS);
 	player_window_count = window_count;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	teammate_view_player_index = teammate_view_find_player();
+	if (teammate_view_player_index != NONE)
+		player_window_count = 2;
+#endif
 	if (force_single_screen || cinematic_in_progress())
 	{
 		window_count = 1;
@@ -3155,6 +3186,13 @@ static void main_game_render(
 		else
 		{
 			window->local_player_index = NONE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			if (window_index == 1 && teammate_view_player_index != NONE)
+			{
+				teammate_view_camera(teammate_view_player_index, &teammate_observer);
+				observer = &teammate_observer;
+			}
+#endif
 		}
 
 		set_window_camera_values(window, observer);
@@ -3304,6 +3342,10 @@ void main_loop(
 		}
 
 		profile_frame_start();
+#if defined(HALO_PORT_MAXIMUM_NETWORK_PLAYERS) && !defined(HALO_MACOS) && !defined(HALO_IOS) && !defined(HALO_ANDROID)
+		halo_release_discovery_set_main_menu(main_globals.main_menu_scenario_loaded &&
+			main_globals.connection == _game_connection_local);
+#endif
 		input_frame_begin();
 		input_update();
 		input_abstraction_update();

@@ -57,12 +57,14 @@ only look up and create stand-ins.
 #include "posix.h"
 #include "port_config.h"
 #include "p2p_internal.h"
+#include "game_directory.h"
 #include "ikcp.h"
 
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <SDL3/SDL.h>
 
 enum
 {
@@ -133,8 +135,9 @@ enum
 	UPNP_RELEASE_WAIT = 3000,
 
 	/* where a running copy of the game takes invites from another one
-	started to open a link (127.0.0.1), sealed with a key of the user's */
-	HANDOFF_PORT = 47315,
+	started to open a link (127.0.0.1), sealed with a key of the user's;
+	keep this branch separate from OpenCE's 47315 and Halo OG's 47316 */
+	HANDOFF_PORT = 47317,
 };
 
 enum
@@ -374,12 +377,14 @@ unsigned long p2p_now(void)
 	return GetTickCount();
 }
 
+/* whether time milliseconds have passed since since; 0 is "never", which
+is long ago (a machine up more than 24.8 days has a clock past 2^31
+milliseconds, where the signed difference from 0 is negative and nothing
+that starts from 0 would ever happen) */
 static int elapsed(unsigned long since, unsigned long time)
 {
-	/* (unsigned, as the clock wraps: a signed difference is negative for
-	half of it, which had nothing lapse from a time of 0 from 24.8 days of
-	uptime on) */
-	return (unsigned int)(p2p_now() - since) >= (unsigned int)time;
+	/* 0 is never; unsigned subtraction also survives clock wrap. */
+	return !since || (unsigned int)(p2p_now() - since) >= (unsigned int)time;
 }
 
 unsigned long p2p_resolve(const char *host)
@@ -395,12 +400,17 @@ unsigned long p2p_resolve(const char *host)
 
 void p2p_register_url_scheme(const char *scheme, const char *description)
 {
+	static pthread_mutex_t registration_lock = PTHREAD_MUTEX_INITIALIZER;
+
 	if (config_real("debug.exit_after") > 0.0 || config_boolean("debug.hidden_window") ||
 		config_boolean("debug.null_renderer"))
 		return;
 	/* it may run a program and wait for it */
 	pthread_mutex_unlock(&p2p_lock);
+	/* The Discord and tunnel workers share Linux's mimeapps.list. */
+	pthread_mutex_lock(&registration_lock);
 	posix_register_url_scheme(scheme, description);
+	pthread_mutex_unlock(&registration_lock);
 	pthread_mutex_lock(&p2p_lock);
 }
 
@@ -2264,13 +2274,8 @@ static int parse_invite(const char *text, unsigned char *host_hash, unsigned cha
 
 	for (search = text; *search && !start; search++)
 	{
-		static const char prefix[] = "halo://join/";
-		int length;
-
-		for (length = 0; prefix[length] && search[length] &&
-			(search[length] | 0x20) == prefix[length]; length++)
-			;
-		if (!prefix[length])
+		unsigned length = p2p_invite_prefix_length(search);
+		if (length)
 			start = search + length;
 	}
 	if (!start)
@@ -2345,8 +2350,34 @@ int p2p_join_invite(const char *text)
 	return result > 0;
 }
 
+int p2p_invite_identity(const char *text, unsigned char *out)
+{
+	unsigned char hash[P2P_KEY_HASH_SIZE], token[P2P_TOKEN_SIZE];
+	if (parse_invite(text, hash, token) != 1) return 0;
+	p2p_identifier_from_hash(hash, out);
+	return 1;
+}
+
+int p2p_invite_peer_address(const char *text, unsigned long *address)
+{
+	unsigned char host[P2P_IDENTIFIER_SIZE];
+	struct peer *peer;
+	int found = 0;
+	if (!p2p_invite_identity(text, host)) return 0;
+	pthread_mutex_lock(&p2p_lock);
+	peer = find_peer(host);
+	if (peer && peer->connected && peer->is_host) { *address = peer->virtual_address; found = 1; }
+	pthread_mutex_unlock(&p2p_lock);
+	return found;
+}
+
 void p2p_invite_received(const char *text)
 {
+	if (!p2p.running)
+	{
+		platform_log("Internet play is off (network.online in config.toml): the invite is ignored");
+		return;
+	}
 	/* (an older version's is logged as such) */
 	if (!join_invite(text))
 		platform_log("Internet play: that is not an invite");
@@ -2400,7 +2431,7 @@ static void make_invite(void)
 	p2p_key_hash(p2p_public_key(), bytes);
 	memcpy(bytes + P2P_KEY_HASH_SIZE, p2p.token, P2P_TOKEN_SIZE);
 	p2p_hex(bytes, sizeof(bytes), text);
-	snprintf(p2p.invite, sizeof(p2p.invite), "halo://join/%s", text);
+	snprintf(p2p.invite, sizeof(p2p.invite), P2P_INVITE_PREFIX "%s", text);
 }
 
 void p2p_new_invite_if_listed(void)
@@ -2439,6 +2470,7 @@ static void update_hosting(void)
 		if (!p2p.has_token)
 			make_invite();
 		p2p.hosting = 1;
+		game_directory_set_invite(p2p.invite);
 		p2p.stun_started = 1;
 		p2p_signal_start();
 		p2p_signal_host(p2p.token);
@@ -2455,6 +2487,7 @@ static void update_hosting(void)
 	else if (!want && p2p.hosting)
 	{
 		p2p.hosting = 0;
+		game_directory_set_invite(NULL);
 		p2p_signal_stop_hosting();
 		p2p_discord_set_hosting(NULL, 0, 0);
 	}
@@ -2467,7 +2500,7 @@ static void update_hosting(void)
 		{
 			p2p.reported_player_count = count;
 			p2p.reported_player_maximum = maximum;
-			p2p_discord_set_hosting(p2p.invite + strlen("halo://join/"), count, maximum);
+			p2p_discord_set_hosting(p2p.invite + sizeof(P2P_INVITE_PREFIX) - 1, count, maximum);
 		}
 	}
 }
@@ -2687,10 +2720,13 @@ invites nor pass its own */
 static int handoff_key(unsigned char *key)
 {
 	unsigned char secret[P2P_SHA256_SIZE];
+	static const char label[] = P2P_INVITE_SCHEME " handoff";
 
 	if (!posix_user_secret(secret, sizeof(secret)))
 		return 0;
-	p2p_hmac_sha256(secret, sizeof(secret), "halo handoff", 12, key);
+	/* The existing private secret stays in place; derive a fork-specific key
+	so another Halo app cannot acknowledge or consume this fork's invites. */
+	p2p_hmac_sha256(secret, sizeof(secret), label, sizeof(label) - 1, key);
 	return 1;
 }
 
@@ -2784,10 +2820,18 @@ static void poll_invite_file(void)
 	if (!elapsed(checked_time, 1000))
 		return;
 	checked_time = p2p_now();
+#ifdef HALO_MACOS
+	/* Native Apple instances share maps, but each owns its save directory. */
+	snprintf(path, sizeof(path), "%s/join_link.txt", platform_save_root());
+#else
 	snprintf(path, sizeof(path), "%s/join_link.txt", platform_data_root());
+#endif
+#ifdef HALO_MACOS
+	snprintf(taken, sizeof(taken), "%s/join_link.taken", platform_save_root());
+#else
 	snprintf(taken, sizeof(taken), "%s/join_link.taken", platform_data_root());
-	/* (taken first: a link the launcher writes while this reads is left for
-	the next look, not removed unread) */
+#endif
+	/* Take the link atomically, leaving any newly delivered invite for the next poll. */
 	if (rename(path, taken) != 0)
 		return;
 	file = fopen(taken, "rb");
@@ -2827,7 +2871,7 @@ static void *p2p_thread(void *unused)
 	pthread_mutex_lock(&p2p_lock);
 #ifndef HALO_ANDROID
 	/* (here: it may wait for a program) */
-	p2p_register_url_scheme("halo", "Halo: Combat Evolved invite");
+	p2p_register_url_scheme(P2P_INVITE_SCHEME, "Halo OG invite");
 #endif
 	for (;;)
 	{
@@ -2996,13 +3040,29 @@ static void *p2p_thread(void *unused)
 		}
 		update_joining();
 		update_upnp();
-		p2p_discord_update();
 #ifdef HALO_ANDROID
 		poll_invite_file();
 #endif
 	}
 	return NULL;
 }
+
+#if (!defined(HALO_ANDROID) || defined(HALO_MACOS)) && !defined(HALO_IOS)
+/* Presence also runs in offline games and when the internet tunnel cannot
+open. The shared lock keeps hosting updates and invite delivery serialized. */
+static void *discord_thread(void *unused)
+{
+	(void)unused;
+	for (;;)
+	{
+		pthread_mutex_lock(&p2p_lock);
+		p2p_discord_update();
+		pthread_mutex_unlock(&p2p_lock);
+		SDL_Delay(50);
+	}
+	return NULL;
+}
+#endif
 
 void p2p_initialize(unsigned long local_address)
 {
@@ -3012,6 +3072,20 @@ void p2p_initialize(unsigned long local_address)
 	int index;
 
 	p2p_identifier();
+#if (!defined(HALO_ANDROID) || defined(HALO_MACOS)) && !defined(HALO_IOS)
+	{
+		static int discord_running;
+
+		pthread_mutex_lock(&p2p_lock);
+		if (!discord_running && *config_string("discord.application_id") &&
+			pthread_create(&thread, NULL, discord_thread, NULL) == 0)
+		{
+			pthread_detach(thread);
+			discord_running = 1;
+		}
+		pthread_mutex_unlock(&p2p_lock);
+	}
+#endif
 	if (p2p.running || !config_boolean("network.online"))
 		return;
 	if (tunnel_port < 0 || tunnel_port > 65535)
@@ -3058,7 +3132,10 @@ void p2p_initialize(unsigned long local_address)
 		return;
 	}
 	pthread_detach(thread);
+	/* The Discord worker can deliver an invite as soon as startup completes. */
+	pthread_mutex_lock(&p2p_lock);
 	p2p.running = 1;
+	pthread_mutex_unlock(&p2p_lock);
 	if (command_line_invite(invite, sizeof(invite)))
 		p2p_join_invite(invite);
 }

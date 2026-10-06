@@ -15,6 +15,10 @@ client's own objects take the upper half of the object array).
 #ifndef __HALO_PORT_CAPACITY_H
 #define __HALO_PORT_CAPACITY_H
 
+/* Uncompressed multiplayer files can exceed the Xbox's 47 MiB disk-cache
+   slots. This is a file capacity, not an increase to the 22 MiB tag arena. */
+#define HALO_PORT_MULTIPLAYER_CACHE_SIZE 0x08000000
+
 /* ---------- game state
 
 The Xbox game state is 0x345000 bytes at 0x80061000 and ends where the tag
@@ -46,12 +50,16 @@ measurement). The desktop builds' cache is 256 MB, half their 512 MB memory
 window (port/linux/src/platform.h), whose pages are backed as they are used.
 Android's window is 128 MB, and its cache the Xbox's. */
 
-#ifdef HALO_ANDROID
+#if defined(HALO_ANDROID) && (!defined(HALO_MACOS) || defined(HALO_IOS))
 #define HALO_PORT_TEXTURE_CACHE_PAGE_COUNT 0x580 /* (0x580) */
 #else
 #define HALO_PORT_TEXTURE_CACHE_PAGE_COUNT 0x4000 /* (0x580) */
 #endif
 #define HALO_PORT_TEXTURE_CACHE_SIZE (HALO_PORT_TEXTURE_CACHE_PAGE_COUNT*0x4000) /* (0x1600000) */
+/* Validated expanded Xbox caches retain their minimum budget. Desktop
+   CE capacity is already larger, so an OG-only map never shrinks it. */
+#define HALO_PORT_GLOBAL_FIESTA_TEXTURE_CACHE_SIZE \
+	(HALO_PORT_TEXTURE_CACHE_SIZE > 0x02000000 ? HALO_PORT_TEXTURE_CACHE_SIZE : 0x02000000)
 
 /* ---------- AI
 

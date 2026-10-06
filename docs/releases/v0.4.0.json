@@ -1,0 +1,11 @@
+{
+  "summary": "This update expands Fiesta with Uncut and All weapon sets and adds optional Upres HUD, fonts and menu titles. It also adds Hardcore camo, solo multiplayer starts and fixes for controls, rendering and Overshield feedback. The public arsenal upload is deferred, so expanded Fiesta currently requires matching arsenals installed manually.",
+  "highlights": [
+    "Fiesta: select Uncut or All in Item Options to spawn with two different random weapons, including weapons absent from the selected map. The reviewed arsenal contains nine recovered Uncut weapons and 31 playable definitions for All; choosing All displays Pfiesta in the menu.",
+    "Hardcore camo: hosts can remove the camouflage tint under Edit Gametypes, Performance, Camo. Normal remains the default.",
+    "Upres: optional sharper HUD artwork, scalable fonts and menu titles are available under Game Settings, Video, Asset Quality. Original remains the default; restart after changing the saved choice.",
+    "Solo multiplayer and controls: start Split Screen or System Link alone with START. Faster menu navigation preserves individual presses and repeats after a 500 ms hold, then every 100 ms; Original remains the default.",
+    "Rendering and audio: Smooth Motion keeps cameras and objects aligned after simulation catch-up, and Metal reuses shader and render work while supporting imported BC2/BC3 cube textures. Recognized passive Overshield drain no longer triggers shield-hit feedback on joining clients.",
+    "Credits: the About page now includes the original Xbox Halo team alongside this port's contributors."
+  ]
+}

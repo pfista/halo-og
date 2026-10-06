@@ -84,7 +84,6 @@ symbols in this file:
 #include "cseries/cseries_windows.h"
 #include "cseries/errors.h"
 #include "bitmaps/bitmap_group.h"
-#include "game/players.h"
 #include "interface/event_manager.h"
 #include "interface/ui_widget.h"
 #include "interface/virtual_keyboard.h"
@@ -96,6 +95,9 @@ symbols in this file:
 #include "text/font_group.h"
 #include "text/text_group.h"
 #include "text/unicode.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "controller_settings.h"
+#endif
 
 /* ---------- constants */
 
@@ -111,6 +113,12 @@ enum
 	FIRST_VIRTUAL_KEYBOARD_FORTUNE_STRING_INDEX = 11,
 	NUMBER_OF_VIRTUAL_KEYBOARD_FORTUNES = 10,
 };
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#define MENU_KEYBOARD_REPEAT_INTERVAL halo_menu_repeat_milliseconds()
+#else
+#define MENU_KEYBOARD_REPEAT_INTERVAL VIRTUAL_KEYBOARD_TAB_REPEAT_MILLISECONDS
+#endif
 
 enum virtual_key_code
 {
@@ -957,13 +965,6 @@ void virtual_keyboard_render(
 void virtual_keyboard_process(
 	void)
 {
-	/* port: while it is up the computer's keyboard types into it
-	(port/linux/src/xinput_sdl.c) */
-	{
-		extern void platform_text_typing(int typing);
-
-		platform_text_typing(virtual_keyboard_globals.active);
-	}
 	if (virtual_keyboard_globals.active)
 		virtual_keyboard_process_internal();
 
@@ -980,14 +981,6 @@ static boolean virtual_keyboard_select(
 	switch (keycode)
 	{
 	case _vkey_done:
-		/* port: a name kept to one the host's ban command can name: its
-		spaces before and after dropped, and one without a character it can
-		type (player_name_clean) empty, which is refused below */
-		if (!player_name_clean(virtual_keyboard_globals.text_buffer,
-			virtual_keyboard_globals.buffer_size / (long)sizeof(wchar_t)))
-		{
-			virtual_keyboard_globals.text_buffer[0] = 0;
-		}
 		if (ustrcmp(virtual_keyboard_globals.saved_text, virtual_keyboard_globals.text_buffer) != 0)
 		{
 			if (virtual_keyboard_globals.text_buffer[0])
@@ -1157,48 +1150,37 @@ static boolean virtual_keyboard_select(
 	return TRUE;
 }
 
-/* port: the characters and backspaces typed on the computer's keyboard,
-as its keys would put them (the first replacing the text it began with) */
-static void virtual_keyboard_port_type(
-	void)
+static void virtual_keyboard_process_action(long action, unsigned long time)
 {
-	struct key_stroke key;
-
-	while (input_get_key(&key))
+	boolean handled = FALSE;
+	virtual_keyboard_globals.last_key = virtual_keyboard_layout_table[
+		virtual_keyboard_globals.row][virtual_keyboard_globals.column];
+	switch (action)
 	{
-		boolean backspace = key.key_code == _key_backspace;
-
-		if (!backspace && ((unsigned char)key.ascii_code < ' ' || (unsigned char)key.ascii_code > '~'))
-			continue;
-		if (virtual_keyboard_globals.first_key_replaces_buffer == TRUE)
-		{
-			csmemset(virtual_keyboard_globals.text_buffer, 0, virtual_keyboard_globals.buffer_size);
-			virtual_keyboard_globals.cursor = virtual_keyboard_globals.text_buffer;
-			virtual_keyboard_globals.first_key_replaces_buffer = FALSE;
-			if (backspace)
-				continue;
-		}
-		if (backspace)
-		{
-			virtual_keyboard_backspace();
-		}
-		else if (virtual_keyboard_free_space_in_text_buffer() >= 2)
-		{
-			csmemmove(
-				virtual_keyboard_globals.cursor + 1,
-				virtual_keyboard_globals.cursor,
-				virtual_keyboard_globals.buffer_size -
-					((byte *)virtual_keyboard_globals.cursor - (byte *)virtual_keyboard_globals.text_buffer) -
-					sizeof(wchar_t));
-			*virtual_keyboard_globals.cursor++ = (wchar_t)(unsigned char)key.ascii_code;
-			ui_play_audio_feedback_sound(_ui_audio_feedback_forward);
-		}
-		else
-		{
-			ui_play_audio_feedback_sound(_ui_audio_feedback_flag_failure);
-		}
+	case _event_tab_left:
+		handled = virtual_keyboard_tab_left();
+		break;
+	case _event_tab_right:
+		handled = virtual_keyboard_tab_right();
+		break;
+	case _event_tab_up:
+		handled = virtual_keyboard_tab_up();
+		break;
+	case _event_tab_down:
+		handled = virtual_keyboard_tab_down();
+		break;
+	case _event_key_select:
+		handled = virtual_keyboard_select();
+		break;
+	case _event_cancel:
+		handled = virtual_keyboard_cancel();
+		break;
 	}
-	return;
+	if (handled == TRUE)
+	{
+		virtual_keyboard_globals.time_of_last_event = time;
+		virtual_keyboard_globals.last_event = action;
+	}
 }
 
 static void virtual_keyboard_process_internal(
@@ -1209,11 +1191,15 @@ static void virtual_keyboard_process_internal(
 	struct event_record event;
 	long action = NONE;
 	boolean handled = FALSE;
-
-	virtual_keyboard_port_type();
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	boolean fast = halo_menu_repeat_is_fast();
+#endif
 
 	while (get_next_event(&event, NONE))
 	{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (fast) action = NONE;
+#endif
 		switch (event.type)
 		{
 		case _event_type_left_stick:
@@ -1242,9 +1228,13 @@ static void virtual_keyboard_process_internal(
 				break;
 
 			case _gamepad_binary_button_dpad_up:
-				if (virtual_keyboard_globals.last_event != _event_tab_up ||
-					time - time_of_last_tab >= VIRTUAL_KEYBOARD_TAB_REPEAT_MILLISECONDS ||
-					event.data.button.value == 1)
+				if (
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+					fast ? event.data.button.value == 1 :
+#endif
+					(virtual_keyboard_globals.last_event != _event_tab_up ||
+					time - time_of_last_tab >= MENU_KEYBOARD_REPEAT_INTERVAL ||
+					event.data.button.value == 1))
 				{
 					action = _event_tab_up;
 					time_of_last_tab = time;
@@ -1252,9 +1242,13 @@ static void virtual_keyboard_process_internal(
 				break;
 
 			case _gamepad_binary_button_dpad_left:
-				if (virtual_keyboard_globals.last_event != _event_tab_left ||
-					time - time_of_last_tab >= VIRTUAL_KEYBOARD_TAB_REPEAT_MILLISECONDS ||
-					event.data.button.value == 1)
+				if (
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+					fast ? event.data.button.value == 1 :
+#endif
+					(virtual_keyboard_globals.last_event != _event_tab_left ||
+					time - time_of_last_tab >= MENU_KEYBOARD_REPEAT_INTERVAL ||
+					event.data.button.value == 1))
 				{
 					action = _event_tab_left;
 					time_of_last_tab = time;
@@ -1262,9 +1256,13 @@ static void virtual_keyboard_process_internal(
 				break;
 
 			case _gamepad_binary_button_dpad_down:
-				if (virtual_keyboard_globals.last_event != _event_tab_down ||
-					time - time_of_last_tab >= VIRTUAL_KEYBOARD_TAB_REPEAT_MILLISECONDS ||
-					event.data.button.value == 1)
+				if (
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+					fast ? event.data.button.value == 1 :
+#endif
+					(virtual_keyboard_globals.last_event != _event_tab_down ||
+					time - time_of_last_tab >= MENU_KEYBOARD_REPEAT_INTERVAL ||
+					event.data.button.value == 1))
 				{
 					action = _event_tab_down;
 					time_of_last_tab = time;
@@ -1272,9 +1270,13 @@ static void virtual_keyboard_process_internal(
 				break;
 
 			case _gamepad_binary_button_dpad_right:
-				if (virtual_keyboard_globals.last_event != _event_tab_right ||
-					time - time_of_last_tab >= VIRTUAL_KEYBOARD_TAB_REPEAT_MILLISECONDS ||
-					event.data.button.value == 1)
+				if (
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+					fast ? event.data.button.value == 1 :
+#endif
+					(virtual_keyboard_globals.last_event != _event_tab_right ||
+					time - time_of_last_tab >= MENU_KEYBOARD_REPEAT_INTERVAL ||
+					event.data.button.value == 1))
 				{
 					action = _event_tab_right;
 					time_of_last_tab = time;
@@ -1339,40 +1341,20 @@ static void virtual_keyboard_process_internal(
 			}
 			break;
 		}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (fast && action != NONE)
+		{
+			virtual_keyboard_process_action(action, time);
+			action = NONE;
+			if (!virtual_keyboard_active()) break;
+		}
+		/* Cancel/Done may close the keyboard while records remain queued. */
+		if (fast && !virtual_keyboard_active()) break;
+#endif
 	}
-
 	if (action != NONE)
-	{
-		virtual_keyboard_globals.last_key = virtual_keyboard_layout_table[
-			virtual_keyboard_globals.row][virtual_keyboard_globals.column];
-		switch (action)
-		{
-		case _event_tab_left:
-			handled = virtual_keyboard_tab_left();
-			break;
-		case _event_tab_right:
-			handled = virtual_keyboard_tab_right();
-			break;
-		case _event_tab_up:
-			handled = virtual_keyboard_tab_up();
-			break;
-		case _event_tab_down:
-			handled = virtual_keyboard_tab_down();
-			break;
-		case _event_key_select:
-			handled = virtual_keyboard_select();
-			break;
-		case _event_cancel:
-			handled = virtual_keyboard_cancel();
-			break;
-		}
-
-		if (handled == TRUE)
-		{
-			virtual_keyboard_globals.time_of_last_event = time;
-			virtual_keyboard_globals.last_event = action;
-		}
-	}
+		virtual_keyboard_process_action(action, time);
+	(void)handled;
 
 	return;
 }

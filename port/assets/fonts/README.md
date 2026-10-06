@@ -1,5 +1,12 @@
 # Fonts
 
+Halo OG selectively imports these fonts and notices from cybersecurity's
+[0182da817285b67eee8264663ca79f7c32d66b5e](https://github.com/cybersecurity/halo-ce-universal/commit/0182da817285b67eee8264663ca79f7c32d66b5e)
+at the user's request. They are enabled by Asset Quality: Upres; Original is
+the default and keeps the maps' fonts and artwork. OpenCE is an internal
+typeface filename only: this import changes no visible branding, original
+menu words or menu structure.
+
 The fonts the game's text is drawn with, at the display's resolution, in
 place of the bitmap fonts of the maps (`port/linux/src/text_hires.c`).
 `fonts.json` says which font draws each of the maps' font tags.

@@ -350,8 +350,8 @@ static struct
 
 static int elapsed(unsigned long since, unsigned long time)
 {
-	/* (unsigned, as the clock wraps) */
-	return (unsigned int)(p2p_now() - since) >= (unsigned int)time;
+	/* 0 is never; unsigned subtraction also survives clock wrap. */
+	return !since || (unsigned int)(p2p_now() - since) >= (unsigned int)time;
 }
 
 static unsigned short network_short(unsigned short value)
@@ -1534,6 +1534,15 @@ static void brokers_list(char *text, size_t size)
 		snprintf(path + strlen(path), sizeof(path) - strlen(path), "%s", name);
 	}
 	file = config_file_read(path, &file_size);
+#ifdef HALO_MACOS
+	/* Apple keeps config with saves and ships the default broker list with
+	 * game data. An explicitly configured custom path has no fallback. */
+	if (!file && !strcmp(name, "brokers.txt"))
+	{
+		snprintf(path, sizeof(path), "%s/brokers.txt", platform_data_root());
+		file = config_file_read(path, &file_size);
+	}
+#endif
 	if (!file)
 	{
 		platform_log("Internet play: the brokers' file %s cannot be read (network.brokers_file)", path);

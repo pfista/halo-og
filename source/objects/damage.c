@@ -2662,12 +2662,18 @@ client's copy of an object takes the host's vitality and recent damage
 shields going down and coming back up as the host's do */
 void damage_set_network_state(
 	long object_index,
-	struct damage_network_state const *state)
+	struct damage_network_state const *state,
+	real passive_shield_loss)
 {
 	struct object_datum *object = object_get(object_index);
 	struct object_definition *object_definition =
 		object_definition_get(object->definition_index);
 	long collision_model_index = object_definition->object.collision_model.index;
+
+	/* The original local drain advances the HUD baseline too. Network clients
+	skip that update, so apply only the passive loss established by host snapshots. */
+	if (passive_shield_loss > 0.f)
+		hud_tick_shield(player_index_from_unit_index(object_index), passive_shield_loss);
 
 	if (state->shield_depleted && !TEST_FLAG(object->object.damage_flags, _object_shield_depleted_bit))
 	{

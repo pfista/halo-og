@@ -20,13 +20,18 @@ with the host ABI.
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#ifndef HALO_IOS /* Darwin host supplies arc4random_buf through its wrapper. */
 #include <sys/random.h>
+#endif
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+#include <crt_externs.h>
+#endif
 
 #include "posix.h"
 
@@ -562,7 +567,12 @@ posix_ulong posix_resolve_ipv4(const char *host)
 
 int posix_command_line_argument(int index, char *buffer, posix_ulong size)
 {
-#ifdef __ANDROID__
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	if (index < 0 || index >= *_NSGetArgc() || !size)
+		return 0;
+	snprintf(buffer, size, "%s", (*_NSGetArgv())[index]);
+	return 1;
+#elif defined(__ANDROID__) || defined(HALO_IOS)
 	(void)index;
 	(void)buffer;
 	(void)size;
@@ -658,7 +668,7 @@ int posix_user_secret(unsigned char *secret, int size)
 #endif
 }
 
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !defined(HALO_MACOS)
 /* runs a program with its arguments and waits for it; its exit status, or -1 */
 static int run_program(char *const arguments[])
 {
@@ -672,44 +682,115 @@ static int run_program(char *const arguments[])
 		return -1;
 	return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
+
+/* Desktop files first unescape string values, then unquote Exec arguments.
+Both layers must preserve the executable path, and %% is a literal percent. */
+static int desktop_exec_path(char *buffer, size_t size, const char *path)
+{
+	size_t used = 0;
+
+	for (; *path; path++)
+	{
+		const char *escaped = NULL;
+		size_t length;
+
+		if ((unsigned char)*path < 32 || *path == '=')
+			return 0;
+		switch (*path)
+		{
+		case '\\': escaped = "\\\\\\\\"; break;
+		case '"': escaped = "\\\\\""; break;
+		case '`': escaped = "\\\\`"; break;
+		case '$': escaped = "\\\\$"; break;
+		case '%': escaped = "%%"; break;
+		}
+		length = escaped ? strlen(escaped) : 1;
+		if (used + length >= size)
+			return 0;
+		memcpy(buffer + used, escaped ? escaped : path, length);
+		used += length;
+	}
+	buffer[used] = '\0';
+	return 1;
+}
+
+/* A first install may have neither ~/.local nor ~/.local/share yet. */
+static int desktop_directory(char *path)
+{
+	char *cursor;
+
+	for (cursor = path + 1; *cursor; cursor++)
+	{
+		if (*cursor != '/')
+			continue;
+		*cursor = '\0';
+		if (mkdir(path, 0755) != 0 && errno != EEXIST)
+		{
+			*cursor = '/';
+			return 0;
+		}
+		*cursor = '/';
+	}
+	return mkdir(path, 0755) == 0 || errno == EEXIST;
+}
 #endif
 
 int posix_register_url_scheme(const char *scheme, const char *description)
 {
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(HALO_MACOS)
 	(void)scheme;
 	(void)description;
+	/* Apple app bundles declare their handler in CFBundleURLTypes. */
+#ifdef HALO_MACOS
+	return 1;
+#else
 	return 0;
+#endif
 #else
 	/* a desktop entry declaring the executable as the scheme's handler, and
 	the scheme's default application set to it (as xdg-open reads it) */
-	char executable[1024], directory[1024], path[1200], name[128], entry[2048], existing[2048];
+	char executable[4096], escaped[16384], directory[4096], path[4352], name[160];
+	char entry[17408], existing[17408];
 	const char *data_home = getenv("XDG_DATA_HOME");
 	const char *home = getenv("HOME");
 	ssize_t length = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
 	FILE *file;
 	size_t existing_length = 0;
+	int formatted;
 
-	if (length <= 0)
+	if (length <= 0 || length >= (ssize_t)sizeof(executable) - 1)
 		return 0;
 	executable[length] = '\0';
+	if (!desktop_exec_path(escaped, sizeof(escaped), executable))
+		return 0;
 	if (data_home && *data_home)
-		snprintf(directory, sizeof(directory), "%s/applications", data_home);
+		formatted = snprintf(directory, sizeof(directory), "%s/applications", data_home);
 	else if (home && *home)
-		snprintf(directory, sizeof(directory), "%s/.local/share/applications", home);
+		formatted = snprintf(directory, sizeof(directory), "%s/.local/share/applications", home);
 	else
 		return 0;
-	snprintf(name, sizeof(name), "halo-ce-universal-%s.desktop", scheme);
-	snprintf(path, sizeof(path), "%s/%s", directory, name);
-	snprintf(entry, sizeof(entry),
+	if (formatted < 0 || (size_t)formatted >= sizeof(directory))
+		return 0;
+	formatted = snprintf(name, sizeof(name), "halo-og-%s.desktop", scheme);
+	if (formatted < 0 || (size_t)formatted >= sizeof(name))
+		return 0;
+	formatted = snprintf(path, sizeof(path), "%s/%s", directory, name);
+	if (formatted < 0 || (size_t)formatted >= sizeof(path))
+		return 0;
+	/* GLib checks the executable before expanding %% field codes. Keep
+	a literal percent path as env's argument so that check can succeed. */
+	formatted = snprintf(entry, sizeof(entry),
 		"[Desktop Entry]\n"
 		"Type=Application\n"
 		"Name=%s\n"
-		"Exec=\"%s\" %%u\n"
+		"Exec=%s\"%s\" %%u\n"
 		"NoDisplay=true\n"
 		"MimeType=x-scheme-handler/%s;\n",
-		description, executable, scheme);
-	/* unchanged since the last start: nothing to do */
+		description, strchr(executable, '%') ? "/usr/bin/env " : "", escaped, scheme);
+	if (formatted < 0 || (size_t)formatted >= sizeof(entry))
+		return 0;
+	/* Preserve an unchanged file, but retry xdg-mime: an earlier run may
+	have failed before setting the default handler. */
 	file = fopen(path, "r");
 	if (file)
 	{
@@ -717,30 +798,35 @@ int posix_register_url_scheme(const char *scheme, const char *description)
 		fclose(file);
 		existing[existing_length] = '\0';
 		if (!strcmp(existing, entry))
-			return 1;
+			goto register_scheme;
 	}
-	mkdir(directory, 0755);
+	if (!desktop_directory(directory))
+		return 0;
 	file = fopen(path, "w");
 	if (!file)
 		return 0;
-	fputs(entry, file);
-	fclose(file);
+	formatted = fputs(entry, file);
+	if (fclose(file) != 0 || formatted < 0)
+		return 0;
+register_scheme:
 	{
-		char mime_type[160];
+		char mime_type[192];
 		char *arguments[] = { "xdg-mime", "default", name, mime_type, NULL };
 
 		snprintf(mime_type, sizeof(mime_type), "x-scheme-handler/%s", scheme);
-		run_program(arguments);
+		return run_program(arguments) == 0;
 	}
-	return 1;
 #endif
 }
 
 /* ---------- Discord's local socket */
 
+/* macOS supplies its native Unix socket implementation in host_discord.c;
+the Winsock adapter's connect wrapper expects guest sockaddr layouts. */
+#if !defined(HALO_MACOS) || defined(HALO_IOS)
 int posix_discord_connect(void)
 {
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(HALO_MACOS)
 	return -1;
 #else
 	/* where Discord (and its Flatpak and Snap packages) put discord-ipc-N */
@@ -807,6 +893,7 @@ int posix_discord_connect(void)
 	return -1;
 #endif
 }
+#endif
 
 int posix_discord_write(int handle, const void *buffer, int length)
 {

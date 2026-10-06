@@ -23,6 +23,12 @@ error */
 int update_download(const char *url, const char *path, update_progress_proc progress, void *context,
 	char *error, int error_size);
 
+/* Bounded content downloads: reject oversized bodies before writing each chunk,
+and refuse redirects. Zero maximum preserves the updater's unbounded redirect
+behavior. Callers supply a fresh private temporary file, never a user file. */
+int update_download_limited(const char *url, const char *path, unsigned long long maximum_bytes,
+	update_progress_proc progress, void *context, char *error, int error_size);
+
 /* the full path of this executable; 1 on success */
 int update_executable_path(char *path, int size);
 
@@ -36,6 +42,10 @@ void update_delete_file(const char *path);
 
 /* makes the directory at path, if there is none; 1 when it is there */
 int update_make_directory(const char *path);
+
+/* Fresh owner-only temporary directory for bounded metadata. Never reuses an
+existing path. The caller removes its own files and then this directory. */
+int update_make_private_temporary_directory(char *path, int size);
 
 /* starts the executable at path as a process of its own, with no arguments,
 this process's environment and none of its files; 1 on success */

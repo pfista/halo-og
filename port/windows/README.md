@@ -34,7 +34,7 @@ The build uses all the instructions of the processor of the computer that
 builds it (`-march=native`). Such a build does not always start on a
 different computer. To make a build for other computers, enter
 `python configure.py --portable`. Refer to the build options in the main
-[README](../../README.md#build-options).
+[building documentation](../../docs/building.md#build-options).
 
 For a new optimization profile (`--pgo=train`), the build compiles the
 profile runtime of LLVM for 32-bit x86 (`pgo/halo_profile_runtime.c`).
@@ -44,16 +44,31 @@ LLVM for Windows supplies this runtime only for x86-64.
 
 Enter `build\windows\halo.exe`.
 
+For a fresh installation, place one complete Halo Xbox `.iso` or `.xiso`
+beside `halo.exe`, then open it. Halo OG imports the original maps
+automatically and leaves the disc image intact. Original NTSC data enables
+the community-map downloader by default. Existing configured or extracted
+game data takes priority; multiple supported images open the usual choice
+dialog instead of selecting one arbitrarily.
+
 The game finds the game data as on Linux. Refer to "Start the game" in
 [port/linux/README.md](../linux/README.md#start-the-game).
 
 | Item | Location |
 | --- | --- |
 | Settings | `config.toml` next to `halo.exe` |
-| Saved games | `%APPDATA%\halo`, or `paths.saves` in `config.toml` |
+| Saved games | `%APPDATA%\Halo OG`, or `paths.saves` in `config.toml` |
 | Log | `debug.txt` in the data root (the folder that contains `maps\`) |
 | Log of the port | The console. The release build has no console: `halo.log` next to `halo.exe` |
 | Crash reports | `crashes\` next to `halo.exe`, until the game sends them |
+
+The first launch copies regular files and folders from `%APPDATA%\halo` into
+`%APPDATA%\Halo OG`, preserving the original files and any files already in
+the new folder. A failed copy or reparse point is reported in the log and keeps
+the old save root for that run; retry after correcting the issue. Explicit
+`paths.saves` or `HALO_SAVE_ROOT` values keep their exact folder without
+migration. Settings stay beside the executable. The existing invitation
+encryption key location stays unchanged so previously issued links still work.
 
 ## How the port operates
 

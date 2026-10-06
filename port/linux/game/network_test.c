@@ -15,6 +15,10 @@ Automated system link sessions for testing the netcode without the menus
   difficulty, as the Map screen does for a campaign level;
 - "join" searches for games and joins the first it finds, as picking it in
   the system link list does.
+- debug.network_test_team selects Red (0) or Blue (1) through the normal
+  lobby request; -1 retains the original host/opposite-client setup.
+- debug.network_test_team_view lets a test host select the saved Team View
+  prototype option. It changes no network messages or update scheduling.
 
 Once the game runs, every second each machine logs where every player's
 unit is, so the machines' views of the game can be compared.
@@ -35,6 +39,7 @@ Called from the main loop every frame (main.c).
 */
 
 #include "cseries.h"
+#include "halo_custom_maps.h"
 #include "main/main.h"
 #include "interface/player_ui.h"
 #include "interface/ui_widget.h"
@@ -43,6 +48,9 @@ Called from the main loop every frame (main.c).
 #include "networking/network_server_manager.h"
 #include "game/game.h"
 #include "game/game_engine.h"
+#include "game/teammate_view_variant.h"
+#include "game/starting_equipment.h"
+#include "game/weapon_sets.h"
 #include "game/players.h"
 #include "objects/objects.h"
 #include "units/units.h"
@@ -55,6 +63,7 @@ Called from the main loop every frame (main.c).
 #include "scenario/scenario.h"
 #include "tag_files/tag_files.h"
 #include "camera/observer.h"
+#include "render/teammate_view.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -65,6 +74,7 @@ Called from the main loop every frame (main.c).
 const char *config_string(char const *name);
 double config_real(char const *name);
 long config_integer(char const *name);
+int config_boolean(char const *name);
 void platform_log(char const *format, ...);
 /* damage.c's */
 void damage_kill_object_for_player(long object_index, long player_index);
@@ -103,6 +113,8 @@ static struct
 	boolean player_added;
 	real joined_seconds;
 	boolean team_set;
+	short team_index;
+	boolean team_view;
 	real kill_interval;
 	real shoot_interval;
 	real vehicle_time;
@@ -141,6 +153,7 @@ static void network_test_read_settings(
 	void)
 {
 	char const *setting = config_string("debug.network_test");
+	long team_index = config_integer("debug.network_test_team");
 
 	network_test.checked = TRUE;
 	if (!strncmp(setting, "host:", 5) && setting[5])
@@ -169,6 +182,8 @@ static void network_test_read_settings(
 	snprintf(network_test.pickup_weapon, sizeof(network_test.pickup_weapon), "%s",
 		config_string("debug.network_test_pickup_weapon"));
 	network_test.score_to_win = (long)config_integer("debug.network_test_score");
+	network_test.team_index = (team_index == 0 || team_index == 1) ? (short)team_index : NONE;
+	network_test.team_view = config_boolean("debug.network_test_team_view") != 0;
 	if (network_test.mode != _network_test_off)
 		platform_log("network test: %s", setting);
 }
@@ -279,11 +294,12 @@ static void network_test_log_players(
 				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index));
 		}
 		/* the game type's score and the kills and deaths */
-		network_test_append(line, (int)sizeof(line), &length, " s%ld k%d d%d f%d t%ld m%d",
+		network_test_append(line, (int)sizeof(line), &length, " s%ld k%d d%d f%d t%ld m%d lp%d c%d",
 			game_engine && game_engine->get_player_score ?
 				game_engine->get_player_score(iterator.datum_index, _get_score_individual) : -1L,
 			player->statistics.kills[0], player->statistics.deaths, player->statistics.friendly_fire_kills, (long)player->team_index,
-			(int)player->network_player_data.machine_index);
+			(int)player->network_player_data.machine_index, (int)player->local_player_index,
+			(int)player->network_player_data.controller_index);
 	}
 	{
 		long sent, received, corrections;
@@ -313,10 +329,12 @@ static void network_test_log_players(
 		/* this machine's player and where its camera is (a player that never
 		spawns leaves it where it began) */
 		long local_player_index = local_player_get_player_index(0);
+		long teammate_player_index = teammate_view_get_player_index(1);
 		struct observer_result const *camera = observer_get_camera(0);
 
 		platform_log("network test: tick %ld%s | items %ld (+%ld -%ld !%ld x%ld) | %s to %ld | sent %ld received %ld corrected %ld"
-			" | hits %ld dealt %ld rejected %ld replayed %ld | local %ld camera (%.1f %.1f %.1f) respawn %ld",
+			" | hits %ld dealt %ld rejected %ld replayed %ld | local %ld camera (%.1f %.1f %.1f) respawn %ld"
+			" | variant_flags 0x%08lx team_view %d windows %d local_count %d view_target %ld",
 			game_time_get(), line, ground_items, creates, deletes, failures, removed,
 			game_engine_can_score() ? "playing" : "game over",
 			game_engine_running() ? (long)game_engine_get_variant()->universal_variant.score_to_win : 0L,
@@ -324,7 +342,11 @@ static void network_test_log_players(
 			sent_reports, dealt_reports, rejected_reports, replayed_events,
 			local_player_index == NONE ? -1L : (long)DATUM_INDEX_TO_ABSOLUTE_INDEX(local_player_index),
 			camera ? camera->position.x : 0.0f, camera ? camera->position.y : 0.0f, camera ? camera->position.z : 0.0f,
-			local_player_index == NONE ? 0L : (long)player_get(local_player_index)->respawn_timer);
+			local_player_index == NONE ? 0L : (long)player_get(local_player_index)->respawn_timer,
+			(unsigned long)game_engine_get_variant()->universal_variant.flags,
+			(int)teammate_view_variant_enabled(game_engine_get_variant()), (int)main_get_window_count(),
+			(int)local_player_count(),
+			teammate_player_index == NONE ? -1L : (long)DATUM_INDEX_TO_ABSOLUTE_INDEX(teammate_player_index));
 	}
 }
 
@@ -937,30 +959,36 @@ void network_test_update(
 				char variant_name[64];
 				struct game_variant variant;
 
-				/* (a level of its own path, else a multiplayer map's name) */
-				if (strchr(network_test.map_name, '\\'))
+				/* Preserve canonical CE paths and OG custom-cache basenames. */
+				if (strchr(network_test.map_name, '\\') || native_map_is_custom(network_test.map_name))
 					snprintf(path, sizeof(path), "%s", network_test.map_name);
 				else
 					snprintf(path, sizeof(path), "levels\\test\\%s\\%s", network_test.map_name, network_test.map_name);
 				network_test_variant(network_test.variant_index, variant_name, sizeof(variant_name));
 				if (!strcmp(variant_name, "coop"))
 				{
-					/* (the Map screen's co-op: menu_functions.c) */
 					extern boolean ui_widget_port_cooperative_level_choose(char const *map_name, short difficulty);
-
 					if (!ui_widget_port_cooperative_level_choose(path, _game_difficulty_level_normal))
 						platform_log("network test: %s is not a campaign level, for co-op", path);
 					platform_log("network test: game %d, co-op", network_test.variant_index + 1);
 				}
 				else
 				{
+					boolean expanded_fiesta;
 					network_game_server_change_map_name(global_network_game_server_get(), path);
-					/* the variant, as picking the game settings does */
-					variant = *game_engine_get_variant_by_name(&variant, variant_name);
+					/* Diagnostic aliases keep the ordinary OG selectors. */
+					expanded_fiesta = !csstrcmp(variant_name, "fiesta uncut") || !csstrcmp(variant_name, "fiesta all");
+					variant = *game_engine_get_variant_by_name(&variant, expanded_fiesta ? "slayer" : variant_name);
+					if (expanded_fiesta)
+					{
+						starting_equipment_set(&variant, _starting_equipment_fiesta);
+						variant.universal_variant.weapon_set = !csstrcmp(variant_name, "fiesta uncut") ?
+							GAME_WEAPON_SET_UNCUT : GAME_WEAPON_SET_ALL;
+					}
 					platform_log("network test: game %d, %s", network_test.variant_index + 1, variant_name);
-					/* debug.network_test_score: a short game, to test the next */
 					if (network_test.score_to_win > 0)
 						variant.universal_variant.score_to_win = network_test.score_to_win;
+					if (network_test.team_view) teammate_view_variant_set_enabled(&variant, TRUE);
 					player_ui_set_game_variant(&variant);
 					network_game_server_change_game_variant(global_network_game_server_get(), &variant);
 				}
@@ -968,6 +996,8 @@ void network_test_update(
 			}
 			if (!network_test.player_added && network_test.setup_seconds >= 2.0f && global_network_game_client_get())
 				network_test.player_added = network_game_client_add_player(global_network_game_client_get(), 0);
+			if (network_test.player_added && !network_test.team_set && network_test.team_index != NONE)
+				network_test.team_set = network_game_client_set_team((char)network_test.team_index);
 			if (network_test.setup_seconds >= network_test.start_delay)
 			{
 				network_test.started = TRUE;
@@ -1012,7 +1042,7 @@ void network_test_update(
 		{
 			network_test.joined_seconds += seconds;
 			if (network_test.joined_seconds >= 5.0f)
-				network_test.team_set = network_game_client_set_team(NONE);
+				network_test.team_set = network_game_client_set_team((char)network_test.team_index);
 		}
 		break;
 	}

@@ -65,6 +65,13 @@ boolean network_game_client_advertised_game_is_valid(
 	struct network_advertised_game *advertised_game);
 struct network_advertised_game *network_game_client_get_available_games(
 	struct network_game_client *client);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+struct network_advertised_game *network_game_client_get_directory_games(struct network_game_client *client, long *count);
+boolean network_game_client_directory_begin_join(struct network_advertised_game *game);
+boolean network_game_client_directory_should_post_join(struct network_game_client *client);
+struct network_advertised_game *network_game_client_directory_take_join(struct network_game_client *client);
+void network_game_client_directory_cancel(void);
+#endif
 short network_game_client_get_error(
 	struct network_game_client *client);
 short network_game_client_get_seconds_to_game_start(

@@ -11,10 +11,23 @@ and the debug keyboard that the game's console reads.
 
 #include "platform.h"
 #include "sdl_platform.h"
+#if !defined(HALO_MACOS_NATIVE_METAL)
 #include "gl.h"
+#endif
 #include "port_config.h"
+#include "input_bindings.h"
 #include "p2p.h"
+#include "game_directory.h"
 #include "xiso.h"
+#include "posix.h"
+#include "community_maps_download.h"
+#include "timer_audio_download.h"
+#include "native_video.h"
+#include "native_input_events.h"
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+#include "guest_host.h"
+#endif
+extern unsigned char console_is_active(void);
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -25,54 +38,184 @@ and the debug keyboard that the game's console reads.
 #endif
 
 static SDL_Window *platform_window;
+#if !defined(HALO_MACOS_NATIVE_METAL)
 static SDL_GLContext platform_gl_context;
+#endif
 static SDL_ThreadID platform_event_thread;
 static BOOL platform_sdl_started = FALSE;
+
+/* Discovery is useful only while the game window can be seen and used.
+   Public-host lease renewal is independent of this foreground gate. */
+static void platform_directory_foreground_update(void)
+{
+	Uint64 flags = platform_window ? SDL_GetWindowFlags(platform_window) : 0;
+	game_directory_set_foreground((flags & SDL_WINDOW_INPUT_FOCUS) &&
+		!(flags & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)));
+}
 
 static struct platform_input_state input_state;
 /* keys pressed since the last read, so a press and release between two
 reads still counts as a press (input injected on Android, or a slow frame) */
 static unsigned char keys_pressed[SDL_SCANCODE_COUNT];
-/* likewise the mouse buttons pressed since the last read, so that a click
-quicker than a frame still counts */
-static unsigned char mouse_buttons_pressed[PLATFORM_MOUSE_BUTTON_COUNT];
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || (defined(HALO_MACOS) && !defined(HALO_IOS))
 /* the menus' pointer (platform_ui_pointer_set_active), under input_lock */
 static struct platform_ui_pointer ui_pointer;
 static float ui_pointer_wheel;
 #endif
 static pthread_mutex_t input_lock = PTHREAD_MUTEX_INITIALIZER;
-/* rebinding (platform_binding_capture_begin), under input_lock: waiting for
-an input, and the one taken; then the keyboard and mouse settle (their keys
-and buttons held then are let go) before they drive anything again */
-enum
+
+/* Menu key edges are independent of keys_pressed: several distinct taps in
+ * one frame must remain several presses, and a released key is never held. */
+static unsigned char menu_keyboard_keys[SDL_SCANCODE_COUNT];
+static struct halo_menu_keyboard_event *menu_keyboard_events;
+static size_t menu_keyboard_head, menu_keyboard_count, menu_keyboard_capacity;
+
+static void menu_keyboard_reset(void)
 {
-	_binding_capture_idle,
-	_binding_capture_waiting,
-	_binding_capture_taken,
-};
-static int binding_capture;
-static int binding_capture_result;
-static int binding_captured_input;
-static BOOL binding_settling;
-static Uint64 binding_taken_ms;
-/* when the menus last asked (a capture they stop asking about, their screen
-gone, ends: else the keyboard stays held from the game) */
-static Uint64 binding_polled_ms;
-#define BINDING_ABANDONED_MS 500
-static unsigned mouse_buttons_down;
-/* (an input taken that nothing asks for is let go after this) */
-#define BINDING_UNCLAIMED_MS 2000
-/* the multiplayer scoreboard is open (platform_scoreboard_scroll): the wheel
-and Page Up/Down scroll it, and the wheel switches no weapon; how far they
-have moved it since the game last asked (notches down, pages down). Open
-until the game stops saying so for SCOREBOARD_OPEN_MS (a game that ends with
-it open never says it closed). */
-#define SCOREBOARD_OPEN_MS 250
-static Uint64 scoreboard_open_until_ms;
-static float scoreboard_wheel;
-static long scoreboard_notches;
-static long scoreboard_pages;
+	memset(menu_keyboard_keys, 0, sizeof(menu_keyboard_keys));
+	menu_keyboard_head = menu_keyboard_count = 0;
+}
+
+static BOOL menu_keyboard_allowed(void)
+{
+	if (!input_state.focused || console_is_active())
+		return FALSE;
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	if (input_state.mouse_released && !input_state.ui_pointer)
+		return FALSE;
+#endif
+	return TRUE;
+}
+
+static unsigned menu_keyboard_key_directions(SDL_Scancode key)
+{
+	unsigned directions = 0;
+
+	if (input_binding_matches_key(_binding_console, key) ||
+		input_binding_matches_key(_binding_release_mouse, key))
+		return 0;
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	if (key == SDL_SCANCODE_ESCAPE)
+		return 0;
+#endif
+#ifndef HALO_ANDROID
+	if (key == SDL_SCANCODE_F11)
+		return 0;
+#endif
+#define DIRECTION(binding, direction, shift) \
+	if (input_binding_matches_key(_binding_##binding, key)) directions |= HALO_MENU_DIRECTION_##direction << shift
+	DIRECTION(dpad_up, UP, 0);
+	DIRECTION(dpad_down, DOWN, 0);
+	DIRECTION(dpad_left, LEFT, 0);
+	DIRECTION(dpad_right, RIGHT, 0);
+	DIRECTION(move_forward, UP, HALO_MENU_KEYBOARD_MOVE_SHIFT);
+	DIRECTION(move_back, DOWN, HALO_MENU_KEYBOARD_MOVE_SHIFT);
+	DIRECTION(move_left, LEFT, HALO_MENU_KEYBOARD_MOVE_SHIFT);
+	DIRECTION(move_right, RIGHT, HALO_MENU_KEYBOARD_MOVE_SHIFT);
+#undef DIRECTION
+	return directions;
+}
+
+static unsigned menu_keyboard_held_directions(void)
+{
+	unsigned directions = 0;
+	int scancode;
+
+	for (scancode = 1; scancode < SDL_SCANCODE_COUNT; scancode++)
+		if (menu_keyboard_keys[scancode])
+			directions |= menu_keyboard_key_directions((SDL_Scancode)scancode);
+	/* Opposing movement keys cancel just as the synthetic left stick does. */
+	if ((directions & ((HALO_MENU_DIRECTION_LEFT | HALO_MENU_DIRECTION_RIGHT) << HALO_MENU_KEYBOARD_MOVE_SHIFT)) ==
+		((HALO_MENU_DIRECTION_LEFT | HALO_MENU_DIRECTION_RIGHT) << HALO_MENU_KEYBOARD_MOVE_SHIFT))
+		directions &= ~((HALO_MENU_DIRECTION_LEFT | HALO_MENU_DIRECTION_RIGHT) << HALO_MENU_KEYBOARD_MOVE_SHIFT);
+	if ((directions & ((HALO_MENU_DIRECTION_UP | HALO_MENU_DIRECTION_DOWN) << HALO_MENU_KEYBOARD_MOVE_SHIFT)) ==
+		((HALO_MENU_DIRECTION_UP | HALO_MENU_DIRECTION_DOWN) << HALO_MENU_KEYBOARD_MOVE_SHIFT))
+		directions &= ~((HALO_MENU_DIRECTION_UP | HALO_MENU_DIRECTION_DOWN) << HALO_MENU_KEYBOARD_MOVE_SHIFT);
+	return directions;
+}
+
+/* Called under input_lock for physical SDL key transitions. */
+static void menu_keyboard_event(const SDL_KeyboardEvent *key)
+{
+	unsigned directions;
+	struct halo_menu_keyboard_event *event;
+
+	if (!menu_keyboard_allowed())
+	{
+		menu_keyboard_reset();
+		return;
+	}
+	if (key->scancode <= 0 || key->scancode >= SDL_SCANCODE_COUNT ||
+		(key->down && key->repeat))
+		return;
+	directions = menu_keyboard_key_directions(key->scancode);
+	if (!directions || (menu_keyboard_keys[key->scancode] != 0) == (key->down != 0))
+		return;
+	menu_keyboard_keys[key->scancode] = key->down;
+	if (menu_keyboard_head + menu_keyboard_count == menu_keyboard_capacity)
+	{
+		if (menu_keyboard_head)
+		{
+			memmove(menu_keyboard_events, menu_keyboard_events + menu_keyboard_head,
+				menu_keyboard_count * sizeof(*menu_keyboard_events));
+			menu_keyboard_head = 0;
+		}
+		else
+		{
+			size_t capacity = menu_keyboard_capacity ? menu_keyboard_capacity * 2 : 64;
+			struct halo_menu_keyboard_event *events;
+
+			if (capacity < menu_keyboard_capacity || capacity > (size_t)-1 / sizeof(*events))
+				return;
+			events = realloc(menu_keyboard_events, capacity * sizeof(*events));
+			if (!events)
+				return;
+			menu_keyboard_events = events;
+			menu_keyboard_capacity = capacity;
+		}
+	}
+	event = &menu_keyboard_events[menu_keyboard_head + menu_keyboard_count++];
+	event->pressed = key->down ? directions : 0;
+	event->released = key->down ? 0 : directions;
+	event->held = menu_keyboard_held_directions();
+}
+
+int halo_menu_keyboard_next(struct halo_menu_keyboard_event *event)
+{
+	int result = FALSE;
+
+	pthread_mutex_lock(&input_lock);
+	if (!menu_keyboard_allowed())
+		menu_keyboard_reset();
+	if (menu_keyboard_count)
+	{
+		*event = menu_keyboard_events[menu_keyboard_head++];
+		if (!--menu_keyboard_count)
+			menu_keyboard_head = 0;
+		result = TRUE;
+	}
+	pthread_mutex_unlock(&input_lock);
+	return result;
+}
+
+unsigned halo_menu_keyboard_held(void)
+{
+	unsigned held;
+
+	pthread_mutex_lock(&input_lock);
+	if (!menu_keyboard_allowed())
+		menu_keyboard_reset();
+	held = menu_keyboard_held_directions();
+	pthread_mutex_unlock(&input_lock);
+	return held;
+}
+
+void halo_menu_keyboard_clear(void)
+{
+	pthread_mutex_lock(&input_lock);
+	menu_keyboard_head = menu_keyboard_count = 0;
+	pthread_mutex_unlock(&input_lock);
+}
 
 /* debug keyboard queue */
 #define KEYSTROKE_QUEUE_SIZE 64
@@ -84,6 +227,16 @@ static unsigned long keystroke_head, keystroke_count;
 void updater_start(void);
 void updater_poll(SDL_Window *window);
 #endif
+
+/* Normal SDL exits must not discard a complete queued native command. */
+static void platform_exit_success(void)
+{
+#if defined(HALO_MACOS_NATIVE_METAL)
+    extern void halo_metal_flush_pending(void);
+    halo_metal_flush_pending();
+#endif
+    exit(EXIT_SUCCESS);
+}
 
 BOOL platform_sdl_initialize(void)
 {
@@ -98,8 +251,8 @@ BOOL platform_sdl_initialize(void)
 	/* a copy of the game started to open an invite link hands it to the
 	one already running, and goes */
 	if (p2p_hand_off_invite())
-		exit(EXIT_SUCCESS);
-	SDL_SetHint(SDL_HINT_APP_NAME, "Halo");
+		platform_exit_success();
+	SDL_SetHint(SDL_HINT_APP_NAME, "Halo OG");
 #ifdef HALO_ANDROID
 	/* landscape only; the back key arrives as a key event (xinput_sdl.c)
 	instead of closing the activity */
@@ -121,6 +274,10 @@ BOOL platform_sdl_initialize(void)
 	platform_data_root();
 	/* (a new version looked for meanwhile, updater_poll asking about it) */
 	updater_start();
+#if !defined(HALO_MACOS)
+	community_maps_download_start();
+	timer_audio_download_start();
+#endif
 #endif
 	return TRUE;
 }
@@ -187,7 +344,7 @@ static BOOL data_extract(const char *image, const char *destination, char *error
 	/* (waited for through extraction.finished; the Windows port's threads
 	cannot be joined) */
 	pthread_detach(thread);
-	window = SDL_CreateWindow("Halo", 640, 150, 0);
+	window = SDL_CreateWindow("Halo OG", 640, 150, 0);
 	if (window)
 	{
 		renderer = SDL_CreateRenderer(window, NULL);
@@ -205,7 +362,7 @@ static BOOL data_extract(const char *image, const char *destination, char *error
 			if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
 			{
 				platform_log("extraction cancelled");
-				exit(EXIT_SUCCESS);
+				platform_exit_success();
 			}
 		}
 		pthread_mutex_lock(&extraction.lock);
@@ -287,6 +444,52 @@ static BOOL data_choose_image(char *path, int size)
 	return TRUE;
 }
 
+/* One supported image beside the executable is enough for an unattended
+first import. Multiple supported images need a deliberate picker choice;
+the directory's enumeration order must never choose the player's data. */
+static int data_find_adjacent_image(const char *directory, char *image, int image_size,
+	char *explanation, int explanation_size)
+{
+	void *entries = posix_directory_open(directory);
+	char name[256], candidate[1024], error[512];
+	int supported = 0, candidates = 0;
+
+	image[0] = '\0';
+	explanation[0] = '\0';
+	if (!entries)
+		return 0;
+	while (posix_directory_next(entries, name, sizeof(name)))
+	{
+		const char *extension = strrchr(name, '.');
+		struct posix_file_information information;
+		int length;
+
+		if (!extension || (SDL_strcasecmp(extension, ".iso") && SDL_strcasecmp(extension, ".xiso")))
+			continue;
+		length = snprintf(candidate, sizeof(candidate), "%s/%s", directory, name);
+		if (length < 0 || length >= (int)sizeof(candidate) ||
+			posix_stat(candidate, &information) != 0 || (information.flags & _posix_file_is_directory))
+			continue;
+		candidates++;
+		if (!xiso_probe_maps(candidate, error, sizeof(error)))
+			continue;
+		if (++supported == 1)
+			snprintf(image, (size_t)image_size, "%s", candidate);
+	}
+	posix_directory_close(entries);
+	if (supported > 1)
+	{
+		image[0] = '\0';
+		snprintf(explanation, (size_t)explanation_size,
+			"More than one Halo Xbox disc image was found beside Halo OG. Choose which one to import.\n\n");
+		return -1;
+	}
+	if (!supported && candidates)
+		snprintf(explanation, (size_t)explanation_size,
+			"The .iso/.xiso files beside Halo OG do not contain a readable Halo Xbox maps folder. Choose a complete Xbox disc image.\n\n");
+	return supported;
+}
+
 BOOL platform_offer_game_data(const char *destination)
 {
 	static const SDL_MessageBoxButtonData buttons[] =
@@ -294,7 +497,8 @@ BOOL platform_offer_game_data(const char *destination)
 		{ SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Yes" },
 		{ SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "No" },
 	};
-	char message[1400];
+	char message[2000], explanation[512], image[1024], error[512], maps[1100], on_disk[256];
+	struct posix_file_information information;
 
 	/* not for runs nobody is watching */
 	if (config_boolean("debug.hidden_window") || config_real("debug.exit_after") > 0.0 ||
@@ -302,23 +506,46 @@ BOOL platform_offer_game_data(const char *destination)
 	{
 		return FALSE;
 	}
+	/* A community-only or incomplete maps directory is not original game
+	data. Never import over it or silently consider it sufficient. */
+	if (posix_find_entry_case_insensitive(destination, "maps", on_disk, sizeof(on_disk)))
+	{
+		snprintf(maps, sizeof(maps), "%s/%s", destination, on_disk);
+		if (posix_stat(maps, &information) == 0)
+		{
+			snprintf(message, sizeof(message),
+				"Halo OG found %s, but it does not contain the original game's ui.map.\n\n"
+				"Your files were preserved. Move or rename that maps folder, place one complete Halo Xbox .iso/.xiso beside Halo OG, and start again. "
+				"You can also set paths.data in config.toml to a folder containing complete original game data.", maps);
+			platform_log("incomplete existing game data: %s", maps);
+			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Halo OG", message, NULL);
+			platform_exit_success();
+		}
+	}
+	if (data_find_adjacent_image(destination, image, sizeof(image), explanation, sizeof(explanation)) == 1)
+	{
+		platform_log("importing adjacent Xbox disc image %s", image);
+		if (data_extract(image, destination, error, sizeof(error)))
+			return TRUE;
+		platform_log("automatic extraction failed: %s", error);
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Halo OG", error, NULL);
+		snprintf(explanation, sizeof(explanation), "Automatic import could not finish. Choose an Xbox disc image to retry.\n\n");
+	}
 	snprintf(message, sizeof(message),
-		"Halo's game data (its maps folder) was not found.\n\n"
+		"%sHalo OG's game data (its maps folder) was not found.\n\n"
 		"Extract the maps folder from an Xbox disc image (.iso) of Halo: Combat Evolved? "
 		"It is copied to %s/maps (about 2 GB).\n\n"
 		"(Or put the maps folder there yourself, or set paths.data in config.toml.)",
-		destination);
+		explanation, destination);
 	for (;;)
 	{
-		SDL_MessageBoxData question = { SDL_MESSAGEBOX_INFORMATION, NULL, "Halo", message, 2, buttons, NULL };
-		char image[1024];
-		char error[512];
+		SDL_MessageBoxData question = { SDL_MESSAGEBOX_INFORMATION, NULL, "Halo OG", message, 2, buttons, NULL };
 		int answer = 0;
 
 		if (!SDL_ShowMessageBox(&question, &answer) || answer != 1)
 		{
 			platform_log("no game data: quitting");
-			exit(EXIT_SUCCESS);
+			platform_exit_success();
 		}
 		/* no image picked: ask again */
 		if (!data_choose_image(image, sizeof(image)))
@@ -330,91 +557,89 @@ BOOL platform_offer_game_data(const char *destination)
 			return TRUE;
 		}
 		platform_log("extraction failed: %s", error);
-		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Halo", error, NULL);
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Halo OG", error, NULL);
 	}
 }
 #endif
 
 int halo_interpolation_enabled(void)
 {
-	static int enabled;
-	static unsigned long read_at = (unsigned long)-1;
+	return config_boolean("display.interpolation");
+}
 
-	if (read_at != config_changes())
-	{
-		read_at = config_changes();
-		enabled = config_boolean("display.interpolation");
-	}
-	return enabled;
+/* Upstream shadow safety code asks for the renderer's scale. OG renderer
+ * adapters keep the original 128-pixel shadow targets. */
+long halo_shadow_map_scale(void)
+{
+	return 1;
+}
+
+/* The authored Xbox vertex programs retain their original lighting. The
+ * upstream renderer's optional per-pixel shader registration is inactive. */
+void halo_vertex_shader_lighting(unsigned long handle)
+{
+	(void)handle;
+}
+
+int halo_video_fullscreen_get(void)
+{
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	return platform_window && host_sdl_video_fullscreen((unsigned int)platform_window, -1);
+#elif !defined(HALO_ANDROID)
+	return platform_window && (SDL_GetWindowFlags(platform_window) & SDL_WINDOW_FULLSCREEN) != 0;
+#else
+	return 1;
+#endif
+}
+
+int halo_video_fullscreen_set(int enabled)
+{
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	return platform_window && host_sdl_video_fullscreen((unsigned int)platform_window, enabled != 0);
+#elif !defined(HALO_ANDROID)
+	return platform_window && SDL_SetWindowFullscreen(platform_window, enabled != 0);
+#else
+	return enabled != 0;
+#endif
+}
+
+int halo_video_apply_settings(void)
+{
+	extern void render_interpolation_reset(void);
+#if defined(HALO_MACOS_NATIVE_METAL)
+	extern int halo_metal_apply_video_settings(void);
+	if (!platform_window || !halo_metal_apply_video_settings())
+#else
+	if (!platform_gl_context || !SDL_GL_SetSwapInterval(config_boolean("display.vsync") ? 1 : 0))
+#endif
+		return 0;
+	/* Previous snapshots can be minutes old when interpolation is re-enabled. */
+	render_interpolation_reset();
+	return 1;
 }
 
 #ifndef HALO_ANDROID
-/* the display mode (display.mode, else display.fullscreen's: borderless or
-the window) */
-enum
-{
-	_display_mode_windowed = 0,
-	_display_mode_borderless,
-	_display_mode_fullscreen
-};
-
-static int platform_display_mode(void)
-{
-	const char *mode = config_string("display.mode");
-
-	if (!strcmp(mode, "fullscreen"))
-		return _display_mode_fullscreen;
-	if (!strcmp(mode, "borderless"))
-		return _display_mode_borderless;
-	if (!strcmp(mode, "windowed"))
-		return _display_mode_windowed;
-	return config_boolean("display.fullscreen") ? _display_mode_borderless : _display_mode_windowed;
-}
-
-/* whether the window opens fullscreen (either kind), never when it is
-hidden */
+/* whether the window opens fullscreen (display.fullscreen), never when it
+is hidden */
 static BOOL platform_fullscreen_setting(void)
 {
-	return !config_boolean("debug.hidden_window") && platform_display_mode() != _display_mode_windowed;
+	return !config_boolean("debug.hidden_window") && config_boolean("display.fullscreen");
 }
 
-/* a size as a setting has it, "<width>x<height>": whether it is one, and
-the Xbox's 640x480 or more */
-static BOOL platform_size_parse(const char *text, long *width, long *height)
+/* whether the game is, or is to be, fullscreen, and if so the size in
+pixels of the display it fills (d3d8_gl.c draws at that resolution) */
+BOOL platform_screen_mode(long *width, long *height)
 {
-	char *end;
+	SDL_DisplayID display;
+	const SDL_DisplayMode *mode;
 
-	*width = strtol(text, &end, 10);
-	*height = *end == 'x' || *end == 'X' ? strtol(end + 1, &end, 10) : 0;
-	return !*end && *width >= 640 && *height >= 480;
-}
-
-/* display.resolution in pixels, or 0x0 for the display's own ("native"),
-as for one the game cannot draw at */
-static void platform_resolution_setting(long *width, long *height)
-{
-	if (!platform_size_parse(config_string("display.resolution"), width, height))
-		*width = *height = 0;
-}
-
-/* the window's size (display.window_size), else the Xbox's 640x480 times
-display.window_scale, as older versions set it */
-static void platform_window_size_setting(long *width, long *height)
-{
-	long scale = config_integer("display.window_scale");
-
-	if (!platform_size_parse(config_string("display.window_size"), width, height))
+	if (platform_window ? !(SDL_GetWindowFlags(platform_window) & SDL_WINDOW_FULLSCREEN) :
+		!platform_fullscreen_setting() || !platform_sdl_initialize())
 	{
-		*width = 640 * (scale < 1 ? 1 : scale);
-		*height = 480 * (scale < 1 ? 1 : scale);
+		return FALSE;
 	}
-}
-
-/* a display's own size in pixels (its desktop mode) */
-static BOOL platform_display_size(SDL_DisplayID display, long *width, long *height)
-{
-	const SDL_DisplayMode *mode = display ? SDL_GetDesktopDisplayMode(display) : NULL;
-
+	display = platform_window ? SDL_GetDisplayForWindow(platform_window) : SDL_GetPrimaryDisplay();
+	mode = display ? SDL_GetDesktopDisplayMode(display) : NULL;
 	if (!mode)
 		return FALSE;
 	*width = (long)(mode->w * mode->pixel_density + 0.5f);
@@ -422,264 +647,22 @@ static BOOL platform_display_size(SDL_DisplayID display, long *width, long *heig
 	return TRUE;
 }
 
-/* the window's fullscreen kind (display.mode): borderless, a window over
-the whole desktop (SDL's fullscreen without a mode), or fullscreen, the
-display taken at display.resolution's mode (the one nearest it), else at its
-desktop one. F11 switches to the kind set. */
-static void platform_fullscreen_kind_apply(void)
-{
-	static int applied = -1;
-	static long applied_width, applied_height;
-	int exclusive = platform_display_mode() == _display_mode_fullscreen ? 1 : 0;
-	long width = 0, height = 0;
-	SDL_DisplayID display;
-	SDL_DisplayMode closest;
-	const SDL_DisplayMode *mode = NULL;
-
-	if (!platform_window)
-		return;
-	if (exclusive)
-		platform_resolution_setting(&width, &height);
-	if (exclusive == applied && width == applied_width && height == applied_height)
-		return;
-	applied = exclusive;
-	applied_width = width;
-	applied_height = height;
-	display = SDL_GetDisplayForWindow(platform_window);
-	if (exclusive && display)
-	{
-		if (width && SDL_GetClosestFullscreenDisplayMode(display, (int)width, (int)height, 0.0f, false, &closest))
-			mode = &closest;
-		else
-			mode = SDL_GetDesktopDisplayMode(display);
-	}
-	SDL_SetWindowFullscreenMode(platform_window, mode);
-}
-
-/* whether the game last asked for the window to be fullscreen */
-static BOOL platform_fullscreen_requested = FALSE;
-
-static void platform_window_set_fullscreen(BOOL fullscreen)
-{
-	platform_fullscreen_requested = fullscreen;
-	SDL_SetWindowFullscreen(platform_window, fullscreen ? true : false);
-}
-
-/* whether the window is fullscreen. SDL sets its flag when the window
-manager confirms the request, and some never do: gamescope (the Steam
-Deck's Game Mode) makes the window the size of the display but leaves the
-flag unset, so the game drew 640x480 and gamescope stretched it. A window
-that was asked to be fullscreen and covers its display counts too. */
-static BOOL platform_window_fullscreen(void)
-{
-	SDL_DisplayID display;
-	const SDL_DisplayMode *mode;
-	int width, height;
-
-	if (SDL_GetWindowFlags(platform_window) & SDL_WINDOW_FULLSCREEN)
-		return TRUE;
-	if (!platform_fullscreen_requested)
-		return FALSE;
-	display = SDL_GetDisplayForWindow(platform_window);
-	mode = display ? SDL_GetDesktopDisplayMode(display) : NULL;
-	if (!mode || !SDL_GetWindowSizeInPixels(platform_window, &width, &height))
-		return FALSE;
-	return width >= (int)(mode->w * mode->pixel_density + 0.5f) &&
-		height >= (int)(mode->h * mode->pixel_density + 0.5f);
-}
-
-/* the size in pixels the game draws its picture at (d3d8_gl.c): the
-window's, the display's while fullscreen, or display.resolution's while
-fullscreen (either kind) where the display has room for it; before the
-window opens, what it will be. FALSE where display.resolution_scaling is
-"original": the Xbox's 640x480, scaled to the window. */
-BOOL platform_screen_mode(long *width, long *height)
-{
-	/* (the size last given, for a window that has none: minimized) */
-	static long last_width, last_height;
-	long resolution_width, resolution_height;
-	BOOL fullscreen;
-
-	if (!strcmp(config_string("display.resolution_scaling"), "original"))
-		return FALSE;
-	if (platform_window)
-	{
-		int pixel_width = 0, pixel_height = 0;
-
-		SDL_GetWindowSizeInPixels(platform_window, &pixel_width, &pixel_height);
-		if (pixel_width <= 0 || pixel_height <= 0)
-		{
-			*width = last_width;
-			*height = last_height;
-			return last_width > 0;
-		}
-		*width = pixel_width;
-		*height = pixel_height;
-		fullscreen = platform_window_fullscreen();
-	}
-	else
-	{
-		if (!platform_sdl_initialize())
-			return FALSE;
-		fullscreen = platform_fullscreen_setting();
-		platform_window_size_setting(width, height);
-		if (fullscreen && !platform_display_size(SDL_GetPrimaryDisplay(), width, height))
-			return FALSE;
-	}
-	/* (fullscreen's display is at the resolution already, where it has that
-	mode: platform_fullscreen_kind_apply; borderless's is scaled to) */
-	platform_resolution_setting(&resolution_width, &resolution_height);
-	if (fullscreen && resolution_width && resolution_width <= *width && resolution_height <= *height)
-	{
-		*width = resolution_width;
-		*height = resolution_height;
-	}
-	last_width = *width;
-	last_height = *height;
-	return TRUE;
-}
-
-/* the size added to the list unless it has it already; the count */
-static int platform_resolution_add(long *widths, long *heights, int count, int maximum, long width, long height)
-{
-	int index;
-
-	for (index = 0; index < count; index++)
-	{
-		if (widths[index] == width && heights[index] == height)
-			return count;
-	}
-	if (count < maximum)
-	{
-		widths[count] = width;
-		heights[count] = height;
-		count++;
-	}
-	return count;
-}
-
-int platform_display_resolutions(long *widths, long *heights, int maximum)
-{
-	SDL_DisplayID display;
-	SDL_DisplayMode **modes;
-	long display_width, display_height, width, height;
-	int mode_count = 0, count = 0, index;
-
-	if (maximum < 1 || !platform_sdl_initialize())
-		return 0;
-	display = platform_window ? SDL_GetDisplayForWindow(platform_window) : 0;
-	if (!display)
-		display = SDL_GetPrimaryDisplay();
-	if (!platform_display_size(display, &display_width, &display_height))
-		return 0;
-	modes = SDL_GetFullscreenDisplayModes(display, &mode_count);
-	for (index = 0; modes && index < mode_count; index++)
-	{
-		width = (long)(modes[index]->w * modes[index]->pixel_density + 0.5f);
-		height = (long)(modes[index]->h * modes[index]->pixel_density + 0.5f);
-		if (width >= 640 && height >= 480 && width <= display_width && height <= display_height &&
-			(width != display_width || height != display_height))
-		{
-			count = platform_resolution_add(widths, heights, count, maximum, width, height);
-		}
-	}
-	SDL_free(modes);
-	/* (the one set, though this display has no such mode, so that Video
-	Setup shows it) */
-	platform_resolution_setting(&width, &height);
-	if (width && (width != display_width || height != display_height))
-		count = platform_resolution_add(widths, heights, count, maximum, width, height);
-	/* largest first */
-	for (index = 1; index < count; index++)
-	{
-		int place;
-
-		width = widths[index];
-		height = heights[index];
-		for (place = index; place > 0 && (widths[place - 1] < width ||
-			(widths[place - 1] == width && heights[place - 1] < height)); place--)
-		{
-			widths[place] = widths[place - 1];
-			heights[place] = heights[place - 1];
-		}
-		widths[place] = width;
-		heights[place] = height;
-	}
-	return count;
-}
-
-/* Video Setup's window sizes, by shape (4:3, 16:10, 16:9, 21:9), each from
-the smallest */
-static const short platform_window_sizes_offered[][2] =
-{
-	{ 640, 480 }, { 800, 600 }, { 1024, 768 }, { 1280, 960 }, { 1600, 1200 }, { 1920, 1440 }, { 2560, 1920 },
-	{ 1280, 800 }, { 1440, 900 }, { 1680, 1050 }, { 1920, 1200 }, { 2560, 1600 },
-	{ 1280, 720 }, { 1600, 900 }, { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 },
-	{ 2560, 1080 }, { 3440, 1440 }, { 3840, 1600 }, { 5120, 2160 },
-};
-
-int platform_window_sizes(long *widths, long *heights, int maximum)
-{
-	SDL_DisplayID display;
-	SDL_Rect usable;
-	long width, height;
-	int count = 0, index;
-
-	if (maximum < 1 || !platform_sdl_initialize())
-		return 0;
-	display = platform_window ? SDL_GetDisplayForWindow(platform_window) : 0;
-	if (!display)
-		display = SDL_GetPrimaryDisplay();
-	if (!display || !SDL_GetDisplayUsableBounds(display, &usable))
-		usable.w = usable.h = 0;
-	for (index = 0; index < (int)(sizeof(platform_window_sizes_offered) / sizeof(*platform_window_sizes_offered));
-		index++)
-	{
-		width = platform_window_sizes_offered[index][0];
-		height = platform_window_sizes_offered[index][1];
-		/* (the Xbox's own whatever the desktop's size) */
-		if (!index || (width <= usable.w && height <= usable.h))
-			count = platform_resolution_add(widths, heights, count, maximum, width, height);
-	}
-	/* (the one set, though it is none of them or too big for this desktop,
-	so that Video Setup shows it) */
-	platform_window_size_setting(&width, &height);
-	return platform_resolution_add(widths, heights, count, maximum, width, height);
-}
-
-#else
-int platform_display_resolutions(long *widths, long *heights, int maximum)
-{
-	(void)widths;
-	(void)heights;
-	(void)maximum;
-	return 0;
-}
-
-int platform_window_sizes(long *widths, long *heights, int maximum)
-{
-	(void)widths;
-	(void)heights;
-	(void)maximum;
-	return 0;
-}
-
 #endif
-#ifndef HALO_ANDROID
-/* the window's size (platform_window_size_setting), as the window was made
-or last resized: platform_display_apply */
-static long platform_window_width = -1, platform_window_height = -1;
-#endif
-
 BOOL platform_video_initialize(unsigned long width, unsigned long height)
 {
+	int scale = (int)config_integer("display.window_scale");
+#if !defined(HALO_MACOS_NATIVE_METAL)
 	int version;
+#endif
 
 	if (platform_window)
 		return TRUE;
 	if (!platform_sdl_initialize())
 		return FALSE;
+	if (scale < 1)
+		scale = 1;
 
+#if !defined(HALO_MACOS_NATIVE_METAL)
 #ifdef HALO_ANDROID
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -701,25 +684,26 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	explicit mesa_glthread setting alone and other drivers ignore it. */
 	setenv("mesa_glthread", "true", 0);
 #endif
+#endif
 
 #ifdef HALO_ANDROID
-	{
-		int scale = (int)config_integer("display.window_scale");
-
-		if (scale < 1)
-			scale = 1;
-		platform_window = SDL_CreateWindow("Halo", (int)(width * scale), (int)(height * scale),
-			SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN);
-	}
+	platform_window = SDL_CreateWindow("Halo OG", (int)(width * scale), (int)(height * scale),
+		SDL_WINDOW_FULLSCREEN |
+#if defined(HALO_MACOS_NATIVE_METAL)
+		SDL_WINDOW_METAL
 #else
-	/* fullscreen (either kind) unless display.mode is the window, which F11
-	switches to and from: display.window_size, whatever shape the fullscreen
-	picture has. The game draws at the size platform_screen_mode gives
-	(d3d8_gl.c). */
-	(void)width;
-	(void)height;
-	platform_window_size_setting(&platform_window_width, &platform_window_height);
-	platform_window = SDL_CreateWindow("Halo", (int)platform_window_width, (int)platform_window_height,
+		SDL_WINDOW_OPENGL
+#endif
+#ifdef HALO_MACOS
+		| (config_boolean("debug.hidden_window") ? SDL_WINDOW_HIDDEN : 0)
+#endif
+		);
+#else
+	/* fullscreen at the desktop's resolution unless display.fullscreen is
+	false, where the game draws the display's shape at its resolution
+	(d3d8_gl.c); the window size is the windowed mode F11 switches to and
+	from, where it draws 640x480 */
+	platform_window = SDL_CreateWindow("Halo OG", (int)(width * scale), (int)(height * scale),
 		SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
 		(config_boolean("debug.hidden_window") ? SDL_WINDOW_HIDDEN : 0) |
 		(platform_fullscreen_setting() ? SDL_WINDOW_FULLSCREEN : 0));
@@ -729,10 +713,8 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 		platform_log("SDL_CreateWindow failed: %s", SDL_GetError());
 		return FALSE;
 	}
-#ifndef HALO_ANDROID
-	platform_fullscreen_requested = platform_fullscreen_setting();
-	platform_fullscreen_kind_apply();
-#endif
+	platform_directory_foreground_update();
+#if !defined(HALO_MACOS_NATIVE_METAL)
 	platform_gl_context = SDL_GL_CreateContext(platform_window);
 #ifdef HALO_ANDROID
 	/* ES 3.2 where the driver has it, otherwise the renderer makes do with
@@ -753,42 +735,20 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 		return FALSE;
 	version = SDL_GL_SetSwapInterval(config_boolean("display.vsync") ? 1 : 0);
 	(void)version;
+#endif
 	platform_event_thread = SDL_GetCurrentThreadID();
+#if !defined(HALO_MACOS_NATIVE_METAL)
 	platform_log("OpenGL %s on %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));
-#ifndef HALO_ANDROID
+#endif
+#if !defined(HALO_ANDROID) || defined(HALO_MACOS)
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	input_state.mouse_released = TRUE;
+	platform_mouse_capture(FALSE);
+#else
 	platform_mouse_capture(TRUE);
 #endif
-	return TRUE;
-}
-
-/* display.mode, display.resolution (fullscreen's display mode),
-display.window_size (when it changes: the window can be resized) and
-display.vsync, as Settings has written them; display.resolution_scaling
-and borderless's resolution are taken up between frames
-(halo_screen_commit) */
-void platform_display_apply(void)
-{
-#ifndef HALO_ANDROID
-	BOOL fullscreen = platform_fullscreen_setting();
-	long width, height;
-
-	if (!platform_window)
-		return;
-	platform_fullscreen_kind_apply();
-	if (platform_window_fullscreen() != (fullscreen != FALSE))
-		platform_window_set_fullscreen(fullscreen);
-	platform_window_size_setting(&width, &height);
-	if (width != platform_window_width || height != platform_window_height)
-	{
-		platform_window_width = width;
-		platform_window_height = height;
-		SDL_SetWindowSize(platform_window, (int)width, (int)height);
-	}
-#else
-	if (!platform_window)
-		return;
 #endif
-	SDL_GL_SetSwapInterval(config_boolean("display.vsync") ? 1 : 0);
+	return TRUE;
 }
 
 void platform_video_drawable_size(int *width, int *height)
@@ -796,65 +756,67 @@ void platform_video_drawable_size(int *width, int *height)
 	SDL_GetWindowSizeInPixels(platform_window, width, height);
 }
 
-#ifndef HALO_ANDROID
-/* with vsync off, the time between frames display.max_fps asks for (0:
-twice the display's refresh rate), or 0 for no limit. A GPU never left idle
-can hang (Intel's Raptor Lake graphics, whose reset then takes the desktop
-with it); the limit gives it a rest every frame. */
-static Uint64 frame_interval_ns(void)
+#if defined(HALO_MACOS_NATIVE_METAL)
+unsigned int platform_video_native_window(void)
 {
-	static int vsync;
-	static long maximum;
-	static unsigned long read_at = (unsigned long)-1;
-	float rate;
-
-	if (read_at != config_changes())
-	{
-		read_at = config_changes();
-		vsync = config_boolean("display.vsync");
-		maximum = config_integer("display.max_fps");
-	}
-	if (vsync || maximum < 0)
-		return 0;
-	rate = (float)maximum;
-	if (!maximum)
-	{
-		SDL_DisplayID display = SDL_GetDisplayForWindow(platform_window);
-		const SDL_DisplayMode *mode = display ? SDL_GetCurrentDisplayMode(display) : NULL;
-
-		rate = 2.0f * (mode && mode->refresh_rate > 0.0f ? mode->refresh_rate : 60.0f);
-	}
-	return (Uint64)(1e9f / rate);
+	return (unsigned int)platform_window;
 }
-
 #endif
+
 void platform_video_swap(void)
 {
-#ifndef HALO_ANDROID
-	static Uint64 next_frame;
-	Uint64 interval, now;
-
-#endif
+#if !defined(HALO_MACOS_NATIVE_METAL)
 	SDL_GL_SwapWindow(platform_window);
-#ifndef HALO_ANDROID
-	interval = frame_interval_ns();
-	if (!interval)
-		return;
-	now = SDL_GetTicksNS();
-	if (next_frame > now)
-	{
-		SDL_DelayPrecise(next_frame - now);
-		now = next_frame;
-	}
-	/* (a frame more than an interval late starts the count again) */
-	next_frame = now - next_frame > interval ? now + interval : next_frame + interval;
 #endif
+	/* Native Metal presents from the Direct3D device after command submission. */
 }
 
 void platform_mouse_capture(BOOL capture)
 {
 	if (platform_window)
-		SDL_SetWindowRelativeMouseMode(platform_window, capture ? true : false);
+	{
+		if (!SDL_SetWindowRelativeMouseMode(platform_window, capture ? true : false) && capture)
+		{
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+			input_state.mouse_released = TRUE;
+#endif
+			platform_log("mouse capture failed: %s", SDL_GetError());
+		}
+	}
+}
+
+/* Called with input_lock held; discard both held and queued input so a
+   native panel or Resume click cannot leak movement/fire into gameplay. */
+static void platform_input_clear(void)
+{
+	menu_keyboard_reset();
+	memset(input_state.keys, 0, sizeof(input_state.keys));
+	memset(keys_pressed, 0, sizeof(keys_pressed));
+	memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
+	input_state.mouse_dx = input_state.mouse_dy = input_state.mouse_wheel = 0.0f;
+	input_state.pause_pressed = input_state.menu_back_pressed = FALSE;
+	keystroke_head = keystroke_count = 0;
+}
+
+static void platform_mouse_released_set(BOOL released)
+{
+	platform_input_clear();
+	input_state.mouse_released = released;
+	platform_mouse_capture(!released && !input_state.ui_pointer);
+}
+
+void platform_mouse_release_gameplay(void)
+{
+	pthread_mutex_lock(&input_lock);
+	platform_mouse_released_set(TRUE);
+	pthread_mutex_unlock(&input_lock);
+}
+
+void platform_mouse_resume_gameplay(void)
+{
+	pthread_mutex_lock(&input_lock);
+	platform_mouse_released_set(FALSE);
+	pthread_mutex_unlock(&input_lock);
 }
 
 /* ---------- keyboard translation */
@@ -979,7 +941,8 @@ static void queue_keystroke(const SDL_KeyboardEvent *event)
 	if (event->mod & SDL_KMOD_NUM) flags |= 0x10;
 	if (!event->down) flags |= 0x40;
 	if (event->repeat) flags |= 0x80;
-	keystroke->virtual_key = virtual_key_from_scancode(event->scancode);
+	keystroke->virtual_key = input_binding_console_key(event->scancode,
+		virtual_key_from_scancode(event->scancode));
 	keystroke->ascii = event->down ? ascii_from_key(event->key, event->mod) : 0;
 	keystroke->flags = flags;
 	keystroke_count++;
@@ -1012,38 +975,12 @@ bool SDL_ShowAndroidToast(const char *message, int duration, int gravity, int xo
 /* whether the text has an invite link in it (its prefix, in any case) */
 static BOOL platform_text_has_invite_link(const char *text)
 {
-	static const char prefix[] = "halo://join/";
-	size_t length = sizeof(prefix) - 1;
-
 	for (; *text; text++)
 	{
-		size_t index;
-
-		for (index = 0; index < length && text[index] &&
-			(text[index] | 0x20) == prefix[index]; index++)
-		{
-		}
-		if (index == length)
+		if (p2p_invite_prefix_length(text))
 			return TRUE;
 	}
 	return FALSE;
-}
-
-/* the clipboard's text (the menus' text fields' Ctrl+V), and text put on it
-(the server settings' invite link); 0 if there is none. The main thread's */
-int platform_clipboard_get(char *text, int size)
-{
-	char *clipboard = SDL_GetClipboardText();
-	int got = clipboard && *clipboard;
-
-	snprintf(text, (size_t)size, "%s", got ? clipboard : "");
-	SDL_free(clipboard);
-	return got;
-}
-
-void platform_clipboard_set(const char *text)
-{
-	SDL_SetClipboardText(text);
 }
 
 /* puts a new invite on the clipboard, and joins one found there when the
@@ -1054,7 +991,9 @@ static void platform_invite_clipboard(BOOL look)
 	static char seen[256];
 	const char *invite = p2p_take_clipboard_text();
 
-	if (invite)
+	/* Automated sessions use isolated saves and logs; leave the player's
+	clipboard alone rather than handing a test room to their running game. */
+	if (invite && !*config_string("debug.network_test"))
 	{
 		SDL_SetClipboardText(invite);
 		snprintf(seen, sizeof(seen), "%s", invite);
@@ -1126,53 +1065,18 @@ static void platform_show_pending_message(void)
 #else
 	{
 		/* (a box cannot show above a fullscreen game) */
-		BOOL fullscreen = platform_window_fullscreen();
+		int fullscreen = (SDL_GetWindowFlags(platform_window) & SDL_WINDOW_FULLSCREEN) != 0;
 
 		if (fullscreen)
-			platform_window_set_fullscreen(FALSE);
+			SDL_SetWindowFullscreen(platform_window, false);
 		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, title, text, platform_window);
 		if (fullscreen)
-			platform_window_set_fullscreen(TRUE);
+			SDL_SetWindowFullscreen(platform_window, true);
 	}
 #endif
 }
 
 /* ---------- events */
-
-/* quits as closing the window does, when the events are next read (the
-menus' Quit: port/linux/game/menu_functions.c); Android's menus have none,
-as the system closes its apps */
-void platform_request_quit(void)
-{
-#ifndef HALO_ANDROID
-	SDL_Event event;
-
-	memset(&event, 0, sizeof(event));
-	event.type = SDL_EVENT_QUIT;
-	SDL_PushEvent(&event);
-#endif
-}
-
-void platform_scoreboard_scroll(int open, long *notches, long *pages)
-{
-	Uint64 now = SDL_GetTicks();
-
-	pthread_mutex_lock(&input_lock);
-	if (!open || now >= scoreboard_open_until_ms)
-	{
-		scoreboard_wheel = 0.0f;
-		scoreboard_notches = 0;
-		scoreboard_pages = 0;
-	}
-	scoreboard_open_until_ms = open ? now + SCOREBOARD_OPEN_MS : 0;
-	if (notches)
-		*notches = scoreboard_notches;
-	if (pages)
-		*pages = scoreboard_pages;
-	scoreboard_notches = 0;
-	scoreboard_pages = 0;
-	pthread_mutex_unlock(&input_lock);
-}
 
 void platform_pump_events(void)
 {
@@ -1194,7 +1098,7 @@ void platform_pump_events(void)
 	if (exit_ticks && SDL_GetTicks() >= exit_ticks)
 	{
 		platform_log("exiting after debug.exit_after");
-		exit(EXIT_SUCCESS);
+		platform_exit_success();
 	}
 	platform_show_pending_message();
 #ifndef HALO_ANDROID
@@ -1208,48 +1112,65 @@ void platform_pump_events(void)
 		case SDL_EVENT_QUIT:
 			pthread_mutex_unlock(&input_lock);
 			platform_log("window closed");
-			exit(EXIT_SUCCESS);
+			platform_exit_success();
 		case SDL_EVENT_KEY_DOWN:
 		case SDL_EVENT_KEY_UP:
-			if (event.key.scancode < SDL_SCANCODE_COUNT)
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+			/* Escape has context, even when an older config still binds it to
+			melee. The console receives Escape for its own close operation. */
+			if (event.key.scancode == SDL_SCANCODE_ESCAPE && !console_is_active())
+			{
+				if (event.key.down && !event.key.repeat)
+				{
+					BOOL menu = input_state.ui_pointer;
+					platform_mouse_released_set(TRUE);
+					input_state.menu_back_pressed = menu;
+					input_state.pause_pressed = !menu;
+				}
+				break;
+			}
+			if (event.key.down && !event.key.repeat && !input_state.ui_pointer &&
+				!console_is_active() && input_binding_matches_key(_binding_start, event.key.scancode))
+			{
+				platform_mouse_released_set(TRUE);
+				input_state.pause_pressed = TRUE;
+				break;
+			}
+			if (event.key.down && !event.key.repeat &&
+				(input_binding_matches_key(_binding_console, event.key.scancode) ||
+				(event.key.scancode == SDL_SCANCODE_ESCAPE && console_is_active())))
+				platform_mouse_released_set(TRUE);
+#endif
+			if (event.key.scancode < SDL_SCANCODE_COUNT && (!event.key.down || !event.key.repeat))
 			{
 				input_state.keys[event.key.scancode] = event.key.down;
 				if (event.key.down)
 					keys_pressed[event.key.scancode] = 1;
 			}
-			if (binding_capture == _binding_capture_waiting && event.key.down && !event.key.repeat &&
-				event.key.scancode != SDL_SCANCODE_F11 && event.key.scancode != SDL_SCANCODE_F12)
-			{
-				binding_capture = _binding_capture_taken;
-				binding_taken_ms = SDL_GetTicks();
-				binding_capture_result = event.key.scancode == SDL_SCANCODE_ESCAPE ? 3 :
-					event.key.scancode == SDL_SCANCODE_DELETE ? 2 : 1;
-				binding_captured_input = event.key.scancode;
-				break;
-			}
+			menu_keyboard_event(&event.key);
 			queue_keystroke(&event.key);
-			if (SDL_GetTicks() < scoreboard_open_until_ms && event.key.down &&
-				(event.key.scancode == SDL_SCANCODE_PAGEUP || event.key.scancode == SDL_SCANCODE_PAGEDOWN))
+			/* The configured mouse-release key releases or recaptures it. */
+			if (event.key.down && !event.key.repeat && input_binding_matches_key(_binding_release_mouse, event.key.scancode))
 			{
-				scoreboard_pages += event.key.scancode == SDL_SCANCODE_PAGEDOWN ? 1 : -1;
-			}
-			/* F12 releases or recaptures the mouse */
-			if (event.key.down && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F12)
-			{
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+				platform_mouse_released_set(input_state.ui_pointer || !input_state.mouse_released);
+#else
 				input_state.mouse_released = !input_state.mouse_released;
 				platform_mouse_capture(!input_state.mouse_released && !input_state.ui_pointer);
+#endif
 			}
 #ifndef HALO_ANDROID
 			/* F11 switches between fullscreen and the window (SDL keeps the
 			window's size and place while fullscreen) */
 			if (event.key.down && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F11)
 			{
-				platform_window_set_fullscreen(!platform_window_fullscreen());
+				SDL_SetWindowFullscreen(platform_window,
+					(SDL_GetWindowFlags(platform_window) & SDL_WINDOW_FULLSCREEN) ? false : true);
 			}
 #endif
 			break;
 		case SDL_EVENT_MOUSE_MOTION:
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || (defined(HALO_MACOS) && !defined(HALO_IOS))
 			/* in the menus the mouse moves the pointer, not the view */
 			if (input_state.ui_pointer)
 			{
@@ -1264,23 +1185,7 @@ void platform_pump_events(void)
 			break;
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
 		case SDL_EVENT_MOUSE_BUTTON_UP:
-			if (event.button.button < 32)
-			{
-				if (event.button.down)
-					mouse_buttons_down |= 1u << event.button.button;
-				else
-					mouse_buttons_down &= ~(1u << event.button.button);
-			}
-			if (binding_capture == _binding_capture_waiting && event.button.down &&
-				event.button.button < PLATFORM_MOUSE_BUTTON_COUNT)
-			{
-				binding_capture = _binding_capture_taken;
-				binding_taken_ms = SDL_GetTicks();
-				binding_capture_result = 1;
-				binding_captured_input = INPUT_MOUSE + event.button.button;
-				break;
-			}
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || (defined(HALO_MACOS) && !defined(HALO_IOS))
 			/* clicks in the menus go to the pointer; a button held down
 			when the menu closes stays up until pressed again, so the click
 			that resumes the game does not also fire */
@@ -1299,39 +1204,21 @@ void platform_pump_events(void)
 				break;
 			}
 #endif
-			if (event.button.button < PLATFORM_MOUSE_BUTTON_COUNT)
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+			if (input_state.mouse_released)
 			{
-				input_state.mouse_buttons[event.button.button] = event.button.down;
-				if (event.button.down)
-					mouse_buttons_pressed[event.button.button] = 1;
+				/* Clicking back into gameplay captures, but this press never
+				fires. A later, distinct click can use its gameplay binding. */
+				if (event.button.down && event.button.button == SDL_BUTTON_LEFT)
+					platform_mouse_released_set(FALSE);
+				break;
 			}
+#endif
+			if (event.button.button < PLATFORM_MOUSE_BUTTON_COUNT)
+				input_state.mouse_buttons[event.button.button] = event.button.down;
 			break;
 		case SDL_EVENT_MOUSE_WHEEL:
-			if (binding_capture == _binding_capture_waiting && event.wheel.y != 0.0f)
-			{
-				binding_capture = _binding_capture_taken;
-				binding_taken_ms = SDL_GetTicks();
-				binding_capture_result = 1;
-				binding_captured_input = event.wheel.y > 0.0f ? INPUT_WHEEL_UP : INPUT_WHEEL_DOWN;
-				break;
-			}
-			if (SDL_GetTicks() < scoreboard_open_until_ms)
-			{
-				/* whole notches, up (away) scrolling up */
-				scoreboard_wheel -= event.wheel.y;
-				while (scoreboard_wheel >= 1.0f)
-				{
-					scoreboard_notches++;
-					scoreboard_wheel -= 1.0f;
-				}
-				while (scoreboard_wheel <= -1.0f)
-				{
-					scoreboard_notches--;
-					scoreboard_wheel += 1.0f;
-				}
-				break;
-			}
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || (defined(HALO_MACOS) && !defined(HALO_IOS))
 			if (input_state.ui_pointer)
 			{
 				/* whole notches: smooth-scrolling wheels send fractions */
@@ -1352,19 +1239,39 @@ void platform_pump_events(void)
 			input_state.mouse_wheel += event.wheel.y;
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
+			menu_keyboard_reset();
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+			platform_mouse_released_set(TRUE);
+#else
 			memset(input_state.keys, 0, sizeof(input_state.keys));
 			memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
-			memset(mouse_buttons_pressed, 0, sizeof(mouse_buttons_pressed));
+#endif
 			input_state.focused = FALSE;
+			game_directory_set_foreground(FALSE);
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_GAINED:
 			input_state.focused = TRUE;
+			platform_directory_foreground_update();
 			look_at_clipboard = TRUE;
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID)
 			if (!input_state.mouse_released && !input_state.ui_pointer)
 				platform_mouse_capture(TRUE);
 #endif
 			break;
+		case SDL_EVENT_WINDOW_MINIMIZED:
+		case SDL_EVENT_WINDOW_HIDDEN:
+			game_directory_set_foreground(FALSE);
+			break;
+		case SDL_EVENT_WINDOW_RESTORED:
+		case SDL_EVENT_WINDOW_SHOWN:
+			platform_directory_foreground_update();
+			break;
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+		case SDL_EVENT_USER:
+			if (event.user.code == HALO_NATIVE_MOUSE_RELEASE)
+				platform_mouse_released_set(TRUE);
+			break;
+#endif
 		case SDL_EVENT_GAMEPAD_ADDED:
 			SDL_OpenGamepad(event.gdevice.which);
 			break;
@@ -1377,39 +1284,7 @@ void platform_pump_events(void)
 	platform_invite_clipboard(look_at_clipboard);
 }
 
-void platform_menus_set_active(BOOL active)
-{
-	pthread_mutex_lock(&input_lock);
-	input_state.menus = active;
-	pthread_mutex_unlock(&input_lock);
-}
-
-void platform_binding_capture_begin(void)
-{
-	pthread_mutex_lock(&input_lock);
-	binding_capture = _binding_capture_waiting;
-	binding_settling = TRUE;
-	binding_polled_ms = SDL_GetTicks();
-	pthread_mutex_unlock(&input_lock);
-}
-
-int platform_binding_capture_poll(int *input)
-{
-	int result = 0;
-
-	pthread_mutex_lock(&input_lock);
-	binding_polled_ms = SDL_GetTicks();
-	if (binding_capture == _binding_capture_taken)
-	{
-		result = binding_capture_result;
-		*input = binding_captured_input;
-		binding_capture = _binding_capture_idle;
-	}
-	pthread_mutex_unlock(&input_lock);
-	return result;
-}
-
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || (defined(HALO_MACOS) && !defined(HALO_IOS))
 /* ---------- the menus' pointer */
 
 /* While a menu is up the mouse is released, its pointer shows (centered when
@@ -1421,13 +1296,20 @@ void platform_ui_pointer_set_active(BOOL active)
 		return;
 	pthread_mutex_lock(&input_lock);
 	input_state.ui_pointer = active;
+	menu_keyboard_reset();
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	/* Menus always free the pointer. Only an explicit Resume can authorize
+	   capture as they close; Escape/Back and navigation never do. */
+	if (active)
+		input_state.mouse_released = TRUE;
+	platform_input_clear();
+#endif
 	memset(&ui_pointer, 0, sizeof(ui_pointer));
 	ui_pointer_wheel = 0.0f;
 	input_state.mouse_dx = 0.0f;
 	input_state.mouse_dy = 0.0f;
 	input_state.mouse_wheel = 0.0f;
 	memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
-	memset(mouse_buttons_pressed, 0, sizeof(mouse_buttons_pressed));
 	pthread_mutex_unlock(&input_lock);
 	platform_mouse_capture(!active && !input_state.mouse_released);
 	if (active)
@@ -1469,37 +1351,6 @@ void platform_input_read(struct platform_input_state *state, BOOL consume_motion
 {
 	pthread_mutex_lock(&input_lock);
 	*state = input_state;
-	/* (rebinding: nothing reaches the controller until the input is taken
-	and every key and button is up again) */
-	if (binding_capture != _binding_capture_idle || binding_settling)
-	{
-		int scancode;
-		BOOL held = mouse_buttons_down != 0;
-
-		for (scancode = 0; scancode < SDL_SCANCODE_COUNT && !held; scancode++)
-			held = input_state.keys[scancode] != 0;
-		if (binding_capture == _binding_capture_taken && SDL_GetTicks() - binding_taken_ms > BINDING_UNCLAIMED_MS)
-			binding_capture = _binding_capture_idle;
-		if (binding_capture == _binding_capture_waiting && SDL_GetTicks() - binding_polled_ms > BINDING_ABANDONED_MS)
-			binding_capture = _binding_capture_idle;
-		if (binding_capture == _binding_capture_idle && !held)
-			binding_settling = FALSE;
-		memset(state->keys, 0, sizeof(state->keys));
-		memset(state->mouse_buttons, 0, sizeof(state->mouse_buttons));
-		memset(keys_pressed, 0, sizeof(keys_pressed));
-		memset(mouse_buttons_pressed, 0, sizeof(mouse_buttons_pressed));
-		state->mouse_wheel = 0.0f;
-		/* (and the motion of the while, which would otherwise pile up for
-		the aim) */
-		state->mouse_dx = state->mouse_dy = 0.0f;
-		if (consume_motion)
-		{
-			input_state.mouse_dx = input_state.mouse_dy = 0.0f;
-			input_state.mouse_wheel = 0.0f;
-		}
-		pthread_mutex_unlock(&input_lock);
-		return;
-	}
 	if (consume_motion)
 	{
 		int scancode;
@@ -1509,17 +1360,83 @@ void platform_input_read(struct platform_input_state *state, BOOL consume_motion
 			state->keys[scancode] |= keys_pressed[scancode];
 			keys_pressed[scancode] = 0;
 		}
-		for (scancode = 0; scancode < PLATFORM_MOUSE_BUTTON_COUNT; scancode++)
-		{
-			state->mouse_buttons[scancode] |= mouse_buttons_pressed[scancode];
-			mouse_buttons_pressed[scancode] = 0;
-		}
 	}
 	if (consume_motion)
 	{
 		input_state.mouse_dx = 0;
 		input_state.mouse_dy = 0;
 		input_state.mouse_wheel = 0;
+		input_state.pause_pressed = FALSE;
+		input_state.menu_back_pressed = FALSE;
 	}
 	pthread_mutex_unlock(&input_lock);
+}
+
+/* Upstream keeps its PC menu callbacks compiled for co-op and server setup.
+ * This branch uses the original authored menus and native settings; the PC
+ * rebinding flow is unavailable and immediately cancels if called. */
+void platform_binding_capture_begin(void)
+{
+}
+
+int platform_binding_capture_poll(int *input)
+{
+	if (input) *input = -1;
+	return 3;
+}
+
+void halo_input_name(int input, char *name, unsigned int size)
+{
+	(void)input;
+	if (name && size) name[0] = 0;
+}
+
+int platform_display_resolutions(long *widths, long *heights, int maximum)
+{
+	(void)widths;
+	(void)heights;
+	(void)maximum;
+	return 0;
+}
+
+int platform_window_sizes(long *widths, long *heights, int maximum)
+{
+	(void)widths;
+	(void)heights;
+	(void)maximum;
+	return 0;
+}
+
+void platform_display_apply(void)
+{
+	(void)halo_video_apply_settings();
+}
+
+void platform_text_field(int typing)
+{
+	(void)typing;
+}
+
+int platform_clipboard_get(char *text, int size)
+{
+	char *clipboard = SDL_GetClipboardText();
+	int got = clipboard && *clipboard;
+	if (text && size > 0) snprintf(text, (size_t)size, "%s", got ? clipboard : "");
+	SDL_free(clipboard);
+	return got;
+}
+
+void platform_clipboard_set(const char *text)
+{
+	if (text) SDL_SetClipboardText(text);
+}
+
+void platform_request_quit(void)
+{
+#ifndef HALO_ANDROID
+	SDL_Event event;
+	memset(&event, 0, sizeof(event));
+	event.type = SDL_EVENT_QUIT;
+	SDL_PushEvent(&event);
+#endif
 }

@@ -124,10 +124,17 @@ shows a notice.
 
 To join a game, do one of these steps:
 
-- Open the link. The app is the handler of `halo://join/...` links. If the
+- Open the link. The app is the handler of `halo-og://join/...` links. If the
   game does not operate, the app starts it. The app writes the link to
-  `files/join_link.txt`, and the game reads it.
+  `files/join_link.txt`, and the game reads it. Links also reach a reused
+  launcher while the game-data setup screen is open; the whole 79-byte invite
+  is retained until the game starts. Later links bring the running game forward.
 - Copy the link and go to the game.
+
+The app claims only `halo-og`, so it does not take over the inherited `halo`
+handler. Its existing Android package remains `com.halo.decomp` to preserve
+updates and saved data. An upstream APK with the same package cannot be installed
+alongside it; changing the package would create a separate data container.
 
 On the local network:
 
@@ -142,22 +149,19 @@ drop it, and when it hosts, its players leave.
 
 ## Updates
 
-The app from GitHub Actions can update itself, as on Linux (refer to
-"Updates" in [port/linux/README.md](../linux/README.md#updates)). When you
-select "Yes":
+Halo OG's Android builds do not currently check for app updates. The inherited
+Java updater targets cybersecurity's releases and remains disabled for this
+fork. Download the Android ZIP from the [Halo OG release](../../README.md#download),
+extract its APK and install it manually. The new Windows/Linux browser notice
+does not enable Android updates.
 
-1. The app downloads the new version.
-2. The package installer of Android opens. At the first update, Android asks
-   you to let Halo install apps. Allow it.
-3. Select "Update". Android replaces the app.
-4. Select "Open" to start the new version.
-
-To install over the previous version, each build must have the same
-signature. GitHub Actions signs each build with the key in the
-`ANDROID_KEYSTORE_BASE64` and `ANDROID_KEYSTORE_PASSWORD` secrets of the
-repository. If you installed a build that has a different signature, remove
-that build before you install a new build. Removing the app deletes its data
-folder: first make a copy of `maps/` and `save/`.
+To install over a previous version while retaining its data, both APKs must use
+the same signing key and the new version code must be higher. CI supports a
+persistent key through the existing `ANDROID_KEYSTORE_BASE64` and
+`ANDROID_KEYSTORE_PASSWORD` repository secrets; without it, builds use the
+runner's debug key and may not install over one another. Back up `maps/`,
+`save/` and settings before uninstalling an incompatible build: uninstalling
+deletes the app's data folder.
 
 ## Widescreen
 

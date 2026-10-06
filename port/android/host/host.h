@@ -91,6 +91,9 @@ void *host_resolve_import(const char *name);
 
 /* ---------- SDL / GL (host_sdl.c, host_gl.c) */
 
+void host_sdl_scancode_name(int32_t scancode, char *buffer, uint32_t size);
+int32_t host_sdl_scancode_from_name(const char *name);
+
 void *host_gl_resolve(const char *name);
 
 #endif

@@ -231,6 +231,15 @@ symbols in this file:
 #include "units/unit_definitions.h"
 #include "units/units.h"
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "game/performance_variant.h"
+#include "performance_precision.h"
+#include "bitmaps/bitmap_group.h"
+#include "cache/texture_cache.h"
+#include "effects/contrail_definitions.h"
+#include "performance_sound.h"
+#endif
+
 /* port/linux/game/pal_tags.c's */
 short pal_tags_first_person_frames(long graph_index, short animation_index, short frames);
 
@@ -572,6 +581,58 @@ void weapons_dispose(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* A trail's first draw requests its bitmap asynchronously and is skipped
+until that read finishes. Warm only the projectile trails of a weapon that
+has been created or readied, before its first shot. Keep ordinary
+streaming nonblocking and leave the original trail tags and lifetime alone. */
+static void weapon_precache_projectile_trails(
+	long definition_index)
+{
+	if (definition_index != NONE)
+	{
+		struct weapon_definition *definition = weapon_definition_get(definition_index);
+		short trigger_index;
+
+		for (trigger_index = 0; trigger_index < definition->weapon.triggers.count; trigger_index++)
+		{
+			struct weapon_trigger_definition *trigger = TAG_BLOCK_GET_ELEMENT(
+				&definition->weapon.triggers, trigger_index, struct weapon_trigger_definition);
+
+			if (trigger->projectile.index != NONE)
+			{
+				struct projectile_definition *projectile = projectile_definition_get(trigger->projectile.index);
+				short attachment_index;
+
+				for (attachment_index = 0; attachment_index < projectile->object.attachments.count; attachment_index++)
+				{
+					struct object_attachment_definition *attachment = TAG_BLOCK_GET_ELEMENT(
+						&projectile->object.attachments, attachment_index, struct object_attachment_definition);
+
+					if (attachment->type.group_tag == CONTRAIL_DEFINITION_TAG && attachment->type.index != NONE)
+					{
+						struct contrail_definition *contrail = contrail_definition_get(attachment->type.index);
+
+						if (contrail->bitmap.index != NONE)
+						{
+							struct bitmap_group *bitmap = bitmap_group_get(contrail->bitmap.index);
+							short bitmap_index;
+
+							for (bitmap_index = 0; bitmap_index < bitmap->bitmaps.count; bitmap_index++)
+							{
+								_texture_cache_bitmap_get_hardware_format(
+									TAG_BLOCK_GET_ELEMENT(&bitmap->bitmaps, bitmap_index, struct bitmap_data),
+									FALSE, TRUE);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+#endif
+
 void weapon_place(
 	long weapon_index,
 	struct scenario_weapon_datum *scenario_weapon)
@@ -603,10 +664,23 @@ void weapon_ready(
 	struct weapon_datum* weapon = weapon_get(weapon_index);
 	struct weapon_definition *weapon_definition = weapon_definition_get(weapon->definition_index);
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	weapon_precache_projectile_trails(weapon->definition_index);
+#endif
 	weapon_reset(weapon_index);
 	weapon_set_state(weapon_index, _weapon_state_ready, TRUE);
 	first_person_weapon_message_from_weapon(weapon_index, _first_person_weapon_message_ready);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	{
+		unsigned previous_sound_role = performance_sound_push(_performance_sound_weapon_ready);
+
+		/* Keep the ready effect, including visuals and deferred events. */
+#endif
 	weapon_effect_new(weapon_index, weapon_definition->weapon.ready_effect.index, 0.f, 0.f);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		performance_sound_pop(previous_sound_role);
+	}
+#endif
 	weapon->weapon.state_timer = weapon_get_first_person_animation_time(weapon_index, 0, _first_person_weapon_animation_ready, NONE);
 
 	return;
@@ -814,6 +888,9 @@ boolean weapon_new(
 		trigger->idle_ticks = 127;
 	}
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	weapon_precache_projectile_trails(weapon->definition_index);
+#endif
 	return TRUE;
 }
 
@@ -2345,6 +2422,9 @@ static void trigger_create_projectiles(
 		long target_object_index= NONE;
 		long projectile_definition_index;
 		short projectile_count;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		boolean precision_player = FALSE;
+#endif
 
 		if (!TEST_FLAG(trigger_definition->flags, _weapon_trigger_projectiles_cannot_be_aimed_bit) &&
 			unit &&
@@ -2363,6 +2443,9 @@ static void trigger_create_projectiles(
 				player_index= gunner->unit.player_index;
 				actor_index= gunner->unit.actor_index;
 			}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			precision_player = player_index != NONE;
+#endif
 
 			adjust_origin= TEST_FLAG(unit_definition->unit.flags, _unit_fires_from_camera_bit);
 			use_aiming_vector= TRUE;
@@ -2450,6 +2533,23 @@ static void trigger_create_projectiles(
 				boolean tracer= FALSE;
 				boolean inside_bsp;
 				long projectile_object_index;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				real initial_error = trigger_definition->projectile_error_angle_lower_bound;
+				real inner_error = trigger_definition->projectile_error_inner_cone_angle;
+
+				/* Hardcore changes the starting cone only. Retain the trigger's
+				 * error buildup, recovery and maximum, and the original RNG call. */
+				if ((performance_variant_get_flags(game_engine_get_variant()) & _performance_option_hardcore) &&
+					performance_precision_zero_initial_spread(
+					performance_variant_get_flags(game_engine_get_variant()),
+					game_engine_running(), precision_player,
+					weapon_definition_index_to_list_index(weapon->definition_index),
+					trigger_index, TEST_FLAG(weapon->weapon.control_flags, _weapon_control_zoomed_bit)))
+				{
+					initial_error = 0.0f;
+					inner_error = 0.0f;
+				}
+#endif
 
 				object_placement_data_new(&data, trigger_definition->projectile.index, projectile_owner_object_index);
 				data.position= origin;
@@ -2467,13 +2567,21 @@ static void trigger_create_projectiles(
 						weapon->weapon.primary_trigger :
 						trigger->error;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+					error= (1.0f-fraction)*initial_error + fraction*trigger_definition->projectile_error_angle_upper_bound;
+#else
 					error= (1.0f-fraction)*trigger_definition->projectile_error_angle_lower_bound + fraction*trigger_definition->projectile_error_angle_upper_bound;
+#endif
 				}
 
 				if (!TEST_FLAG(trigger_definition->flags, _weapon_trigger_use_error_when_unzoomed_bit) ||
 					!TEST_FLAG(weapon->weapon.control_flags, _weapon_control_zoomed_bit))
 				{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+					random_vector_in_cone3d(&data.forward, inner_error, error, &data.forward);
+#else
 					random_vector_in_cone3d(&data.forward, trigger_definition->projectile_error_inner_cone_angle, error, &data.forward);
+#endif
 				}
 
 				if (projectile_index==0)

@@ -374,6 +374,11 @@ symbols in this file:
 #include "cseries/cseries_windows.h"
 #include "cseries/errors.h"
 #include "game/game_engine.h"
+#include "game/performance_variant.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "../../port/linux/game/performance_options.h"
+#include "performance_audio.h"
+#endif
 #include "game/local_players.h"
 #include "game/player_queues_new.h"
 #include "game/players.h"
@@ -389,7 +394,15 @@ symbols in this file:
 #include "networking/network_game_manager.h"
 #include "networking/network_game_protocol.h"
 #include "networking/network_messages.h"
+#include "networking/network_performance_protocol.h"
+#include "networking/network_variant_capabilities.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "halo_expanded_cache.h"
+#include "halo_custom_maps.h"
+#include "networking/network_expanded_cache_protocol.h"
+#endif
 #include "networking/network_server_manager.h"
+#include "networking/network_server_manager_internal.h"
 #include "text/unicode.h"
 
 /* ---------- constants */
@@ -807,11 +820,30 @@ static struct
 	byte flags;
 } network_game_client_advertised_versions[MAXIMUM_NETWORK_ADVERTISED_GAMES];
 
+/* Runtime support confirmed by the selected host's reliable connection. */
+static unsigned network_game_client_performance_host_capabilities;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static struct network_expanded_cache_identity network_game_client_cache_offer;
+static boolean network_game_client_cache_offer_valid;
+/* Full settings remain private until the host's exact offered cache validates.
+   No game/client wire layout changes, and no old-map readiness while waiting. */
+static struct network_game network_game_client_cache_settings;
+static struct network_expanded_cache_identity network_game_client_cache_settings_offer;
+static boolean network_game_client_cache_settings_pending;
+static boolean network_game_client_cache_begin_pending;
+static unsigned long network_game_client_cache_wait_started;
+static unsigned long network_game_client_cache_retry_time;
+static unsigned long network_game_client_cache_heartbeat_time;
+#endif
+
 struct network_game_client network_game_client_dont_use_directly;
 boolean allow_out_of_sync = FALSE;
 boolean network_game_client_dont_use_directly_in_use = FALSE;
 
 /* ---------- public code */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "network_directory.inc"
+#endif
 
 /* transport_network_available asks the system for its interfaces
 (getifaddrs): asked at most once a second, not every frame */
@@ -901,6 +933,15 @@ void network_game_client_dispose(
 {
 	if (client)
 	{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		network_game_client_directory_cancel();
+#endif
+		network_game_client_performance_host_capabilities = 0;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		network_game_client_cache_offer_valid = FALSE;
+		network_game_client_cache_settings_pending = FALSE;
+		network_game_client_cache_begin_pending = FALSE;
+#endif
 		if (client->connection)
 			network_connection_delete(client->connection);
 
@@ -910,6 +951,11 @@ void network_game_client_dispose(
 			network_game_client_dont_use_directly_in_use);
 
 		network_game_client_dont_use_directly_in_use = FALSE;
+		/* Leaving a lobby can dispose the client without loading a map. */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (!global_network_game_server_get())
+			performance_options_apply_host_flags(0);
+#endif
 	}
 
 	network_event("network client disposed");
@@ -1209,6 +1255,13 @@ boolean network_game_client_idle(
 	struct network_game_client *client)
 {
 	boolean success = FALSE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (client && client->state != _network_game_client_state_searching)
+	{
+		game_directory_browse(FALSE);
+		p2p_lobby_browse(FALSE);
+	}
+#endif
 
 	match_assert(
 		"c:\\halo\\SOURCE\\networking\\network_client_manager.c",
@@ -1253,6 +1306,101 @@ boolean network_game_client_idle(
 	return success;
 }
 
+void platform_show_message(char const *title, char const *message);
+static boolean network_game_client_receive_performance_capability(
+	struct network_game_client const *client,
+	byte const *packet,
+	unsigned size,
+	boolean reliable)
+{
+	unsigned supported;
+	if (!reliable || !network_performance_decode(packet, size,
+		NETWORK_PERFORMANCE_CAPABILITY, &supported))
+		return FALSE;
+	if (!global_network_game_server_get() && client->state >= _network_game_client_state_joining)
+		network_game_client_performance_host_capabilities = supported;
+	return TRUE;
+}
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static boolean network_game_client_receive_cache_identity(struct network_game_client *client,
+	byte const *packet, unsigned size, boolean reliable)
+{
+	struct network_expanded_cache_identity identity;
+	if (!reliable || client->state < _network_game_client_state_joining ||
+		(!global_network_game_server_get() && !(network_game_client_performance_host_capabilities & NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY)) ||
+		!network_expanded_cache_decode(packet, size, NETWORK_EXPANDED_CACHE_OFFER, &identity)) return FALSE;
+	/* An active match keeps its accepted rules and physical cache. */
+	if (client->state == _network_game_client_state_ingame &&
+		(identity.weapon_set != (unsigned)client->game.variant.universal_variant.weapon_set ||
+		 !native_map_cache_selection_equal(&identity.selection, native_map_cache_current()))) return TRUE;
+	if (network_game_client_cache_offer_valid &&
+		(identity.weapon_set != network_game_client_cache_offer.weapon_set ||
+		 !native_map_cache_selection_equal(&identity.selection, &network_game_client_cache_offer.selection)))
+	{
+		/* A replacement offer cancels settings/start belonging to its predecessor.
+		   The following full settings on this reliable stream stage a new wait. */
+		network_game_client_cache_settings_pending = FALSE;
+		network_game_client_cache_begin_pending = FALSE;
+	}
+	network_game_client_cache_offer = identity;
+	network_game_client_cache_offer_valid = TRUE;
+	return TRUE;
+}
+static boolean network_game_client_send_cache_ready(struct network_game_client *client)
+{
+	word message[NETWORK_EXPANDED_CACHE_MESSAGE_SIZE / sizeof(word)];
+	struct native_map_cache_selection const *selection = native_map_cache_current();
+	if (network_game_client_cache_settings_pending) return FALSE;
+	if (!native_map_cache_uses_global_arsenal(&client->game.variant)) return TRUE;
+	if (!selection->expanded || !cache_files_precache_map_loaded(client->game.map.name) ||
+		(!global_network_game_server_get() && (!network_game_client_cache_offer_valid ||
+		 network_game_client_cache_offer.weapon_set != (unsigned)client->game.variant.universal_variant.weapon_set ||
+		 !native_map_cache_selection_equal(selection, &network_game_client_cache_offer.selection)))) return FALSE;
+	network_expanded_cache_encode((byte *)message, NETWORK_EXPANDED_CACHE_READY, selection,
+		(unsigned)client->game.variant.universal_variant.weapon_set);
+	return network_game_client_write(client->connection, message, sizeof(message), NULL, 1);
+}
+
+static boolean network_game_client_defer_cache_settings(struct network_game *settings)
+{
+	if (native_map_cache_download_status() != 2 ||
+		!(network_game_client_performance_host_capabilities & NETWORK_PERFORMANCE_DOWNLOAD_WAIT_CAPABILITY)) return FALSE;
+	if (!network_game_client_cache_settings_pending)
+	{
+		network_game_client_cache_wait_started = system_milliseconds();
+		network_game_client_cache_retry_time = network_game_client_cache_wait_started;
+		network_game_client_cache_heartbeat_time = network_game_client_cache_wait_started - 15000;
+		platform_show_message("Halo: downloading Fiesta arsenal",
+			"Downloading the host's exact weapon arsenal. Joining will continue when it is verified. Leave the lobby to cancel joining.");
+	}
+	network_game_client_cache_settings = *settings;
+	network_game_client_cache_settings_offer = network_game_client_cache_offer;
+	network_game_client_cache_settings_pending = TRUE;
+	return TRUE;
+}
+static boolean network_game_client_defer_cache_begin(void)
+{
+	if (!network_game_client_cache_settings_pending) return FALSE;
+	network_game_client_cache_begin_pending = TRUE;
+	return TRUE;
+}
+#endif
+
+static unsigned network_game_client_performance_settings_flags(
+	struct network_game_client const *client,
+	unsigned flags)
+{
+	if (!global_network_game_server_get())
+		flags = network_performance_host_settings_flags(flags,
+			network_game_client_performance_host_capabilities);
+	/* Live controls may change aids, but never the active match's rules. */
+	if (client->state == _network_game_client_state_ingame)
+		flags = (flags & ~PERFORMANCE_MATCH_RULE_FLAGS) |
+			(performance_variant_get_flags(&client->game.variant) & PERFORMANCE_MATCH_RULE_FLAGS);
+	return flags;
+}
+
 boolean network_game_client_game_settings_updated(
 	struct network_game_client *client,
 	struct network_game *message_packet)
@@ -1274,16 +1422,97 @@ boolean network_game_client_game_settings_updated(
 		VALID_INDEX(message_packet->difficulty, NUMBER_OF_GAME_DIFFICULTY_LEVELS))
 	{
 		struct network_game previous_game;
-
-		/* port: the record's players: no two the same machine's same
-		controller, no machine with more than its local players; the
-		strings ending in their fields */
+		unsigned performance_flags = network_game_client_performance_settings_flags(client,
+			performance_variant_get_flags(&message_packet->variant));
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		struct native_map_cache_selection selection;
+		struct game_variant cache_variant = message_packet->variant;
+		boolean cache_changed;
+		unsigned char const *expected_cache = NULL;
+#endif
+		/* Validate the upstream player/controller record before choosing a
+		 * cache, starting a download or changing any accepted local state. */
 		if (!network_game_client_game_record_is_valid(message_packet))
 		{
 			network_event("invalid message_server_game_settings_update message received: its players");
 			return FALSE;
 		}
-		if (csstrcmp(message_packet->map.name, client->game.map.name))
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (client->state == _network_game_client_state_ingame)
+		{
+			if (csstrcmp(message_packet->map.name, client->game.map.name)) return FALSE;
+			cache_variant.universal_variant.weapon_set = client->game.variant.universal_variant.weapon_set;
+		}
+		performance_variant_set_flags(&cache_variant, performance_flags);
+		if (network_game_client_cache_settings_pending && !native_map_cache_uses_global_arsenal(&cache_variant))
+		{
+			network_game_client_cache_settings_pending = FALSE;
+			network_game_client_cache_begin_pending = FALSE;
+		}
+#endif
+		if (!global_network_game_server_get() &&
+			game_variant_uses_expanded_weapon_set(&message_packet->variant) &&
+			!(network_game_client_performance_host_capabilities & NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY))
+		{
+			platform_show_message("Halo: expanded weapon sets unavailable",
+				"Uncut and All weapons require an updated host. Choose another Weapon Set, or update the host before joining.");
+			display_error_when_main_menu_loaded(_error_network_failed_to_join_game);
+			return FALSE;
+		}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (!global_network_game_server_get() && native_map_cache_uses_global_arsenal(&cache_variant) &&
+			!(network_game_client_performance_host_capabilities & NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY))
+		{
+			platform_show_message("Halo: full Fiesta arsenal unavailable", "The host needs an updated build for the full Uncut or All Fiesta arsenal.");
+			display_error_when_main_menu_loaded(_error_network_failed_to_join_game);
+			return FALSE;
+		}
+		if (!global_network_game_server_get() && native_map_cache_uses_global_arsenal(&cache_variant))
+		{
+			if (!network_game_client_cache_offer_valid ||
+				network_game_client_cache_offer.weapon_set != (unsigned)cache_variant.universal_variant.weapon_set ||
+				_stricmp(native_map_basename(message_packet->map.name), network_game_client_cache_offer.selection.logical_name))
+				return FALSE;
+			expected_cache = network_game_client_cache_offer.selection.sha256;
+		}
+		if (!native_map_cache_prepare_expected(message_packet->map.name, &cache_variant, expected_cache, &selection, FALSE))
+		{
+			if (!global_network_game_server_get() && expected_cache &&
+				network_game_client_defer_cache_settings(message_packet)) return TRUE;
+			/* Only an explicit failure/unavailable status ends joining. Pending
+			   returns success to transport without committing incoming settings. */
+			if (expected_cache && native_map_cache_download_status() == 2)
+				platform_show_message("Halo: host update required",
+					"The arsenal is downloading, but this host cannot keep a joining player waiting for it. Update the host, or retry joining after the exact matching arsenal is installed.");
+			else
+				platform_show_message("Halo: Fiesta arsenal unavailable",
+					"The matching full weapon arsenal could not be downloaded or verified. Enable map downloads and retry joining, or install the host's exact arsenal manually. On Mac, use Settings > Check Maps to retry a failed download.");
+			display_error_when_main_menu_loaded(_error_network_failed_to_join_game);
+			return FALSE;
+		}
+		if (!global_network_game_server_get() && selection.expanded &&
+			(!network_game_client_cache_offer_valid || network_game_client_cache_offer.weapon_set != (unsigned)cache_variant.universal_variant.weapon_set ||
+			 !native_map_cache_selection_equal(&selection, &network_game_client_cache_offer.selection)))
+		{
+			platform_show_message("Halo: Fiesta cache mismatch", "This machine and the host have different weapon arsenal caches. Install the same complete arsenal on both machines.");
+			display_error_when_main_menu_loaded(_error_network_failed_to_join_game);
+			return FALSE;
+		}
+		/* The host shares the resolver with its local client and may have
+		   selected this cache before delivering the updated settings. */
+		cache_changed = !native_map_cache_selection_equal(&selection, native_map_cache_current()) ||
+			!cache_files_precache_map_loaded(message_packet->map.name);
+		if (!global_network_game_server_get()) native_map_cache_select(&selection);
+		network_game_client_cache_settings_pending = FALSE;
+#endif
+		/* Protocol 22 shares the host complete authoritative options record.
+		 * Local presentation does not override these match rules. */
+
+		if (csstrcmp(message_packet->map.name, client->game.map.name)
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			|| cache_changed
+#endif
+			)
 		{
 			char build[0x20];
 
@@ -1312,6 +1541,23 @@ boolean network_game_client_game_settings_updated(
 
 		csmemcpy(&previous_game, &client->game, sizeof(client->game));
 		csmemcpy(&client->game, message_packet, sizeof(client->game));
+		/* Full live records cannot change the match's weapon population. */
+		if (client->state == _network_game_client_state_ingame)
+			client->game.variant.universal_variant.weapon_set = previous_game.variant.universal_variant.weapon_set;
+		/* Full settings currently arrive only in pregame, including late
+		 * joins. Keep active timing fixed if another caller applies them. */
+		if (performance_variant_get_flags(&client->game.variant) != performance_flags)
+			performance_variant_set_flags(&client->game.variant, performance_flags);
+		/* The settings precede begin-game on the same reliable stream, for
+		 * both lobby starts and joins in progress. The host's local client
+		 * must not overwrite its own newer authoritative state. */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (global_network_game_server_get())
+			performance_options_apply_host_flags(performance_variant_get_flags(
+				&network_game_server_get_game(global_network_game_server_get())->variant));
+		else
+			performance_options_apply_host_flags(performance_variant_get_flags(&client->game.variant));
+#endif
 		csmemcpy(
 			&client->game.local_data,
 			&previous_game.local_data,
@@ -1650,6 +1896,20 @@ boolean network_game_client_game_has_started(
 		0x3B0,
 		client && (client->state == _network_game_client_state_pregame));
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (network_game_client_defer_cache_begin())
+	{
+		/* Late-join BEGIN follows settings before a missing cache can arrive.
+		   Retain the start signal, but never load the previous lobby variant. */
+		return TRUE;
+	}
+	if (!global_network_game_server_get() && native_map_cache_uses_global_arsenal(&client->game.variant) &&
+		(!network_game_client_cache_offer_valid ||
+		 network_game_client_cache_offer.weapon_set != (unsigned)client->game.variant.universal_variant.weapon_set ||
+		 !native_map_cache_selection_equal(native_map_cache_current(), &network_game_client_cache_offer.selection)))
+		return FALSE;
+#endif
+
 	client->seconds_to_game_start = NONE;
 	network_connection_keep_alive(client->connection);
 
@@ -1674,6 +1934,12 @@ boolean network_game_client_game_has_started(
 		}
 
 		network_connection_keep_alive(client->connection);
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* A late join can load directly after full settings. Confirm the same
+		   digest before its ordinary loaded message on the reliable stream. */
+		if (!network_game_client_send_cache_ready(client)) return FALSE;
+#endif
 
 		{
 			struct message_client_loaded loaded = {0};
@@ -2026,6 +2292,12 @@ boolean network_game_client_initiate_join_game(
 		0x157,
 		client && (client->state == _network_game_client_state_searching) && game && join_parameters && client->connection && !network_connection_connected(client->connection) && (game->platform == network_game_get_local_platform()));
 
+	network_game_client_performance_host_capabilities = 0;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		network_game_client_cache_offer_valid = FALSE;
+		network_game_client_cache_settings_pending = FALSE;
+		network_game_client_cache_begin_pending = FALSE;
+#endif
 	client->join_in_progress = TRUE;
 	client->connect_process = 0;
 	client->connection_attempt_time = system_milliseconds();
@@ -2187,6 +2459,12 @@ void network_game_client_reset(
 		0x4EE,
 		client);
 
+	network_game_client_performance_host_capabilities = 0;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		network_game_client_cache_offer_valid = FALSE;
+		network_game_client_cache_settings_pending = FALSE;
+		network_game_client_cache_begin_pending = FALSE;
+#endif
 	network_game_invalidate(&client->game);
 
 	client->machine_index = NONE;
@@ -2223,6 +2501,10 @@ void network_game_client_reset(
 	network_game_client_late_join_time = 0;
 	network_game_client_late_join_clock_pending = FALSE;
 	network_game_client_incompatibility_told = FALSE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (!global_network_game_server_get())
+		performance_options_apply_host_flags(0);
+#endif
 	csmemset(network_game_client_add_player_requested, 0, sizeof(network_game_client_add_player_requested));
 
 	return;
@@ -2546,6 +2828,7 @@ static boolean network_game_client_process_messages(
 	boolean budgeted)
 {
 	boolean success = TRUE;
+	boolean reliable;
 	word message_packet_size;
 	struct transport_address source_address;
 	word message_packet[MAXIMUM_NETWORK_MESSAGE_SIZE / sizeof(word)];
@@ -2553,12 +2836,56 @@ static boolean network_game_client_process_messages(
 
 	message_packet_size = sizeof(message_packet);
 
-	while (success && network_connection_read(
+	while (success && network_connection_read_with_transport(
 		client->connection,
 		message_packet,
 		&message_packet_size,
-		&source_address))
+		&source_address,
+		&reliable))
 	{
+		unsigned performance_flags;
+
+		if (network_game_client_receive_performance_capability(client,
+			(byte const *)message_packet, message_packet_size, reliable))
+		{
+			message_packet_size = sizeof(message_packet);
+			if (budgeted && system_milliseconds() - start_time >= MAXIMUM_MESSAGE_MILLISECONDS_PER_IDLE)
+				break;
+			continue;
+		}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (network_game_client_receive_cache_identity(client, (byte const *)message_packet, message_packet_size, reliable))
+		{
+			message_packet_size = sizeof(message_packet);
+			if (budgeted && system_milliseconds() - start_time >= MAXIMUM_MESSAGE_MILLISECONDS_PER_IDLE)
+				break;
+			continue;
+		}
+#endif
+
+		/* Only the established host's reliable stream may change options.
+		 * UDP and client-originated controls never reach this branch. */
+		if (reliable && network_performance_decode((byte const *)message_packet,
+			message_packet_size, NETWORK_PERFORMANCE_SETTINGS, &performance_flags))
+		{
+			if (!global_network_game_server_get() &&
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				!network_game_client_cache_settings_pending &&
+#endif
+				client->state >= _network_game_client_state_pregame)
+			{
+				performance_flags = network_game_client_performance_settings_flags(client, performance_flags);
+				performance_variant_set_flags(&client->game.variant, performance_flags);
+				performance_variant_set_flags(game_engine_get_variant(), performance_flags);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				performance_options_apply_host_flags(performance_flags);
+#endif
+			}
+			message_packet_size = sizeof(message_packet);
+			if (budgeted && system_milliseconds() - start_time >= MAXIMUM_MESSAGE_MILLISECONDS_PER_IDLE)
+				break;
+			continue;
+		}
 		if (!(success = network_game_client_handle_message(
 			client,
 			message_packet,
@@ -2596,10 +2923,73 @@ static boolean network_game_client_process_last_messages(
 	return client->state != state;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static boolean network_game_client_retry_cache_settings(struct network_game_client *client)
+{
+	unsigned long now = system_milliseconds();
+	struct network_game settings;
+	if (!network_game_client_cache_settings_pending)
+	{
+		/* A fresh full record can complete validation between idle retries. */
+		if (network_game_client_cache_begin_pending)
+		{
+			network_game_client_cache_begin_pending = FALSE;
+			return network_game_client_game_has_started(client);
+		}
+		return TRUE;
+	}
+	if (client->state != _network_game_client_state_pregame ||
+		!network_game_client_cache_offer_valid ||
+		network_game_client_cache_settings_offer.weapon_set != network_game_client_cache_offer.weapon_set ||
+		!native_map_cache_selection_equal(&network_game_client_cache_settings_offer.selection,
+			&network_game_client_cache_offer.selection))
+	{
+		network_game_client_cache_settings_pending = FALSE;
+		network_game_client_cache_begin_pending = FALSE;
+		return TRUE;
+	}
+	if (now - network_game_client_cache_wait_started > 15UL * 60 * 1000)
+	{
+		network_game_client_cache_settings_pending = FALSE;
+		network_game_client_cache_begin_pending = FALSE;
+		platform_show_message("Halo: arsenal download timed out",
+			"The matching arsenal was not verified within 15 minutes. Retry joining after the download finishes, or leave and choose another game.");
+		display_error_when_main_menu_loaded(_error_network_failed_to_join_game);
+		return FALSE;
+	}
+	if (now - network_game_client_cache_heartbeat_time >= 15000)
+	{
+		word message[NETWORK_EXPANDED_CACHE_MESSAGE_SIZE / sizeof(word)];
+		network_game_client_cache_heartbeat_time = now;
+		network_expanded_cache_encode((byte *)message, NETWORK_EXPANDED_CACHE_DOWNLOAD_PENDING,
+			&network_game_client_cache_settings_offer.selection, network_game_client_cache_settings_offer.weapon_set);
+		if (!network_game_client_write(client->connection, message, sizeof(message), NULL, 1)) return FALSE;
+	}
+	if (now - network_game_client_cache_retry_time < 1000) return TRUE;
+	network_game_client_cache_retry_time = now;
+	settings = network_game_client_cache_settings;
+	if (!network_game_client_game_settings_updated(client, &settings))
+	{
+		network_game_client_cache_settings_pending = FALSE;
+		network_game_client_cache_begin_pending = FALSE;
+		return FALSE;
+	}
+	if (!network_game_client_cache_settings_pending && network_game_client_cache_begin_pending)
+	{
+		network_game_client_cache_begin_pending = FALSE;
+		return network_game_client_game_has_started(client);
+	}
+	return TRUE;
+}
+#endif
+
 static void network_game_client_update_precache_status(
 	struct network_game_client *client)
 {
 	unsigned long now = system_milliseconds();
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (network_game_client_cache_settings_pending) return;
+#endif
 
 	if (now - client->last_precache_time > 1000)
 	{
@@ -2609,6 +2999,13 @@ static void network_game_client_update_precache_status(
 
 		if (cache_files_give_time_to_precache(map_name))
 		{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			if (native_map_cache_uses_global_arsenal(&client->game.variant))
+			{
+				network_game_client_send_cache_ready(client);
+				return;
+			}
+#endif
 			struct message_client_map_is_precached_pregame map_is_precached = {0};
 			message_header *message;
 
@@ -2784,6 +3181,59 @@ static boolean network_game_client_idle_joining(
 			{
 				struct message_client_join_game_request join_game_request;
 				message_header *message;
+				word capability[NETWORK_PERFORMANCE_MESSAGE_SIZE / sizeof(word)];
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				unsigned supported = network_performance_runtime_supported_flags(TRUE, halo_performance_audio_available());
+#else
+				unsigned supported = network_performance_runtime_supported_flags(FALSE, FALSE);
+#endif
+
+				/* Earlier hosts reject unknown capability bits. Announce each
+				 * supported generation first: timer/markers, then timer audio,
+				 * then sound rules, input delay, Hardcore precision, Fiesta, camo and expanded weapons. Each host
+				 * retains the newest capability it understands before the
+				 * reliable join request. */
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY, 3);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported & 7);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported & 31);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported & 63);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported & 127);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported & 255);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				/* Version 1/2 hosts retain their final understood generation.
+				 * The separate expanded-weapon bit is never a saved aid flag. */
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported & 511);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported & 1023);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported & 2047);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
 
 				csmemset(&join_game_request, 0, sizeof(join_game_request));
 				network_game_generate_local_machine_name(join_game_request.machine_name);
@@ -2870,6 +3320,10 @@ static boolean network_game_client_idle_pregame(
 		if (network_connection_active(client->connection) &&
 			(boolean)network_connection_connected(client->connection))
 		{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			if (!network_game_client_retry_cache_settings(client)) return FALSE;
+			if (client->state != _network_game_client_state_pregame) return TRUE;
+#endif
 			network_game_client_update_precache_status(client);
 
 			if (!(success = network_connection_idle(client->connection, 15000, NULL)))
@@ -3074,7 +3528,8 @@ boolean network_game_client_advertised_game_compatible(
 	theirs = network_game_client_advertised_versions[game_index].version;
 	distributed = (network_game_client_advertised_versions[game_index].flags &
 		HALO_PORT_ADVERTISED_DISTRIBUTED_FLAG) != 0;
-	if (theirs == ours && distributed)
+	if (network_performance_version_compatible(theirs,
+		network_game_client_advertised_versions[game_index].flags, ours) && distributed)
 	{
 		network_event("joining a host of network version %u", theirs);
 		return TRUE;
@@ -3110,12 +3565,14 @@ boolean network_game_client_advertised_game_compatible(
 	return FALSE;
 }
 
-/* port: whether the advertised game is under way (HALO_PORT_ADVERTISED_IN_PROGRESS_FLAG),
-not in its lobby */
 boolean network_game_client_advertised_game_in_progress(
 	struct network_game_client *client,
 	struct network_advertised_game const *game)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	long directory_index = directory_game_index(game);
+	if (directory_index != NONE) return (boolean)directory_metadata[directory_index].in_progress;
+#endif
 	long game_index = client ? game - client->available_games : NONE;
 
 	return game_index >= 0 && game_index < MAXIMUM_NETWORK_ADVERTISED_GAMES &&
@@ -3196,4 +3653,3 @@ boolean network_game_client_set_team(
 	}
 	return success;
 }
-

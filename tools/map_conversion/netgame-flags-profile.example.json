@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "target_engine": "xbox",
+  "write_policy": "fresh_overlay",
+  "conversion": "append_reviewed_netgame_flags",
+  "origin": "Record the reviewed stock or authored marker source, target map and deliberate compatibility addition",
+  "converter_source_sha256": "REPLACE_WITH_REVIEWED_CONVERTER_SOURCE_SHA256",
+  "source": {
+    "tag": "levels/example/source.scenario",
+    "sha256": "REPLACE_WITH_REVIEWED_SOURCE_SCENARIO_SHA256",
+    "expected_selected_type_count": 3
+  },
+  "target": {
+    "tag": "levels/example/multiplayer.scenario",
+    "sha256": "REPLACE_WITH_REVIEWED_TARGET_SCENARIO_SHA256",
+    "expected_flag_count": 0,
+    "expected_selected_type_count": 0
+  },
+  "selection": {
+    "type": "race_track",
+    "usage_ids": [0, 1, 2]
+  }
+}

@@ -51,7 +51,9 @@ Each map can have, beside it in its folder:
 #define MAXIMUM_CUSTOM_EDITION_CAMPAIGNS 1024
 #define FIRST_CUSTOM_CAMPAIGN_DISPLAY_INDEX 0x6000
 /* room for the level list's Xbox levels (ui_widget_event_handler_functions.c has 13) */
-#define MAXIMUM_XBOX_LEVELS 16
+/* The original menu also offers the fork's validated Xbox-v5 community
+maps. They precede CE maps and keep their own loader/identity namespace. */
+#define MAXIMUM_XBOX_LEVELS 128
 
 /* the longest map file name whose level name
 (CUSTOM_EDITION_LEVEL_NAME_PREFIX and it) the game engine keeps whole */

@@ -320,6 +320,8 @@ void game_state_save(
 	game_state_globals.saved_game_valid = (game_state_write_to_file()!=FALSE);
 	main_start_time();
 	game_state_note_event("checkpoint saved");
+	if (debug_game_save)
+		console_printf(FALSE, "\ncheckpoint save %s\n", game_state_globals.saved_game_valid ? "completed" : "failed");
 
 	return;
 }
@@ -343,6 +345,7 @@ void game_state_port_restamp_revert_time(
 void game_state_revert(
 	void)
 {
+	boolean restored;
 	if (!game_state_globals.saved_game_valid && !recover_saved_games_hack)
 	{
 		main_reset_map();
@@ -352,14 +355,16 @@ void game_state_revert(
 
 	game_state_note_event("checkpoint revert");
 	game_state_call_before_load_procs();
-	/* port: a file that is not a saved game of this build is not taken, and
-	the map starts over */
-	if (!game_state_read_from_file())
+	/* Reject checkpoints whose build layout no longer matches this version. */
+	restored = game_state_read_from_file();
+	if (!restored)
 	{
 		game_state_globals.saved_game_valid = FALSE;
 		main_reset_map();
 	}
 	game_state_call_after_load_procs();
+	if (debug_game_save)
+		console_printf(FALSE, "\ncheckpoint revert %s\n", restored ? "completed" : "failed");
 
 	return;
 }

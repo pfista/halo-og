@@ -590,12 +590,19 @@ struct network_game *network_game_server_get_game(struct network_game_server *se
 #include "text/unicode.h"
 #include "units/bipeds.h"
 #include "units/units.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "game/starting_equipment.h"
+#include "game/fiesta_weapon_pool.h"
+#endif
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
 /* port/linux/game/network_distributed.c's */
 void network_distributed_player_killed(long *killing_player_index, long *killing_object_index,
 	long dead_player_index, boolean *friendly_fire);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+void network_distributed_player_teleported(long player_index);
+#endif
 /* port/linux/game/network_damage.c's */
 boolean network_damage_killer_score(long player_index, long *score);
 
@@ -679,6 +686,10 @@ enum game_engine_weapons
 	_game_engine_weapons_covenant,
 	_game_engine_weapons_classic,
 	_game_engine_weapons_heavy,
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	_game_engine_weapons_uncut = GAME_WEAPON_SET_UNCUT,
+	_game_engine_weapons_all = GAME_WEAPON_SET_ALL,
+#endif
 	NUMBER_OF_GAME_ENGINE_WEAPON_SETS,
 };
 
@@ -850,6 +861,10 @@ static void game_engine_rasterize_in_game_score(
 
 static void game_engine_predict_resources(
 	void);
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static void handle_fiesta_starting_equipment(long unit_index);
+#endif
 
 static void game_engine_verify_current_map(
 	void);
@@ -1089,7 +1104,6 @@ static void game_engine_generate_title_string(
 {
 	wchar_t *secondary_string;
 	wchar_t life_string[128];
-	wchar_t time_left_string[160];
 	wchar_t score_string[256];
 	long string_list_index;
 	wchar_t *format_string;
@@ -1155,24 +1169,6 @@ static void game_engine_generate_title_string(
 			secondary_string = life_string;
 			break;
 		}
-	}
-
-	/* port: the gametype's time limit's time left (game_variant_options) */
-	if (game_variant_options_get()->time_limit > 0 &&
-		game_engine_globals.postgame_state == game_engine_mode_active)
-	{
-		long left = game_variant_options_get()->time_limit * 60L * TICKS_PER_SECOND - game_time_get();
-		wchar_t time_string[32];
-
-		ticks_to_unicode_time_string(MAX(left, 0), NUMBEROF(time_string), time_string);
-		if (secondary_string[0] && secondary_string != time_left_string)
-		{
-			usnprintf(time_left_string, NUMBEROF(time_left_string), L"%s, %s left", secondary_string, time_string);
-		}
-		else
-			usnprintf(time_left_string, NUMBEROF(time_left_string), L"%s left", time_string);
-		time_left_string[NUMBEROF(time_left_string) - 1] = 0;
-		secondary_string = time_left_string;
 	}
 
 	if (game_engine_globals.postgame_state == game_engine_mode_postgame_delay)
@@ -1675,469 +1671,29 @@ static long select_players_to_display(
 	return MIN(maximum_count, player_count);
 }
 
-/* port: network co-op's scoreboard list (game_engine_rasterize_scoreboard):
-the players in the game, as they joined */
-static long populate_campaign_player_buffer(
-	struct statistic_buffer *statistic_buffer)
-{
-	struct data_iterator iterator;
-	struct player_datum *player;
-	long player_count = 0;
-
-	data_iterator_new(&iterator, player_data);
-	while ((player = data_iterator_next(&iterator)) != NULL && player_count < MULTIPLAYER_MAXIMUM_PLAYERS)
-	{
-		if (player->quit_out_of_game)
-			continue;
-		csmemset(&statistic_buffer[player_count], 0, sizeof(*statistic_buffer));
-		statistic_buffer[player_count++].player_index = iterator.datum_index;
-	}
-
-	return player_count;
-}
-
-/* port: the scoreboard of a full-screen view (game_engine_rasterize_in_game_score;
-a split-screen view's keeps the Xbox's six rows): SCOREBOARD_SCALE times the
-HUD's text, centred, on a panel (display.scoreboard_background). A team game's
-players in a column for each team (display.scoreboard_team_layout), else in
-order of score in one column, or two when one has too few rows; each with
-the player's ping in a network game (the host's measure:
-network_distributed.c). More players than a page are scrolled to with the
-mouse wheel and Page Up/Down (platform_scoreboard_scroll), a footer telling
-which are shown; opened, it shows the viewer's own player's page. Network
-co-op's campaign, with no game engine, lists its players as they joined,
-with only their names and pings. */
-enum
-{
-	/* the rows' widths (in the scoreboard's text, before it is scaled):
-	place, name, score, ping (the last as wide as "Ping" or three digits,
-	so that the columns centred are their text centred) */
-	SCOREBOARD_PLACE_WIDTH = 55,
-	SCOREBOARD_NAME_WIDTH = 150,
-	SCOREBOARD_SCORE_WIDTH = 95,
-	SCOREBOARD_PING_WIDTH = 40,
-	SCOREBOARD_COLUMN_WIDTH = SCOREBOARD_PLACE_WIDTH + SCOREBOARD_NAME_WIDTH + SCOREBOARD_SCORE_WIDTH + SCOREBOARD_PING_WIDTH,
-	SCOREBOARD_COLUMN_GAP = 40,
-	/* the rows a column has: as many as fit between 6 rows of the screen
-	from its top and 2 from its bottom (the motion sensor); the scoreboard
-	is centred on the screen, but never nearer its top than 4 rows (the
-	HUD's shields and health; its messages, such as "hold BACK for score",
-	are hidden while the scoreboard shows) */
-	SCOREBOARD_LAYOUT_TOP_ROWS = 6,
-	SCOREBOARD_BOTTOM_ROWS = 2,
-	SCOREBOARD_MINIMUM_TOP_ROWS = 4,
-	/* the entries (or a team column's rows) a notch of the wheel scrolls */
-	SCOREBOARD_WHEEL_STEP = 3,
-};
-
-#define SCOREBOARD_SCALE 0.75f
-
-/* network_distributed.c's */
-long distributed_player_ping(short player_index);
-/* port_config.c's */
-int config_boolean(const char *name);
-const char *config_string(const char *name);
-unsigned long config_changes(void);
-/* cinematics.c's */
-void draw_quad(rectangle2d *rectangle, pixel32 color);
-
-/* display.scoreboard_background(_color): the panel behind the scoreboard's
-text, its colour "red, green, blue, alpha" (0 to 255 each), or 0 for none */
-static pixel32 scoreboard_background_color(
-	void)
-{
-	static unsigned long read_at = (unsigned long)-1;
-	static pixel32 color = 0;
-
-	/* (read again when Settings changes it) */
-	if (read_at != config_changes())
-	{
-		char const *text = config_string("display.scoreboard_background_color");
-		long parts[4] = { 16, 16, 16, 150 };
-		short part;
-
-		read_at = config_changes();
-		color = 0;
-		if (!config_boolean("display.scoreboard_background"))
-			return color;
-		for (part = 0; part < 4 && text && *text; part++)
-		{
-			long value = 0;
-			boolean digits = FALSE;
-
-			while (*text == ' ' || *text == ',')
-				text++;
-			while (*text >= '0' && *text <= '9')
-			{
-				value = value * 10 + (*text++ - '0');
-				digits = TRUE;
-			}
-			if (digits)
-				parts[part] = PIN(value, 0, 255);
-			while (*text && *text != ',')
-				text++;
-		}
-		color = ((pixel32)parts[3] << 24) | ((pixel32)parts[0] << 16) | ((pixel32)parts[1] << 8) | (pixel32)parts[2];
-	}
-
-	return color;
-}
-
-/* a row of the scoreboard: its text (tab separated) from the column's left
-(tabs: the column's stops), on the row below the title's (at top) */
-static void scoreboard_draw_row(
-	wchar_t const *string,
-	boolean brighten,
-	real_argb_color const *row_color,
-	long row_index,
-	short top,
-	short left,
-	boolean tabs)
-{
-	rectangle2d bounds = render.camera.window_bounds;
-	long font_index = hud_get_font_index();
-	/* (brightened as a copy: the team colours serve every row) */
-	real_argb_color color = *row_color;
-	short tab_stops[4];
-	struct font_header *font;
-	long line_height;
-
-	if (font_index == NONE)
-		return;
-	offset_rectangle2d(&bounds, -render.camera.viewport_bounds.x0, -render.camera.viewport_bounds.y0);
-	font = font_definition_get(font_index);
-	line_height = font->leading_height + font->descending_height + font->ascending_height;
-	if (brighten)
-	{
-		color.red = MIN(color.red + 0.4f, 1.0f);
-		color.green = MIN(color.green + 0.4f, 1.0f);
-		color.blue = MIN(color.blue + 0.4f, 1.0f);
-	}
-	tab_stops[0] = left;
-	tab_stops[1] = (short)(left + SCOREBOARD_PLACE_WIDTH);
-	tab_stops[2] = (short)(tab_stops[1] + SCOREBOARD_NAME_WIDTH);
-	tab_stops[3] = (short)(tab_stops[2] + SCOREBOARD_SCORE_WIDTH);
-	draw_string_set_tab_stops(tabs ? tab_stops : NULL, tabs ? 4 : 0);
-	/* (the row as wide as the screen once scaled) */
-	bounds.x1 = (short)(bounds.x0 + (bounds.x1 - bounds.x0) / SCOREBOARD_SCALE);
-	if (!tabs)
-		bounds.x0 = left;
-	bounds.y0 = (short)(top + row_index * line_height);
-	bounds.y1 = (short)(bounds.y0 + line_height);
-	draw_string_set_draw_mode(font_index, NONE, 0, 0, &color);
-	rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, string);
-	draw_string_set_tab_stops(NULL, 0);
-
-	return;
-}
-
-/* sdl_platform.c's: the wheel's and Page Up/Down's moves of the open
-scoreboard (notches and pages, down positive) */
-void platform_scoreboard_scroll(int open, long *notches, long *pages);
-
-/* the scoreboard's scroll (entries of one list, or rows of the team
-columns), and whether it showed last frame (opened, it shows the viewer's
-own player) */
-static long scoreboard_scroll = 0;
-static boolean scoreboard_open = FALSE;
-
-/* display.scoreboard_team_layout: a team game's players in a column for each
-team ("teams", the red team's on the left), or all in order of score
-("score") */
-static boolean scoreboard_team_columns(
-	void)
-{
-	static short setting = NONE;
-	static unsigned long read_at = (unsigned long)-1;
-
-	if (read_at != config_changes())
-	{
-		char const *value = config_string("display.scoreboard_team_layout");
-
-		read_at = config_changes();
-		setting = value && !csstrcmp(value, "score") ? FALSE : TRUE;
-	}
-
-	return (boolean)setting;
-}
-
-/* the scoreboard closed: its scroll forgotten, the wheel the weapons' again */
-static void game_engine_scoreboard_closed(
-	void)
-{
-	if (scoreboard_open)
-	{
-		scoreboard_open = FALSE;
-		platform_scoreboard_scroll(FALSE, NULL, NULL);
-	}
-}
-
-static void game_engine_rasterize_scoreboard(
+/* Co-op has no multiplayer engine or ranked scores. Keep the authored
+Xbox HUD layout and list its players without invoking those callbacks. */
+static void game_engine_rasterize_campaign_score(
 	long player_index,
 	real alpha)
 {
-	struct statistic_buffer ranked[MULTIPLAYER_MAXIMUM_PLAYERS];
-	/* (the players of each column's list, as indices into ranked: a team
-	game's by team, else all in one list over both columns) */
-	short lists[2][MULTIPLAYER_MAXIMUM_PLAYERS];
-	long list_counts[2] = { 0, 0 };
-	wchar_t row_string[256];
-	wchar_t score_string[256];
-	wchar_t title_string[80];
-	wchar_t ping_string[16];
-	real_argb_color text_color;
-	real_argb_color team_colors[2];
+	struct data_iterator iterator;
+	struct player_datum *player;
 	real_argb_color color;
-	rectangle2d bounds = render.camera.window_bounds;
-	boolean has_teams = game_engine_has_teams();
-	boolean network = game_connection() == _game_connection_network_client ||
-		game_connection() == _game_connection_network_server;
-	boolean campaign = !game_engine;
-	boolean team_columns;
-	long font_index = hud_get_font_index();
-	long string_list_index;
-	long line_height;
-	long rows;
-	long columns;
-	long ranked_count;
-	long total;
-	long page;
-	long shown_rows;
-	long index;
-	short width;
-	short left;
-	short top;
-	wchar_t *column_name;
-	wchar_t *score_name;
+	wchar_t row_string[256];
+	long row = 2;
 
-	if (font_index == NONE)
-		return;
-	offset_rectangle2d(&bounds, -render.camera.viewport_bounds.x0, -render.camera.viewport_bounds.y0);
-	{
-		struct font_header *font = font_definition_get(font_index);
-
-		line_height = font->leading_height + font->descending_height + font->ascending_height;
-	}
-	if (line_height <= 0)
-		return;
-	/* (laid out at full size, then drawn scaled about the title's top left:
-	the screen holds 1/SCOREBOARD_SCALE as much) */
-	width = (short)((bounds.x1 - bounds.x0) / SCOREBOARD_SCALE);
-	rows = (long)((bounds.y1 - SCOREBOARD_LAYOUT_TOP_ROWS * line_height) / SCOREBOARD_SCALE / line_height) - 2 -
-		SCOREBOARD_BOTTOM_ROWS;
-	rows = MAX(rows, 1);
-	if (campaign)
-	{
-		ranked_count = populate_campaign_player_buffer(ranked);
-	}
-	else
-	{
-		statistic_buffer_in_game_only = TRUE;
-		ranked_count = populate_statistic_buffer(ranked, _postgame_statistic_ranking, FALSE);
-		statistic_buffer_in_game_only = FALSE;
-	}
-	team_columns = has_teams && scoreboard_team_columns() && width >= 2 * SCOREBOARD_COLUMN_WIDTH + SCOREBOARD_COLUMN_GAP;
-	for (index = 0; index < ranked_count; index++)
-	{
-		struct player_datum *player = player_try_and_get(ranked[index].player_index);
-		short list = team_columns && player ? (short)PIN(player->team_index, 0, 1) : 0;
-
-		lists[list][list_counts[list]++] = (short)index;
-	}
-	/* (a page: the rows of both team columns, or both columns of one list;
-	the scroll in rows of the team columns, or entries of the list) */
-	if (team_columns)
-	{
-		columns = 2;
-		total = MAX(list_counts[0], list_counts[1]);
-		page = rows;
-	}
-	else
-	{
-		columns = list_counts[0] > rows && width >= 2 * SCOREBOARD_COLUMN_WIDTH + SCOREBOARD_COLUMN_GAP ? 2 : 1;
-		total = list_counts[0];
-		page = rows * columns;
-	}
-	/* (opened, at the viewer's own player's page; then where the wheel and
-	Page Up/Down take it) */
-	{
-		long notches = 0;
-		long pages = 0;
-
-		platform_scoreboard_scroll(TRUE, &notches, &pages);
-		if (!scoreboard_open)
-		{
-			scoreboard_open = TRUE;
-			scoreboard_scroll = 0;
-			for (index = 0; index < 2; index++)
-			{
-				long position;
-
-				for (position = 0; position < list_counts[index]; position++)
-				{
-					if (ranked[lists[index][position]].player_index == player_index)
-						scoreboard_scroll = position / page * page;
-				}
-			}
-		}
-		scoreboard_scroll += notches * SCOREBOARD_WHEEL_STEP + pages * page;
-		scoreboard_scroll = PIN(scoreboard_scroll, 0, MAX(total - page, 0));
-	}
-	left = (short)(bounds.x0 + (width - (columns * SCOREBOARD_COLUMN_WIDTH + (columns - 1) * SCOREBOARD_COLUMN_GAP)) / 2);
-	/* (centred on the rows shown: the title's, the heading's, the longest
-	column's, and the footer telling where the scroll is) */
-	shown_rows = MIN(rows, total);
-	if (total > page)
-		shown_rows++;
-	{
-		real height = (2 + shown_rows) * line_height * SCOREBOARD_SCALE;
-
-		top = (short)(bounds.y0 + ((bounds.y1 - bounds.y0) - height) / 2);
-		top = MAX(top, (short)(SCOREBOARD_MINIMUM_TOP_ROWS * line_height));
-		/* (the panel behind it, half a row beyond its text, fading with it) */
-		{
-			pixel32 background = scoreboard_background_color();
-			real padding = 0.5f * line_height * SCOREBOARD_SCALE;
-			real block_width = (columns * SCOREBOARD_COLUMN_WIDTH + (columns - 1) * SCOREBOARD_COLUMN_GAP) * SCOREBOARD_SCALE;
-			real block_left = bounds.x0 + (left - bounds.x0) * SCOREBOARD_SCALE;
-
-			if (background >> 24)
-			{
-				rectangle2d panel;
-				long panel_alpha = (long)((background >> 24) * PIN(alpha, 0.0f, 1.0f) + 0.5f);
-
-				panel.x0 = (short)(block_left - padding);
-				/* (the ping, nearly as wide as its column, given room) */
-				panel.x1 = (short)(block_left + block_width + padding + 8.0f * SCOREBOARD_SCALE);
-				panel.y0 = (short)(top - padding);
-				panel.y1 = (short)(top + height + padding);
-				draw_quad(&panel, ((pixel32)panel_alpha << 24) | (background & 0x00FFFFFF));
-			}
-		}
-	}
-	rasterizer_text_set_scale(SCOREBOARD_SCALE, (real)bounds.x0, (real)top);
-
-	team_colors[0].alpha = alpha;
-	team_colors[0].red = 0.6f;
-	team_colors[0].green = 0.3f;
-	team_colors[0].blue = 0.3f;
-	team_colors[1].alpha = alpha;
-	team_colors[1].red = 0.3f;
-	team_colors[1].green = 0.3f;
-	team_colors[1].blue = 0.6f;
-
-	if (campaign)
-		usprintf(title_string, L"Co-op");
-	else
-		game_engine_generate_title_string(title_string, player_index);
 	color.alpha = alpha;
 	color.red = color.green = color.blue = 0.7f;
-	scoreboard_draw_row(title_string, FALSE, &color, 0, top, left, FALSE);
-
-	string_list_index = tag_loaded('ustr', "ui\\multiplayer_game_text");
-	column_name = string_list_index != NONE && !campaign ? unicode_string_list_get_string(string_list_index, 0x43) : L"";
-	score_name = string_list_index != NONE ? unicode_string_list_get_string(string_list_index, 0x44) : L"";
-	score_string[0] = 0;
-	if (!campaign)
-		game_engine->format_score_name(score_string);
-	usprintf(row_string, L"\t%s\t%s\t%s\t%s", column_name, score_name, score_string, network ? L"Ping" : L"");
+	rasterize_in_game_score_draw_line(L"Co-op", FALSE, &color, 0);
+	data_iterator_new(&iterator, player_data);
+	while ((player = data_iterator_next(&iterator)) != NULL && row < 8)
 	{
-		long column;
-
-		for (column = 0; column < columns; column++)
-		{
-			/* (a team column's heading in its team's colour, brightened) */
-			if (team_columns)
-			{
-				color = team_colors[column];
-				color.red = MIN(color.red + 0.25f, 1.0f);
-				color.green = MIN(color.green + 0.25f, 1.0f);
-				color.blue = MIN(color.blue + 0.25f, 1.0f);
-			}
-			else
-			{
-				color.alpha = alpha;
-				color.red = color.green = color.blue = 0.5f;
-			}
-			scoreboard_draw_row(row_string, FALSE, &color, 1, top,
-				(short)(left + column * (SCOREBOARD_COLUMN_WIDTH + SCOREBOARD_COLUMN_GAP)), TRUE);
-		}
-	}
-
-	/* each slot of the page: a team column's row, or a place in the list */
-	for (index = 0; index < rows * columns; index++)
-	{
-		long column = team_columns ? index % 2 : index / rows;
-		long row = team_columns ? index / 2 : index % rows;
-		long list = team_columns ? column : 0;
-		long position = scoreboard_scroll + (team_columns ? row : index);
-		struct statistic_buffer *entry;
-		struct player_datum *player;
-		wchar_t *status_string;
-		real_argb_color *row_color;
-
-		if (row >= rows || position >= list_counts[list])
+		if (player->quit_out_of_game)
 			continue;
-		entry = &ranked[lists[list][position]];
-		player = player_try_and_get(entry->player_index);
-		if (!player)
-			continue;
-		color = *hud_get_text_color(&text_color);
-		color.alpha = alpha;
-		score_string[0] = 0;
-		status_string = score_string;
-		if (!campaign)
-		{
-			game_engine->format_player_score(entry->player_index, score_string);
-			if (game_engine_player_is_out_of_lives(entry->player_index))
-				status_string = string_list_index != NONE ? unicode_string_list_get_string(string_list_index, 0x8A) : L"";
-			else if (player->quit_out_of_game)
-				status_string = string_list_index != NONE ? unicode_string_list_get_string(string_list_index, 0x8B) : L"";
-		}
-		ping_string[0] = 0;
-		if (network)
-		{
-			long ping = distributed_player_ping((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(entry->player_index));
-
-			/* (three digits at most: its column's width) */
-			if (ping == NONE)
-				usprintf(ping_string, L"-");
-			else if (ping > 999)
-				usprintf(ping_string, L"999+");
-			else
-				usprintf(ping_string, L"%ld", ping);
-		}
-		usprintf(
-			row_string,
-			L"\t%s\t%s\t%s\t%s",
-			campaign ? L"" : get_place_string(entry),
-			player->name,
-			status_string,
-			ping_string);
-		row_color = has_teams ? &team_colors[PIN(player->team_index, 0, 1)] : &color;
-		scoreboard_draw_row(
-			row_string,
-			player_index == entry->player_index,
-			row_color,
-			2 + row,
-			top,
-			(short)(left + column * (SCOREBOARD_COLUMN_WIDTH + SCOREBOARD_COLUMN_GAP)),
-			TRUE);
+		usprintf(row_string, L"\t\t%s\t", player->name);
+		rasterize_in_game_score_draw_line(row_string, player_index == iterator.datum_index, &color, row++);
 	}
-	/* (where the scroll is, and how to move it) */
-	if (total > page)
-	{
-		long first = scoreboard_scroll + 1;
-		long last = MIN(scoreboard_scroll + page, total);
-
-		color.alpha = alpha;
-		color.red = color.green = color.blue = 0.6f;
-		usprintf(row_string, L"%ld-%ld of %ld   (Page Up / Page Down, mouse wheel)", first, last, total);
-		scoreboard_draw_row(row_string, FALSE, &color, 2 + rows, top, left, FALSE);
-	}
-	rasterizer_text_set_scale(1.0f, 0.0f, 0.0f);
-
-	return;
 }
 
 static void game_engine_rasterize_in_game_score(
@@ -2159,21 +1715,17 @@ static void game_engine_rasterize_in_game_score(
 	wchar_t *column_name;
 	wchar_t *score_name;
 
-	/* port: a full-screen view's its own, as is the campaign's
-	(game_engine_rasterize_scoreboard) */
-	if (local_player_count() <= 1 || !game_engine)
+	if (!game_engine)
 	{
-		game_engine_rasterize_scoreboard(player_index, alpha);
+		game_engine_rasterize_campaign_score(player_index, alpha);
 		return;
 	}
 	game_engine_generate_title_string(title_string, player_index);
-	statistic_buffer_in_game_only = TRUE;
 	entry_count = select_players_to_display(
 		_postgame_statistic_ranking,
 		player_index,
 		entries,
 		NUMBEROF(entries));
-	statistic_buffer_in_game_only = FALSE;
 
 	color.alpha = alpha;
 	color.red = 0.7f;
@@ -3568,11 +3120,6 @@ static void game_engine_post_rasterize_in_game(
 
 		game_engine_rasterize_in_game_score(player_index, alpha);
 	}
-	else if (local_player_count() <= 1)
-	{
-		/* (port: the full-screen scoreboard's scroll forgotten) */
-		game_engine_scoreboard_closed();
-	}
 
 	game_engine_globals.hud_message_timers[local_player_index] = fade;
 
@@ -3684,23 +3231,6 @@ boolean game_engine_showing_postgame(
 	return game_engine != NULL && game_engine_globals.postgame_state == game_engine_mode_postgame_rasterize;
 }
 
-void game_variant_options_default(
-	struct game_variant const *variant,
-	struct game_variant_options *options)
-{
-	csmemset(options, 0, sizeof(*options));
-	options->friendly_fire = _friendly_fire_on;
-	options->loadout = _loadout_category;
-	options->primary_weapon = _loadout_weapon_assault_rifle;
-	options->secondary_weapon = _loadout_weapon_pistol;
-	options->radar_players = variant &&
-		!TEST_FLAG(variant->universal_variant.flags, _game_variant_draw_object_in_motion_sensor_bit) ?
-		_radar_players_none : _radar_players_all;
-	options->vehicle_set[0] = options->vehicle_set[1] =
-		variant ? (byte)variant->universal_variant.vehicle_set : 0;
-
-	return;
-}
 
 boolean game_engine_force_single_screen(
 	void)
@@ -4170,6 +3700,10 @@ static void game_engine_update_teleporter(
 				0.0f,
 				_netgame_flag_teleporter_source,
 				NONE);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			/* Native prediction history cannot span this discontinuity. */
+			network_distributed_player_teleported(player_index);
+#endif
 		}
 		return;
 	}
@@ -6830,6 +6364,21 @@ static void game_engine_predict_resources(
 			game_engine_remap_weapon(weapon_indices[weapon_index]));
 	}
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (starting_equipment_get(&global_variant) == _starting_equipment_fiesta)
+	{
+		struct fiesta_weapon_iterator iterator;
+		long definition_index;
+		fiesta_weapon_iterator_new(&iterator, global_variant.universal_variant.weapon_set);
+		/* A global arsenal can lock the texture cache by prewarming every
+		 * candidate in one frame. Ordinary object/first-person prediction
+		 * loads the actual spawned pair. Keep the original pool's prewarm. */
+		if (!iterator.global_arsenal)
+			while ((definition_index = fiesta_weapon_iterator_next(&iterator)) != NONE)
+				object_definition_predict(definition_index);
+	}
+#endif
+
 	return;
 }
 
@@ -8416,6 +7965,114 @@ static void game_engine_update_item_spawn(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static void handle_fiesta_starting_equipment(long unit_index)
+{
+	struct fiesta_weapon_iterator iterator;
+	long definition_index;
+	long definitions[2] = {NONE, NONE};
+	long weapons[2] = {NONE, NONE};
+	long previous_weapons[MAXIMUM_WEAPONS_PER_UNIT];
+	long previous_last_used[MAXIMUM_WEAPONS_PER_UNIT];
+	struct unit_datum *unit;
+	short previous_current;
+	short previous_desired;
+	short count;
+	short first;
+	short second;
+	short index;
+	short slot;
+	short weapon_number;
+
+	if (!game_engine_running() || network_game_distributed_client() || unit_index == NONE ||
+		starting_equipment_get(&global_variant) != _starting_equipment_fiesta)
+		return;
+	count = 0;
+	fiesta_weapon_iterator_new(&iterator, global_variant.universal_variant.weapon_set);
+	while (fiesta_weapon_iterator_next(&iterator) != NONE) count++;
+	if (count < 2)
+		return; /* Keep the map's generic equipment when a pair is unavailable. */
+	unit = unit_get(unit_index);
+	for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+	{
+		if (unit->unit.weapon_object_indices[slot] != NONE &&
+			weapon_is_flag(unit->unit.weapon_object_indices[slot]))
+			return; /* Objective weapons belong to their engine, never this pool. */
+	}
+
+	/* Two bounded draws select an ordered pair without rejection sampling or
+	 * duplicate weapons. Non-Fiesta spawns consume no additional shared RNG. */
+	first = seed_random_range(get_global_random_seed_address(), 0, count);
+	second = seed_random_range(get_global_random_seed_address(), 0, count - 1);
+	if (second >= first)
+		second++;
+	/* Walk the same stable pool again to resolve the two chosen ordinals.
+	 * This avoids a fixed-size array truncating All on larger custom maps. */
+	fiesta_weapon_iterator_new(&iterator, global_variant.universal_variant.weapon_set);
+	index = 0;
+	while ((definition_index = fiesta_weapon_iterator_next(&iterator)) != NONE)
+	{
+		if (index == first) definitions[0] = definition_index;
+		if (index == second) definitions[1] = definition_index;
+		index++;
+	}
+	for (weapon_number = 0; weapon_number < 2; weapon_number++)
+	{
+		struct object_placement_data placement_data;
+		object_placement_data_new(&placement_data,
+			definitions[weapon_number], unit_index);
+		SET_FLAG(placement_data.flags, _new_object_skip_variant_remap_bit, TRUE);
+		weapons[weapon_number] = object_new(&placement_data);
+		if (weapons[weapon_number] == NONE ||
+			!unit_can_use_weapon(unit_index, weapons[weapon_number]))
+			break;
+	}
+	if (weapon_number < 2)
+	{
+		for (weapon_number = 0; weapon_number < 2; weapon_number++)
+			if (weapons[weapon_number] != NONE)
+				object_delete(weapons[weapon_number]);
+		return;
+	}
+
+	/* Creation and attachment can fail. Retain the old objects until both
+	 * new weapons are attached, and restore every inventory field on failure.
+	 * unit_delete_all_weapons intentionally keeps the current weapon, so it
+	 * cannot replace this complete loadout safely. */
+	previous_current = unit->unit.current_weapon_index;
+	previous_desired = unit->unit.desired_weapon_index;
+	for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+	{
+		previous_weapons[slot] = unit->unit.weapon_object_indices[slot];
+		previous_last_used[slot] = unit->unit.weapon_last_used_at_game_time[slot];
+		unit->unit.weapon_object_indices[slot] = NONE;
+		unit->unit.weapon_last_used_at_game_time[slot] = 0;
+	}
+	unit->unit.current_weapon_index = NONE;
+	unit->unit.desired_weapon_index = NONE;
+	if (!unit_add_weapon_to_inventory(unit_index, weapons[0], _unit_add_weapon_normal) ||
+		!unit_add_weapon_to_inventory(unit_index, weapons[1], _unit_add_weapon_normal))
+	{
+		object_delete(weapons[0]);
+		object_delete(weapons[1]);
+		for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+		{
+			unit->unit.weapon_object_indices[slot] = previous_weapons[slot];
+			unit->unit.weapon_last_used_at_game_time[slot] = previous_last_used[slot];
+		}
+		unit->unit.current_weapon_index = previous_current;
+		unit->unit.desired_weapon_index = previous_desired;
+		return;
+	}
+	/* Only a committed pair may change the local player's desired selection. */
+	player_control_set_desired_weapon(unit_index, 0);
+	unit->unit.desired_weapon_index = 0;
+	for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+		if (previous_weapons[slot] != NONE)
+			object_delete(previous_weapons[slot]);
+}
+#endif
+
 static void handle_custom_starting_equipment(
 	long unit_index,
 	long *fragmentation_grenade_count,
@@ -8619,13 +8276,24 @@ void game_engine_postspawn_player_update(
 		{
 			game_engine_give_loadout(unit_index);
 		}
-		else if (!TEST_FLAG(global_variant.universal_variant.flags, _game_variant_generic_starting_equipment_bit))
+		else if (!TEST_FLAG(global_variant.universal_variant.flags, _game_variant_generic_starting_equipment_bit)
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			&& starting_equipment_get(&global_variant) != _starting_equipment_fiesta
+#endif
+			)
 		{
 			handle_custom_starting_equipment(
 				unit_index,
 				&starting_fragmentation_grenade_count,
 				&starting_plasma_grenade_count);
 		}
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* Shared custom loadouts remain authoritative even if a received or
+		 * imported variant also contains Halo OG's optional Fiesta extension. */
+		if (game_variant_options_get()->loadout != _loadout_custom)
+			handle_fiesta_starting_equipment(unit_index);
+#endif
 
 		if (game_engine_infinite_grenades_internal())
 		{

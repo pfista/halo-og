@@ -88,6 +88,10 @@ symbols in this file:
 #include "network_game_globals.h"
 #include "network_messages.h"
 #include "network_game_manager.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "halo_expanded_cache.h"
+void platform_show_message(char const *title, char const *message);
+#endif
 #include "network_game_ui.h"
 #include "networking/network_server_manager.h"
 #include "objects/objects.h"
@@ -164,6 +168,10 @@ struct game_options
 
 typedef char network_game_players_offset_assert[
 	offsetof(struct network_game, players) == HALO_PORT_NETWORK_GAME_PLAYERS_OFFSET ? 1 : -1];
+typedef char network_game_variant_options_offset_assert[
+	offsetof(struct network_game, variant_options) == HALO_PORT_NETWORK_GAME_VARIANT_OPTIONS_OFFSET ? 1 : -1];
+typedef char network_game_local_data_offset_assert[
+	offsetof(struct network_game, local_data) == HALO_PORT_NETWORK_GAME_LOCAL_DATA_OFFSET ? 1 : -1];
 typedef char network_game_size_assert[
 	sizeof(struct network_game) == HALO_PORT_NETWORK_GAME_SIZE ? 1 : -1];
 
@@ -742,6 +750,24 @@ boolean network_game_create_game_objects(
 	game_options_new(&options);
 	csstrncpy(options.map_name, game->map.name, sizeof(game->map.name) - 1);
 	options.difficulty = game->difficulty;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	{
+		struct native_map_cache_selection selection;
+		struct native_map_cache_selection const *accepted = native_map_cache_current();
+		unsigned char const *expected = native_map_cache_uses_global_arsenal(&game->variant) && accepted->expanded ? accepted->sha256 : NULL;
+		if (!native_map_cache_prepare_expected(game->map.name, &game->variant, expected, &selection, TRUE)) return FALSE;
+		/* Settings accepted this exact asset identity before readiness. Replacing
+		   a valid cache on disk cannot change an already accepted match. */
+		if (selection.expanded &&
+			!native_map_cache_selection_equal(&selection, native_map_cache_current()))
+		{
+			platform_show_message("Halo: Fiesta cache changed",
+				"The weapon arsenal changed after this match was selected. Return to the lobby and select the game type again before starting.");
+			return FALSE;
+		}
+		native_map_cache_select(&selection);
+	}
+#endif
 
 	switch (game_connection())
 	{

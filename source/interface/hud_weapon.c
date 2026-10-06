@@ -59,6 +59,11 @@ symbols in this file:
 #include "game/game.h"
 #include "game/game_globals.h"
 #include "game/players.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "render/teammate_view.h"
+#else
+#define teammate_view_hud_player_count local_player_count
+#endif
 #include "interface/hud_draw.h"
 #include "interface/hud.h"
 #include "interface/hud_definitions.h"
@@ -613,7 +618,7 @@ static void render_grenade_hud(
 		draw_flags,
 		_hud_draw_disabled_bit,
 		unit->unit.grenade_counts[unit->unit.current_grenade_index] == 0);
-	SET_FLAG(draw_flags, _hud_draw_in_multiplayer_bit, local_player_count() > 1);
+	SET_FLAG(draw_flags, _hud_draw_in_multiplayer_bit, teammate_view_hud_player_count() > 1);
 
 	if (TEST_FLAG(draw_flags, _hud_draw_flashing_bit))
 	{
@@ -679,7 +684,7 @@ static void render_grenade_hud(
 			overlay_flags,
 			hud_state->last_grenade_flash_time,
 			draw_flags,
-			local_player_count() > 1);
+			teammate_view_hud_player_count() > 1);
 	}
 
 finished:
@@ -978,8 +983,8 @@ static void crosshairs_draw(
 		struct weapon_hud_interface_definition *root_definition = weapon_hud_interface_definition_get(hud_index);
 		short map_type_flags = global_scenario_get()->type != _scenario_type_main_menu;
 
-		SET_FLAG(map_type_flags, 1, local_player_count() == 1);
-		SET_FLAG(map_type_flags, 2, local_player_count() > 1);
+		SET_FLAG(map_type_flags, 1, teammate_view_hud_player_count() == 1);
+		SET_FLAG(map_type_flags, 2, teammate_view_hud_player_count() > 1);
 		if (unit_index != NONE)
 		{
 			struct unit_datum *unit = unit_get(unit_index);
@@ -1015,7 +1020,7 @@ static void crosshairs_draw(
 			{
 				struct weapon_hud_interface_definition *definition = weapon_hud_hierarchy[definition_index];
 				struct hud_absolute_placement_definition absolute_placement = { _hud_anchor_center };
-				boolean in_multiplayer = local_player_count() > 1;
+				boolean in_multiplayer = teammate_view_hud_player_count() > 1;
 				short crosshair_index;
 
 				for (crosshair_index = 0;
@@ -1050,7 +1055,7 @@ static void crosshairs_draw(
 								(!TEST_FLAG(item->flags, _hud_crosshair_only_on_default_zoom_bit) ||
 									crosshair->states[_crosshair_state_zoom].value.reference_data == 0))
 							{
-								real scale = local_player_count() > 1 &&
+								real scale = teammate_view_hud_player_count() > 1 &&
 									!TEST_FLAG(item->placement.multiplayer_scaling_flags, _hud_dont_scale_size_bit) ?
 									0.5f :
 									1.0f;
@@ -1414,7 +1419,7 @@ static void render_weapon_hud(
 		SET_FLAG(
 			flags,
 			_hud_draw_in_multiplayer_bit,
-			local_player_count() > 1);
+			teammate_view_hud_player_count() > 1);
 		state_flags[0] = flags;
 
 		flags = state_flags[1];
@@ -1427,7 +1432,7 @@ static void render_weapon_hud(
 		SET_FLAG(
 			flags,
 			_hud_draw_in_multiplayer_bit,
-			local_player_count() > 1);
+			teammate_view_hud_player_count() > 1);
 		state_flags[1] = flags;
 
 		flags = state_flags[2];
@@ -1439,7 +1444,7 @@ static void render_weapon_hud(
 		SET_FLAG(
 			flags,
 			_hud_draw_in_multiplayer_bit,
-			local_player_count() > 1);
+			teammate_view_hud_player_count() > 1);
 		state_flags[2] = flags;
 
 		flags = state_flags[3];
@@ -1458,7 +1463,7 @@ static void render_weapon_hud(
 		SET_FLAG(
 			flags,
 			_hud_draw_in_multiplayer_bit,
-			local_player_count() > 1);
+			teammate_view_hud_player_count() > 1);
 		state_flags[3] = flags;
 
 		flags = state_flags[4];
@@ -1473,7 +1478,7 @@ static void render_weapon_hud(
 		SET_FLAG(
 			flags,
 			_hud_draw_in_multiplayer_bit,
-			local_player_count() > 1);
+			teammate_view_hud_player_count() > 1);
 		state_flags[4] = flags;
 
 		flags = state_flags[5];
@@ -1486,7 +1491,7 @@ static void render_weapon_hud(
 		SET_FLAG(
 			flags,
 			_hud_draw_in_multiplayer_bit,
-			local_player_count() > 1);
+			teammate_view_hud_player_count() > 1);
 		state_flags[5] = flags;
 
 		for (state_index = 0;
@@ -1700,8 +1705,8 @@ static void render_weapon_hud(
 	}
 
 	map_type_flags = global_scenario_get()->type != _scenario_type_main_menu;
-	SET_FLAG(map_type_flags, 1, local_player_count() == 1);
-	SET_FLAG(map_type_flags, 2, local_player_count() > 1);
+	SET_FLAG(map_type_flags, 1, teammate_view_hud_player_count() == 1);
+	SET_FLAG(map_type_flags, 2, teammate_view_hud_player_count() > 1);
 
 	for (element_index = 0;
 		element_index < definition->statics.count;
@@ -1869,7 +1874,7 @@ static void render_weapon_hud(
 				overlay_flags[state_index],
 				hud_state->last_weapon_flash_time[state_index],
 				state_flags[state_index],
-				local_player_count() > 1);
+				teammate_view_hud_player_count() > 1);
 		}
 	}
 

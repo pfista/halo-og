@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "target_engine": "xbox",
+  "write_policy": "fresh_overlay",
+  "conversion": "map_local_weapon_alias",
+  "origin": "Review imported community weapon provenance; this alias is a deliberate map-local adaptation",
+  "alias": {
+    "source_weapon": "weapons/reviewed/reviewed.weapon",
+    "alias_weapon": "community/map_compat/weapons/reviewed/reviewed.weapon",
+    "globals_tag": "globals/globals.globals",
+    "reserved_slot": 1
+  },
+  "reference_rules": [
+    {"tag": "item collections/reviewed.item_collection", "expected_replacements": 1}
+  ],
+  "tags": {
+    "weapons/reviewed/reviewed.weapon": "REPLACE_WITH_REVIEWED_SOURCE_SHA256",
+    "globals/globals.globals": "REPLACE_WITH_REVIEWED_SOURCE_SHA256",
+    "item collections/reviewed.item_collection": "REPLACE_WITH_REVIEWED_SOURCE_SHA256"
+  }
+}

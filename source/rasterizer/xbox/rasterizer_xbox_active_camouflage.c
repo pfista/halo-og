@@ -53,6 +53,9 @@ symbols in this file:
 #include "cseries.h"
 #include "bitmaps/bitmaps_inlines.h"
 #include "game/game_globals.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "game/performance_variant.h"
+#endif
 #include "rasterizer/rasterizer.h"
 #include "rasterizer/rasterizer_active_camouflage.h"
 #include "rasterizer/rasterizer_geometry.h"
@@ -825,6 +828,21 @@ void rasterizer_active_camouflage_draw(
 				group->effect.parameter*global_rasterizer_data->active_camouflage_hyper_stealth_tint_color.green;
 			tint_color.blue = (1.0f - group->effect.parameter)*global_rasterizer_data->active_camouflage_tint_color.blue +
 				group->effect.parameter*global_rasterizer_data->active_camouflage_hyper_stealth_tint_color.blue;
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			/* Optional match rule: remove only the authored blue tint. White
+			 * is neutral: the pixel combiner multiplies the refracted scene
+			 * by this RGB, so zero would make a black silhouette. Preserve
+			 * refraction, reveal intensity and hyper-stealth interpolation
+			 * in the shared ANGLE/native Metal draw path. */
+			if (game_engine_running() &&
+				(performance_variant_get_flags(game_engine_get_variant()) & _performance_option_hardcore_camo))
+			{
+				tint_color.red = 1.0f;
+				tint_color.green = 1.0f;
+				tint_color.blue = 1.0f;
+			}
+#endif
 
 			vertex_constants[0].i = refraction_amount*group->effect.intensity;
 			vertex_constants[0].j = distance_falloff;

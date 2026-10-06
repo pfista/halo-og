@@ -167,6 +167,7 @@ boolean game_load(
 	struct game_options *options);
 void game_initialize_for_new_map(
 	void);
+boolean game_map_loaded(void);
 void game_set_game_variant_from_name(
 	const char *name);
 

@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "target_engine": "xbox",
+  "write_policy": "fresh_overlay",
+  "source_tree": "source-tags",
+  "description": "Data-free example. Replace tag names, hashes, expected values, and factors with a reviewed map-specific sizing inventory. Factors shown here are examples, not defaults.",
+  "tags": {
+    "ui/custom/example.weapon_hud_interface": "0000000000000000000000000000000000000000000000000000000000000000",
+    "ui/custom/example_icons.bitmap": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "field_rules": [
+    {
+      "tag": "ui/custom/example.weapon_hud_interface",
+      "field": "static_elements[0].width_scale",
+      "before": 1.0,
+      "after": 0.25,
+      "reason": "Example only: reviewed source sprite width is four times its chosen logical HUD width. Preserve bitmap pixels through placement scaling."
+    },
+    {
+      "tag": "ui/custom/example.weapon_hud_interface",
+      "field": "static_elements[0].height_scale",
+      "before": 1.0,
+      "after": 0.25,
+      "reason": "Example only: preserve sprite aspect after the separately reviewed width adjustment."
+    }
+  ],
+  "bitmap_resamples": [
+    {
+      "tag": "ui/custom/example_icons.bitmap",
+      "divisor": 4,
+      "reason": "Example only: this fixed-size native draw path has no placement scale. Source sprite measurements justify this physical atlas normalization. Do not apply this factor to other HUD families automatically."
+    }
+  ],
+  "preservation_checks": [
+    "All referenced tags must be explicitly listed and match their expected SHA256 hashes.",
+    "Compare sprite sequence order, UVs, image indices, and normalized registration points before and after.",
+    "Keep meter channel pixels and font metrics unchanged unless a separately reviewed rule requires a change.",
+    "Validate ordinary HUD, pickup messaging, counter digits, zoom scopes, and split screen separately."
+  ]
+}

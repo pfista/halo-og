@@ -1,0 +1,110 @@
+name: Apple regression checks
+
+on:
+  push:
+    branches: [main, pfister/open-ce]
+    paths:
+      - 'source/**'
+      - 'port/**'
+      - 'tools/**'
+      - '.github/workflows/apple.yml'
+  pull_request:
+    paths:
+      - 'source/**'
+      - 'port/**'
+      - 'tools/**'
+      - '.github/workflows/apple.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    # ARM64 guest probes execute on Apple Silicon. These tests use authored
+    # fixtures and public dependencies; no maps, Xbox SDK or signing account.
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      HALO_MACOS_LLVM_BIN: /opt/homebrew/opt/llvm@22/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Public toolchain
+        run: |
+          brew install llvm@22 lld@22 sdl3 ninja cmake
+          printf '%s\n' /opt/homebrew/opt/lld@22/bin >> "$GITHUB_PATH"
+      - name: Verify runner and prepare dependencies
+        run: |
+          test "$(uname -m)" = arm64
+          python3 tools/macos_setup.py
+          python3 tools/macos_build.py --plugin-only
+          python3 tools/ios_build.py --plugin-only
+      - name: HUD fixture dependencies
+        run: python3 -m pip install Pillow
+      - name: Shared HUD assets, settings and ANGLE rendering
+        run: |
+          python3 -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_device_settings tools.test_menu_assets tools.test_text_hires tools.test_metal_text_atlas
+          python3 -m tools.test_game_settings
+          python3 -m unittest tools.test_gl_hud_hires.GlHudFixtureTests.test_standalone_angle_load_prepares_egl_companion_before_dlopen tools.test_gl_hud_hires.GlHudFixtureTests.test_rgba8_rounding_bounds_keep_point_endpoints_and_discards_strict
+          python3 tools/hud_glsl_validate.py --output build/hud-glsl-validation
+          python3 tools/test_texture_border.py
+      - name: Teammate split-screen and interactive runner fixtures
+        run: >-
+          python3 -m unittest tools.test_teammate_view tools.test_teammate_view_menu
+          tools.test_teammate_view_render tools.test_macos_teammate_view_smoke
+          tools.test_macos_teammate_view_runner
+      - name: iOS shared game image
+        run: python3 tools/ios_build.py --guest-only --jobs 6
+      - name: iOS simulator and unsigned device apps
+        run: python3 tools/ios_build.py --host-only --platform both --no-bundle-maps --jobs 6
+      - name: Mac ABI, allocation, networking and audio
+        run: python3 tools/test_macos_runtime.py --standalone
+      - name: Guest directory and map service imports
+        run: python3 -m unittest tools.test_macos_service_imports
+      - name: Signed iOS instruction image
+        run: python3 tools/test_ios_runtime.py
+      - name: Invite URI registration and delivery
+        run: >-
+          python3 -m unittest tools.test_p2p_invites tools.test_p2p_handoff
+          tools.test_url_scheme_registration tools.test_invite_layout tools.test_discord_presence
+          tools.test_mobile_invites.MobileInviteRegistrationTests tools.test_guest_build_dependencies
+      - name: Controls, rendering and workload verification
+        run: python3 -m unittest tools.test_input_bindings tools.test_direct_camera tools.test_controller_settings tools.test_menu_repeat tools.test_menu_keyboard tools.test_visibility_queries tools.test_geometry_cache tools.test_presentation tools.test_macos_preflight tools.test_macos_benchmark
+      - name: Version 11 network protocol
+        run: python3 -m unittest tools.test_network_pings tools.test_network_v11 tools.test_solo_multiplayer_start tools.test_game_directory tools.test_game_directory_worker
+      - name: OpenCE protocol 20 compatibility fixtures
+        run: python3 -m unittest tools.test_opence_network tools.test_opence_gameplay tools.test_opence_platform tools.test_game_directory_ui
+      - name: Input timing and fidelity comparison fixtures
+        run: python3 -m unittest tools.test_input_delay tools.test_performance_network tools.test_performance_variants tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_halo_fidelity tools.test_meeting_gameplay tools.test_refined_tag_effects
+      - name: Expanded Fiesta cache lifecycle and authoring
+        run: >-
+          python3 -m unittest tools.test_expanded_cache tools.test_fiesta_menu_preflight
+          tools.test_texture_cache_budget tools.test_weapon_pack_maps tools.test_android_asm_convert
+          tools.test_arsenal_catalog tools.test_publish_map_catalog tools.test_desktop_arsenal_downloads
+      - name: Spawn inventory, teleports, trails and lifecycle safety
+        run: python3 -m unittest tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail tools.test_weapon_sound_events tools.test_overshield_hud tools.test_map_lifecycle tools.test_network_client_lifecycle tools.test_stale_player_references
+      - name: Native data import and packaging rules
+        run: python3 tools/test_macos_menu.py
+      - name: App installation and desktop data migration
+        run: python3 -m unittest tools.test_macos_installer tools.test_save_migration tools.test_desktop_first_run tools.test_release_discovery tools.test_download_transport_limits tools.test_desktop_map_downloads
+      - name: Native Mac release discovery fixtures
+        run: python3 tools/test_macos_release_updates.py
+      - name: Versioned releases and complete commit changelogs
+        run: python3 -m unittest tools.test_testing_release tools.test_release_changelog
+      - name: Native community map download fixtures
+        run: python3 tools/test_macos_map_downloads.py
+      - name: Optional timer recording packs and native downloads
+        run: |
+          python3 -m unittest tools.test_performance_audio tools.test_timer_audio_pack tools.test_download_timer_audio tools.test_desktop_timer_audio
+          python3 tools/test_macos_timer_audio.py
+      - name: Managed map lookup and precache readiness
+        run: python3 -m unittest tools.test_custom_maps tools.test_map_download_precache tools.test_map_catalog tools.test_publish_map_catalog
+      - name: Native Settings keeps the game loop running
+        run: python3 tools/test_macos_menu.py --check-ui

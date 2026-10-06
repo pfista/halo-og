@@ -280,6 +280,9 @@ symbols in this file:
 /* port: an unarmed player's melee's length, in ticks (a weapon's is about
 this: its first person melee animation, sped up a quarter) */
 #define UNARMED_MELEE_TICKS 16
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "performance_sound.h"
+#endif
 
 /* ---------- constants */
 
@@ -1982,11 +1985,17 @@ static void biped_make_footstep(
 
 		if (object_get_marker_by_name(biped_index, contact_point->marker_name, &marker, 1))
 		{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			unsigned previous_sound_role = performance_sound_push(_performance_sound_movement);
+#endif
 			material_effect_new_from_point(
 				definition->biped.material_effects.index,
 				event_index,
 				&marker.matrix.position,
 				0.f);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			performance_sound_pop(previous_sound_role);
+#endif
 		}
 	}
 

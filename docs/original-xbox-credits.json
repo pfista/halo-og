@@ -1,0 +1,511 @@
+{
+  "title": "Original Halo: Combat Evolved - Xbox (2001)",
+  "sources": [
+    {
+      "kind": "original-credits-video-archive",
+      "url": "https://halo.bungie.org/misc/cutscenes/halo.html?cs=32",
+      "note": "Halo.Bungie.Org's original Halo Cutscene Library lists Final Credits (2:56). Primary transcription was verified against the locally supplied original Xbox credits.bik; this public page supplies a reviewable credits-video reference."
+    },
+    {
+      "kind": "original-xbox-manual",
+      "url": "https://www.halopedia.org/images/2/2a/HCE_Xbox_Manual.pdf",
+      "note": "Original Xbox manual, printed page 27 (PDF page 15). Halopedia archives Bungie's xbox_manual.pdf. Used to cross-check the movie and preserve explicitly labeled manual-only credits."
+    },
+    {
+      "kind": "credits-transcript",
+      "url": "https://www.halopedia.org/Halo:_Combat_Evolved_credits",
+      "note": "Secondary in-game credits transcript. Useful for role order, but contains spelling differences and omits Personal Thanks; the original movie takes precedence."
+    }
+  ],
+  "provenance": {
+    "scope": "Original English Xbox Halo: Combat Evolved credits only. No PC, Mac, Gearbox, Anniversary, or Master Chief Collection credits are imported.",
+    "verification": "Visually decoded the original local Bink movie at five-second intervals with overlapping credit text, and compared the original Xbox manual. No proprietary movie or manual assets are bundled.",
+    "original_movie": {
+      "local_reference": "build/game-extracted/bink/credits.bik",
+      "sha256": "9912b2324539470038125142790edb9d75dde1267dddc5c947fae8b2485de878",
+      "size_bytes": 200614260,
+      "duration_seconds": 175.075075,
+      "resolution": "640x480",
+      "note": "English original Xbox end-credit movie; the source/interface/attract_mode.c game_end_credits_start function plays this movie."
+    },
+    "original_manual": {
+      "sha256": "35686259fcc7f99fc6b4e88ee38110ce8020e05d57ef163c3dea08df60030ac2",
+      "printed_page": 27,
+      "pdf_page": 15
+    },
+    "role_policy": "Original movie role groups and order are preserved. The movie's long audio role title is preserved, voice character attributions are stored below, and manual supplements follow the movie credits with Xbox Manual prefixes.",
+    "name_policy": "Preserve names exactly as displayed in the original movie, including its spellings; use straight apostrophes and ASCII hyphens for the original game font. Repeated names in different roles are intentional. Published credits are the scope, rather than a claim to identify every uncredited contributor.",
+    "discrepancies": [
+      "The movie spells Stephen Okasaki, Paul Russel, and Brian Schultz. Halopedia's transcript spells Stephan Okasaki, Paul Russel, and Brian Shultz; movie spellings are retained.",
+      "The movie spells Paul Pedersen, Zach Russell, and Matthew Shimabuku. The manual prints Paul Peterson, Zach Russell, and Mathew Shimbaku; Halopedia's transcript spells Paul Pederson, Zach Russel, and Matthew Shimabuku. The movie's names are retained rather than treating variants as extra people.",
+      "The movie spells Tawnya Pettiford-Waites, Ken Boynton, Andrew McKaige, and Juan Ramirez. The manual prints Keny Boynton and Andy Mckaige; Halopedia's transcript uses Tanya Pettiford-Wates and Juan Remirez. Original movie spellings are retained.",
+      "The manual includes Justin Hayward under Draft Dodgers and David Dunn under Multiplayer Artists; those appear as labeled supplemental roles.",
+      "The manual places Brian Morden in Special Thanks; the movie credits him under Additional Voices. The movie placement is retained.",
+      "The manual calls Additional Voices Bungie Folks, while the movie says And the Bungie Auxiliary Players. The movie collective credit is retained.",
+      "The movie has fourteen Testers, including Jeff Kafer and Todd Schultz; the manual lists twelve. Both movie-only testers are included.",
+      "The movie credits Keith Steury separately as User Testing Lead; the manual includes him under Test Leads. The movie grouping is retained.",
+      "The manual credits Karin Jaques as Designer; the movie credits her as Print Artist. The movie attribution is retained.",
+      "Personal Thanks differs between sources: the movie uses Alex - Laura, John F. - Kate, M&D, the girls, Chris B. - Jody, Brooklyn, and Paul P. - Laura Drevecky. The manual prints Alex - Laura Seropian, Jeffrey - Kate, M&D, the girls, Chris B. - Jody, Maxwell, and Paul B. - Laura Drevecky, and includes Outsiders - thx 4M*!PIA!. Distinct manual names or attributions are preserved in the labeled supplement without inferring alias identities.",
+      "The movie adds P. Bertone - Family, Marta & Max and B. Wallace - Milo, Castle Argh to Personal Thanks; those movie lines are included.",
+      "The original Bink Video (c)1997-2001 by RAD Game Tools, Inc. notice is an engine vendor attribution rather than a named-person role; its text is preserved as vendor_credit below."
+    ],
+    "original_voice_talent": [
+      "Cortana: Jen Taylor",
+      "Captain Keyes: Pete Stacker",
+      "343 Guilty Spark: Tim Dadabo",
+      "The Master Chief: Steve Downes",
+      "Foe Hammer: Tawnya Pettiford-Waites",
+      "Sgt. Johnson: David Scully",
+      "Pvt. Bisenti: Mike Madeoy",
+      "Pvt. Mendoza: Mark Dias",
+      "Pvt. Jenkins: Chris Wicklund",
+      "Pvt. Chips Dubbo: Andrew McKaige"
+    ],
+    "original_personal_thanks": [
+      "Hamilton - Sandy&Chibi",
+      "Marcus - Lynn&kids I'm back!",
+      "M. Soell - All hippos worldwide",
+      "Shiek - Ba Ma Guh, Laurel G.",
+      "Marty - Marcie-last crunch!!",
+      "Adrian - stage3,314 Spahr,2DX",
+      "Tyson - The r.net and RHL gang",
+      "Butcher - Neen Watering Hole",
+      "Adam - AprilD ShaneD GregO",
+      "Chris L. - minivan+redbriefedBB",
+      "Hardy - All my family/friends",
+      "Tom - The guys from NoVA",
+      "Bernie - lil M+Sha sushi2nite",
+      "David C. - Marcy & all the kids",
+      "Mat - No more bloody eyes!",
+      "Michael - Erika Hall",
+      "Paul P. - Laura Drevecky",
+      "M. Cody - Betsy & Monkey",
+      "Stefan - God, 48th&VanDorn KFC",
+      "Joseph - Susan Lusty (&then?)",
+      "Carney - ma9: it has begun...",
+      "Jay - HDT you rock!",
+      "Erik - Christine&FatboySlim",
+      "M. Wu - Liz and Leia",
+      "Paul R. - Keely, Mom & Dad",
+      "Chucky - Weedmonkeys free AK!",
+      "Steve A. - Swetta, Mom & Dad",
+      "Luke - Rachel, Mom and Dad",
+      "Dave D. - BP,Bean,and Pauls",
+      "Lorraine - 4 lettin me join in",
+      "John - ConDev",
+      "Alex - Laura",
+      "Matt - the army",
+      "Rick - Sandy,Nathan&Celina",
+      "Zach - 1st one, Mom & Dad",
+      "Eric A. - Joy's love & support",
+      "John F. - Kate, M&D, the girls",
+      "Chris B. - Jody, Brooklyn",
+      "Jaime - Meg, Bugs and the BB's",
+      "Ryan - MPlayers, Fans, Guz",
+      "R. McLees - Family (new and old)",
+      "P. Bertone - Family, Marta & Max",
+      "B. Wallace - Milo, Castle Argh"
+    ],
+    "vendor_credit": "Bink Video (c)1997-2001 by RAD Game Tools, Inc."
+  },
+  "sections": [
+    {
+      "role": "Project Lead",
+      "names": [
+        "Jason Jones"
+      ]
+    },
+    {
+      "role": "Lead Producer",
+      "names": [
+        "Hamilton Chu"
+      ]
+    },
+    {
+      "role": "Producer",
+      "names": [
+        "Rick Ryan"
+      ]
+    },
+    {
+      "role": "Programmers",
+      "names": [
+        "Chris Butcher",
+        "Bernie Freidin",
+        "Charlie Gough",
+        "Mat Noguchi",
+        "Matt Segur"
+      ]
+    },
+    {
+      "role": "Additional Programming",
+      "names": [
+        "Eamon McKenzie",
+        "Ben Wallace"
+      ]
+    },
+    {
+      "role": "Art Director",
+      "names": [
+        "Marcus Lehto"
+      ]
+    },
+    {
+      "role": "Assistant Art Lead",
+      "names": [
+        "Steve Abeyta"
+      ]
+    },
+    {
+      "role": "Artists",
+      "names": [
+        "Eric Arroyo",
+        "Chris Barrett",
+        "Mark Bernal",
+        "David Dunn",
+        "Chris Hughes",
+        "Chris Lee",
+        "Robert McLees",
+        "Stephen Okasaki",
+        "Paul Russel",
+        "Shi Kai Wang",
+        "Michael Wu"
+      ]
+    },
+    {
+      "role": "Additional Art",
+      "names": [
+        "Brian Schultz"
+      ]
+    },
+    {
+      "role": "Lead Designer",
+      "names": [
+        "John Howard"
+      ]
+    },
+    {
+      "role": "Designers",
+      "names": [
+        "Paul Bertone",
+        "Tyson Green",
+        "Jaime Griesemer",
+        "Dan Orzulak"
+      ]
+    },
+    {
+      "role": "Additional Writing",
+      "names": [
+        "Brannon Boren",
+        "Matt Soell",
+        "Eric Trautmann"
+      ]
+    },
+    {
+      "role": "Multiplayer Project Lead",
+      "names": [
+        "Michael Evans"
+      ]
+    },
+    {
+      "role": "Multiplayer Programmers",
+      "names": [
+        "Adrian Perez",
+        "Stefan Sinclair"
+      ]
+    },
+    {
+      "role": "Multiplayer Lead Designer",
+      "names": [
+        "Hardy LeBel"
+      ]
+    },
+    {
+      "role": "Multiplayer Artists",
+      "names": [
+        "Chris Carney",
+        "Peter Marks",
+        "Derrick Moore",
+        "Stephen Okasaki"
+      ]
+    },
+    {
+      "role": "Director of Cinematics",
+      "names": [
+        "Joseph Staten"
+      ]
+    },
+    {
+      "role": "Cinematic Artists",
+      "names": [
+        "Steve Abeyta",
+        "Paul Clift",
+        "Adam Crockett",
+        "Lorraine McLees",
+        "Stephen Okasaki"
+      ]
+    },
+    {
+      "role": "Storyboard Artist",
+      "names": [
+        "Lee Wilson"
+      ]
+    },
+    {
+      "role": "Matte and Concept Artist",
+      "names": [
+        "Craig Mullins"
+      ]
+    },
+    {
+      "role": "Audio Lead, Sound Design & Original Music",
+      "names": [
+        "Martin O'Donnell"
+      ]
+    },
+    {
+      "role": "Sound Designer",
+      "names": [
+        "Jay Weinland"
+      ]
+    },
+    {
+      "role": "Additional Music",
+      "names": [
+        "Michael Salvatori"
+      ]
+    },
+    {
+      "role": "Additional Sound",
+      "names": [
+        "Adam Tewes"
+      ]
+    },
+    {
+      "role": "User Interface Lead",
+      "names": [
+        "Max Hoberman"
+      ]
+    },
+    {
+      "role": "User Interface Designer",
+      "names": [
+        "David Candland"
+      ]
+    },
+    {
+      "role": "User Interface Programmer",
+      "names": [
+        "Stefan Sinclair"
+      ]
+    },
+    {
+      "role": "Test Manager",
+      "names": [
+        "Harold Ryan"
+      ]
+    },
+    {
+      "role": "Test Leads",
+      "names": [
+        "Curtis Creamer",
+        "Ryan Hylland"
+      ]
+    },
+    {
+      "role": "User Testing Lead",
+      "names": [
+        "Keith Steury"
+      ]
+    },
+    {
+      "role": "Testers",
+      "names": [
+        "Chris Chamberlain",
+        "Mike Cody",
+        "Chuck Cooper",
+        "Erik Davis",
+        "John Frey",
+        "Rick Lockyear",
+        "Paul Pedersen",
+        "Zach Russell",
+        "Matthew Shimabuku",
+        "Luke Timmins",
+        "Jeff Wilson",
+        "Roger Wolfson",
+        "Jeff Kafer",
+        "Todd Schultz"
+      ]
+    },
+    {
+      "role": "Voice Talent",
+      "names": [
+        "Jen Taylor",
+        "Pete Stacker",
+        "Tim Dadabo",
+        "Steve Downes",
+        "Tawnya Pettiford-Waites",
+        "David Scully",
+        "Mike Madeoy",
+        "Mark Dias",
+        "Chris Wicklund",
+        "Andrew McKaige"
+      ],
+      "note": "Character attributions are retained in provenance.original_voice_talent. Names and order follow the original movie."
+    },
+    {
+      "role": "Additional Voices",
+      "names": [
+        "Ken Boynton",
+        "Todd Licea",
+        "Jeff Steitzer",
+        "Brian Morden",
+        "And the Bungie Auxiliary Players"
+      ]
+    },
+    {
+      "role": "Damage and Spin",
+      "names": [
+        "Matt Soell"
+      ]
+    },
+    {
+      "role": "Draft Dodgers",
+      "names": [
+        "Pete Demoreuille",
+        "Tom Gioconda",
+        "Joshua Grass",
+        "Jason Major",
+        "Juan Ramirez",
+        "Bob Settles"
+      ]
+    },
+    {
+      "role": "Executive Producer",
+      "names": [
+        "Alexander Seropian"
+      ]
+    },
+    {
+      "role": "Product Manager",
+      "names": [
+        "Steve Fowler"
+      ]
+    },
+    {
+      "role": "Product Planner",
+      "names": [
+        "Jon Kimmich"
+      ]
+    },
+    {
+      "role": "Localization Lead",
+      "names": [
+        "Ji Hong"
+      ]
+    },
+    {
+      "role": "Halo Manual",
+      "names": [
+        "Writer: Keith Cirillo",
+        "Editor: Tom Brush",
+        "Print Artist: Karin Jaques"
+      ]
+    },
+    {
+      "role": "Special Thanks",
+      "names": [
+        "Jule Zuccotti",
+        "Ed Fries",
+        "Stuart Moulder",
+        "Peter Parsons",
+        "Chris Cocks",
+        "Matt Gradwohl",
+        "Michael Sartain",
+        "Mark Thomas",
+        "Jonathan Sposato",
+        "Vic Bonilla",
+        "Miguel Chavez",
+        "Claude Errera",
+        "And all Bungie fans new and old"
+      ]
+    },
+    {
+      "role": "Personal Thanks",
+      "names": [
+        "Hamilton - Sandy&Chibi",
+        "Marcus - Lynn&kids",
+        "M. Soell - All hippos worldwide",
+        "Shiek - Ba Ma Guh, Laurel G.",
+        "Marty - Marcie",
+        "Adrian - stage3,314 Spahr,2DX",
+        "Tyson - The r.net and RHL gang",
+        "Butcher - Neen Watering Hole",
+        "Adam - AprilD ShaneD GregO",
+        "Chris L. - minivan+redbriefedBB",
+        "Hardy - All my family/friends",
+        "Tom - The guys from NoVA",
+        "Bernie - lil M+Sha",
+        "David C. - Marcy & all the kids",
+        "Mat - No more bloody eyes!",
+        "Michael - Erika Hall",
+        "Paul P. - Laura Drevecky",
+        "M. Cody - Betsy & Monkey",
+        "Stefan - God, 48th&VanDorn KFC",
+        "Joseph - Susan Lusty (&then?)",
+        "Carney - ma9",
+        "Jay - HDT",
+        "Erik - Christine&FatboySlim",
+        "M. Wu - Liz and Leia",
+        "Paul R. - Keely, Mom & Dad",
+        "Chucky - Weedmonkeys",
+        "Steve A. - Swetta, Mom & Dad",
+        "Luke - Rachel, Mom and Dad",
+        "Dave D. - BP,Bean,and Pauls",
+        "Lorraine - 4 lettin me join in",
+        "John - ConDev",
+        "Alex - Laura",
+        "Matt - the army",
+        "Rick - Sandy,Nathan&Celina",
+        "Zach - 1st one, Mom & Dad",
+        "Eric A. - Joy",
+        "John F. - Kate, M&D, the girls",
+        "Chris B. - Jody, Brooklyn",
+        "Jaime - Meg, Bugs and the BB's",
+        "Ryan - MPlayers, Fans, Guz",
+        "R. McLees - Family (new and old)",
+        "P. Bertone - Family, Marta & Max",
+        "B. Wallace - Milo, Castle Argh"
+      ],
+      "note": "Original aliases and collective acknowledgments are preserved without inferring identities. Some personal messages are shortened for display; the complete movie text is retained in provenance.original_personal_thanks."
+    },
+    {
+      "role": "Xbox Manual - Draft Dodgers",
+      "names": [
+        "Justin Hayward"
+      ],
+      "source": "original-xbox-manual",
+      "note": "Manual-only credited person absent from the original movie. Other Draft Dodgers remain in the movie section."
+    },
+    {
+      "role": "Xbox Manual - Multiplayer Artists",
+      "names": [
+        "David Dunn"
+      ],
+      "source": "original-xbox-manual",
+      "note": "The manual adds this role for David Dunn, who is also credited under Artists in the movie."
+    },
+    {
+      "role": "Xbox Manual - Personal Thanks",
+      "names": [
+        "Outsiders - thx 4M*!PIA!",
+        "Alex - Laura Seropian",
+        "Paul B. - Laura Drevecky",
+        "Jeffrey - Kate, M&D, the girls",
+        "Chris B. - Jody, Maxwell"
+      ],
+      "source": "original-xbox-manual",
+      "note": "Preserves manual acknowledgments or distinct names absent from the movie. The manual uses Jeffrey where the movie uses John F.; identities are not inferred."
+    }
+  ]
+}

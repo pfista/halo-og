@@ -19,7 +19,9 @@ type that carries no pointer, which covers all the platform layer reads.
 #include "guest_host.h"
 
 /* guest/runtime/guest_gl.c (generated) */
+#if !defined(HALO_MACOS_NATIVE_METAL)
 SDL_FunctionPointer guest_gl_get_proc_address(const char *name);
+#endif
 
 bool SDL_Init(SDL_InitFlags flags)
 {
@@ -111,6 +113,11 @@ SDL_Window *SDL_CreateWindow(const char *title, int width, int height, SDL_Windo
 	return (SDL_Window *)host_sdl_create_window(title, width, height, (long long)flags);
 }
 
+SDL_WindowFlags SDL_GetWindowFlags(SDL_Window *window)
+{
+	return (SDL_WindowFlags)host_sdl_window_flags((unsigned int)window);
+}
+
 bool SDL_GetWindowSizeInPixels(SDL_Window *window, int *width, int *height)
 {
 	int w = 0, h = 0;
@@ -123,11 +130,26 @@ bool SDL_GetWindowSizeInPixels(SDL_Window *window, int *width, int *height)
 	return true;
 }
 
+bool SDL_GetWindowSize(SDL_Window *window, int *width, int *height)
+{
+	int w = 0, h = 0;
+	host_sdl_window_size((unsigned int)window, &w, &h);
+	if (width) *width = w;
+	if (height) *height = h;
+	return w > 0 && h > 0;
+}
+
+void SDL_WarpMouseInWindow(SDL_Window *window, float x, float y)
+{
+	host_sdl_warp_mouse((unsigned int)window, x, y);
+}
+
 bool SDL_SetWindowRelativeMouseMode(SDL_Window *window, bool enabled)
 {
 	return host_sdl_set_relative_mouse((unsigned int)window, enabled) != 0;
 }
 
+#if !defined(HALO_MACOS_NATIVE_METAL)
 bool SDL_GL_SetAttribute(SDL_GLAttr attribute, int value)
 {
 	return host_sdl_gl_set_attribute((int)attribute, value) != 0;
@@ -157,6 +179,7 @@ SDL_FunctionPointer SDL_GL_GetProcAddress(const char *name)
 {
 	return guest_gl_get_proc_address(name);
 }
+#endif
 
 /* ---------- events */
 

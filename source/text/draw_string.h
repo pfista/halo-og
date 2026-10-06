@@ -58,6 +58,10 @@ void draw_string_set_font(
 	long font_index);
 long draw_string_get_font(
 	void);
+/* Native glyph adapters resolve the actual styled tag without changing the
+ * original parser's layout. NONE when the header is outside this font set. */
+long draw_string_get_font_index(struct font_header const *font);
+void draw_string_get_character_clip(struct parse_string_state const *state, rectangle2d *clip);
 void draw_string_set_format(
 	short style,
 	short justification,
@@ -71,6 +75,13 @@ void draw_string_set_draw_mode(
 void draw_string_set_highlight(
 	short start,
 	short end);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+void draw_string_render_label(
+	long font_index,
+	rectangle2d const *bounds,
+	real_argb_color const *color,
+	char const *string);
+#endif
 void draw_string(
 	draw_character_proc draw_character,
 	rectangle2d const *bounds,
@@ -85,6 +96,14 @@ void draw_unicode_string(
 	rectangle2d const *clip,
 	short height_adjust,
 	wchar_t const *string);
+/* A layout-only pass retains highlight state for the real draw. The caller
+ * supplies its own cursor copy when it wants the resulting position. */
+void draw_string_preflight(draw_character_proc draw_character,
+	rectangle2d const *bounds, point2d *cursor_reference,
+	rectangle2d const *clip, short height_adjust, char const *string);
+void draw_unicode_string_preflight(draw_character_proc draw_character,
+	rectangle2d const *bounds, point2d *cursor_reference,
+	rectangle2d const *clip, short height_adjust, wchar_t const *string);
 void draw_string_compute_bounds(
 	rectangle2d const *bounds,
 	char const *string,

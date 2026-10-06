@@ -59,6 +59,16 @@ public class LauncherActivity extends Activity {
         buildInterface();
     }
 
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        passOnInvite(intent);
+        // ui.map may appear before the rest of an in-progress import.
+        if (haveData() && (pick == null || pick.isEnabled()))
+            startGame();
+    }
+
     /**
      * An internet play invite link the app was opened with: the game
      * (port/linux/src/p2p.c) picks it up from join_link.txt, whether it is
@@ -68,18 +78,7 @@ public class LauncherActivity extends Activity {
         if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction()) || intent.getData() == null
             || dataRoot == null)
             return;
-        // written whole under another name, then renamed: the game never
-        // reads it half written
-        File partial = new File(dataRoot, "join_link.txt.tmp");
-        try (OutputStream out = new FileOutputStream(partial)) {
-            out.write(intent.getData().toString().getBytes("UTF-8"));
-        } catch (java.io.IOException e) {
-            // the link is lost; the player can copy it instead
-            partial.delete();
-            return;
-        }
-        if (!partial.renameTo(new File(dataRoot, "join_link.txt")))
-            partial.delete();
+        InviteLink.deliver(dataRoot, intent.getData().toString());
     }
 
     /**
@@ -133,7 +132,7 @@ public class LauncherActivity extends Activity {
         layout.setBackgroundColor(Color.rgb(12, 16, 20));
 
         TextView title = new TextView(this);
-        title.setText("Halo needs its game data");
+        title.setText("Halo OG needs its game data");
         title.setTextColor(Color.WHITE);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
         title.setGravity(Gravity.CENTER);

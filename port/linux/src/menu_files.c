@@ -1036,8 +1036,10 @@ void halo_menus_art_register(void const *texture, char const *png)
 	else
 	{
 		free(art[index].png);
+#ifndef HALO_MACOS_NATIVE_METAL
 		if (art[index].texture)
 			glDeleteTextures(1, &art[index].texture);
+#endif
 	}
 	memset(&art[index], 0, sizeof(art[index]));
 	art[index].data = data;
@@ -1051,8 +1053,10 @@ void halo_menus_art_forget(void)
 	for (index = 0; index < art_count; index++)
 	{
 		free(art[index].png);
+#ifndef HALO_MACOS_NATIVE_METAL
 		if (art[index].texture)
 			glDeleteTextures(1, &art[index].texture);
+#endif
 	}
 	art_count = 0;
 }

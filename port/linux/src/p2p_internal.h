@@ -25,15 +25,12 @@ enum
 	P2P_TOKEN_SIZE = 16,
 	/* the addresses a machine offers to be reached at */
 	P2P_MAXIMUM_CANDIDATES = 4,
-	/* an invite link's text: "halo://join/", the host's key hash and the
-	token in hexadecimal, and a terminator */
-	P2P_LINK_SIZE = 12 + 2 * (P2P_KEY_HASH_SIZE + P2P_TOKEN_SIZE) + 1,
 	/* the most machines one tunnels to: a host and the rest of a system
 	link game's 128 machines (include/halo_port_limits.h) */
 	P2P_MAXIMUM_PEERS = 127,
 };
 
-typedef char p2p_listing_invite_size_assert[P2P_LISTING_INVITE_SIZE == P2P_LINK_SIZE ? 1 : -1];
+typedef char p2p_listing_invite_size_assert[P2P_LISTING_INVITE_SIZE <= P2P_LINK_SIZE ? 1 : -1];
 
 /* the prefix of a public game's slot (a key hash in hex follows), and the
 topic of queries (p2p_lobby.c) */
@@ -60,7 +57,7 @@ while it waits; the p2p thread's */
 unsigned long p2p_resolve(const char *host);
 /* registers this executable for links of scheme (posix_register_url_scheme),
 unless it is an automated run (debug.exit_after, a hidden window, no
-renderer), which must not take the links over. The p2p thread's: it lets
+renderer), which must not take the links over. Under p2p_lock: it lets
 go of the p2p lock while it may wait for a program */
 void p2p_register_url_scheme(const char *scheme, const char *description);
 /* formats bytes as lower-case hexadecimal (text holds 2 * size + 1) */
@@ -101,8 +98,8 @@ none does (a session that has ended is never taken up again: its keys'
 packet numbers would start again) */
 int p2p_peer_reoffered(const unsigned char *identifier, const unsigned char *secret,
 	const struct p2p_candidate *candidates, int count);
-/* an invite that arrived on the p2p thread (from Discord, or another copy
-of the game) */
+/* an invite that arrived under p2p_lock (from Discord, or another copy
+of the game); ignored when internet play is off */
 void p2p_invite_received(const char *text);
 /* a new invite (token) for the game hosted, if its invite was listed in the
 server browser (going private: those who saw it must not get in); under
@@ -241,7 +238,7 @@ void p2p_lobby_slot_topic(const unsigned char *key_hash, char *topic, int size);
 /* ---------- p2p_discord.c: rich presence and invites through the Discord
 desktop client */
 
-/* called from the p2p thread each pass */
+/* called from the Discord thread each pass, under p2p_lock */
 void p2p_discord_update(void);
 /* the Discord user signed in, as told (empty if none): under p2p_lock */
 void p2p_discord_user(char *id, int id_size, char *name, int name_size);

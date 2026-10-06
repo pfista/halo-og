@@ -41,6 +41,7 @@
         <activity
             android:name=".LauncherActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode">
             <meta-data
@@ -51,12 +52,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
-            <!-- internet play invite links, halo://join/... -->
+            <!-- Separate handler; pasted OpenCE and OG links are also accepted. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="halo" android:host="join" />
+                <data android:scheme="halo-og-opence" android:host="join" />
             </intent-filter>
         </activity>
 
@@ -77,7 +78,7 @@
         <!-- the downloaded new version, for the package installer (Updater) -->
         <provider
             android:name=".UpdateProvider"
-            android:authorities="com.halo.decomp.update"
+            android:authorities="com.halo.decomp.opence.update"
             android:exported="false"
             android:grantUriPermissions="true" />
 

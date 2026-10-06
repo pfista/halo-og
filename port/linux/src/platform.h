@@ -114,7 +114,7 @@ that window at start-up and hands out page-granular blocks from it, so the
 physical/virtual arithmetic the game and Direct3D rely on keeps working. */
 
 #define PLATFORM_CONTIGUOUS_BASE 0x80000000UL
-#ifdef HALO_ANDROID
+#if defined(HALO_ANDROID) && (!defined(HALO_MACOS) || defined(HALO_IOS))
 /* 128 MB, a development kit's: Android's guest image is linked just above
 the window (port/android/include/halo_android_abi.h) */
 #define PLATFORM_CONTIGUOUS_SIZE 0x08000000UL
@@ -143,6 +143,7 @@ void *halo_custom_edition_tag_cache(void);
 (xbox_textures.c; also declared for the game there) */
 void halo_custom_edition_texels_channels(const void *texels, unsigned char channel_order);
 void halo_custom_edition_texels_forget(void);
+unsigned char halo_custom_edition_texels_channel_order(const void *texels);
 
 /* ---------- guest memory write tracking (memory_watch.c)
 

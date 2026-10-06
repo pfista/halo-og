@@ -347,6 +347,10 @@ symbols in this file:
 #include "game/players.h"
 #include "main/main.h"
 #include "networking/network_client_manager.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "../../port/linux/src/game_directory.h"
+#include "interface/event_manager.h"
+#endif
 #include "networking/network_game_globals.h"
 #include "networking/network_game_manager.h"
 #include "networking/network_messages.h"
@@ -356,6 +360,11 @@ symbols in this file:
 #include "text/unicode.h"
 #include "custom_edition_maps.h" /* port: port/linux/game/custom_edition_maps.c */
 #include "halo_menus.h" /* port: PC_MENU_FUNCTION_BASE */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "halo_custom_maps.h"
+#include "game/performance_variant.h"
+#include "game/weapon_sets.h"
+#endif
 
 /* ---------- constants */
 
@@ -700,6 +709,27 @@ static short custom_edition_map_display_index(
 
 /* ---------- public code */
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static void custom_map_text(struct widget_instance *widget, char const *caption)
+{
+	unsigned int i;
+	int capitalize = TRUE;
+	widget->parameters.text_box.text = ui_widget_realloc(widget->parameters.text_box.text,
+		HALO_CUSTOM_MAP_NAME_SIZE * sizeof(wchar_t), __FILE__, __LINE__);
+	if (!widget->parameters.text_box.text) return;
+	for (i = 0; i < HALO_CUSTOM_MAP_NAME_SIZE - 1 && caption[i]; i++)
+	{
+		unsigned char c = (unsigned char)caption[i];
+		if (c == '_') c = ' ';
+		if (capitalize && c >= 'a' && c <= 'z') c -= 'a' - 'A';
+		widget->parameters.text_box.text[i] = c;
+		capitalize = c == ' ';
+	}
+	widget->parameters.text_box.text[i] = 0;
+	widget->parameters.text_box.string_list_index = HALO_CUSTOM_MAP_TEXT;
+}
+#endif
+
 void ui_widget_game_data_function_invoke(
 	struct widget_instance *widget,
 	word function)
@@ -727,6 +757,14 @@ void ui_widget_game_data_function_invoke(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+boolean ui_widget_game_data_function_is_server_list(word function)
+{
+	return function < NUMBEROF(game_data_input_function_list) &&
+		game_data_input_function_list[function] == server_list_menu_update;
+}
+#endif
+
 static void widget_function_null(
 	struct widget_instance *widget)
 {
@@ -741,7 +779,6 @@ static void settings_menu_update_extended_description(
 		list_widget->parameters.list.extended_description->definition_tag_index);
 	struct widget_instance *description_picture;
 	struct widget_instance *description_text;
-	struct widget_instance *child;
 	short index;
 
 	match_vassert(
@@ -775,6 +812,12 @@ static void settings_menu_update_extended_description(
 			"expected a text box widget for the settings select list extended description text");
 
 		description_picture->animation.current_frame_index = index;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* The local settings chooser reuses the original profile artwork:
+		 * Spartans for Profile Settings, controller for Game Settings. */
+		if (!strcmp(tag_get_name(list_widget->definition_tag_index), "ui\\native_settings\\menu"))
+			description_picture->animation.current_frame_index = index ? 1 : 3;
+#endif
 		description_text->parameters.text_box.string_list_index = index;
 	}
 	return;
@@ -930,6 +973,31 @@ static void difficulty_select_menu_update_extended_description(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static struct network_advertised_game *server_list_directory_games(
+	struct widget_instance *widget,
+	struct network_game_client *client,
+	long *count)
+{
+	struct widget_instance *ancestor;
+	*count = 0;
+	/* Game-data inputs run before the renderer's visibility check. Do not
+	   keep internet discovery active for a hidden list or a hidden parent. */
+	for (ancestor = widget; ancestor; ancestor = ancestor->parent)
+		if (!ancestor->visible)
+		{
+			network_game_client_get_directory_games(NULL, count);
+			return NULL;
+		}
+	if (!client)
+	{
+		network_game_client_get_directory_games(NULL, count);
+		return NULL;
+	}
+	return network_game_client_get_directory_games(client, count);
+}
+#endif
+
 static void server_list_menu_update(
 	struct widget_instance *widget)
 {
@@ -937,14 +1005,22 @@ static void server_list_menu_update(
 	   local of server_list_menu_update; their element type is named advertised_game_data). Neither
 	   PDB records the block: placing it at the top of the function is unattested. January
 	   corroborates: .bss +0, referenced only by this function. */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	static struct network_advertised_game *displayed_servers[MAXIMUM_NETWORK_ADVERTISED_GAMES + HALO_DIRECTORY_MAX_GAMES];
+#else
 	static struct network_advertised_game *displayed_servers[MAXIMUM_NETWORK_ADVERTISED_GAMES];
+#endif
 	struct network_game_client *client = global_network_game_client_get();
 	long displayed_server_count = 0;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	long directory_count;
+	struct network_advertised_game *directory_servers = server_list_directory_games(widget, client, &directory_count);
+#endif
 
 	csmemset(
 		displayed_servers,
 		0,
-		MAXIMUM_NETWORK_ADVERTISED_GAMES * sizeof(*displayed_servers));
+		sizeof(displayed_servers));
 	if (client)
 	{
 		struct ui_widget_definition *definition = ui_widget_definition_get(
@@ -990,6 +1066,16 @@ static void server_list_menu_update(
 		}
 
 		widget->parameters.list.list_items = displayed_servers;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		for (game_index = 0; game_index < directory_count; game_index++)
+			if (directory_servers[game_index].open) displayed_servers[displayed_server_count++] = &directory_servers[game_index];
+		for (game_index = 0; game_index < directory_count; game_index++)
+			if (!directory_servers[game_index].open) displayed_servers[displayed_server_count++] = &directory_servers[game_index];
+		/* The distinct event changes screens during event processing, never
+		   while traversing the render tree. It is inert after cancelling. */
+		if (network_game_client_directory_should_post_join(client))
+			event_manager_post_directory_join(widget->local_player_index >= 0 ? widget->local_player_index : 0);
+#endif
 		widget->parameters.list.number_of_items = (word)displayed_server_count;
 		widget->parameters.list.selected_list_item_index = (short)CEILING(
 			widget->parameters.list.selected_list_item_index,
@@ -1139,6 +1225,11 @@ static void server_list_menu_update(
 				}
 
 				map_name = server->map_name;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				if (native_map_is_custom(map_name) && custom_edition_map_display_index(map_name) == NONE)
+					map_bitmap->animation.current_frame_index = 13;
+				else
+#endif
 				if (strstr(map_name, "beavercreek"))
 					map_bitmap->animation.current_frame_index = 0;
 				else if (strstr(map_name, "sidewinder"))
@@ -1175,6 +1266,10 @@ static void server_list_menu_update(
 					(server->open == TRUE) ? 20 : 21;
 				map_name_text->parameters.text_box.string_list_index =
 					map_bitmap->animation.current_frame_index;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				if (native_map_is_custom(map_name) && custom_edition_map_display_index(map_name) == NONE)
+					custom_map_text(map_name_text, native_map_basename(map_name));
+#endif
 
 				switch (server->engine_type)
 				{
@@ -1231,15 +1326,27 @@ static void server_list_menu_update(
 					0x369);
 				if (score_limit_text->parameters.text_box.text)
 				{
-					usnprintf(
-						score_limit_text->parameters.text_box.text,
-						3,
-						L"%d",
-						server->score_limit);
-					score_limit_text->parameters.text_box.text[3] = 0;
+					if (server->score_limit < 0)
+					{
+						/* Legacy directory records have no score metadata. */
+						score_limit_text->parameters.text_box.text[0] = 0;
+					}
+					else
+					{
+						usnprintf(
+							score_limit_text->parameters.text_box.text,
+							3,
+							L"%d",
+							server->score_limit);
+						score_limit_text->parameters.text_box.text[3] = 0;
+					}
 				}
 
-				switch (server->engine_type)
+				if (server->score_limit < 0)
+				{
+					score_limit_type_text->parameters.text_box.string_list_index = 1;
+				}
+				else switch (server->engine_type)
 				{
 				case game_engine_ctf:
 					score_limit_type_text->parameters.text_box.string_list_index =
@@ -2017,6 +2124,10 @@ static void netgame_prejoin_players(
 static void set_textbox_to_build_number(
 	struct widget_instance *widget)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Native builds show the historical engine identifier in About. */
+	widget->visible = FALSE;
+#else
 	/* Name, type and function scope from the 2003 PC demo PDB and the HCEX PDB (static local
 	   wchar_t build_number_string[0x40]). Neither PDB records the block: placing it at the top of
 	   the function is unattested. January corroborates: .bss +0x28, referenced only here. */
@@ -2054,6 +2165,7 @@ static void set_textbox_to_build_number(
 			NUMBEROF(build_number_string) - 1);
 		widget->parameters.text_box.text[NUMBEROF(build_number_string) - 1] = 0;
 	}
+#endif
 	return;
 }
 
@@ -2318,23 +2430,11 @@ static void game_options_menu_update_text_desc(
 
 			if (column == widget->focused_child)
 			{
-				/* port: an extra item's own description (ui_widget.c) */
-				short extra_description = ui_widget_spinner_extra_description(spinner_list,
-					spinner_list->parameters.list.selected_list_item_index);
-
-				if (extra_description != NONE)
-				{
-					widget->parameters.list.extended_description->parameters.text_box.string_list_index =
-						extra_description;
-					return;
-				}
 				description_index += spinner_list->parameters.list.selected_list_item_index;
 				break;
 			}
 
-			/* port: only the items of a spinner's string list's own have
-			descriptions in its tag */
-			description_index += ui_widget_spinner_own_item_count(spinner_list);
+			description_index += spinner_list->parameters.list.number_of_items;
 			column = column->next;
 		}
 	}
@@ -2439,6 +2539,13 @@ static void multiplayer_game_set_text_box_for_map_name(
 		widget->parameters.text_box.string_list_index = custom_edition_map_display_index(map_name);
 		return;
 	}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (native_map_is_custom(map_name))
+		{
+			custom_map_text(widget, native_map_basename(map_name));
+			return;
+		}
+#endif
 	if (strstr(map_name, "beavercreek"))
 	{
 		widget->parameters.text_box.string_list_index = 0;
@@ -2713,6 +2820,13 @@ static void multiplayer_game_set_bitmap_for_map(
 		widget->animation.current_frame_index = custom_edition_map_display_index(map_name);
 		return;
 	}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (native_map_is_custom(map_name))
+		{
+			widget->animation.current_frame_index = 13;
+			return;
+		}
+#endif
 	if (strstr(map_name, "beavercreek"))
 	{
 		widget->animation.current_frame_index = 0;
@@ -2931,12 +3045,53 @@ static void multiplayer_game_directions(
 		widget->type == _ui_widget_type_text_box,
 		"expected text box widget for team game directions");
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Native extension: the host may start alone using the existing A/START
+	 * action. Keep the stock directions widget and its original font/layout. */
+	if (server && game && game->player_count == 1 && game->machine_count == 1 &&
+		network_game_client_get_seconds_to_game_start(global_network_game_client_get()) < 0)
+	{
+		short local_machine_index = network_game_client_get_machine_index(
+			global_network_game_client_get());
+		long player_index;
+
+		for (player_index = 0; player_index < NUMBEROF(game->players); player_index++)
+		{
+			if (network_player_is_valid(&game->players[player_index]) &&
+				game->players[player_index].machine_index == local_machine_index)
+			{
+				static wchar_t const prompt[] = L"Press START to begin countdown";
+
+				widget->parameters.text_box.text = ui_widget_realloc(
+					widget->parameters.text_box.text, sizeof(prompt), __FILE__, __LINE__);
+				if (widget->parameters.text_box.text)
+				{
+					csmemcpy(widget->parameters.text_box.text, prompt, sizeof(prompt));
+					widget->parameters.text_box.string_list_index = HALO_CUSTOM_MAP_TEXT;
+					widget->visible = TRUE;
+					return;
+				}
+				break;
+			}
+		}
+	}
+#endif
+
 	if (server)
 	{
 		boolean waiting_for_machines = !network_game_is_splitscreen_local() &&
 			game &&
 			game->machine_count < 2;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* A manually started solo countdown no longer waits for opponents. */
+		if (game && game->player_count == 1 &&
+			network_game_client_get_seconds_to_game_start(global_network_game_client_get()) >= 0)
+		{
+			widget->visible = FALSE;
+			return;
+		}
+#endif
 		if (!waiting_for_machines &&
 			network_game_is_splitscreen_local() &&
 			game &&
@@ -3242,6 +3397,50 @@ static void variant_profile_update_cache_for_nwide_list(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* The card has 256 UTF-16 characters and room for one more small-ui line.
+Prioritize Hardcore Camo, then starting equipment and precision rules. */
+static void playlist_profile_append_performance_status(
+	wchar_t *description,
+	struct playlist_profile const *profile)
+{
+	static wchar_t const status[] = L"\r\nPerformance options active";
+	static wchar_t const hardcore_status[] = L"\r\nHardcore: On";
+	static wchar_t const fiesta_status[] = L"\r\nStarting Equipment: Fiesta";
+	static wchar_t const fiesta_hardcore_status[] = L"\r\nFiesta / Hardcore: On";
+	/* Keep the All-only spelling inside the authored narrow game-type cards. */
+	static wchar_t const pfiesta_status[] = L"\r\nEquipment: Pfiesta";
+	static wchar_t const pfiesta_hardcore_status[] = L"\r\nPfiesta/Hardcore: On";
+	static wchar_t const camo_status[] = L"\r\nCamo: Hardcore";
+	unsigned flags;
+	unsigned long length;
+	wchar_t const *suffix;
+	unsigned long suffix_length;
+
+	if (!description)
+		return;
+	flags = performance_variant_get_flags((struct game_variant const *)profile);
+	if (!flags)
+		return;
+	length = ustrnlen(description, 0x100);
+	if (flags & _performance_option_hardcore_camo)
+		suffix = camo_status;
+	else if (flags & _performance_option_fiesta)
+	{
+		if (((struct game_variant const *)profile)->universal_variant.weapon_set == GAME_WEAPON_SET_ALL)
+			suffix = (flags & _performance_option_hardcore) ? pfiesta_hardcore_status : pfiesta_status;
+		else
+			suffix = (flags & _performance_option_hardcore) ? fiesta_hardcore_status : fiesta_status;
+	}
+	else
+		suffix = (flags & _performance_option_hardcore) ? hardcore_status : status;
+	if (!description[0]) suffix += 2;
+	suffix_length = ustrlen(suffix);
+	if (length + suffix_length < 0x100)
+		ustrncpy(description + length, suffix, suffix_length + 1);
+}
+#endif
+
 static void mutliplayer_settings_select_list_update_displayed_items(
 	struct widget_instance *list_widget)
 {
@@ -3396,6 +3595,9 @@ static void mutliplayer_settings_select_list_update_displayed_items(
 					label_box->parameters.text_box.text[0xFF] = 0;
 				}
 				description_container->visible = TRUE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				playlist_profile_append_performance_status(label_box->parameters.text_box.text, profile);
+#endif
 				continue;
 			}
 
@@ -3508,6 +3710,9 @@ static void mutliplayer_settings_select_list_update_displayed_items(
 				break;
 			}
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			playlist_profile_append_performance_status(label_box->parameters.text_box.text, profile);
+#endif
 			continue;
 		}
 
@@ -4258,14 +4463,25 @@ static void mp_level_select_list_update_displayed_items(
 
 		/* port: the Custom Edition maps after the Xbox levels show their own
 		names, pictures and descriptions (port/linux/game/custom_edition_maps.c) */
-		displayed_item_indices[item_index] = custom_edition_maps_level_display_index(
-			(short)displayed_item_indices[item_index]);
+		short list_index = (short)displayed_item_indices[item_index];
+		short display_index = custom_edition_maps_level_display_index(list_index);
 		map_name->parameters.text_box.string_list_index =
-			(short)displayed_item_indices[item_index];
+			display_index;
 		map_bitmap->animation.current_frame_index =
-			(short)displayed_item_indices[item_index];
+			display_index;
 		map_description->parameters.text_box.string_list_index =
-			(short)displayed_item_indices[item_index];
+			display_index;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* Community entries can start at index zero when stock maps are hidden.
+		   Classify the selected map name, not its position in the filtered list. */
+		char *map = ((char **)list_widget->parameters.list.list_items)[list_index];
+		if (native_map_is_custom(map) && custom_edition_map_display_index(map) == NONE)
+		{
+			custom_map_text(map_name, native_map_basename(map));
+			custom_map_text(map_description, "Community map");
+			map_bitmap->animation.current_frame_index = 13;
+		}
+#endif
 	}
 	return;
 }

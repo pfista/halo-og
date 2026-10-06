@@ -27,6 +27,9 @@ void physical_memory_free(void);
 void *physical_memory_get_game_state_base_address(void);
 void *physical_memory_get_tag_cache_base_address(void);
 void *physical_memory_get_texture_cache_base_address(void);
+/* Caller must first flush every cached texture and complete its reads. Failure
+   preserves the previous allocation and base address. */
+int physical_memory_resize_texture_cache(long size);
 void *physical_memory_get_sound_cache_base_address(void);
 
 /* ---------- globals */

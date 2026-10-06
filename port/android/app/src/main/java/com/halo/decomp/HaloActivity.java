@@ -3,6 +3,7 @@ package com.halo.decomp;
 import android.content.Context;
 import android.net.wifi.WifiManager;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Display;
 import android.view.WindowManager;
 
@@ -29,6 +30,9 @@ public class HaloActivity extends SDLActivity {
         acquireMulticastLock();
         // a new version looked for while the game starts
         Updater.start(this);
+        // Optional recordings use the existing save root and config opt-out.
+        // This thread never holds game startup or enables the game-type option.
+        TimerAudio.start(getExternalFilesDir(null), message -> Log.i("halo", message));
     }
 
     @Override

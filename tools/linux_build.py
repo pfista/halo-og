@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .embed_assets import hud_assets_build, hud_configure_inputs
 from .ninja_syntax import Writer
+from .release_discovery import desktop_discovery_defines
 
 PORT_DIR = Path("port/linux")
 PORT_CONFIG = PORT_DIR / "port.json"
@@ -149,7 +150,7 @@ def updater_defines(release: bool) -> str:
     if not number.isdigit():
         number = "0"
     flavor = "release" if release else "debug"
-    return f'-DHALO_BUILD_NUMBER={number} -DHALO_BUILD_FLAVOR=\\"{flavor}\\"'
+    return f'-DHALO_BUILD_NUMBER={number} -DHALO_BUILD_FLAVOR=\\"{flavor}\\" ' + desktop_discovery_defines()
 
 PLATFORM_FLAGS = [
     "-std=gnu11",
@@ -292,11 +293,12 @@ def _load_port_config() -> Dict[str, Any]:
 def linux_configure_inputs() -> List[Path]:
     """Files whose change must re-run configure.py."""
     if not PORT_CONFIG.is_file():
-        return [Path(__file__)]
+        return [Path(__file__), Path("tools/release_discovery.py"), Path(".gitignore")]
     # (the folders of the game's sources, so that adding or removing one
     # re-runs it)
     game_folders = sorted({source.parent for source in game_sources(_load_port_config())})
-    return [PORT_CONFIG, Path(__file__), PORT_DIR / "src", PORT_DIR / "game", XDK_INCLUDE, *game_folders,
+    return [PORT_CONFIG, Path(__file__), Path("tools/release_discovery.py"), Path(".gitignore"),
+            PORT_DIR / "src", PORT_DIR / "game", XDK_INCLUDE, *game_folders,
             *hud_configure_inputs()]
 
 
@@ -454,13 +456,13 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
         posix_cflags = " ".join(POSIX_FLAGS + [march_flag(sln), f"-I{platform_dir}"])
         mbedtls_include = f"-I{MBEDTLS_DIR / 'include'}"
         for source in sorted(platform_dir.glob("*.c")):
-            if source.name == "posix_update.c":
+            if source.name in ("posix_update.c", "community_maps_download.c", "timer_audio_download.c"):
                 add_object(source, f"{posix_cflags} {mbedtls_include}", posix=True)
             elif source.name == "posix_upnp.c":
                 add_object(source, f"{posix_cflags} -I{MINIUPNPC_DIR / 'include'} -DMINIUPNP_STATICLIB", posix=True)
             elif source.name.startswith("posix_"):
                 add_object(source, posix_cflags, posix=True)
-            elif source.name == "updater.c":
+            elif source.name in ("updater.c", "release_discovery.c"):
                 add_object(source, f"{platform_cflags} {updater_defines(getattr(sln, 'port_release', False))}")
             else:
                 add_object(source, platform_cflags)

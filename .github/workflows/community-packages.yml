@@ -1,0 +1,63 @@
+name: Community map and package checks
+
+# Asset-only fixtures. Never upload game data or rebuild a player's private maps
+# on a hosted runner. Real Invader/Downrush acceptance remains a separate check.
+on:
+  push:
+    paths:
+      - '.github/workflows/community-packages.yml'
+      - 'tools/community_packages.py'
+      - 'tools/test_community_packages.py'
+      - 'tools/test_map_catalog.py'
+      - 'tools/map_catalog.py'
+      - 'tools/test_desktop_map_downloads.py'
+      - 'tools/test_download_transport_limits.py'
+      - 'port/linux/src/community_maps_download.*'
+      - 'port/linux/src/posix_update.c'
+      - 'port/linux/src/update.h'
+      - 'port/linux/src/port_config.c'
+      - 'port/linux/src/sdl_platform.c'
+      - 'port/windows/src/win32_update.c'
+      - 'port/maps/jukkis-beta3.json'
+  pull_request:
+    paths:
+      - '.github/workflows/community-packages.yml'
+      - 'tools/community_packages.py'
+      - 'tools/test_community_packages.py'
+      - 'tools/test_map_catalog.py'
+      - 'tools/map_catalog.py'
+      - 'tools/test_desktop_map_downloads.py'
+      - 'tools/test_download_transport_limits.py'
+      - 'port/linux/src/community_maps_download.*'
+      - 'port/linux/src/posix_update.c'
+      - 'port/linux/src/update.h'
+      - 'port/linux/src/port_config.c'
+      - 'port/linux/src/sdl_platform.c'
+      - 'port/windows/src/win32_update.c'
+      - 'port/maps/jukkis-beta3.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: community-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate package and download boundaries
+        run: >-
+          python -m unittest -v tools.test_community_packages
+          tools.test_desktop_map_downloads tools.test_download_transport_limits

@@ -2171,7 +2171,8 @@ void network_damage_host_tick(
 
 void network_damage_handle_events(
 	void const *entries,
-	short count)
+	short count,
+	long host_time)
 {
 	struct distributed_damage_event const *events = (struct distributed_damage_event const *)entries;
 	short index;
@@ -2203,6 +2204,8 @@ void network_damage_handle_events(
 				object_try_and_get_and_verify_type(event->object_index, _object_mask_unit))
 			{
 				/* (what harm it did the units' states bring: no death from here) */
+				if (event->shield_damage > 0.f)
+					network_distributed_note_shield_damage(event->object_index, host_time);
 				damage_replay_aftermath(event->object_index, &damage,
 					event->being_damaged_flags &
 						~(FLAG(_object_being_damaged_body_depleted_bit) | FLAG(_object_being_damaged_killed_instantly_bit)),

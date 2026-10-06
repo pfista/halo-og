@@ -67,6 +67,7 @@ struct physical_memory_map_globals
 /* ---------- globals */
 
 static struct physical_memory_map_globals physical_memory_map_globals;
+static long physical_memory_texture_cache_size = TEXTURE_CACHE_SIZE;
 
 /* ---------- public code */
 
@@ -84,6 +85,7 @@ void physical_memory_allocate(
 	physical_memory_map_globals.texture_cache_base_address = XPhysicalAlloc(TEXTURE_CACHE_SIZE, -1, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
 #line 55 "c:\\halo\\SOURCE\\cache\\physical_memory_map.c"
 	match_assert(__FILE__, __LINE__, physical_memory_map_globals.texture_cache_base_address);
+	physical_memory_texture_cache_size = TEXTURE_CACHE_SIZE;
 
 	physical_memory_map_globals.sound_cache_base_address = XPhysicalAlloc(SOUND_CACHE_SIZE, -1, 0, PAGE_READWRITE);
 #line 58 "c:\\halo\\SOURCE\\cache\\physical_memory_map.c"
@@ -150,6 +152,26 @@ void *physical_memory_get_texture_cache_base_address(
 	void)
 {
 	return physical_memory_map_globals.texture_cache_base_address;
+}
+
+int physical_memory_resize_texture_cache(
+	long size)
+{
+	void *replacement;
+
+	if (size != TEXTURE_CACHE_SIZE && size != HALO_PORT_GLOBAL_FIESTA_TEXTURE_CACHE_SIZE)
+		return FALSE;
+	if (size == physical_memory_texture_cache_size)
+		return TRUE;
+	/* Allocate before freeing: a failed expansion leaves a usable original
+	   arena, rather than exposing a null/dangling cache base to the loader. */
+	replacement = XPhysicalAlloc(size, -1, 0, PAGE_READWRITE | PAGE_WRITECOMBINE);
+	if (!replacement)
+		return FALSE;
+	XPhysicalFree(physical_memory_map_globals.texture_cache_base_address);
+	physical_memory_map_globals.texture_cache_base_address = replacement;
+	physical_memory_texture_cache_size = size;
+	return TRUE;
 }
 
 void *physical_memory_get_sound_cache_base_address(

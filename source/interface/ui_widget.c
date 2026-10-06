@@ -679,6 +679,17 @@ struct widget_instance;
 #include "text/text_group.h"
 #include "text/unicode.h"
 #include "ui_widget.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "halo_custom_maps.h"
+#include "halo_og_version.h"
+#include "port_config.h"
+#include "controller_settings.h"
+#include "../../port/linux/game/performance_options.h"
+#include "game/game.h"
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+#include "native_video.h"
+#endif
+#endif
 
 /* ---------- constants */
 
@@ -902,6 +913,12 @@ enum
 	NUMBER_OF_DPAD_DIRECTIONS =
 		_widget_event_dpad_right - _widget_event_dpad_up + 1
 };
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#define MENU_DPAD_REPEAT_INTERVAL halo_menu_repeat_milliseconds()
+#else
+#define MENU_DPAD_REPEAT_INTERVAL DPAD_EVENT_REPEAT_MILLISECONDS
+#endif
 
 enum
 {
@@ -1440,6 +1457,16 @@ static wchar_t *spinner_string_list_get_string(
 	long string_list_index,
 	short string_index);
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "../../port/linux/game/device_settings.h"
+#include "performance_editor_menu.inc"
+#include "fiesta_item_options_menu.inc"
+#include "teammate_view_menu.inc"
+#include "native_pause_frame.inc"
+#include "performance_pause_menu.inc"
+#include "game_settings_menu.inc"
+#endif
+
 /* ---------- globals */
 
 /* port: text boxes' string list indices from here are the descriptions of
@@ -1666,14 +1693,15 @@ static __inline real compute_offset_coordinate(
 		1.0);
 }
 
-void draw_bitmap_in_rect(
+static void draw_bitmap_region_in_rect(
 	struct bitmap_data *bitmap,
 	rectangle2d *rect,
 	rectangle2d *bitmap_rect,
 	rectangle2d *clip_rect,
 	pixel32 argb,
 	struct rasterizer_dynamic_screen_geometry_parameters *multitexture_params,
-	boolean no_plasma)
+	boolean no_plasma,
+	rectangle2d const *source_region)
 {
 	if (bitmap && rect)
 	{
@@ -1762,6 +1790,24 @@ void draw_bitmap_in_rect(
 				(vertex_index > 1) ? texture_height : 0.0f;
 			vertices[vertex_index].position = points[vertex_index];
 		}
+		/* Explicit source regions are reserved for runtime native pause
+		 * frames. Preserve the stock path above, including its texel-sized
+		 * clipping, for every authored widget. */
+		if (source_region)
+		{
+			if (rectangle_width <= 0 || rectangle_height <= 0 ||
+				points[0].x >= points[1].x || points[0].y >= points[2].y)
+				return;
+			for (vertex_index = 0; vertex_index < NUMBER_OF_POINTS_PER_RECTANGLE; vertex_index++)
+			{
+				real x = (points[vertex_index].x - rectangle_x0) / rectangle_width;
+				real y = (points[vertex_index].y - rectangle_y0) / rectangle_height;
+				vertices[vertex_index].texture_coordinates.x =
+					(source_region->x0 + x * (source_region->x1 - source_region->x0)) / bitmap_width;
+				vertices[vertex_index].texture_coordinates.y =
+					(source_region->y0 + y * (source_region->y1 - source_region->y0)) / bitmap_height;
+			}
+		}
 
 		csmemset(&parameters, 0, sizeof(parameters));
 		if (no_plasma)
@@ -1834,6 +1880,39 @@ void draw_bitmap_in_rect(
 
 	return;
 }
+
+void draw_bitmap_in_rect(
+	struct bitmap_data *bitmap, rectangle2d *rect, rectangle2d *bitmap_rect,
+	rectangle2d *clip_rect, pixel32 argb,
+	struct rasterizer_dynamic_screen_geometry_parameters *multitexture_params,
+	boolean no_plasma)
+{
+	draw_bitmap_region_in_rect(bitmap, rect, bitmap_rect, clip_rect, argb,
+		multitexture_params, no_plasma, NULL);
+}
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static void native_pause_frame_render(struct widget_instance *widget,
+	rectangle2d *clip, point2d origin, real alpha)
+{
+	short piece, band;
+	if (!native_pause_frame_is_widget(widget->definition_tag_index)) return;
+	for (piece = 0; piece < 3; piece++)
+	{
+		struct bitmap_data *bitmap = bitmap_group_get_bitmap_from_sequence(
+			native_pause_frame_bitmaps[piece], 0, 0);
+		for (band = 0; band < 3; band++)
+		{
+			rectangle2d destination, source;
+			native_pause_frame_slice(piece, band,
+				ui_widget_definition_get(widget->definition_tag_index)->bounds.y1,
+				origin, &destination, &source);
+			draw_bitmap_region_in_rect(bitmap, &destination, &source, clip,
+				modulate_pixel32_by_real_alpha(0xFFFFFFFF, alpha), NULL, FALSE, &source);
+		}
+	}
+}
+#endif
 
 void ui_widgets_set_fade_value(
 	real value)
@@ -3283,6 +3362,19 @@ static void event_handler_dispatch(
 	boolean close_widget_after = FALSE;
 	boolean close_current = FALSE;
 	boolean close_all = FALSE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	struct ui_widget_event_handler_reference settings_handler;
+	handler = game_settings_route_handler(&widget, handler, &settings_handler);
+#endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	boolean resume_mouse = FALSE;
+	char const *event_widget_name = tag_get_name(widget->definition_tag_index);
+	if ((handler->event_type == _gamepad_analog_button_a ||
+		handler->event_type == _gamepad_binary_button_start) && event_widget_name &&
+		(!csstrcmp(event_widget_name, "ui\\shell\\multiplayer_game\\pause_game\\resume_game_button") ||
+		 !csstrcmp(event_widget_name, "ui\\shell\\solo_game\\pause_game\\resume_game_button")))
+		resume_mouse = TRUE;
+#endif
 
 	if (TEST_FLAG(handler->flags, _event_handler_run_scenario_script_bit) &&
 		handler->script[0])
@@ -3292,11 +3384,18 @@ static void event_handler_dispatch(
 	}
 	if (TEST_FLAG(handler->flags, _event_handler_run_function_bit) &&
 		!widget_deleted &&
-		!ui_widget_event_handler_function_invoke(
-			widget,
-			event,
-			handler->function,
-			&widget_deleted))
+		!(
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			handler->function >= 31970 && handler->function <= 31999 ?
+				game_settings_event(widget, handler->function) :
+			handler->function >= 32000 && handler->function <= 32001 ?
+				performance_editor_event(widget, handler->function) :
+			handler->function >= 32010 && handler->function <= 32019 ?
+				performance_pause_event(widget, handler->function) :
+			handler->function >= 32030 && handler->function <= 32031 ?
+				teammate_view_menu_event(widget, event, handler->function, &widget_deleted) :
+#endif
+			ui_widget_event_handler_function_invoke(widget, event, handler->function, &widget_deleted)))
 	{
 		error(_error_silent, "event handler function failed");
 		function_failed = TRUE;
@@ -3548,6 +3647,10 @@ static void event_handler_dispatch(
 			}
 		}
 	}
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	if (resume_mouse && widget_deleted && success && !function_failed)
+		platform_mouse_resume_gameplay();
+#endif
 	ui_play_audio_feedback_sound(audio_feedback);
 	*calling_widget_deleted = widget_deleted;
 
@@ -3909,6 +4012,13 @@ struct widget_instance *ui_widget_load_by_name_or_tag(
 		tag_index = tag_loaded(UI_WIDGET_DEFINITION_TAG, name);
 	if (tag_index != NONE)
 	{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		tag_index = performance_editor_remap_tag(tag_index);
+		tag_index = fiesta_item_options_remap_tag(tag_index);
+		tag_index = teammate_view_menu_remap_tag(tag_index);
+		tag_index = performance_pause_remap_tag(tag_index);
+		tag_index = game_settings_remap_tag(tag_index);
+#endif
 		definition = ui_widget_definition_get(tag_index);
 		widget = pool_new_pointer(
 			widget_memory_pool,
@@ -4224,6 +4334,10 @@ void draw_string_and_hack_in_icons(
 void ui_start_main_menu_music(
 	void)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (!config_boolean("audio.menu_music"))
+		return;
+#endif
 	if (!widget_globals.main_menu_music_active && !main_menu_fade_active())
 	{
 		long sound_definition_index = tag_loaded(LOOPING_SOUND_DEFINITION_TAG, "sound\\music\\title1\\title1");
@@ -4242,6 +4356,16 @@ void ui_start_main_menu_music(
 
 	return;
 }
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+void ui_apply_main_menu_music_setting(void)
+{
+	if (!config_boolean("audio.menu_music"))
+		ui_stop_main_menu_music();
+	else if (we_are_at_the_main_menu)
+		ui_start_main_menu_music();
+}
+#endif
 
 void ui_stop_main_menu_music(
 	void)
@@ -4667,7 +4791,7 @@ void network_game_reset_to_pregame_ui(
 			network_game_server_pause_countdown(global_network_game_server_get(), TRUE);
 			/* port: with the PC version's menus, theirs (port/linux/game/menu_tags.c) */
 			if (!ui_widget_load_by_name_or_tag(
-				pc_menus_screen("ui\\shell\\main_menu\\multiplayer_type_select\\connected\\connected_map_select_postgame_wrapper"),
+				"ui\\shell\\main_menu\\multiplayer_type_select\\connected\\connected_map_select_postgame_wrapper",
 				NONE, NULL, NONE, NONE, NONE, NONE))
 			{
 				error(_error_silent, "failed to load map select postgame screen");
@@ -4676,7 +4800,7 @@ void network_game_reset_to_pregame_ui(
 		else
 		{
 			if (!ui_widget_load_by_name_or_tag(
-				pc_menus_screen("ui\\shell\\main_menu\\multiplayer_type_select\\connected\\pregame\\connected_pregame_screen"),
+				"ui\\shell\\main_menu\\multiplayer_type_select\\connected\\pregame\\connected_pregame_screen",
 				NONE, NULL, NONE, NONE, NONE, NONE))
 			{
 				error(_error_silent, "failed to load networked pregame status screen");
@@ -4927,11 +5051,10 @@ void main_screen_shell_load(
 	{
 		attract_mode_reset_timer();
 		ui_widgets_close_all();
-		/* port: the menus' main menu, when they are there (port/linux/game/menu_tags.c) */
+		/* Compatibility builds retain the original Xbox root menu. */
 		{
-			extern char const *pc_menus_root_name(void);
 
-			if (!ui_widget_load_by_name_or_tag(pc_menus_root_name(), NONE, NULL, NONE, NONE, NONE, NONE))
+			if (!ui_widget_load_by_name_or_tag("ui\\shell\\main_menu\\main_menu", NONE, NULL, NONE, NONE, NONE, NONE))
 				error(_error_silent, "failed to load main screen shell window");
 		}
 		if (widget_globals.main_menu_deferred_error_code != NONE)
@@ -5208,7 +5331,11 @@ static void widget_instance_render_text_box(
 	rectangle2d bounds;
 	rectangle2d clip;
 
-	if (definition->text_label_string_list.index != NONE)
+	if (definition->text_label_string_list.index != NONE
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		&& widget->parameters.text_box.string_list_index != HALO_CUSTOM_MAP_TEXT
+#endif
+		)
 	{
 		short string_list_index;
 		wchar_t *string;
@@ -5548,6 +5675,15 @@ static void widget_instance_render_spinner_list(
 					bounds.x0 -= SPINNER_EXTRA_WIDTH;
 					clip.x0 -= SPINNER_EXTRA_WIDTH;
 				}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				/* These runtime selectors retain the original pause button's
+				 * three-pixel text inset. Authored spinner tags are unchanged. */
+				if (performance_pause_is_spinner(widget))
+				{
+					bounds.x0 += definition->horizontal_offset;
+					bounds.y0 += definition->vertical_offset;
+				}
+#endif
 				if (focus)
 				{
 					color.alpha = definition->text_color.alpha;
@@ -5826,6 +5962,17 @@ static void ui_mouse_note_target(
 		if (!parent || ui_mouse_list_shows_several(widget) || !widget_instance_can_receive_events(widget))
 			return;
 		kind = _ui_mouse_target_value;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (game_settings_is_native_spinner(widget) || performance_editor_is_spinner(widget))
+		{
+			/* Native option arrows sit just outside the text rectangle. A
+			 * missed arrow would select the row and send its Accept button. */
+			bounds.x0 = MIN(bounds.x0, definition->list_header_bounds.x0 + offset.x);
+			bounds.x1 = MAX(bounds.x1, definition->list_footer_bounds.x1 + offset.x);
+			bounds.y0 = MIN(bounds.y0, definition->list_header_bounds.y0 + offset.y);
+			bounds.y1 = MAX(bounds.y1, definition->list_footer_bounds.y1 + offset.y);
+		}
+#endif
 	}
 	else if (ui_mouse_widget_is_item(widget))
 	{
@@ -5903,6 +6050,9 @@ static void ui_mouse_list_directions(
 	struct ui_widget_definition *definition = ui_widget_definition_get(widget->definition_tag_index);
 
 	if (TEST_FLAG(definition->flags, _widget_dpad_leftright_tabs_thru_list_items_bit) ||
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		game_settings_is_native_spinner(widget) ||
+#endif
 		TEST_FLAG(definition->flags, _widget_dpad_leftright_tabs_thru_children_bit))
 	{
 		*back = _widget_event_dpad_left;
@@ -5951,10 +6101,14 @@ static struct widget_instance *ui_mouse_wheel_widget(
 	{
 		struct ui_widget_definition *definition = ui_widget_definition_get(widget->definition_tag_index);
 
-		if (definition->flags & (FLAG(_widget_dpad_updown_tabs_thru_children_bit) |
+		if (
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			game_settings_is_native_spinner(widget) ||
+#endif
+			(definition->flags & (FLAG(_widget_dpad_updown_tabs_thru_children_bit) |
 			FLAG(_widget_dpad_leftright_tabs_thru_children_bit) |
 			FLAG(_widget_dpad_updown_tabs_thru_list_items_bit) |
-			FLAG(_widget_dpad_leftright_tabs_thru_list_items_bit)))
+			FLAG(_widget_dpad_leftright_tabs_thru_list_items_bit))))
 		{
 			result = widget;
 		}
@@ -6099,6 +6253,12 @@ static void ui_widgets_process_mouse(
 						break;
 					}
 					ui_mouse_give_focus(target->widget);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+					if (game_settings_is_adjustable(target->widget))
+						ui_mouse_press(ui_mouse_click_x < (target->bounds.x0 + target->bounds.x1) / 2 ?
+							_widget_event_dpad_left : _widget_event_dpad_right);
+					else
+#endif
 					ui_mouse_press(_gamepad_analog_button_a);
 					break;
 				case _ui_mouse_target_value:
@@ -6167,6 +6327,10 @@ static void widget_instance_render_recursive(
 	struct bitmap_data *custom_edition_picture;
 	short frame_index;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (!widget->parent)
+		performance_pause_update(widget);
+#endif
 	if (!use_nifty_plasma_fx &&
 		TEST_FLAG(definition->flags, _widget_always_render_with_nifty_fx_bit))
 	{
@@ -6183,11 +6347,25 @@ static void widget_instance_render_recursive(
 				definition->game_data_inputs.address +
 			input_index;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		teammate_view_menu_update(widget);
+		if (input->function >= 32000 && input->function <= 32001)
+			performance_editor_input(widget, input->function);
+		else
+#endif
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (input->function == _device_settings_chooser_preview || input->function == _device_settings_option_help)
+			game_settings_input(widget, input->function);
+		else
+#endif
 		ui_widget_game_data_function_invoke(widget, input->function);
 	}
 	if (!widget->visible)
 		return;
 	ui_mouse_note_target(widget, definition, offset);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	native_pause_frame_render(widget, clip_rect, offset, alpha_modifier);
+#endif
 	/* port: a Custom Edition map's picture, drawn over the whole widget, or
 	the unknown level's frame for a map without one
 	(port/linux/game/custom_edition_maps.c) */
@@ -6442,6 +6620,26 @@ void render_ui_widgets_postgame(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static void render_home_menu_version(void)
+{
+	long font_index;
+	rectangle2d bounds = { 448, 16, 476, 240 };
+	real_argb_color color = { 0.7f, 0.8f, 0.8f, 0.8f };
+
+	if (!main_menu_screen_is_active() || !widget_globals.active_widgets[0]->visible)
+		return;
+	font_index = tag_loaded(FONT_GROUP_TAG, "ui\\small_ui");
+	if (font_index == NONE)
+		return;
+	color.alpha *= widget_instance_get_cumulative_alpha_modifier(widget_globals.active_widgets[0]);
+	/* Menus occupy centered 640 columns; this footer belongs to the screen edge. */
+	halo_screen_ui_offset(FALSE);
+	draw_string_render_label(font_index, &bounds, &color, "OG v" HALO_OG_VERSION);
+	halo_screen_ui_offset(TRUE);
+}
+#endif
+
 void render_ui_widgets(
 	short local_player_index,
 	rectangle2d const *window_bounds)
@@ -6539,6 +6737,9 @@ void render_ui_widgets(
 				}
 			}
 		}
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		render_home_menu_version();
+#endif
 		if (widget_globals.fade_to_black >= 0.0f &&
 			widget_globals.fade_to_black <= 1.0f)
 		{
@@ -6623,6 +6824,9 @@ static void widget_instance_render_column_list(
 	point2d offset,
 	boolean focus)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	fiesta_item_options_update_name(widget);
+#endif
 	if (widget->parameters.list.extended_description)
 	{
 		widget->parameters.list.extended_description->alpha_modifier =
@@ -6726,13 +6930,14 @@ static void widget_instance_tab_to_next_valid_widget(
 		struct ui_widget_definition *definition =
 			ui_widget_definition_get(child->definition_tag_index);
 
-		if ((definition->event_handlers.count > 0 ||
+		if (
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			!teammate_view_menu_hidden_row(child) &&
+#endif
+			(definition->event_handlers.count > 0 ||
 			TEST_FLAG(definition->flags, _widget_pass_unhandled_events_to_children_bit) ||
 			widget->type == _ui_widget_type_spinner_list ||
-			widget->type == _ui_widget_type_column_list) &&
-			/* port: over the PC version's labels and hidden rows */
-			!(widget->type == _ui_widget_type_column_list && pc_menu_tag(widget->definition_tag_index) &&
-				widget_instance_port_is_label(child)))
+			widget->type == _ui_widget_type_column_list))
 		{
 			widget->focused_child = child;
 			break;
@@ -6768,13 +6973,14 @@ static void widget_instance_tab_to_previous_valid_widget(
 		struct ui_widget_definition *definition =
 			ui_widget_definition_get(child->definition_tag_index);
 
-		if ((definition->event_handlers.count > 0 ||
+		if (
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			!teammate_view_menu_hidden_row(child) &&
+#endif
+			(definition->event_handlers.count > 0 ||
 			TEST_FLAG(definition->flags, _widget_pass_unhandled_events_to_children_bit) ||
 			widget->type == _ui_widget_type_spinner_list ||
-			widget->type == _ui_widget_type_column_list) &&
-			/* port: over the PC version's labels and hidden rows */
-			!(widget->type == _ui_widget_type_column_list && pc_menu_tag(widget->definition_tag_index) &&
-				widget_instance_port_is_label(child)))
+			widget->type == _ui_widget_type_column_list))
 		{
 			widget->focused_child = child;
 			break;
@@ -6815,6 +7021,20 @@ static boolean widget_takes_events_of_controller(
 	return FALSE;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+boolean ui_widget_is_system_link_list(struct ui_widget_definition *definition)
+{
+	long i;
+	for (i = 0; i < definition->game_data_inputs.count; i++)
+	{
+		struct ui_widget_game_data_input_reference *input =
+			(struct ui_widget_game_data_input_reference *)definition->game_data_inputs.address + i;
+		if (ui_widget_game_data_function_is_server_list(input->function)) return TRUE;
+	}
+	return FALSE;
+}
+#endif
+
 static void widget_instance_process_one_event_recursive(
 	struct widget_instance *widget,
 	struct ui_widget_definition *definition,
@@ -6830,8 +7050,19 @@ static void widget_instance_process_one_event_recursive(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
 		3067,
 		widget && definition && event && return_widget_deleted);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (event_for_this_widget && event->type == HALO_DIRECTORY_JOIN_READY_EVENT && ui_widget_is_system_link_list(definition))
+	{
+		ui_widget_directory_join_ready(widget, &widget_deleted);
+		*return_widget_deleted = widget_deleted;
+		return;
+	}
+#endif
 	if (event->type == _event_type_button &&
 		event->data.button.value > 1 &&
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		!halo_menu_repeat_is_fast() &&
+#endif
 		event->controller_index >= 0 &&
 		event->controller_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS &&
 		event->data.button.index >= _widget_event_dpad_up &&
@@ -6839,7 +7070,7 @@ static void widget_instance_process_one_event_recursive(
 		widget_globals.current_system_milliseconds -
 			dpad_event_times[event->controller_index]
 				[event->data.button.index - _widget_event_dpad_up] >=
-			DPAD_EVENT_REPEAT_MILLISECONDS)
+			MENU_DPAD_REPEAT_INTERVAL)
 	{
 		event->data.button.value = 1;
 	}

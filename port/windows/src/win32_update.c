@@ -13,7 +13,10 @@ Paths are UTF-8, as SDL gives them.
 
 #include <windows.h>
 #include <winhttp.h>
+#include <aclapi.h>
+#include <bcrypt.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "update.h"
@@ -39,8 +42,8 @@ static void set_error(char *error, int error_size, const char *what)
 		snprintf(error, (size_t)error_size, "%s (error %lu)", what, (unsigned long)code);
 }
 
-int update_download(const char *url, const char *path, update_progress_proc progress, void *context, char *error,
-	int error_size)
+int update_download_limited(const char *url, const char *path, unsigned long long maximum_bytes,
+	update_progress_proc progress, void *context, char *error, int error_size)
 {
 	wchar_t wide_url[2048], wide_path[MAX_PATH * 2], host[256], url_path[2048];
 	URL_COMPONENTS components;
@@ -49,7 +52,8 @@ int update_download(const char *url, const char *path, update_progress_proc prog
 	DWORD status = 0, status_size = sizeof(status);
 	DWORD length = 0, length_size = sizeof(length);
 	DWORD protocols;
-	unsigned long long received = 0;
+	unsigned long long received = 0, expected_length = 0;
+	int have_length = 0;
 	int succeeded = 0;
 
 	if (!wide_from_utf8(url, wide_url, 2048) || !wide_from_utf8(path, wide_path, MAX_PATH * 2))
@@ -90,6 +94,15 @@ int update_download(const char *url, const char *path, update_progress_proc prog
 		request = WinHttpOpenRequest(connection, L"GET", url_path, NULL, WINHTTP_NO_REFERER,
 			WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
 	}
+	if (request && maximum_bytes)
+	{
+		DWORD redirect_policy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+		if (!WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &redirect_policy, sizeof(redirect_policy)))
+		{
+			set_error(error, error_size, "could not disable content redirects");
+			goto done;
+		}
+	}
 	if (!request || !WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
 		!WinHttpReceiveResponse(request, NULL))
 	{
@@ -102,10 +115,55 @@ int update_download(const char *url, const char *path, update_progress_proc prog
 		snprintf(error, (size_t)error_size, "the server answered %lu", (unsigned long)status);
 		goto done;
 	}
-	if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
-		WINHTTP_HEADER_NAME_BY_INDEX, &length, &length_size, WINHTTP_NO_HEADER_INDEX))
+	if (maximum_bytes)
 	{
-		length = 0;
+		wchar_t header[64];
+		DWORD header_size = sizeof(header);
+		if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH,
+			WINHTTP_HEADER_NAME_BY_INDEX, header, &header_size, WINHTTP_NO_HEADER_INDEX))
+		{
+			const wchar_t *digit = header;
+			if (!*digit)
+			{
+				snprintf(error, (size_t)error_size, "invalid content length");
+				goto done;
+			}
+			while (*digit)
+			{
+				unsigned number;
+				if (*digit < L'0' || *digit > L'9')
+				{
+					snprintf(error, (size_t)error_size, "invalid content length");
+					goto done;
+				}
+				number = (unsigned)(*digit++ - L'0');
+				if (expected_length > (~0ULL - number) / 10)
+				{
+					snprintf(error, (size_t)error_size, "content length overflow");
+					goto done;
+				}
+				expected_length = expected_length * 10 + number;
+			}
+			have_length = 1;
+		}
+		else if (GetLastError() != ERROR_WINHTTP_HEADER_NOT_FOUND)
+		{
+			set_error(error, error_size, "invalid content length header");
+			goto done;
+		}
+	}
+	else
+	{
+		if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+			WINHTTP_HEADER_NAME_BY_INDEX, &length, &length_size, WINHTTP_NO_HEADER_INDEX))
+			length = 0;
+		expected_length = length;
+		have_length = length != 0;
+	}
+	if (maximum_bytes && have_length && expected_length > maximum_bytes)
+	{
+		snprintf(error, (size_t)error_size, "the download exceeds its byte limit");
+		goto done;
 	}
 	file = CreateFileW(wide_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (file == INVALID_HANDLE_VALUE)
@@ -125,6 +183,11 @@ int update_download(const char *url, const char *path, update_progress_proc prog
 		}
 		if (!count)
 			break;
+		if (maximum_bytes && (received > maximum_bytes || count > maximum_bytes - received))
+		{
+			snprintf(error, (size_t)error_size, "the download exceeds its byte limit");
+			goto done;
+		}
 		if (!WriteFile(file, buffer, count, &written, NULL) || written != count)
 		{
 			set_error(error, error_size, "could not write the download");
@@ -132,9 +195,9 @@ int update_download(const char *url, const char *path, update_progress_proc prog
 		}
 		received += count;
 		if (progress)
-			progress(context, received, length);
+			progress(context, received, expected_length);
 	}
-	if (length && received != length)
+	if (have_length && received != expected_length)
 	{
 		snprintf(error, (size_t)error_size, "the download broke off");
 		goto done;
@@ -155,6 +218,12 @@ done:
 	if (session)
 		WinHttpCloseHandle(session);
 	return succeeded;
+}
+
+int update_download(const char *url, const char *path, update_progress_proc progress, void *context, char *error,
+	int error_size)
+{
+	return update_download_limited(url, path, 0, progress, context, error, error_size);
 }
 
 /* ---------- files and processes */
@@ -205,6 +274,53 @@ int update_make_directory(const char *path)
 
 	return wide_from_utf8(path, wide, MAX_PATH * 2) &&
 		(CreateDirectoryW(wide, NULL) || GetLastError() == ERROR_ALREADY_EXISTS);
+}
+
+int update_make_private_temporary_directory(char *path, int size)
+{
+	wchar_t temporary[MAX_PATH * 2], directory[MAX_PATH * 2];
+	HANDLE token = NULL;
+	DWORD bytes = 0, length;
+	TOKEN_USER *user = NULL;
+	PACL acl = NULL;
+	EXPLICIT_ACCESSW access;
+	SECURITY_DESCRIPTOR descriptor;
+	SECURITY_ATTRIBUTES attributes = { sizeof(attributes), &descriptor, FALSE };
+	unsigned char random[16];
+	wchar_t suffix[33];
+	int result = 0;
+	length = GetTempPathW(MAX_PATH * 2, temporary);
+	if (!length || length >= MAX_PATH * 2 || !OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) goto done;
+	GetTokenInformation(token, TokenUser, NULL, 0, &bytes);
+	if (!bytes || !(user = malloc(bytes)) || !GetTokenInformation(token, TokenUser, user, bytes, &bytes)) goto done;
+	memset(&access, 0, sizeof(access));
+	access.grfAccessPermissions = FILE_ALL_ACCESS;
+	access.grfAccessMode = SET_ACCESS;
+	access.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+	access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	access.Trustee.TrusteeType = TRUSTEE_IS_USER;
+	access.Trustee.ptstrName = (wchar_t *)user->User.Sid;
+	if (SetEntriesInAclW(1, &access, NULL, &acl) != ERROR_SUCCESS ||
+		!InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION) ||
+		!SetSecurityDescriptorDacl(&descriptor, TRUE, acl, FALSE) ||
+		!SetSecurityDescriptorControl(&descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED)) goto done;
+	for (unsigned attempt = 0; attempt < 8; attempt++) {
+		if (BCryptGenRandom(NULL, random, sizeof(random), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0) goto done;
+		for (unsigned i = 0; i < 16; i++) {
+			suffix[i * 2] = L"0123456789abcdef"[random[i] >> 4];
+			suffix[i * 2 + 1] = L"0123456789abcdef"[random[i] & 15];
+		}
+		suffix[32] = 0;
+		if (_snwprintf(directory, MAX_PATH * 2, L"%lshalo-og-update-%ls", temporary, suffix) < 0) goto done;
+		if (!WideCharToMultiByte(CP_UTF8, 0, directory, -1, path, size, NULL, NULL)) goto done;
+		if (CreateDirectoryW(directory, &attributes)) { result = 1; break; }
+		if (GetLastError() != ERROR_ALREADY_EXISTS) goto done;
+	}
+done:
+	if (acl) LocalFree(acl);
+	free(user);
+	if (token) CloseHandle(token);
+	return result;
 }
 
 int update_launch(const char *path)

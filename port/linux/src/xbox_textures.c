@@ -15,18 +15,21 @@ memory_watch.c detects that by write-protecting the pages.
 */
 
 #include "xgpu.h"
+#ifndef HALO_MACOS_NATIVE_METAL
 #include "hud_hires.h"
-#include "menu_files.h"
 #include "text_hires.h"
 #include "port_config.h"
+#endif
 #include "../game/cache_file_formats.h"
 
 #include <stdio.h>
-#ifdef HALO_ANDROID
+#if defined(HALO_ANDROID) && !defined(HALO_MACOS_NATIVE_METAL)
 #define GL_BGRA GL_RGBA
 #endif
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <limits.h>
 
 #ifndef GL_COMPRESSED_RGBA_S3TC_DXT1_EXT
 #define GL_COMPRESSED_RGBA_S3TC_DXT1_EXT 0x83f1
@@ -53,7 +56,7 @@ struct format_information
 	unsigned char linear;
 };
 
-static struct format_information format_information(DWORD format)
+static struct format_information known_format_information(DWORD format)
 {
 	static const struct format_information table[0x42] =
 	{
@@ -112,11 +115,20 @@ static struct format_information format_information(DWORD format)
 		[0x40] = { _texel_b8g8r8a8, 4, 1 },
 		[0x41] = { _texel_r8g8b8a8, 4, 1 },
 	};
-	struct format_information unknown = { _texel_a8r8g8b8, 4, 0 };
+	struct format_information unknown = { _texel_unknown, 0, 0 };
 
 	if (format < sizeof(table) / sizeof(table[0]) && table[format].kind != _texel_unknown)
 		return table[format];
 	return unknown;
+}
+
+static struct format_information format_information(DWORD format)
+{
+	struct format_information information = known_format_information(format);
+	struct format_information fallback = { _texel_a8r8g8b8, 4, 0 };
+
+	/* Keep the legacy GL fallback; the CPU copy interface fails explicitly. */
+	return information.kind == _texel_unknown ? fallback : information;
 }
 
 static BOOL kind_compressed(unsigned char kind)
@@ -209,15 +221,6 @@ unsigned long xgpu_texture_face_size(const struct xgpu_texture_description *desc
 	if (description->cube_map)
 		size = (size + D3DTEXTURE_CUBEFACE_ALIGNMENT - 1) & ~(unsigned long)(D3DTEXTURE_CUBEFACE_ALIGNMENT - 1);
 	return size;
-}
-
-/* whether the size is one D3DDevice_GetDeviceCaps allows (d3d8_gl.c): up
-to 4096 by 4096, and 512 each way for a volume */
-static BOOL texture_size_supported(const struct xgpu_texture_description *description)
-{
-	if (description->depth > 1)
-		return description->width <= 512 && description->height <= 512 && description->depth <= 512;
-	return description->width <= 4096 && description->height <= 4096;
 }
 
 unsigned long xgpu_texture_level_pitch(const struct xgpu_texture_description *description, unsigned long level)
@@ -363,9 +366,9 @@ static unsigned long convert_texel(unsigned char kind, const unsigned char *sour
 	}
 }
 
-/* one level (or 3D slice set) of an uncompressed texture into BGRA; FALSE
-when out of memory */
-static BOOL decode_level(const struct xgpu_texture_description *description, unsigned long level,
+/* one level (or 3D slice set) of an uncompressed texture into BGRA */
+#ifndef HALO_MACOS_NATIVE_METAL
+static void decode_level(const struct xgpu_texture_description *description, unsigned long level,
 	const unsigned char *source, const D3DCOLOR *palette, unsigned long *destination)
 {
 	struct format_information information = format_information(description->format);
@@ -392,14 +395,12 @@ static BOOL decode_level(const struct xgpu_texture_description *description, uns
 				destination[y * width + x] = x < row_texels ?
 					convert_texel(information.kind, row + x * information.bytes, palette, x, row) : 0;
 		}
-		return TRUE;
+		return;
 	}
 	{
 		struct swizzle_masks masks = swizzle_masks(width, height, depth);
 		unsigned long *x_offsets = malloc(width * sizeof(unsigned long));
 
-		if (!x_offsets)
-			return FALSE;
 		for (x = 0; x < width; x++)
 			x_offsets[x] = spread(masks.x, x);
 		for (z = 0; z < depth; z++)
@@ -420,9 +421,378 @@ static BOOL decode_level(const struct xgpu_texture_description *description, uns
 		}
 		free(x_offsets);
 	}
-	return TRUE;
+}
+#endif
+
+/* ---------- Custom Edition channel orders
+
+Halo PC keeps what some textures hold in other channels than the game reads
+it from (enum custom_edition_channel_order): a model shader's multipurpose
+masks, and a HUD meter's shape and fill order. The Custom Edition map
+loading says which texels hold which order as they arrive
+(port/linux/game/custom_edition_bitmaps.c), and textures made of them are
+sampled with each channel taken from where Halo PC keeps it, which leaves
+them as compressed as they were. Addresses stay listed until other texels
+arrive there, which the loading also says, or the map goes; the game and the
+renderer share a thread. */
+
+/* for each order, the channel (red, green, blue, alpha) of the texels each
+channel is sampled from */
+#ifndef HALO_MACOS_NATIVE_METAL
+static const unsigned char custom_edition_channel_sources[NUMBER_OF_CUSTOM_EDITION_CHANNEL_ORDERS][4] =
+{
+	{ 0, 1, 2, 3 },
+	/* specular, self-illumination, color change and the auxiliary mask */
+	{ 2, 1, 3, 0 },
+	/* the fill order in color, the shape in alpha */
+	{ 3, 3, 3, 0 },
+};
+#endif
+
+struct custom_edition_texels
+{
+	unsigned long address;
+	unsigned char channel_order;
+};
+
+static struct custom_edition_texels *custom_edition_texels;
+static unsigned long custom_edition_texel_count;
+static unsigned long custom_edition_texel_capacity;
+
+/* the order of the texels at address */
+unsigned char halo_custom_edition_texels_channel_order(const void *texels)
+{
+	unsigned long address = (unsigned long)texels;
+	unsigned long index;
+
+	for (index = 0; index < custom_edition_texel_count; index++)
+	{
+		if (custom_edition_texels[index].address == address)
+			return custom_edition_texels[index].channel_order;
+	}
+	return _custom_edition_channels_xbox;
 }
 
+void halo_custom_edition_texels_channels(const void *texels, unsigned char channel_order)
+{
+	unsigned long address = (unsigned long)texels;
+	unsigned long index;
+
+	if (channel_order >= NUMBER_OF_CUSTOM_EDITION_CHANNEL_ORDERS)
+		channel_order = _custom_edition_channels_xbox;
+	for (index = 0; index < custom_edition_texel_count && custom_edition_texels[index].address != address; index++)
+	{
+	}
+	if (index < custom_edition_texel_count)
+	{
+		if (channel_order == _custom_edition_channels_xbox)
+			custom_edition_texels[index] = custom_edition_texels[--custom_edition_texel_count];
+		else
+			custom_edition_texels[index].channel_order = channel_order;
+	}
+	else if (channel_order != _custom_edition_channels_xbox)
+	{
+		if (custom_edition_texel_count == custom_edition_texel_capacity)
+		{
+			unsigned long capacity = custom_edition_texel_capacity ? custom_edition_texel_capacity * 2 : 64;
+			struct custom_edition_texels *grown = realloc(custom_edition_texels, capacity * sizeof(*grown));
+
+			if (!grown)
+			{
+				platform_log("no memory to list the texels at %08lx: they are sampled in Halo PC's channel order",
+					address);
+				return;
+			}
+			custom_edition_texels = grown;
+			custom_edition_texel_capacity = capacity;
+		}
+		custom_edition_texels[custom_edition_texel_count].address = address;
+		custom_edition_texels[custom_edition_texel_count].channel_order = channel_order;
+		custom_edition_texel_count++;
+	}
+}
+
+void halo_custom_edition_texels_forget(void)
+{
+	free(custom_edition_texels);
+	custom_edition_texels = NULL;
+	custom_edition_texel_count = 0;
+	custom_edition_texel_capacity = 0;
+}
+
+/* ---------- backend-neutral authored mip copies */
+
+enum xgpu_texture_copy_status xgpu_texture_mip_layout(DWORD format_word, DWORD size_word,
+	unsigned long face, unsigned long level, enum xgpu_texture_copy_order order,
+	struct xgpu_texture_mip_layout *layout)
+{
+	struct xgpu_texture_description description;
+	struct xgpu_texture_mip_layout result;
+	struct format_information information;
+	unsigned long dimension = (format_word & D3DFORMAT_DIMENSION_MASK) >> D3DFORMAT_DIMENSION_SHIFT;
+	unsigned long format = (format_word & D3DFORMAT_FORMAT_MASK) >> D3DFORMAT_FORMAT_SHIFT;
+
+	if (!layout)
+		return _xgpu_texture_copy_invalid;
+	memset(layout, 0, sizeof(*layout));
+	if (order != _xgpu_texture_copy_rgba && order != _xgpu_texture_copy_bgra)
+		return _xgpu_texture_copy_invalid;
+	information = known_format_information(format);
+	if (dimension != 2 || information.kind == _texel_unknown ||
+		information.kind == _texel_d24s8 || information.kind == _texel_d16)
+		return _xgpu_texture_copy_unsupported;
+	if (kind_compressed(information.kind) && size_word)
+		return _xgpu_texture_copy_unsupported;
+	xgpu_texture_describe(format_word, size_word, &description);
+	/* The native upload contract currently bounds each axis to 4096. This
+	also bounds all pitch, face-chain and output-size arithmetic in ILP32. */
+	if (description.width > 4096 || description.height > 4096)
+		return _xgpu_texture_copy_unsupported;
+	if (description.levels > 1 + floor_log2(description.width > description.height ?
+		description.width : description.height) ||
+		(description.cube_map && (description.width != description.height || description.linear)) ||
+		(!description.compressed && description.pitch < description.width * information.bytes))
+		return _xgpu_texture_copy_invalid;
+	if (level >= description.levels || face >= (description.cube_map ? 6UL : 1UL))
+		return _xgpu_texture_copy_invalid;
+	memset(&result, 0, sizeof(result));
+	result.texture_width = description.width;
+	result.texture_height = description.height;
+	result.levels = description.levels;
+	result.faces = description.cube_map ? 6 : 1;
+	result.face = face;
+	result.level = level;
+	result.width = level_dimension(description.width, level);
+	result.height = level_dimension(description.height, level);
+	result.source_face_pitch = xgpu_texture_face_size(&description);
+	result.source_total_size = result.source_face_pitch * result.faces;
+	result.source_offset = face * result.source_face_pitch + xgpu_texture_level_offset(&description, level);
+	result.source_size = level_bytes(&description, level);
+	result.source_row_pitch = xgpu_texture_level_pitch(&description, level);
+	if ((information.kind == _texel_yuy2 || information.kind == _texel_uyvy) &&
+		result.source_row_pitch < ((result.width + 1) & ~1UL) * 2)
+		return _xgpu_texture_copy_invalid;
+	if (description.compressed)
+	{
+		result.format = information.kind == _texel_dxt1 ? _xgpu_texture_copy_bc1 :
+			information.kind == _texel_dxt3 ? _xgpu_texture_copy_bc2 : _xgpu_texture_copy_bc3;
+		result.output_row_pitch = result.source_row_pitch;
+		result.output_size = result.source_size;
+	}
+	else
+	{
+		result.format = order == _xgpu_texture_copy_rgba ? _xgpu_texture_copy_rgba8 : _xgpu_texture_copy_bgra8;
+		result.output_row_pitch = result.width * 4;
+		result.output_size = result.output_row_pitch * result.height;
+	}
+	*layout = result;
+	return _xgpu_texture_copy_ok;
+}
+
+static BOOL copy_ranges_overlap(uintptr_t first, unsigned long first_bytes,
+	uintptr_t second, unsigned long second_bytes)
+{
+	return first < second + second_bytes && second < first + first_bytes;
+}
+
+enum xgpu_texture_copy_status xgpu_texture_mip_copy(DWORD format_word, DWORD size_word,
+	const void *source, unsigned long source_bytes, const D3DCOLOR *palette, unsigned long palette_entries,
+	unsigned long face, unsigned long level, enum xgpu_texture_copy_order order,
+	void *destination, unsigned long destination_bytes, struct xgpu_texture_mip_layout *layout)
+{
+	struct xgpu_texture_mip_layout result;
+	struct format_information information;
+	struct xgpu_texture_description description;
+	enum xgpu_texture_copy_status status;
+	uintptr_t source_address = (uintptr_t)source, destination_address = (uintptr_t)destination;
+	unsigned char *output = destination;
+	const unsigned char *input;
+	unsigned long x, y;
+
+	if (!layout)
+		return _xgpu_texture_copy_invalid;
+	memset(layout, 0, sizeof(*layout));
+	status = xgpu_texture_mip_layout(format_word, size_word, face, level, order, &result);
+	if (status != _xgpu_texture_copy_ok)
+		return status;
+	if (!source || !destination)
+		return _xgpu_texture_copy_invalid;
+	if (source_bytes < result.source_total_size || destination_bytes < result.output_size ||
+		result.source_total_size > UINTPTR_MAX - source_address ||
+		result.output_size > UINTPTR_MAX - destination_address)
+		return _xgpu_texture_copy_bounds;
+	if (copy_ranges_overlap(source_address, result.source_total_size, destination_address, result.output_size))
+		return _xgpu_texture_copy_invalid;
+	xgpu_texture_describe(format_word, size_word, &description);
+	information = known_format_information(description.format);
+	if (information.kind == _texel_p8)
+	{
+		uintptr_t palette_address = (uintptr_t)palette;
+		unsigned long palette_bytes = 256 * sizeof(D3DCOLOR);
+
+		if (!palette || palette_entries != 256 || palette_bytes > UINTPTR_MAX - palette_address ||
+			copy_ranges_overlap(palette_address, palette_bytes, destination_address, result.output_size))
+			return _xgpu_texture_copy_invalid;
+	}
+	input = (const unsigned char *)source + result.source_offset;
+	if (description.compressed)
+		memcpy(destination, input, result.output_size);
+	else
+	{
+		struct swizzle_masks masks = swizzle_masks(result.width, result.height, 1);
+
+		for (y = 0; y < result.height; y++)
+		{
+			const unsigned char *row = description.linear ? input + y * description.pitch : input;
+			unsigned long y_offset = spread(masks.y, y), x_offset = 0;
+
+			for (x = 0; x < result.width; x++)
+			{
+				const unsigned char *texel = description.linear ? row + x * information.bytes :
+					input + (x_offset | y_offset) * information.bytes;
+				unsigned char padded[4] = { 0, 0, 0, 0 };
+				unsigned long value;
+
+				/* The shared legacy converter reads a four-byte word. Padding
+				keeps one/two-byte final texels inside their authored allocation. */
+				memcpy(padded, texel, information.bytes);
+				value = convert_texel(information.kind, padded, palette, x, row);
+				output[0] = (unsigned char)(value >> (order == _xgpu_texture_copy_rgba ? 16 : 0));
+				output[1] = (unsigned char)(value >> 8);
+				output[2] = (unsigned char)(value >> (order == _xgpu_texture_copy_rgba ? 0 : 16));
+				output[3] = (unsigned char)(value >> 24);
+				output += 4;
+				/* Increment a counter in the scattered x bits without allocating
+				an offset table or changing the original Morton coordinate order. */
+				x_offset = (x_offset - masks.x) & masks.x;
+			}
+		}
+	}
+	*layout = result;
+	return _xgpu_texture_copy_ok;
+}
+
+enum xgpu_texture_copy_status xgpu_texture_volume_mip_layout(DWORD format_word, DWORD size_word,
+	unsigned long face, unsigned long level, enum xgpu_texture_copy_order order,
+	struct xgpu_texture_volume_mip_layout *layout)
+{
+	struct xgpu_texture_description description;
+	struct xgpu_texture_volume_mip_layout result;
+	struct format_information information;
+	unsigned long maximum;
+	uint64_t total = 0, offset = 0, size = 0;
+	unsigned long dimension = (format_word & D3DFORMAT_DIMENSION_MASK) >> D3DFORMAT_DIMENSION_SHIFT;
+	unsigned long format = (format_word & D3DFORMAT_FORMAT_MASK) >> D3DFORMAT_FORMAT_SHIFT;
+
+	if (!layout) return _xgpu_texture_copy_invalid;
+	memset(layout, 0, sizeof(*layout));
+	if (order != _xgpu_texture_copy_rgba && order != _xgpu_texture_copy_bgra)
+		return _xgpu_texture_copy_invalid;
+	information = known_format_information(format);
+	if (dimension != 3 || size_word || (format_word & D3DFORMAT_CUBEMAP) ||
+		information.linear || kind_compressed(information.kind) || information.kind == _texel_unknown ||
+		information.kind == _texel_d24s8 || information.kind == _texel_d16)
+		return _xgpu_texture_copy_unsupported;
+	xgpu_texture_describe(format_word, size_word, &description);
+	if (description.width > 512 || description.height > 512 || description.depth > 512)
+		return _xgpu_texture_copy_unsupported;
+	maximum = description.width > description.height ? description.width : description.height;
+	if (description.depth > maximum) maximum = description.depth;
+	if (description.levels > 1 + floor_log2(maximum) || face || level >= description.levels)
+		return _xgpu_texture_copy_invalid;
+	/* Validate the entire allocation in wide arithmetic before narrowing for
+	   the ILP32 guest. Independently authored levels are never regenerated. */
+	for (unsigned long i = 0; i < description.levels; i++) {
+		uint64_t bytes = (uint64_t)level_dimension(description.width, i) *
+			level_dimension(description.height, i) * level_dimension(description.depth, i) * information.bytes;
+		if (i == level) { offset = total; size = bytes; }
+		total += bytes;
+	}
+	memset(&result, 0, sizeof(result));
+	result.mip.texture_width = description.width;
+	result.mip.texture_height = description.height;
+	result.texture_depth = description.depth;
+	result.mip.levels = description.levels;
+	result.mip.faces = 1;
+	result.mip.level = level;
+	result.mip.width = level_dimension(description.width, level);
+	result.mip.height = level_dimension(description.height, level);
+	result.depth = level_dimension(description.depth, level);
+	uint64_t output_size = (uint64_t)result.mip.width * result.mip.height * result.depth * 4;
+	if (total > ULONG_MAX || size > ULONG_MAX || offset > ULONG_MAX || output_size > ULONG_MAX)
+		return _xgpu_texture_copy_bounds;
+	result.mip.source_face_pitch = result.mip.source_total_size = (unsigned long)total;
+	result.mip.source_offset = (unsigned long)offset;
+	result.mip.source_size = (unsigned long)size;
+	result.mip.source_row_pitch = result.mip.width * information.bytes;
+	result.source_image_pitch = result.mip.source_row_pitch * result.mip.height;
+	result.mip.output_row_pitch = result.mip.width * 4;
+	result.output_image_pitch = result.mip.output_row_pitch * result.mip.height;
+	result.mip.output_size = (unsigned long)output_size;
+	result.mip.format = order == _xgpu_texture_copy_rgba ? _xgpu_texture_copy_rgba8 : _xgpu_texture_copy_bgra8;
+	*layout = result;
+	return _xgpu_texture_copy_ok;
+}
+
+enum xgpu_texture_copy_status xgpu_texture_volume_mip_copy(DWORD format_word, DWORD size_word,
+	const void *source, unsigned long source_bytes, const D3DCOLOR *palette, unsigned long palette_entries,
+	unsigned long face, unsigned long level, enum xgpu_texture_copy_order order,
+	void *destination, unsigned long destination_bytes, struct xgpu_texture_volume_mip_layout *layout)
+{
+	struct xgpu_texture_volume_mip_layout result;
+	struct format_information information;
+	struct xgpu_texture_description description;
+	uintptr_t source_address = (uintptr_t)source, destination_address = (uintptr_t)destination;
+	unsigned char *output = destination;
+	const unsigned char *input;
+
+	if (!layout) return _xgpu_texture_copy_invalid;
+	memset(layout, 0, sizeof(*layout));
+	enum xgpu_texture_copy_status status = xgpu_texture_volume_mip_layout(format_word, size_word,
+		face, level, order, &result);
+	if (status != _xgpu_texture_copy_ok) return status;
+	if (!source || !destination) return _xgpu_texture_copy_invalid;
+	if (source_bytes < result.mip.source_total_size || destination_bytes < result.mip.output_size ||
+		result.mip.source_total_size > UINTPTR_MAX - source_address ||
+		result.mip.output_size > UINTPTR_MAX - destination_address)
+		return _xgpu_texture_copy_bounds;
+	if (copy_ranges_overlap(source_address, result.mip.source_total_size, destination_address, result.mip.output_size))
+		return _xgpu_texture_copy_invalid;
+	xgpu_texture_describe(format_word, size_word, &description);
+	information = known_format_information(description.format);
+	if (information.kind == _texel_p8) {
+		uintptr_t palette_address = (uintptr_t)palette;
+		unsigned long palette_bytes = 256 * sizeof(D3DCOLOR);
+		if (!palette || palette_entries != 256 || palette_bytes > UINTPTR_MAX - palette_address ||
+			copy_ranges_overlap(palette_address, palette_bytes, destination_address, result.mip.output_size))
+			return _xgpu_texture_copy_invalid;
+	}
+	input = (const unsigned char *)source + result.mip.source_offset;
+	struct swizzle_masks masks = swizzle_masks(result.mip.width, result.mip.height, result.depth);
+	for (unsigned long z = 0; z < result.depth; z++) {
+		unsigned long z_offset = spread(masks.z, z);
+		for (unsigned long y = 0; y < result.mip.height; y++) {
+			unsigned long y_offset = spread(masks.y, y) | z_offset, x_offset = 0;
+			for (unsigned long x = 0; x < result.mip.width; x++) {
+				const unsigned char *texel = input + (x_offset | y_offset) * information.bytes;
+				unsigned char padded[4] = {0, 0, 0, 0};
+				memcpy(padded, texel, information.bytes);
+				unsigned long value = convert_texel(information.kind, padded, palette, x, padded);
+				output[0] = (unsigned char)(value >> (order == _xgpu_texture_copy_rgba ? 16 : 0));
+				output[1] = (unsigned char)(value >> 8);
+				output[2] = (unsigned char)(value >> (order == _xgpu_texture_copy_rgba ? 0 : 16));
+				output[3] = (unsigned char)(value >> 24);
+				output += 4;
+				x_offset = (x_offset - masks.x) & masks.x;
+			}
+		}
+	}
+	*layout = result;
+	return _xgpu_texture_copy_ok;
+}
+
+/* ---------- GL texture upload/cache */
+#ifndef HALO_MACOS_NATIVE_METAL
 #ifdef HALO_ANDROID
 /* ---------- DXT decoding, for ES drivers without S3TC (Mali) */
 
@@ -581,8 +951,6 @@ static void texture_dump(GLenum target, const struct xgpu_texture_description *d
 	if (!directory || target != GL_TEXTURE_2D)
 		return;
 	pixels = malloc(width * height * 4);
-	if (!pixels)
-		return;
 	glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
 	snprintf(path, sizeof(path), "%s/tex%05lu_fmt%02x_%lux%lu.tga", directory, dump_index++,
 		(unsigned)description->format, width, height);
@@ -602,99 +970,6 @@ static void texture_dump(GLenum target, const struct xgpu_texture_description *d
 }
 #endif
 
-/* ---------- Custom Edition channel orders
-
-Halo PC keeps what some textures hold in other channels than the game reads
-it from (enum custom_edition_channel_order): a model shader's multipurpose
-masks, and a HUD meter's shape and fill order. The Custom Edition map
-loading says which texels hold which order as they arrive
-(port/linux/game/custom_edition_bitmaps.c), and textures made of them are
-sampled with each channel taken from where Halo PC keeps it, which leaves
-them as compressed as they were. Addresses stay listed until other texels
-arrive there, which the loading also says, or the map goes; the game and the
-renderer share a thread. */
-
-/* for each order, the channel (red, green, blue, alpha) of the texels each
-channel is sampled from */
-static const unsigned char custom_edition_channel_sources[NUMBER_OF_CUSTOM_EDITION_CHANNEL_ORDERS][4] =
-{
-	{ 0, 1, 2, 3 },
-	/* specular, self-illumination, color change and the auxiliary mask */
-	{ 2, 1, 3, 0 },
-	/* the fill order in color, the shape in alpha */
-	{ 3, 3, 3, 0 },
-};
-
-struct custom_edition_texels
-{
-	unsigned long address;
-	unsigned char channel_order;
-};
-
-static struct custom_edition_texels *custom_edition_texels;
-static unsigned long custom_edition_texel_count;
-static unsigned long custom_edition_texel_capacity;
-
-/* the order of the texels at address */
-static unsigned char custom_edition_texels_order(unsigned long address)
-{
-	unsigned long index;
-
-	for (index = 0; index < custom_edition_texel_count; index++)
-	{
-		if (custom_edition_texels[index].address == address)
-			return custom_edition_texels[index].channel_order;
-	}
-	return _custom_edition_channels_xbox;
-}
-
-void halo_custom_edition_texels_channels(const void *texels, unsigned char channel_order)
-{
-	unsigned long address = (unsigned long)texels;
-	unsigned long index;
-
-	if (channel_order >= NUMBER_OF_CUSTOM_EDITION_CHANNEL_ORDERS)
-		channel_order = _custom_edition_channels_xbox;
-	for (index = 0; index < custom_edition_texel_count && custom_edition_texels[index].address != address; index++)
-	{
-	}
-	if (index < custom_edition_texel_count)
-	{
-		if (channel_order == _custom_edition_channels_xbox)
-			custom_edition_texels[index] = custom_edition_texels[--custom_edition_texel_count];
-		else
-			custom_edition_texels[index].channel_order = channel_order;
-	}
-	else if (channel_order != _custom_edition_channels_xbox)
-	{
-		if (custom_edition_texel_count == custom_edition_texel_capacity)
-		{
-			unsigned long capacity = custom_edition_texel_capacity ? custom_edition_texel_capacity * 2 : 64;
-			struct custom_edition_texels *grown = realloc(custom_edition_texels, capacity * sizeof(*grown));
-
-			if (!grown)
-			{
-				platform_log("no memory to list the texels at %08lx: they are sampled in Halo PC's channel order",
-					address);
-				return;
-			}
-			custom_edition_texels = grown;
-			custom_edition_texel_capacity = capacity;
-		}
-		custom_edition_texels[custom_edition_texel_count].address = address;
-		custom_edition_texels[custom_edition_texel_count].channel_order = channel_order;
-		custom_edition_texel_count++;
-	}
-}
-
-void halo_custom_edition_texels_forget(void)
-{
-	free(custom_edition_texels);
-	custom_edition_texels = NULL;
-	custom_edition_texel_count = 0;
-	custom_edition_texel_capacity = 0;
-}
-
 static void upload(GLuint texture, GLenum target, const struct xgpu_texture_description *description,
 	const unsigned char *base, const D3DCOLOR *palette, unsigned char channel_order)
 {
@@ -710,12 +985,6 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 	decode_compressed = description->compressed && !xgpu_capabilities.s3tc;
 #endif
 	converted = description->compressed && !decode_compressed ? NULL : malloc(largest * sizeof(unsigned long));
-	if (!converted && !(description->compressed && !decode_compressed))
-	{
-		platform_log("textures: no memory to convert a %lux%lux%lu texture; it is not drawn",
-			description->width, description->height, description->depth);
-		return;
-	}
 	glBindTexture(target, texture);
 	xgpu_gl_state_invalidate();
 	/* the channel of the texels each channel is sampled from, set on every
@@ -776,13 +1045,7 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 						(unsigned long)depth, converted);
 				else
 #endif
-				if (!decode_level(description, level, source, palette, converted))
-				{
-					platform_log("textures: no memory to convert a %lux%lux%lu texture; it is not drawn",
-						description->width, description->height, description->depth);
-					free(converted);
-					return;
-				}
+				decode_level(description, level, source, palette, converted);
 				if (target == GL_TEXTURE_3D)
 					glTexImage3D(image_target, (GLint)level, GL_RGBA8, width, height, depth, 0, GL_BGRA, GL_UNSIGNED_BYTE, converted);
 				else
@@ -809,10 +1072,6 @@ struct texture_entry
 	unsigned long last_used_frame;
 	/* the high-res HUD texture drawn in its place (hud_hires.h), or -1 */
 	long override;
-	/* the newest generation of its pages (memory_watch_generation) as of the
-	memory watch serial read before it was found: the same while no watched
-	page has been written since (0: never found) */
-	unsigned long watched_serial, watched_generation;
 };
 
 #define TEXTURE_BUCKET_COUNT 4096
@@ -825,7 +1084,7 @@ static struct texture_entry *texture_buckets[TEXTURE_BUCKET_COUNT];
 texture that is not palettized is remembered with the memory watch serial it
 started at: while no watched page has been written since, and no texture
 has been dropped, the same lookup finds the same current texture. */
-#define RECENT_TEXTURE_COUNT 512
+#define RECENT_TEXTURE_COUNT 64
 
 static struct
 {
@@ -837,14 +1096,9 @@ static struct
 static unsigned long texture_drop_serial = 1;
 static unsigned long texture_frame = 0;
 
-/* (every bit of the three mixed into the top ones: textures are aligned,
-and few sizes and formats are common) */
 static unsigned long bucket_index(DWORD data, DWORD format_word, DWORD size_word)
 {
-	unsigned long hash = (unsigned long)data * 2654435761UL ^ (unsigned long)format_word * 2246822519UL ^
-		(unsigned long)size_word * 3266489917UL;
-
-	return ((hash & 0xffffffffUL) >> 20) % TEXTURE_BUCKET_COUNT;
+	return ((data >> 7) ^ (format_word * 2654435761UL) ^ size_word) % TEXTURE_BUCKET_COUNT;
 }
 
 /* palettized textures are cached per palette contents: the game rewrites
@@ -867,28 +1121,6 @@ static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 {
 	*target = entry->target;
 	*description = entry->description;
-	/* (the high-res text's atlas, for its placeholder bitmap: text_hires.h) */
-	{
-		GLuint atlas = text_hires_atlas_texture(entry->data);
-
-		if (atlas)
-		{
-			description->levels = 1;
-			return atlas;
-		}
-	}
-	/* (a menu's bitmap: menu_files.h) */
-	{
-		unsigned long levels;
-		GLuint art = menu_art_texture(entry->data, &levels);
-
-		if (art)
-		{
-			description->levels = levels;
-			description->hires = TRUE;
-			return art;
-		}
-	}
 	if (entry->override >= 0)
 	{
 		GLuint texture = hud_hires_override_texture(entry->override, &description->levels);
@@ -901,6 +1133,60 @@ static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 		}
 	}
 	return entry->texture;
+}
+
+/* The core supplies RGBA8 and revisions without depending on GL. This adapter
+ * uploads only rows changed since its own last bind, independently of Metal. */
+static GLuint text_atlas_gl_texture;
+static uint64_t text_atlas_uploaded_revision;
+
+static void text_atlas_dispose(void)
+{
+	if (text_atlas_gl_texture)
+	{
+		glDeleteTextures(1, &text_atlas_gl_texture);
+		xgpu_gl_state_invalidate();
+	}
+	text_atlas_gl_texture = 0;
+	text_atlas_uploaded_revision = 0;
+}
+
+static GLuint text_atlas_texture(unsigned long data)
+{
+	static int logged;
+	struct text_hires_atlas_pixels pixels;
+	if (!text_hires_atlas_pixels_since(data, text_atlas_gl_texture ? text_atlas_uploaded_revision : 0, &pixels))
+		return 0;
+	if (!text_atlas_gl_texture)
+	{
+		glGenTextures(1, &text_atlas_gl_texture);
+		if (!text_atlas_gl_texture)
+			return 0;
+		text_hires_set_atlas_dispose_proc(text_atlas_dispose);
+		glBindTexture(GL_TEXTURE_2D, text_atlas_gl_texture);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)pixels.width, (GLsizei)pixels.height,
+			0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+		pixels.dirty_top = 0;
+		pixels.dirty_bottom = pixels.height;
+	}
+	if (pixels.dirty_top < pixels.dirty_bottom)
+	{
+		glBindTexture(GL_TEXTURE_2D, text_atlas_gl_texture);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, (GLint)pixels.dirty_top,
+			(GLsizei)pixels.width, (GLsizei)(pixels.dirty_bottom - pixels.dirty_top),
+			GL_RGBA, GL_UNSIGNED_BYTE, pixels.rgba + (size_t)pixels.dirty_top * pixels.width * 4);
+		xgpu_gl_state_invalidate();
+		if (!logged)
+		{
+			platform_log("high-res text: GL atlas %lux%lu RGBA8", pixels.width, pixels.height);
+			logged = 1;
+		}
+	}
+	text_atlas_uploaded_revision = pixels.revision;
+	return text_atlas_gl_texture;
 }
 
 GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *target,
@@ -918,34 +1204,38 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 	static int no_cache = -1;
 	unsigned long recent = bucket_index(data, format_word, size_word) % RECENT_TEXTURE_COUNT;
 	unsigned long watch_serial = memory_watch_serial();
+	GLuint text_texture = text_atlas_texture(data);
+	if (text_texture)
+	{
+		/* Retain the placeholder's logical size: glyph UVs are expressed in
+		 * its texels. The actual texture is the larger single-mip atlas. */
+		xgpu_texture_describe(format_word, size_word, description);
+		*target = GL_TEXTURE_2D;
+		description->levels = 1;
+		description->hires = TRUE;
+		description->hires_coverage = FALSE;
+		return text_texture;
+	}
 
-	/* (a texture that is not palettized has the one entry, until one is
-	dropped: remembered, a page written since only means checking it) */
-	entry = NULL;
 	if (!palettized && recent_textures[recent].entry && recent_textures[recent].data == data &&
 		recent_textures[recent].format_word == format_word && recent_textures[recent].size_word == size_word &&
+		recent_textures[recent].watch_serial == watch_serial &&
 		recent_textures[recent].drop_serial == texture_drop_serial)
 	{
 		entry = recent_textures[recent].entry;
-		if (recent_textures[recent].watch_serial == watch_serial)
-		{
-			entry->last_used_frame = texture_frame;
-			return texture_entry_result(entry, target, description);
-		}
+		entry->last_used_frame = texture_frame;
+		return texture_entry_result(entry, target, description);
 	}
 
-	if (!entry)
+	for (entry = *bucket; entry; entry = entry->next)
 	{
-		for (entry = *bucket; entry; entry = entry->next)
+		if (entry->data == data && entry->format_word == format_word && entry->size_word == size_word)
 		{
-			if (entry->data == data && entry->format_word == format_word && entry->size_word == size_word)
-			{
-				if (entry->palette_hash == hash)
-					break;
-				variant_count++;
-				if (!oldest_variant || entry->last_used_frame < oldest_variant->last_used_frame)
-					oldest_variant = entry;
-			}
+			if (entry->palette_hash == hash)
+				break;
+			variant_count++;
+			if (!oldest_variant || entry->last_used_frame < oldest_variant->last_used_frame)
+				oldest_variant = entry;
 		}
 	}
 	if (!entry && variant_count >= MAXIMUM_PALETTE_VARIANTS)
@@ -958,12 +1248,6 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 	if (!entry)
 	{
 		entry = calloc(1, sizeof(*entry));
-		if (!entry)
-		{
-			xgpu_texture_describe(format_word, size_word, description);
-			*target = GL_TEXTURE_2D;
-			return 0;
-		}
 		entry->data = data;
 		entry->format_word = format_word;
 		entry->size_word = size_word;
@@ -972,15 +1256,7 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 		entry->target = entry->description.cube_map ? GL_TEXTURE_CUBE_MAP :
 			entry->description.depth > 1 ? GL_TEXTURE_3D : GL_TEXTURE_2D;
 		entry->address = (unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(data);
-		/* (a size beyond D3DDevice_GetDeviceCaps' is never uploaded: its
-		byte counts would not fit in 32 bits) */
-		entry->size = texture_size_supported(&entry->description) ?
-			xgpu_texture_face_size(&entry->description) * (entry->description.cube_map ? 6 : 1) : 0;
-		if (!entry->size)
-		{
-			platform_log("textures: a %lux%lux%lu texture is larger than the device takes; it is not drawn",
-				entry->description.width, entry->description.height, entry->description.depth);
-		}
+		entry->size = xgpu_texture_face_size(&entry->description) * (entry->description.cube_map ? 6 : 1);
 		entry->generation = 0;
 		entry->override = -1;
 		glGenTextures(1, &entry->texture);
@@ -990,17 +1266,7 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 
 	if (no_cache < 0)
 		no_cache = config_boolean("debug.texture_no_cache");
-	/* (its pages' newest generation, found again only once a watched page
-	has been written: a large texture's pages, scanned for every draw that
-	bound it, were much of a frame with many objects) */
-	if (entry->watched_serial && entry->watched_serial == watch_serial)
-		generation = entry->watched_generation;
-	else
-	{
-		generation = memory_watch_generation(entry->address, entry->size);
-		entry->watched_serial = watch_serial;
-		entry->watched_generation = generation;
-	}
+	generation = memory_watch_generation(entry->address, entry->size);
 	if (!entry->generation || generation > entry->generation || no_cache)
 	{
 		/* protect first, so a write racing with the upload is noticed */
@@ -1010,7 +1276,7 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 			entry->generation = 1;
 		/* (which bitmap is here may have changed with the pixels) */
 		entry->override = -1;
-		if (entry->size && !palettized && !entry->description.cube_map && entry->description.depth == 1)
+		if (!palettized && !entry->description.cube_map && entry->description.depth == 1)
 		{
 			unsigned long levels;
 
@@ -1020,7 +1286,7 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 			if (entry->override >= 0 && !hud_hires_override_texture(entry->override, &levels))
 				entry->override = -1;
 		}
-		if (entry->override < 0 && entry->size && platform_is_contiguous((void *)entry->address) &&
+		if (entry->override < 0 && platform_is_contiguous((void *)entry->address) &&
 			platform_is_contiguous((void *)(entry->address + entry->size - 1)))
 		{
 			if (config_boolean("debug.texture_log"))
@@ -1039,7 +1305,7 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 					ones * 100 / entry->size, zeros * 100 / entry->size);
 			}
 			upload(entry->texture, entry->target, &entry->description, (const unsigned char *)entry->address, palette,
-				custom_edition_texels_order(entry->address));
+				halo_custom_edition_texels_channel_order((const void *)entry->address));
 		}
 	}
 	entry->last_used_frame = texture_frame;
@@ -1086,3 +1352,4 @@ void xgpu_texture_cache_begin_frame(void)
 		}
 	}
 }
+#endif /* !HALO_MACOS_NATIVE_METAL */

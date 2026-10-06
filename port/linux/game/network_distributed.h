@@ -26,7 +26,8 @@ enum
 	_distributed_message_unit_states,
 	/* the players' statistics (unreliable) */
 	_distributed_message_player_statistics,
-	/* what units carry (unreliable) */
+	/* what units carry (weapon/grenade changes reliable; ammunition and
+	unchanged refreshes unreliable) */
 	_distributed_message_inventories,
 	/* objects created and deleted (reliable) */
 	_distributed_message_object_changes,
@@ -313,7 +314,7 @@ void network_objects_client_asked(long machine_index, boolean again);
 void network_objects_handle_changes(void const *entries, short count);
 void network_objects_handle_synchronized(void);
 void network_objects_handle_states(void const *entries, short count);
-void network_objects_handle_inventories(void const *entries, short count);
+void network_objects_handle_inventories(void const *entries, short count, long time);
 /* (a client) its own player picked up the weapon, to ready once its unit has it */
 void network_objects_client_picked_up_weapon(short local_player_index, long unit_index, long definition_index);
 void network_objects_handle_vehicle_prediction(long machine_index, void const *entries, short count);
@@ -344,7 +345,8 @@ player's machine reports */
 void network_damage_note_grenade(long unit_index, short grenade_type);
 void network_damage_host_tick(void);
 void network_damage_client_tick(void);
-void network_damage_handle_events(void const *entries, short count);
+void network_damage_handle_events(void const *entries, short count, long host_time);
+void network_distributed_note_shield_damage(long object_index, long host_time);
 void network_damage_handle_reports(long machine_index, void const *entries, short count);
 word network_damage_entry_size(byte type);
 

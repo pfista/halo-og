@@ -112,6 +112,9 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "rasterizer/rasterizer_console_vars.h"
 #include "rasterizer/rasterizer_model_types.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "render/teammate_view.h"
+#endif
 
 /* ---------- constants */
 
@@ -354,7 +357,12 @@ void render_objects(
 	{
 		if (first_person_pass != rasterizer_debug_options.draw_first_person_weapon_first)
 		{
-			first_person_weapon_draw();
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			/* Read-only teammate panes never borrow a local player's hands. */
+			if (render.local_player_index != NONE ||
+				teammate_view_get_player_index(render.window_index) == NONE)
+#endif
+				first_person_weapon_draw();
 		}
 		else
 		{
@@ -399,7 +407,19 @@ void render_object_shadows(
 static boolean object_is_first_person_camera(
 	long object_index)
 {
-	long unit_index = (local_player_get_player_index(render.local_player_index) == NONE)
+	long unit_index;
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Community addition: hide the viewed teammate's body only in its own
+	   first-person pane; vehicle third-person views retain the body. */
+	if (render.local_player_index == NONE &&
+		teammate_view_get_player_index(render.window_index) != NONE)
+	{
+		return object_index ==
+			teammate_view_get_first_person_unit_index(render.window_index);
+	}
+#endif
+	unit_index = (local_player_get_player_index(render.local_player_index) == NONE)
 		? NONE
 		: player_get(local_player_get_player_index(render.local_player_index))->unit_index;
 
@@ -614,7 +634,13 @@ static void render_object_list(
 						object->object.forced_shader_permutation_index,
 						data->no_planar_fog ? FLAG(_render_model_no_planar_fog_bit) : 0);
 
-					if (debug_objects)
+					if (debug_objects
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+						/* Unit-seat debug drawing dereferences a local player. */
+						&& (render.local_player_index != NONE ||
+							teammate_view_get_player_index(render.window_index) == NONE)
+#endif
+						)
 					{
 						object_type_render_debug(object_index);
 					}

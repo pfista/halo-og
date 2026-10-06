@@ -1334,11 +1334,26 @@ boolean network_connection_read(
 	word *buffer_size,
 	struct transport_address *source_address)
 {
+	return network_connection_read_with_transport(connection, buffer, buffer_size, source_address, NULL);
+}
+
+boolean network_connection_read_with_transport(
+	struct network_connection *connection,
+	void *buffer,
+	word *buffer_size,
+	struct transport_address *source_address,
+	boolean *reliable)
+{
 	boolean result;
+
+	if (reliable)
+		*reliable = FALSE;
 
 	if (TEST_FLAG(connection->flags, _connection_create_server_bit))
 	{
-		return network_client_unreliable_connection_read(connection, buffer, buffer_size, source_address);
+		result = network_client_unreliable_connection_read(connection, buffer, buffer_size, source_address);
+		network_connection_last_read_unreliable = result;
+		return result;
 	}
 
 	match_assert(
@@ -1349,6 +1364,8 @@ boolean network_connection_read(
 
 	result = network_client_reliable_connection_read(connection, buffer, buffer_size, source_address);
 	network_connection_last_read_unreliable = FALSE;
+	if (reliable)
+		*reliable = result;
 	if (!result && TEST_FLAG(connection->flags, _connection_create_clientside_client_bit))
 	{
 		result = network_client_unreliable_connection_read(connection, buffer, buffer_size, source_address);

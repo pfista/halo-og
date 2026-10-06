@@ -10,4 +10,4 @@ unchanged.
 
 The game's text is drawn with fonts from `port/assets/fonts`, rasterized
 with it at the display's resolution (`port/linux/src/text_hires.c`); it
-builds into the Linux, Windows and Android platform layers.
+builds into the shared Linux, Windows, Android, iOS and macOS platform layers.

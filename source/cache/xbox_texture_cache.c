@@ -120,6 +120,9 @@ symbols in this file:
 #include "tag_files/tag_groups.h"
 #include "text/draw_string.h"
 #include <xtl.h>
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "halo_expanded_cache.h"
+#endif
 
 /* ---------- constants */
 
@@ -130,12 +133,11 @@ enum
 {
 	/* port: the native builds' larger cache (halo_port_capacity.h) */
 	XBOX_TEXTURE_CACHE_PAGE_COUNT = HALO_PORT_TEXTURE_CACHE_PAGE_COUNT,
+	NATIVE_GLOBAL_FIESTA_TEXTURE_CACHE_PAGE_COUNT =
+		MAX(HALO_PORT_TEXTURE_CACHE_PAGE_COUNT, HALO_PORT_GLOBAL_FIESTA_TEXTURE_CACHE_SIZE >> 14),
 	XBOX_TEXTURE_CACHE_PAGE_SIZE_BITS = 14,
 	XBOX_TEXTURE_CACHE_PAGE_SIZE = 1 << XBOX_TEXTURE_CACHE_PAGE_SIZE_BITS,
 	XBOX_TEXTURE_CACHE_STEAL_GUARD_SIZE = 0x104000,
-	XBOX_TEXTURE_CACHE_STEALABLE_PAGE_COUNT =
-		XBOX_TEXTURE_CACHE_PAGE_COUNT -
-		2 * (XBOX_TEXTURE_CACHE_STEAL_GUARD_SIZE / XBOX_TEXTURE_CACHE_PAGE_SIZE),
 	XBOX_TEXTURE_CACHE_ENTRY_SIZE = 0x20,
 	XBOX_TEXTURE_CACHE_SIZE = HALO_PORT_TEXTURE_CACHE_SIZE,
 	XBOX_TEXTURE_CACHE_PROTECTION = 0x404,
@@ -339,6 +341,9 @@ static struct xbox_texture_cache_globals xbox_texture_cache_globals;
 struct texture_cache_debug_options texture_cache_debug_options = {0};
 boolean debug_texture_cache = FALSE;
 static unsigned long texture_cache_last_failure_time = 0;
+/* The original structs and datum/block counts stay unchanged. Pages can grow
+   for a validated global arsenal, which includes world + imported FP textures. */
+static long texture_cache_page_count = XBOX_TEXTURE_CACHE_PAGE_COUNT;
 
 /* ---------- public code */
 
@@ -357,6 +362,38 @@ void texture_cache_open(
 	data_make_valid(xbox_texture_cache_globals.textures);
 
 	return;
+}
+
+boolean texture_cache_set_map(
+	char const *logical_map)
+{
+	long page_count = XBOX_TEXTURE_CACHE_PAGE_COUNT;
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	struct native_map_cache_selection const *selection = native_map_cache_current();
+	void platform_log(char const *format, ...);
+	/* A lobby selection alone must not enlarge the UI, campaign or another
+	   map. The resolver has already verified this exact accepted selection. */
+	if (logical_map && selection && selection->expanded &&
+		!_stricmp(logical_map, selection->logical_name))
+		page_count = MAX(page_count, NATIVE_GLOBAL_FIESTA_TEXTURE_CACHE_PAGE_COUNT);
+#else
+	(void)logical_map;
+#endif
+	match_assert(__FILE__, __LINE__, !xbox_texture_cache_globals.stolen_memory);
+	match_assert(__FILE__, __LINE__, xbox_texture_cache_globals.textures->actual_count == 0);
+	match_assert(__FILE__, __LINE__, xbox_texture_cache_globals.cache->blocks->actual_count == 0);
+	if (!physical_memory_resize_texture_cache(page_count * XBOX_TEXTURE_CACHE_PAGE_SIZE))
+		return FALSE;
+	xbox_texture_cache_globals.base_address = physical_memory_get_texture_cache_base_address();
+	lruv_resize(xbox_texture_cache_globals.cache, page_count);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (page_count != texture_cache_page_count)
+		platform_log("texture cache: %ld MiB for %s", (page_count * XBOX_TEXTURE_CACHE_PAGE_SIZE) >> 20,
+			logical_map ? logical_map : "<none>");
+#endif
+	texture_cache_page_count = page_count;
+	return TRUE;
 }
 
 void texture_cache_idle(
@@ -419,7 +456,8 @@ void *texture_cache_steal_memory(
 {
 	long page_count = size / XBOX_TEXTURE_CACHE_PAGE_SIZE + 1;
 	long remaining_page_count =
-		XBOX_TEXTURE_CACHE_STEALABLE_PAGE_COUNT - page_count;
+		texture_cache_page_count -
+		2 * (XBOX_TEXTURE_CACHE_STEAL_GUARD_SIZE / XBOX_TEXTURE_CACHE_PAGE_SIZE) - page_count;
 	byte *base_address =
 		(byte *)physical_memory_get_texture_cache_base_address() +
 		remaining_page_count * XBOX_TEXTURE_CACHE_PAGE_SIZE;
@@ -466,10 +504,10 @@ void texture_cache_return_memory(
 		xbox_texture_cache_globals.stolen_memory);
 	lruv_resize(
 		xbox_texture_cache_globals.cache,
-		XBOX_TEXTURE_CACHE_PAGE_COUNT);
+		texture_cache_page_count);
 	XPhysicalProtect(
 		physical_memory_get_texture_cache_base_address(),
-		XBOX_TEXTURE_CACHE_SIZE,
+		texture_cache_page_count * XBOX_TEXTURE_CACHE_PAGE_SIZE,
 		XBOX_TEXTURE_CACHE_PROTECTION);
 	xbox_texture_cache_globals.stolen_memory = FALSE;
 
@@ -851,7 +889,7 @@ void texture_cache_debug_render(
 {
 	if (texture_cache_debug_options.graph)
 	{
-		byte page_usage[XBOX_TEXTURE_CACHE_PAGE_COUNT];
+		byte page_usage[NATIVE_GLOBAL_FIESTA_TEXTURE_CACHE_PAGE_COUNT];
 		real_point3d world_positions[2];
 		real_point2d screen_positions[2];
 		real_point3d *world_position;
@@ -875,7 +913,7 @@ void texture_cache_debug_render(
 		colors[3] = NULL;
 		lruv_cache_get_page_usage(xbox_texture_cache_globals.cache, page_usage);
 
-		for (page_index = 0; page_index < XBOX_TEXTURE_CACHE_PAGE_COUNT; page_index++)
+		for (page_index = 0; page_index < xbox_texture_cache_globals.cache->page_count; page_index++)
 		{
 			x_offset = render.camera.window_bounds.x0 -
 				render.camera.viewport_bounds.x0;

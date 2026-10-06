@@ -125,6 +125,12 @@ uint32_t host_sdl_create_window(const char *title, int width, int height, int64_
 	return handle_new(_handle_window, SDL_CreateWindow(title, width, height, (SDL_WindowFlags)flags));
 }
 
+uint64_t host_sdl_window_flags(uint32_t window)
+{
+	SDL_Window *object = handle_get(window, _handle_window);
+	return object ? (uint64_t)SDL_GetWindowFlags(object) : 0;
+}
+
 void host_sdl_window_size_in_pixels(uint32_t window, int *width, int *height)
 {
 	SDL_Window *object = handle_get(window, _handle_window);
@@ -140,6 +146,27 @@ int host_sdl_set_relative_mouse(uint32_t window, int enabled)
 	SDL_Window *object = handle_get(window, _handle_window);
 
 	return object ? SDL_SetWindowRelativeMouseMode(object, enabled != 0) : 0;
+}
+
+void host_sdl_window_size(uint32_t window, int *width, int *height)
+{
+	SDL_Window *object = handle_get(window, _handle_window);
+	*width = *height = 0;
+	if (object) SDL_GetWindowSize(object, width, height);
+}
+
+void host_sdl_warp_mouse(uint32_t window, float x, float y)
+{
+	SDL_Window *object = handle_get(window, _handle_window);
+	if (object) SDL_WarpMouseInWindow(object, x, y);
+}
+
+int host_sdl_video_fullscreen(uint32_t window, int enabled)
+{
+	SDL_Window *object = handle_get(window, _handle_window);
+	if (!object) return 0;
+	if (enabled < 0) return (SDL_GetWindowFlags(object) & SDL_WINDOW_FULLSCREEN) != 0;
+	return SDL_SetWindowFullscreen(object, enabled != 0);
 }
 
 int host_sdl_gl_set_attribute(int attribute, int value)
