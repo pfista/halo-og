@@ -380,14 +380,84 @@ the production FXAA regression also passes all 103 readbacks with no failure.
 The warmed headless A/B/B/A replay has 5.386 ms median host cost before and
 4.006 ms after (25.6% lower), with exact final bytes in every run. This is one
 captured 640x480 frame; baseline drift, gameplay packet building, presentation
-and native-resolution performance remain separate. Fullscreen follow-up tests
-were blocked when macOS returned to the login screen. See
+and native-resolution performance remain separate. All ten subsequent
+fullscreen comparisons passed in
+`build/macos-metal/performance-pass-attempt1/matrix-attempt5/matrix.json`
+(SHA256 `5ee5bb8bb61f94e81c4eba557da49575c7710551a91fc0527f616c86680b2395`).
+At native 3600x2338, the stationary campaign opening averages 35.59 versus
+38.98 FPS with VSync off and 34.48 versus 39.03 with it on. Solo Chill Out
+averages 147.32 versus 153.71 uncapped/off and about 118.7 in both on runs.
+The campaign reproduces long stalls; solo Chill Out does not reproduce the
+multiplayer report. Both native hosts use the same new guest, so this measures
+host pass reuse. ANGLE uses the much smaller original logical picture, and
+stationary/audio-disabled runs exclude combat, traversal and input latency.
+Earlier locked, launcher-identity and lost-focus attempts remain invalid. See
 [measurement scope and reproducible commands](metal-performance.md).
+
+The benchmark now freezes selected binaries inside a private app with a unique
+bundle identifier, the selected executable name, no URL handlers and isolated
+relaunch settings. This prevents activation from opening an extra primary Halo
+copy. Host/guest bytes remain unchanged; whole-app signing is not claimed.
+Launcher correction: `de52b60a7c5de19223de1ed5c2d4a74afe088b88`, with 16 focused
+CPU tests. Later optional shader metrics preserve older log readers.
 
 Implementation commit: `69deba4f697707d3ac36b6721e1629760d4fb6c0`. Integration remains
 local and unreleased; ANGLE remains the default, and original assets, HUD and
 30 Hz gameplay remain unchanged. This does not certify retail parity or sustained
 60/120 FPS in the reported multiplayer/campaign scenes.
+
+### Native Metal shader compilation reuse (October 5, 2026)
+
+Decision: adopt on `codex/metal-performance-pass`. Reuse successfully compiled
+functions only for identical source bytes, shader stage and math/invariance
+contracts, within one Metal device/context. Packet-private candidates publish
+after complete validation; ordinary rejection cannot publish them. Cache
+allocation failure may change cache warmth, but not live resources, queries or
+sequence state. Each cache is bounded by 256 entries and 8 MiB of source keys;
+this is not a bound on driver code memory. Shared-stage cleanup retains other
+live programs' warm pipelines. Shader text, draw order, resource validation and
+synchronous completion remain unchanged.
+
+Validation: the focused CPU/GPU proof passes with API validation and exact
+controlled render bytes. The rebuilt real ILP32 ordered replay preserves all
+378 attachment/query checkpoints, and the coalesced replay preserves all six
+final outputs. Proofs:
+`build/metal-poc/function-cache-ordered-frame-attempt1/comparison.json`
+(SHA256 `9ff3b0db2d4e2b55eadda8e3119f912e2db1e458b9254ab51ee60ade6b76b42b`)
+and `build/metal-poc/function-cache-coalesced-frame-attempt3/result.json`
+(SHA256 `7a9c8bc41f6bef0c1162926557de06364245cc5beaf64cf4ddc18c5931e8bc15`).
+A four-run campaign A/B/B/A avoids 316/400 and 356/440 reported compilation
+requests. Run FPS is 30.52, 38.17, 42.69 and 43.92; substantial baseline drift
+prevents a precise causal FPS claim. Long hitches and the 60 FPS goal remain.
+See [contracts, proofs and timing scope](metal-function-compilation-cache.md).
+
+Implementation commit: `fca76d55c8e3b7e576abc9d677a674d25ec9a845`. Local and
+unreleased; ANGLE remains the default and original assets/gameplay are preserved.
+
+### Coherent catch-up interpolation (October 5, 2026)
+
+Decision: correct a shared ANGLE/Metal Smooth Motion timing mismatch. Object
+snapshots are captured every simulation tick, while camera samples are captured
+on rendered frames. After a frame advances several ticks, their endpoint pairs
+span different durations. The current-tick fallback now applies to camera,
+object nodes, first-person pose and shader time together, persists across
+zero-tick frames, and resumes normal blending on the next tick. First/reset/
+re-enabled frames seed current raw nodes without advancing gameplay. Internal
+unsigned tick comparisons handle wrap. No camera cadence, assets, settings or
+30 Hz simulation changes are introduced; Smooth Motion off keeps raw rendering.
+
+Validation: 11 focused CPU tests compile the production interpolation unit and
+object accessor with 32-bit-normalized counters and ASan/UBSan. A negative
+control reproduces the camera/object separation. Tests cover tracking across
+1/2/1/3-tick gaps, zero-tick frames, resets/toggles, cuts, teleports, direct
+facing, network corrections and wrap. The final targeted CPU union passes 94
+tests. Runtime confirmation of the reported Pelican jump remains separate.
+During fallback, a new camera cut may wait for the next advancing tick; see
+[presentation tradeoff and test scope](render-interpolation-catch-up.md).
+
+Implementation commit: `19743f0a33363c3db4d82e1f43cffde28f98bf62`. Local and
+unreleased; this fixes the optional interpolation path rather than establishing
+retail cinematic parity. Upstream reviewed-through is unchanged.
 
 ### Original target
 

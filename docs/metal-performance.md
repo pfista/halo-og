@@ -46,6 +46,12 @@ without concurrent builds or GPU tests. Camera input follows elapsed time, so
 loading and spawn timing can shift its phase. Compare draw and submission counts
 alongside frame timings and repeat runs before generalizing gains.
 
+For motion comparisons, `--interpolation off --fps-limit 30` requests the
+original rendering reference. Native Metal's `--interpolation on --fps-limit 60`
+requests smooth rendering with a 60 FPS cap. ANGLE ignores the native-only cap;
+with interpolation enabled it uses its existing VSync/display pacing. These
+setting comparisons do not establish image or cinematic motion parity.
+
 The output binds binary/map hashes, exact configuration, environment override
 names, activation observations and logs. Native results report completed-present
 intervals, observed simulation Hz, physical/logical target sizes and host phase
@@ -113,7 +119,41 @@ uncapped, VSync off and FXAA averaged 116.37 FPS with 30.007 simulation Hz. This
 path did not reproduce the reported drops. Its original harness record remains
 failed because a focus check raced the natural timer exit; separate recollected
 timing/exit evidence retains that limitation rather than rewriting the result.
-The harness now checks process exit after a foreground observation. Optimized
-fullscreen, VSync-on, ANGLE and campaign comparisons require fresh valid
-foreground runs; earlier locked sessions and launcher identity failures did not
-qualify.
+The harness now checks process exit after a foreground observation. Earlier
+locked sessions, launcher identity failures and lost-focus runs remain invalid.
+
+### Completed fullscreen comparison
+
+All ten cases in `build/macos-metal/performance-pass-attempt1/matrix-attempt5/`
+passed foreground, configuration, binary and clean-exit checks. Its `matrix.json`
+SHA256 is `5ee5bb8bb61f94e81c4eba557da49575c7710551a91fc0527f616c86680b2395`.
+Native runs render at 3600x2338 with FXAA, interpolation enabled and no frame cap.
+Both native variants use the same new guest, so these pairs measure host pass
+reuse rather than isolating the guest payload-copy change.
+
+| Stationary scene | VSync | Original host FPS | Pass-reuse host FPS | Original / reuse p95 ms |
+| --- | --- | ---: | ---: | ---: |
+| Silent Cartographer opening | Off | 35.59 | 38.98 | 44.80 / 40.49 |
+| Silent Cartographer opening | On | 34.48 | 39.03 | 49.65 / 40.26 |
+| Chill Out, offline solo | Off | 147.32 | 153.71 | 10.12 / 9.83 |
+| Chill Out, offline solo | On | 118.79 | 118.73 | 9.64 / 9.63 |
+
+The campaign opening reproduces severe slowdown and long stalls; the solo
+Chill Out path does not reproduce the reported multiplayer drops. Campaign
+frames still reach 182–252 ms, and observed simulation progress averages about
+29.2–29.3 Hz despite the unchanged 30 Hz simulation schedule. VSync does not
+explain that campaign slowdown. This is one before/after pair per setting;
+camera phase, scene activity and thermal drift limit causal/general claims.
+
+ANGLE references average 313.21 FPS in the campaign opening and 463.61 FPS in
+solo Chill Out. Their original rendered picture is 738x480, substantially fewer
+pixels than native Metal. Those swap measurements do not prove equal-resolution
+renderer performance or actual display refresh. Both references also retain
+their own shader/asset-loading stalls.
+
+These are 40-second stationary `look:0` runs with audio disabled and diagnostic
+logging included. They exclude multiplayer peers, combat, campaign traversal
+and input-latency validation. Original map/UI hashes are bound in each record;
+the player-readiness check confirms a player, rather than a complete scenario
+or all participants. Idle physical controllers are assumed. The private launcher
+identity correction is commit `de52b60a`; its 16 focused CPU tests pass.
