@@ -1,7 +1,7 @@
 /* Shared original-draw encoder for the live guest bridge and ordered replay.
  * Callers own compilation, source-layout expansion, uploads, target history,
  * resource lifetimes, synchronization and presentation. This module only
- * validates and encodes one draw against existing attachments using LOAD/STORE.
+ * validates and encodes draws against existing attachments using LOAD/STORE.
  */
 #ifndef HALO_METAL_DRAW_ENCODER_H
 #define HALO_METAL_DRAW_ENCODER_H
@@ -56,6 +56,17 @@ typedef NS_ENUM(NSInteger, HaloMetalDrawError) {
 - (BOOL)usedTextureMaskForDraw:(const HaloMetalDraw &)draw mask:(uint32_t *)mask error:(NSError **)error;
 - (BOOL)encodeDraw:(const HaloMetalDraw &)draw
      commandBuffer:(id<MTLCommandBuffer>)commandBuffer error:(NSError **)error;
+/* Optional reuse is restricted to consecutive non-query, blend-disabled draws on the same
+ * command buffer and exact attachment objects. Every original draw state is
+ * still rebound. Blended draws preserve their original per-draw LOAD/STORE
+ * rounding boundary. The caller must endEncoding before other GPU operations,
+ * resource mutations, command-buffer submission or abandoning a packet.
+ * The original encodeDraw overload always closes its pass before returning. */
+- (BOOL)encodeDraw:(const HaloMetalDraw &)draw
+     commandBuffer:(id<MTLCommandBuffer>)commandBuffer reusePass:(BOOL)reusePass error:(NSError **)error;
+- (void)endEncoding;
+/* Cumulative successfully created draw passes, including isolated queries. */
+@property(nonatomic, readonly) NSUInteger renderPassCount;
 - (void)clearCaches;
 /* Retained functions prevent identity reuse in cached pipeline keys. Program
  * deletion can remove its pipelines without resetting other programs. */

@@ -353,8 +353,41 @@ passes 2,862 room/builder cases and 56 exact payload/padding cases. Its closure 
 `build/metal-poc/payload-padding-ilp32-attempt1/closure.json`
 (SHA256 `da8cab138eed341685b8140bfd157211a8f58525742556a540a5df4b2310d293`).
 This verifies byte preservation and rejection boundaries, not achieved FPS.
-The implementation is in the commit containing this entry; it has not been
+Implementation commit: `08ef504a2f0e99289cd5d5ccdb6c324eccff3580`. It has not been
 integrated into main or released. The upstream reviewed-through remains separate.
+
+### Native Metal draw-pass performance (October 5, 2026)
+
+Decision: adopt conservative reuse on `codex/metal-performance-pass`. Consecutive
+blend-disabled draws share a pass only with identical attachments and no query.
+Every original draw state is rebound; all non-draw operations, attachment
+changes, queries, blended draws, packet end and failures close the pass. Full
+atomic preflight, shader code and synchronous completion remain intact. Broader
+reuse changed 384 captured color bytes and was rejected; blended draws retain
+their original per-draw store boundaries.
+
+Validation: the production ordered replay preserves all 378 color/depth/stencil/
+query checkpoints and the coalesced 126-draw replay preserves all six final
+outputs with Metal API validation. Proofs are
+`build/metal-poc/performance-pass-ordered-frame-attempt2/comparison.json`
+(SHA256 `4419afa815ed140d480dd192bede3a82d9e535272430ff7009fb5ee71db96c00`)
+and `build/metal-poc/performance-pass-coalesced-frame-attempt2/result.json`
+(SHA256 `4fbdb0c7661768bc9907df72ce894fed0f36c52736043d73ce8b0631eeafb313`).
+The focused GPU fixture has 13,608 identical checkpoint bytes and reduces
+32 passes to 25. The final union of targeted CPU suites passes 80 tests;
+the production FXAA regression also passes all 103 readbacks with no failure.
+
+The warmed headless A/B/B/A replay has 5.386 ms median host cost before and
+4.006 ms after (25.6% lower), with exact final bytes in every run. This is one
+captured 640x480 frame; baseline drift, gameplay packet building, presentation
+and native-resolution performance remain separate. Fullscreen follow-up tests
+were blocked when macOS returned to the login screen. See
+[measurement scope and reproducible commands](metal-performance.md).
+
+The implementation is in the commit containing this entry. Integration remains
+local and unreleased; ANGLE remains the default, and original assets, HUD and
+30 Hz gameplay remain unchanged. This does not certify retail parity or sustained
+60/120 FPS in the reported multiplayer/campaign scenes.
 
 ### Original target
 

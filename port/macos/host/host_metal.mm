@@ -53,7 +53,7 @@ template<typename Value> bool sampler_cache_insert(std::map<SamplerKey,Value> &c
 }
 struct Metrics {
     bool enabled = false;
-    uint64_t submissions = 0, frames = 0, bytes = 0, draws = 0;
+    uint64_t submissions = 0, frames = 0, bytes = 0, draws = 0, render_passes = 0;
     uint64_t packet_copy_ns = 0, prepare_ns = 0, encode_ns = 0;
     uint64_t drawable_wait_ns = 0, commit_ns = 0, completion_wait_ns = 0, gpu_ns = 0, gpu_samples = 0;
     uint64_t packet_buffers = 0, sampler_hits = 0, sampler_misses = 0, sampler_allocations = 0;
@@ -135,14 +135,14 @@ void metrics_report(void) {
     host_logf(HOST_LOG_INFO,"Native Metal host metrics: %llu frames, %llu submits, %llu draws, %llu bytes; "
         "packet-copy %llu us, prepare %llu us, encode %llu us, drawable-wait %llu us, commit %llu us, "
         "completion-wait %llu us, gpu %llu us/%llu samples; packet-buffers %llu, sampler-hits %llu, "
-        "sampler-misses %llu, sampler-allocations %llu, sampler-cache %zu, upload-buffers %llu, visibility-buffers %llu",
+        "sampler-misses %llu, sampler-allocations %llu, sampler-cache %zu, upload-buffers %llu, visibility-buffers %llu, render-passes %llu",
         (unsigned long long)m.frames,(unsigned long long)m.submissions,(unsigned long long)m.draws,(unsigned long long)m.bytes,
         (unsigned long long)(m.packet_copy_ns/1000),(unsigned long long)(m.prepare_ns/1000),(unsigned long long)(m.encode_ns/1000),
         (unsigned long long)(m.drawable_wait_ns/1000),(unsigned long long)(m.commit_ns/1000),
         (unsigned long long)(m.completion_wait_ns/1000),(unsigned long long)(m.gpu_ns/1000),(unsigned long long)m.gpu_samples,
         (unsigned long long)m.packet_buffers,(unsigned long long)m.sampler_hits,(unsigned long long)m.sampler_misses,
         (unsigned long long)m.sampler_allocations,context.samplers.size(),(unsigned long long)m.upload_buffers,
-        (unsigned long long)m.visibility_buffers);
+        (unsigned long long)m.visibility_buffers,(unsigned long long)m.render_passes);
     context.metrics = Metrics{}; context.metrics.enabled = true;
 }
 
@@ -1046,14 +1046,27 @@ void fxaa(id<MTLCommandBuffer> buffer, Texture &source, const halo_metal_fxaa &c
     initialized(source,HALO_METAL_COLOR,false);
 }
 void execute(const std::vector<uint8_t> &packet, const Prepared &prepared) {
+    // A failed packet must close its retained draw pass before command-buffer
+    // ownership is released. Normal execution closes it before every boundary.
+    struct DrawPassScope {
+        HaloMetalDrawEncoder *encoder;
+        ~DrawPassScope() { [encoder endEncoding]; }
+    } draw_scope{context.draw_encoder};
     auto header = record<halo_metal_packet>(packet,0);
     auto buffer = [context.queue commandBuffer]; check(buffer != nil,HALO_METAL_GPU_ERROR);
     buffer.label = [NSString stringWithFormat:@"Halo guest native frame %llu",header.frame_sequence];
     const uint64_t drawable_before = context.metrics.drawable_wait_ns;
+    const NSUInteger passes_before = context.draw_encoder.renderPassCount;
     uint64_t encode_started = metrics_start();
     size_t position = sizeof(header);
     for (uint32_t i = 0; i < header.command_count; i++) {
         auto command = record<halo_metal_command>(packet,position);
+        // Contiguous original draws alone may share a pass. Keep uploads,
+        // clears, copies, queries, resource changes and presentation in their
+        // exact original order with a completed attachment store boundary.
+        if (command.opcode != HALO_METAL_DRAW && command.opcode != HALO_METAL_DRAW_ALPHA_BORDER &&
+            command.opcode != HALO_METAL_DRAW_VOLUME_BORDER)
+            [context.draw_encoder endEncoding];
         switch (command.opcode) {
             case HALO_METAL_CREATE_TEXTURE:
             case HALO_METAL_CREATE_TEXTURE_EX: {
@@ -1142,7 +1155,7 @@ void execute(const std::vector<uint8_t> &packet, const Prepared &prepared) {
             case HALO_METAL_DRAW_VOLUME_BORDER: {
                 auto c = record<halo_metal_draw>(packet,position); NSError *error = nil;
                 const auto &draw = prepared.draws.at(position);
-                check([context.draw_encoder encodeDraw:draw commandBuffer:buffer error:&error],HALO_METAL_GPU_ERROR,i);
+                check([context.draw_encoder encodeDraw:draw commandBuffer:buffer reusePass:YES error:&error],HALO_METAL_GPU_ERROR,i);
                 if (context.metrics.enabled) context.metrics.draws++;
                 if (context.active_query.id)
                     visibility(context.queries,context.active_query).words.push_back(draw.visibilityBuffer);
@@ -1172,6 +1185,8 @@ void execute(const std::vector<uint8_t> &packet, const Prepared &prepared) {
         }
         position += command.byte_size;
     }
+    [context.draw_encoder endEncoding];
+    if (context.metrics.enabled) context.metrics.render_passes += context.draw_encoder.renderPassCount - passes_before;
     const uint64_t elapsed = metrics_elapsed(encode_started);
     const uint64_t drawable_elapsed = context.metrics.drawable_wait_ns - drawable_before;
     if (context.metrics.enabled) context.metrics.encode_ns += elapsed >= drawable_elapsed ? elapsed - drawable_elapsed : 0;

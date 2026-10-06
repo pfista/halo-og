@@ -31,7 +31,18 @@ static std::vector<uint8_t> readPlane(id<MTLDevice> device, id<MTLCommandQueue> 
         memcpy(result.data() + y * texture.width * bpp, (uint8_t *)buffer.contents + y * row, texture.width * bpp);
     return result;
 }
-int main() { @autoreleasepool {
+static BOOL encode(HaloMetalDrawEncoder *encoder, const HaloMetalDraw &draw,
+                   id<MTLCommandBuffer> command, bool reuse, NSError **error) {
+    return reuse ? [encoder encodeDraw:draw commandBuffer:command reusePass:YES error:error] :
+                   [encoder encodeDraw:draw commandBuffer:command error:error];
+}
+static void append(std::vector<uint8_t> &result, const std::vector<uint8_t> &bytes) {
+    result.insert(result.end(),bytes.begin(),bytes.end());
+}
+int main(int argc, const char **argv) { @autoreleasepool {
+    const bool reuse = argc > 1 && !strcmp(argv[1],"reuse");
+    require(argc <= 3 && (argc < 2 || reuse || !strcmp(argv[1],"isolated")), @"Invalid test mode");
+    std::vector<uint8_t> checkpoints;
     id<MTLDevice> device = MTLCreateSystemDefaultDevice(); require(device != nil, @"No Metal device");
     id<MTLCommandQueue> queue = [device newCommandQueue];
     NSString *source = @R"MSL(
@@ -104,8 +115,10 @@ fragment float4 sampledFragment(constant PS &u [[buffer(0)]], texture2d<float> t
     farther.vertexUniforms = uniforms(device, HaloMetalVertexUniformSize, fartherZ);
     farther.pixelUniforms = uniforms(device, HaloMetalPixelUniformSize, green);
     id<MTLCommandBuffer> command = [queue commandBuffer];
-    require([encoder encodeDraw:draw commandBuffer:command error:&error], error.localizedDescription ?: @"First draw encoding failed");
-    require([encoder encodeDraw:farther commandBuffer:command error:&error], error.localizedDescription ?: @"Second draw encoding failed");
+    require(encode(encoder,draw,command,reuse,&error), error.localizedDescription ?: @"First draw encoding failed");
+    require(encode(encoder,farther,command,reuse,&error), error.localizedDescription ?: @"Second draw encoding failed");
+    [encoder endEncoding];
+    require(encoder.renderPassCount == (reuse ? 1u : 2u), @"Consecutive compatible draws did not use the expected number of passes");
     complete(command);
     std::vector<uint8_t> rgba(16 * 16 * 4); [color getBytes:rgba.data() bytesPerRow:64 fromRegion:MTLRegionMake2D(0, 0, 16, 16) mipmapLevel:0];
     auto depthBytes = readPlane(device, queue, depth, true), stencilBytes = readPlane(device, queue, depth, false);
@@ -117,6 +130,7 @@ fragment float4 sampledFragment(constant PS &u [[buffer(0)]], texture2d<float> t
         require(z == (inside ? .25f : 1.0f) && stencilBytes[i] == (inside ? 7 : 3),
             @"LOAD/STORE did not preserve original depth/stencil history");
     }
+    append(checkpoints,rgba); append(checkpoints,depthBytes); append(checkpoints,stencilBytes);
     HaloMetalDraw blended = farther;
     blended.state.color_write_mask = 15; blended.state.blend_enabled = 1;
     blended.state.blend_source = 12; blended.state.blend_destination = 13;
@@ -124,13 +138,15 @@ fragment float4 sampledFragment(constant PS &u [[buffer(0)]], texture2d<float> t
     blended.state.depth_enabled = blended.state.depth_write = 0;
     blended.state.stencil_compare = 3; blended.state.stencil_write_mask = 0; blended.state.stencil_pass = 1;
     command = [queue commandBuffer];
-    require([encoder encodeDraw:blended commandBuffer:command error:&error], error.localizedDescription ?: @"Blend draw encoding failed"); complete(command);
+    require(encode(encoder,blended,command,reuse,&error), error.localizedDescription ?: @"Blend draw encoding failed"); [encoder endEncoding]; complete(command);
     [color getBytes:rgba.data() bytesPerRow:64 fromRegion:MTLRegionMake2D(0, 0, 16, 16) mipmapLevel:0];
     for (unsigned y = 0; y < 16; y++) for (unsigned x = 0; x < 16; x++) {
         bool inside = x >= 4 && x < 12 && y >= 4 && y < 12; size_t i = y * 16 + x;
         require(rgba[i * 4] == (inside ? 0 : 10) && rgba[i * 4 + 1] == 20 && rgba[i * 4 + 2] == 30 && rgba[i * 4 + 3] == 255,
             @"Explicit constant blend/stencil comparison state did not preserve expected channels");
     }
+    append(checkpoints,rgba); append(checkpoints,readPlane(device,queue,depth,true));
+    append(checkpoints,readPlane(device,queue,depth,false));
     // Query geometry is depth/stencil tested against the existing attachments,
     // but has no color, depth or stencil writes. Each encoder has a fresh word;
     // the unrelated canary at offset 0 detects an unintended Disabled setter.
@@ -152,14 +168,19 @@ fragment float4 sampledFragment(constant PS &u [[buffer(0)]], texture2d<float> t
     occludedQuery.vertexUniforms = farther.vertexUniforms; occludedQuery.visibilityOffset = 16;
     HaloMetalDraw booleanQuery = query;
     booleanQuery.visibilityMode = MTLVisibilityResultModeBoolean; booleanQuery.visibilityOffset = 24;
-    command = [queue commandBuffer];
-    require([encoder encodeDraw:query commandBuffer:command error:&error], error.localizedDescription ?: @"Counting query encoding failed");
-    require([encoder encodeDraw:occludedQuery commandBuffer:command error:&error], error.localizedDescription ?: @"Occluded query encoding failed");
-    require([encoder encodeDraw:booleanQuery commandBuffer:command error:&error], error.localizedDescription ?: @"Boolean query encoding failed");
-    // A draw outside a query must leave all previous result words alone.
     HaloMetalDraw noQuery = query;
     noQuery.visibilityBuffer = nil; noQuery.visibilityOffset = 0; noQuery.visibilityMode = MTLVisibilityResultModeDisabled;
-    require([encoder encodeDraw:noQuery commandBuffer:command error:&error], error.localizedDescription ?: @"Inactive-query draw encoding failed");
+    command = [queue commandBuffer];
+    const NSUInteger queryPasses = encoder.renderPassCount;
+    require(encode(encoder,noQuery,command,reuse,&error), error.localizedDescription ?: @"Ordinary draw before query failed");
+    require(encode(encoder,query,command,reuse,&error), error.localizedDescription ?: @"Counting query encoding failed");
+    require(encode(encoder,occludedQuery,command,reuse,&error), error.localizedDescription ?: @"Occluded query encoding failed");
+    require(encode(encoder,booleanQuery,command,reuse,&error), error.localizedDescription ?: @"Boolean query encoding failed");
+    // A draw outside a query must leave all previous result words alone.
+    require(encode(encoder,noQuery,command,reuse,&error), error.localizedDescription ?: @"Inactive-query draw encoding failed");
+    require(encode(encoder,noQuery,command,reuse,&error), error.localizedDescription ?: @"Consecutive inactive-query draw encoding failed");
+    [encoder endEncoding];
+    require(encoder.renderPassCount - queryPasses == (reuse ? 5u : 6u), @"Query draws did not retain isolated passes between ordinary draw runs");
     complete(command);
     const uint64_t *words = (const uint64_t *)visibility.contents;
     require(words[0] == canary && words[4] == canary, @"A query encoder reset an unrelated result word");
@@ -169,6 +190,154 @@ fragment float4 sampledFragment(constant PS &u [[buffer(0)]], texture2d<float> t
     require(rgba == beforeQueryColor && readPlane(device, queue, depth, true) == beforeQueryDepth &&
         readPlane(device, queue, depth, false) == beforeQueryStencil,
         @"Readonly visibility queries changed original color, depth or stencil attachments");
+    append(checkpoints,rgba); append(checkpoints,readPlane(device,queue,depth,true));
+    append(checkpoints,readPlane(device,queue,depth,false));
+    const uint8_t *queryBytes = (const uint8_t *)visibility.contents;
+    checkpoints.insert(checkpoints.end(),queryBytes,queryBytes + sizeof(initialWords));
+
+    // Exact attachment identity forms a boundary, including returning to an
+    // earlier target. No-op draws make all history checks independent of raster
+    // coverage and ensure the repeated middle target alone can share a pass.
+    description = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:16 height:16 mipmapped:NO];
+    description.storageMode = MTLStorageModeShared;
+    description.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+    id<MTLTexture> alternate = [device newTextureWithDescriptor:description];
+    require(alternate != nil, @"Alternate attachment allocation failed");
+    [alternate replaceRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0 withBytes:initial.data() bytesPerRow:64];
+    HaloMetalDraw alternateDraw = noQuery; alternateDraw.color = alternate;
+    command = [queue commandBuffer];
+    NSUInteger boundaryPasses = encoder.renderPassCount;
+    require(encode(encoder,noQuery,command,reuse,&error), @"First attachment draw failed");
+    require(encode(encoder,alternateDraw,command,reuse,&error), @"Attachment switch draw failed");
+    require(encode(encoder,alternateDraw,command,reuse,&error), @"Repeated alternate attachment draw failed");
+    require(encode(encoder,noQuery,command,reuse,&error), @"Returning attachment draw failed");
+    [encoder endEncoding]; complete(command);
+    require(encoder.renderPassCount - boundaryPasses == (reuse ? 3u : 4u), @"Attachment switches were not pass boundaries");
+    std::vector<uint8_t> alternateBytes(initial.size());
+    [alternate getBytes:alternateBytes.data() bytesPerRow:64 fromRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0];
+    require(alternateBytes == initial, @"Attachment switch changed the alternate target");
+
+    // Depth/stencil identity is independent of color identity. Keep the color
+    // fixed while moving to another initialized depth/stencil object and back.
+    description.pixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+    description.storageMode = MTLStorageModePrivate; description.usage = MTLTextureUsageRenderTarget;
+    id<MTLTexture> alternateDepth = [device newTextureWithDescriptor:description];
+    require(alternateDepth != nil, @"Alternate depth/stencil allocation failed");
+    clear = [queue commandBuffer]; pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    pass.depthAttachment.texture = pass.stencilAttachment.texture = alternateDepth;
+    pass.depthAttachment.loadAction = pass.stencilAttachment.loadAction = MTLLoadActionClear;
+    pass.depthAttachment.storeAction = pass.stencilAttachment.storeAction = MTLStoreActionStore;
+    pass.depthAttachment.clearDepth = 1; pass.stencilAttachment.clearStencil = 3;
+    [[clear renderCommandEncoderWithDescriptor:pass] endEncoding]; complete(clear);
+    HaloMetalDraw alternateDepthDraw = noQuery; alternateDepthDraw.depthStencil = alternateDepth;
+    command = [queue commandBuffer]; boundaryPasses = encoder.renderPassCount;
+    require(encode(encoder,noQuery,command,reuse,&error), @"Draw before depth attachment switch failed");
+    require(encode(encoder,alternateDepthDraw,command,reuse,&error), @"Depth attachment switch draw failed");
+    require(encode(encoder,alternateDepthDraw,command,reuse,&error), @"Repeated depth attachment draw failed");
+    require(encode(encoder,noQuery,command,reuse,&error), @"Returning depth attachment draw failed");
+    [encoder endEncoding]; complete(command);
+    require(encoder.renderPassCount - boundaryPasses == (reuse ? 3u : 4u), @"Depth attachment switches were not pass boundaries");
+    const auto alternateDepthBytes = readPlane(device,queue,alternateDepth,true);
+    const auto alternateStencilBytes = readPlane(device,queue,alternateDepth,false);
+    for (size_t i = 0; i < 256; i++) {
+        float z; memcpy(&z,alternateDepthBytes.data() + i*4,4);
+        require(z == 1 && alternateStencilBytes[i] == 3, @"Depth attachment switch changed readonly target history");
+    }
+    append(checkpoints,alternateDepthBytes); append(checkpoints,alternateStencilBytes);
+
+    // A different command buffer cannot inherit a retained encoder, even when
+    // all attachments match. Both buffers must be independently submittable.
+    command = [queue commandBuffer]; boundaryPasses = encoder.renderPassCount;
+    require(encode(encoder,noQuery,command,reuse,&error), @"Draw on first command buffer failed");
+    id<MTLCommandBuffer> nextCommand = [queue commandBuffer];
+    require(encode(encoder,noQuery,nextCommand,reuse,&error), @"Draw on next command buffer failed");
+    complete(command); [encoder endEncoding]; complete(nextCommand);
+    require(encoder.renderPassCount - boundaryPasses == 2, @"Command buffer switch was not a pass boundary");
+
+    // Explicit boundaries permit intervening copy and clear encoders. Draws
+    // following a boundary must reload the resulting attachment history.
+    command = [queue commandBuffer]; boundaryPasses = encoder.renderPassCount;
+    require(encode(encoder,noQuery,command,reuse,&error), @"Draw before copy failed");
+    [encoder endEncoding];
+    id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
+    require(blit != nil, @"Copy encoder after draw boundary failed");
+    [blit copyFromTexture:color sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0)
+        sourceSize:MTLSizeMake(16,16,1) toTexture:alternate destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0,0,0)];
+    [blit endEncoding];
+    require(encode(encoder,alternateDraw,command,reuse,&error), @"Draw after copy failed");
+    require(encode(encoder,alternateDraw,command,reuse,&error), @"Repeated draw after copy failed");
+    [encoder endEncoding]; complete(command);
+    require(encoder.renderPassCount - boundaryPasses == (reuse ? 2u : 3u), @"Copy boundary did not restart draw pass reuse");
+    [alternate getBytes:alternateBytes.data() bytesPerRow:64 fromRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0];
+    require(alternateBytes == beforeQueryColor, @"Draw pass did not preserve copied target history");
+    append(checkpoints,alternateBytes);
+
+    command = [queue commandBuffer]; boundaryPasses = encoder.renderPassCount;
+    require(encode(encoder,alternateDraw,command,reuse,&error), @"Draw before clear failed");
+    [encoder endEncoding];
+    pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture = alternate;
+    pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+    pass.colorAttachments[0].clearColor = MTLClearColorMake(0,0,1,1);
+    [[command renderCommandEncoderWithDescriptor:pass] endEncoding];
+    require(encode(encoder,alternateDraw,command,reuse,&error), @"Draw after clear failed");
+    require(encode(encoder,alternateDraw,command,reuse,&error), @"Repeated draw after clear failed");
+    [encoder endEncoding]; complete(command);
+    require(encoder.renderPassCount - boundaryPasses == (reuse ? 2u : 3u), @"Clear boundary did not restart draw pass reuse");
+    [alternate getBytes:alternateBytes.data() bytesPerRow:64 fromRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0];
+    for (size_t i = 0; i < 256; i++)
+        require(alternateBytes[i*4] == 0 && alternateBytes[i*4+1] == 0 && alternateBytes[i*4+2] == 255 && alternateBytes[i*4+3] == 255,
+                @"Draw pass did not preserve cleared target history");
+    append(checkpoints,alternateBytes);
+
+    // Fractional additive writes must retain the per-draw UNorm store boundary.
+    // Two separately stored .49/255 contributions each round to zero; a later
+    // ordinary draw run may reuse its own pass after those blended draws.
+    command = [queue commandBuffer]; boundaryPasses = encoder.renderPassCount;
+    pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture = alternate;
+    pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+    pass.colorAttachments[0].clearColor = MTLClearColorMake(0,0,0,0);
+    [[command renderCommandEncoderWithDescriptor:pass] endEncoding];
+    HaloMetalDraw rounded = alternateDraw; rounded.depthStencil = nil;
+    rounded.state.depth_enabled = rounded.state.depth_write = rounded.state.stencil_enabled = 0;
+    rounded.state.color_write_mask = 15; rounded.state.blend_enabled = 1;
+    rounded.state.blend_source = rounded.state.blend_destination = 2;
+    rounded.state.blend_operation = 1;
+    rounded.state.scissor[0] = rounded.state.scissor[1] = 0;
+    rounded.state.scissor[2] = rounded.state.scissor[3] = 16;
+    const float fraction[4] = {.49f/255,.49f/255,.49f/255,0};
+    rounded.pixelUniforms = uniforms(device,HaloMetalPixelUniformSize,fraction);
+    require(encode(encoder,alternateDraw,command,reuse,&error), @"Ordinary draw before fractional blend failed");
+    require(encode(encoder,rounded,command,reuse,&error), @"First fractional blend failed");
+    require(encode(encoder,rounded,command,reuse,&error), @"Second fractional blend failed");
+    require(encode(encoder,alternateDraw,command,reuse,&error), @"Ordinary draw after fractional blend failed");
+    require(encode(encoder,alternateDraw,command,reuse,&error), @"Repeated ordinary draw after fractional blend failed");
+    [encoder endEncoding]; complete(command);
+    require(encoder.renderPassCount - boundaryPasses == (reuse ? 4u : 5u), @"Blended draws lost their per-draw store boundary");
+    [alternate getBytes:alternateBytes.data() bytesPerRow:64 fromRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0];
+    for (uint8_t value : alternateBytes) require(value == 0, @"Fractional blending changed isolated UNorm rounding");
+    append(checkpoints,alternateBytes);
+
+    // A rejected draw closes an earlier active pass without adding commands;
+    // another encoder can then be used safely on that command buffer.
+    command = [queue commandBuffer]; boundaryPasses = encoder.renderPassCount;
+    require(encode(encoder,noQuery,command,reuse,&error), @"Draw before rejection failed");
+    HaloMetalDraw rejected = noQuery; rejected.state.depth_compare = 0;
+    require(!encode(encoder,rejected,command,reuse,&error) && error.code == HaloMetalDrawInvalid, @"Invalid reusable draw accepted");
+    blit = [command blitCommandEncoder]; require(blit != nil, @"Rejected draw left an active render pass");
+    [blit endEncoding];
+    require(encode(encoder,noQuery,command,reuse,&error), @"Valid draw after rejection failed");
+    [encoder endEncoding]; complete(command);
+    require(encoder.renderPassCount - boundaryPasses == 2, @"Rejected draw created a pass or retained its previous pass");
+    [color getBytes:rgba.data() bytesPerRow:64 fromRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0];
+    require(rgba == beforeQueryColor && readPlane(device,queue,depth,true) == beforeQueryDepth &&
+            readPlane(device,queue,depth,false) == beforeQueryStencil, @"Pass boundaries changed original attachment history");
+    append(checkpoints,rgba); append(checkpoints,readPlane(device,queue,depth,true));
+    append(checkpoints,readPlane(device,queue,depth,false));
+
     HaloMetalDraw invalidQuery = query; invalidQuery.visibilityBuffer = nil;
     require(![encoder prepareDraw:invalidQuery error:&error] && error.code == HaloMetalDrawInvalid, @"Active query without a result buffer accepted");
     invalidQuery = noQuery; invalidQuery.visibilityOffset = 8;
@@ -202,12 +371,19 @@ fragment float4 sampledFragment(constant PS &u [[buffer(0)]], texture2d<float> t
     description = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:2 height:2 mipmapped:NO];
     description.usage = MTLTextureUsageShaderRead; invalid.textures[0] = [device newTextureWithDescriptor:description];
     require([encoder prepareDraw:invalid error:&error], error.localizedDescription ?: @"Valid reflected sampler/texture rejected");
-    require(![encoder encodeDraw:draw commandBuffer:command error:&error], @"Submitted command buffer accepted");
+    require(!encode(encoder,draw,command,reuse,&error), @"Submitted command buffer accepted");
     [encoder removePipelinesForVertexFunction:draw.vertexFunction fragmentFunction:nil];
     require([encoder prepareDraw:draw error:&error], error.localizedDescription ?: @"Cache eviction lost valid original program");
     [encoder clearCaches];
+    if (argc == 3) {
+        FILE *file = fopen(argv[2],"wb"); require(file != nullptr, @"Checkpoint output failed");
+        require(fwrite(checkpoints.data(),1,checkpoints.size(),file) == checkpoints.size() && fclose(file) == 0,
+                @"Checkpoint output was incomplete");
+    }
     printf("{\"complete\":true,\"color_depth_stencil_history\":true,\"state_and_resource_validation\":true,"
         "\"visibility_readonly_count\":64,\"visibility_occluded_count\":0,\"visibility_boolean\":1,"
-        "\"visibility_offset_validation\":true,\"cpu_query_timing_verified\":false}\n");
+        "\"visibility_offset_validation\":true,\"cpu_query_timing_verified\":false,"
+        "\"pass_reuse\":%s,\"render_passes\":%lu,\"checkpoint_bytes\":%zu}\n",
+        reuse ? "true" : "false",(unsigned long)encoder.renderPassCount,checkpoints.size());
     return 0;
 } }
