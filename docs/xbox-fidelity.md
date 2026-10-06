@@ -340,6 +340,22 @@ network behavior is therefore unverified;
 these fixtures and build results do not certify original-Xbox parity. Generated
 evidence is under `build/macos/safe-upstream-*`.
 
+### Native Metal packet-copy performance (October 5, 2026)
+
+Decision: adopt on the local `codex/metal-performance-pass` branch. Payload
+appends initialize alignment and trailing padding, then copy every payload byte,
+avoiding the redundant full-payload zero write. Immediate packet ownership,
+resource lifetimes, rejection behavior and all wire bytes remain unchanged.
+The original assets and 30 Hz simulation are unaffected; ANGLE stays the default.
+
+Validation: ten focused CPU tests pass. The actual ILP32 mocked-import fixture
+passes 2,862 room/builder cases and 56 exact payload/padding cases. Its closure is
+`build/metal-poc/payload-padding-ilp32-attempt1/closure.json`
+(SHA256 `da8cab138eed341685b8140bfd157211a8f58525742556a540a5df4b2310d293`).
+This verifies byte preservation and rejection boundaries, not achieved FPS.
+The implementation is in the commit containing this entry; it has not been
+integrated into main or released. The upstream reviewed-through remains separate.
+
 ### Original target
 
 The executable target is Xbox build **2342**, `cachebeta.exe`, SHA-256

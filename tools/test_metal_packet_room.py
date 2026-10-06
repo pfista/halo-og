@@ -251,6 +251,27 @@ int room_mock_readback(uint32_t i,uint32_t g,uint32_t p,uint32_t d,uint32_t n,ui
     (void)i;(void)g;(void)p;(void)d;(void)n;(void)r;(void)b;host_calls++;return HALO_METAL_INVALID;
 }
 void room_mock_shutdown(void) {host_calls++;}
+static uint32_t payload_byte_guards(void) {
+    const uint32_t fixed[]={8,9,40,72,80,416,424}, sizes[]={1,7,8,9,15,16,17,65535};
+    for(uint32_t f=0;f<sizeof(fixed)/sizeof(*fixed);f++)for(uint32_t s=0;s<sizeof(sizes)/sizeof(*sizes);s++) {
+        for(uint32_t i=0;i<131072;i++)storage[i]=0xa5;
+        if(halo_metal_guest_setup(&t,storage,131072) || halo_metal_guest_initialize(&t,0,HALO_METAL_OFFSCREEN,0) ||
+           halo_metal_guest_begin(&t,1))return 60000+f*8+s;
+        uint32_t command_offset=UINT32_MAX,offset=UINT32_MAX;
+        if(halo_metal_guest_append_command(&t,command,fixed[f],&command_offset))return 61000+f*8+s;
+        uint32_t previous=t.size,first=((previous+15)/16)*16,end=((first+sizes[s]+7)/8)*8;
+        uint32_t calls=host_calls;
+        if(halo_metal_guest_append_payload(&t,payload,sizes[s],&offset) || offset!=first || t.size!=end ||
+           host_calls!=calls)return 62000+f*8+s;
+        for(uint32_t i=previous;i<end;i++) {
+            unsigned char expected=i>=first && i<first+sizes[s] ? payload[i-first]:0;
+            if(storage[i]!=expected)return 63000+f*8+s;
+        }
+        if(storage[end]!=0xa5 || ((struct halo_metal_command*)(void*)(storage+command_offset))->byte_size!=end-command_offset ||
+           ((struct halo_metal_packet*)(void*)storage)->byte_size!=end)return 64000+f*8+s;
+    }
+    return 0;
+}
 uint32_t guest_test(uint32_t unused) {
     (void)unused;
     for(uint32_t i=0;i<sizeof(payload);i++)payload[i]=(unsigned char)(i*13+7);
@@ -272,7 +293,7 @@ uint32_t guest_test(uint32_t unused) {
         if(status!=c->status || (!status && t.size!=c->end))return 40000+i;
         if(host_calls!=i+1)return 50000+i; /* initialize only; never submit/readback */
     }
-    return 0;
+    return payload_byte_guards();
 }
 ''')
     def run(*args):
@@ -300,7 +321,7 @@ uint32_t guest_test(uint32_t unused) {
         ('__host_import_table','__host_import_names','__host_import_count')],'0x5000000']
     assert bindings=={str(path):sha(path) for path in files}, 'Source changed during preparation'
     prepared=dict(kind='native_packet_room_ilp32_cpu',schema_version=1,complete=False,passed=False,
-        case_count=len(cases),original_capture=capture,source_sha256=bindings,
+        case_count=len(cases),payload_byte_cases=56,original_capture=capture,source_sha256=bindings,
         inputs_sha256={str(p):sha(p) for p in output.rglob('*') if p.is_file()},
         execution_command=command,guest_pointer_bits=32,
         toolchain_sha256={str(p):sha(p) for p in (plugin,llvm/'clang',llvm/'opt',llvm/'llc',linker)},
