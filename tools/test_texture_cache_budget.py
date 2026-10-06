@@ -131,6 +131,7 @@ static boolean locked_block(long index) { (void)index;return FALSE; }
 static void setup(void) {
     physical_memory_map_globals.texture_cache_base_address=XPhysicalAlloc(HALO_PORT_TEXTURE_CACHE_SIZE,-1,0,4);
     assert(physical_memory_map_globals.texture_cache_base_address);
+    assert(last_allocation_size==HALO_PORT_TEXTURE_CACHE_SIZE);
     data_initialize(&texture_slots,"textures",XBOX_TEXTURE_CACHE_PAGE_COUNT,32);data_make_valid(&texture_slots);
     xbox_texture_cache_globals.textures=&texture_slots;
     xbox_texture_cache_globals.cache=lruv_new("fixture",XBOX_TEXTURE_CACHE_PAGE_COUNT,14,
@@ -193,6 +194,7 @@ int main(int argc,char **argv) {
         configure("CHILLOUT_DIGSITE",1);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
         assert_budget(HALO_PORT_GLOBAL_FIESTA_TEXTURE_CACHE_SIZE);
+        assert(last_allocation_size==HALO_PORT_GLOBAL_FIESTA_TEXTURE_CACHE_SIZE);
         assert(budget_logs==1 && strstr(budget_log,"32 MiB for CHILLOUT_DIGSITE"));
 #else
         assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
@@ -205,6 +207,7 @@ int main(int argc,char **argv) {
            borrowing budget. Only the next explicit map hook can select pages. */
         strcpy(selection.logical_name,"prisoner");selection.expanded=FALSE;
         borrow_and_return();configure("ui",1);assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
+        assert(last_allocation_size==HALO_PORT_TEXTURE_CACHE_SIZE);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
         assert(budget_logs==2 && strstr(budget_log,"22 MiB for ui"));
 #endif
@@ -235,10 +238,12 @@ int main(int argc,char **argv) {
            allocated arena, reports failure, and never exposes a stale base. */
         old=physical_memory_get_texture_cache_base_address();old_frees=frees;allocation_fail=TRUE;
         assert(!texture_cache_set_map("ui"));assert(frees==old_frees);
+        assert(last_allocation_size==HALO_PORT_TEXTURE_CACHE_SIZE);
         assert(old==physical_memory_get_texture_cache_base_address());
         assert_budget(HALO_PORT_GLOBAL_FIESTA_TEXTURE_CACHE_SIZE);allocation_fail=FALSE;
 #endif
         configure("ui",1);assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
+        assert(last_allocation_size==HALO_PORT_TEXTURE_CACHE_SIZE);
     } else return 2;
     teardown();puts("texture budget fixture passed");return 0;
 }
