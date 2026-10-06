@@ -27,10 +27,13 @@ The execute pass uses the prepared GPU objects and immutable original bytes.
 An execution failure poisons the context until shutdown; validation failure
 leaves its existing resource maps and completed sequence unchanged.
 
-Extended sampled textures support RGBA8, BGRA8 and authored BC1 blocks, 2D or
-cube, plus authored BC2/BC3 blocks for 2D textures, with exact mip/face uploads
-and independently tracked initialization. BC2/BC3 cubes and volume textures
-fail closed. Render targets are 2D with one mip.
+Extended sampled textures support RGBA8, BGRA8 and authored BC1/BC2/BC3 blocks,
+2D or cube, with exact mip/face uploads and independently tracked initialization.
+The BC2/BC3 cube component fixture at
+`build/metal-poc/bc23-cube-20261006-r01/result.json` runs the real ILP32 bridge:
+all six faces and five authored mips match pinned ANGLE color/depth/stencil
+bytes exactly. It uploads original compressed blocks, never reference pixels.
+Compressed volumes fail closed. Render targets are 2D with one mip.
 Original initial depth float32 and stencil uint8 seed uploads are separate
 aspects of Depth32FloatStencil8. After-draw reference checkpoints never enter
 these uploads. Xbox D24/F24 storage precision remains a separate fidelity gate.

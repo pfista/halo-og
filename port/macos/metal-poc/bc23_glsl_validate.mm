@@ -52,7 +52,8 @@ int main(int argc,const char **argv) { @autoreleasepool {
     EGLint contextAttributes[]={EGL_CONTEXT_CLIENT_VERSION,3,EGL_NONE};
     EGLContext context=eglCreateContext(display,config,EGL_NO_CONTEXT,contextAttributes);
     unsigned width=[manifest[@"target"][@"width"] unsignedIntValue],height=[manifest[@"target"][@"height"] unsignedIntValue];
-    require(width==80&&height==32,@"Wrong fixture dimensions");
+    bool cube=[manifest[@"textures"][0][@"type"] isEqual:@"cube"];
+    require(width==80&&height==(cube?192:32),@"Wrong fixture dimensions");
     EGLint surfaceAttributes[]={EGL_WIDTH,(EGLint)width,EGL_HEIGHT,(EGLint)height,EGL_NONE};
     EGLSurface surface=eglCreatePbufferSurface(display,config,surfaceAttributes);
     require(eglMakeCurrent(display,surface,surface,context),@"ANGLE context");
@@ -66,15 +67,23 @@ int main(int argc,const char **argv) { @autoreleasepool {
     glLinkProgram(program);GLint linked=0;glGetProgramiv(program,GL_LINK_STATUS,&linked);require(linked,@"GLSL link");glUseProgram(program);
     for(unsigned slot=0;slot<2;slot++) {
         NSDictionary *texture=manifest[@"textures"][slot];
-        require([texture[@"type"] isEqual:@"2d"]&&[texture[@"pixel_format"] isEqual:slot?@"bc3_rgba":@"bc2_rgba"]&&[texture[@"mipmaps"] count]==5,@"Unexpected original compressed format");
-        GLuint object;glGenTextures(1,&object);glActiveTexture(GL_TEXTURE0+slot);glBindTexture(GL_TEXTURE_2D,object);
-        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST_MIPMAP_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,4);
+        require([texture[@"type"] isEqual:cube?@"cube":@"2d"]&&[texture[@"pixel_format"] isEqual:slot?@"bc3_rgba":@"bc2_rgba"]&&[texture[@"mipmaps"] count]==5,@"Unexpected original compressed format");
+        GLenum target=cube?GL_TEXTURE_CUBE_MAP:GL_TEXTURE_2D;
+        GLuint object;glGenTextures(1,&object);glActiveTexture(GL_TEXTURE0+slot);glBindTexture(target,object);
+        glTexParameteri(target,GL_TEXTURE_MIN_FILTER,GL_NEAREST_MIPMAP_NEAREST);glTexParameteri(target,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(target,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(target,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+        glTexParameteri(target,GL_TEXTURE_MAX_LEVEL,4);
         for(NSDictionary *mip in texture[@"mipmaps"]) {
-            NSData *data=payload(mip);unsigned size=16u>>[mip[@"level"] unsignedIntValue];
-            require(size==[mip[@"width"] unsignedIntValue]&&size==[mip[@"height"] unsignedIntValue]&&data.length==((size+3)/4)*((size+3)/4)*16,@"Invalid compressed mip");
-            glCompressedTexImage2D(GL_TEXTURE_2D,[mip[@"level"] intValue],slot?0x83f3:0x83f2,size,size,0,(GLsizei)data.length,data.bytes);
+            unsigned size=16u>>[mip[@"level"] unsignedIntValue];
+            NSArray *faces=cube?mip[@"faces"]:@[mip];
+            require(faces.count==(cube?6:1),@"Missing cube face");
+            for(unsigned face=0;face<faces.count;face++) {
+                NSDictionary *description=faces[face];NSData *data=payload(description);
+                require([description[@"face"] unsignedIntValue]==face&&size==[mip[@"width"] unsignedIntValue]&&
+                    size==[mip[@"height"] unsignedIntValue]&&data.length==((size+3)/4)*((size+3)/4)*16,@"Invalid compressed mip/face");
+                glCompressedTexImage2D(cube?GL_TEXTURE_CUBE_MAP_POSITIVE_X+face:GL_TEXTURE_2D,
+                    [mip[@"level"] intValue],slot?0x83f3:0x83f2,size,size,0,(GLsizei)data.length,data.bytes);
+            }
         }
         glUniform1i(glGetUniformLocation(program,slot?"bc3":"bc2"),slot);
     }

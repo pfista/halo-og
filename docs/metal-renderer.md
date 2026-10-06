@@ -92,9 +92,10 @@ padded uploads, ordered copies, full/scissored clears and aspect readbacks.
 It also accepts generated NV2A programs and immutable original draw inputs via
 the shared draw encoder. Extended uploads retain every authored mip and cube
 face, including BC1 blocks and separate initial depth/stencil seeds. Original
-BC2/BC3 blocks and authored mips are supported for 2D sampled textures; their
-real ILP32 upload/draw fixture matches pinned ANGLE exactly. BC2/BC3 cubes and
-volume textures still reject. Each used
+BC2/BC3 blocks and authored mips are supported for 2D and cube sampled textures;
+their real ILP32 upload/draw fixtures match pinned ANGLE exactly. The cube
+fixture covers all six faces at five authored mip levels, including alpha
+selectors and both RGB endpoint orders. Compressed volumes still reject. Each used
 subresource must be initialized; unsupported formats remain explicit failures.
 SDL layer ownership is exclusive with EGL. Its exact-size BGRA presentation
 path compiles but has not been tested by the offscreen transport probe.

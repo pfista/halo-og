@@ -278,7 +278,6 @@ Texture make_texture(halo_metal_create_ex c) {
     if (compressed(c.format)) {
         check(context.device.supportsBCTextureCompression && !(c.width & 3) && !(c.height & 3) &&
             c.usage == HALO_METAL_SHADER_READ, HALO_METAL_UNSUPPORTED);
-        check(c.format == HALO_METAL_BC1 || c.type == HALO_METAL_TEXTURE_2D,HALO_METAL_UNSUPPORTED);
     }
     if ((c.usage & HALO_METAL_RENDER_TARGET) || c.format == HALO_METAL_DEPTH32_STENCIL8)
         check(c.type == HALO_METAL_TEXTURE_2D && c.mip_levels == 1 &&

@@ -699,10 +699,12 @@ The CPU-only `stock-bitmap-metadata-audit.json` in that folder (SHA256
 V16U16 flags. All 572 cube records use currently admitted formats. L16 has no
 authored bitmap/cache-format mapping in the reviewed original source. Counts
 include repeated assets across caches; no texture pixels were exported and
-this audit ran no GPU work. BC2/BC3 cube admission and shared V16U16/L16
-low-byte precision remain general resource gaps, without an affected stock
-asset established by this scan. Do not widen native mode/format guards from
-enum availability alone; retain actual failure evidence first.
+this audit ran no GPU work. A later All Fiesta asset exposed the existing
+BC2/BC3 cube rejection. The production bridge now admits those cubes after
+the six-face, five-mip component at
+`build/metal-poc/bc23-cube-20261006-r01/result.json` matched pinned ANGLE
+color/depth/stencil bytes exactly. Shared V16U16/L16 low-byte precision remains
+a general resource gap, without an affected stock asset established by this scan.
 
 ## Remaining live gates
 
@@ -757,7 +759,7 @@ original lighting draw parity and manual firing remain unverified. Rendered
 water executes in the bounded Damnation runs, but its native pixel parity
 remains unverified. Near-half nearest-LOD selection
 and roof/downward glyph clipping remain unresolved.
-Compressed/render-target volumes, BC2/BC3 cubes, missing rendered-mip generation,
+Compressed/render-target volumes, missing rendered-mip generation,
 floating/unknown DOT_ZW depth units and multisample paths remain explicitly
 unsupported. Optional high-resolution HUD uploads and their meter coverage-alpha
 path are implemented; see [the HUD guide](high-resolution-hud.md). Integer-D24 packing

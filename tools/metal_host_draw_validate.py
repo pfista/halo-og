@@ -184,11 +184,12 @@ def wire_packet(root,manifest):
         resource=10+slot;texture_refs.append((resource,1))
         format_id={'rgba8unorm':1,'bc1_rgba':4,'bc2_rgba':5,'bc3_rgba':6}.get(texture['pixel_format']);require(format_id,'Unverified wire sampled texture format')
         texture_type={'2d':1,'cube':2}.get(texture['type']);require(texture_type,'Unverified wire texture dimension')
-        require(texture_type!=2 or format_id not in (5,6),'BC2/BC3 cube transport has not been validated')
         packet.command(struct.pack('<12I',10,48,resource,1,format_id,texture['width'],texture['height'],1,
             texture_type,len(texture['mipmaps']),1,0))
         for level,mip in enumerate(texture['mipmaps']):
             faces=mip['faces'] if texture_type==2 else [dict(mip,face=0)]
+            require(texture_type!=2 or sorted(face['face'] for face in faces)==list(range(6)),
+                    'Cube mip must contain all six unique faces')
             for face in faces:
                 data=payload(root,face)
                 fixed=struct.pack('<18I',11,72,resource,1,level,face['face'],0,0,0,mip['width'],mip['height'],1,

@@ -64,7 +64,6 @@ def append_texture(packet,resource,texture,usage):
     format_id={'rgba8unorm':1,'bgra8unorm':2,'depth32float_stencil8':3,'bc1_rgba':4,'bc2_rgba':5,'bc3_rgba':6}.get(texture['pixel_format'])
     type_id={'2d':1,'cube':2}.get(texture.get('type','2d'))
     require(format_id and type_id,'Unsupported original wire texture format/type')
-    require(type_id!=2 or format_id not in (5,6),'BC2/BC3 cubes lack a verified native transport contract')
     levels=len(texture.get('mipmaps',[None]))
     packet.command(struct.pack('<12I',10,48,resource,1,format_id,texture['width'],texture['height'],1,type_id,levels,usage,0))
 

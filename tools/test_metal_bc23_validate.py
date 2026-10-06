@@ -1,5 +1,4 @@
 """Independent known blocks and transport preservation for BC2/BC3 fixtures."""
-import copy
 from pathlib import Path
 import struct
 import tempfile
@@ -33,7 +32,7 @@ class BC23FixtureTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<2H',encoded,8),(0,0x07e0))
         self.assertIn(bytes((0,85,0,57)),pixels) # Reversed RGB endpoints still use four-color interpolation.
 
-    def test_wire_retains_all_authored_block16_mips_and_rejects_unverified_cubes(self):
+    def test_wire_retains_all_authored_block16_mips(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder=Path(temporary);manifest=fixture(folder);packet,info=wire_packet(folder,manifest)
             self.assertEqual(info['command_count'],17)
@@ -54,10 +53,34 @@ class BC23FixtureTests(unittest.TestCase):
                     self.assertEqual(fields[12:14],(mip['bytes_per_row'],mip['bytes_per_image']))
                     self.assertEqual(len(data),max(1,(mip['width']+3)//4)**2*16)
                     self.assertEqual(data,(folder/mip['file']).read_bytes())
-            for slot in (0,1):
-                cube=copy.deepcopy(manifest);cube['textures'][slot]['type']='cube'
-                with self.assertRaisesRegex(ValueError,'cube transport has not been validated'):
-                    wire_packet(folder,cube)
+
+    def test_cube_wire_preserves_distinct_faces_and_authored_mips(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=Path(temporary);manifest=fixture(folder,cube=True);packet,info=wire_packet(folder,manifest)
+            self.assertEqual(info['command_count'],67)
+            self.assertEqual(manifest['target']['height'],192)
+            creates={};uploads={};offset=24
+            while offset<len(packet):
+                opcode,size=struct.unpack_from('<2I',packet,offset)
+                if opcode==10:
+                    fields=struct.unpack_from('<12I',packet,offset);creates[fields[2]]=fields
+                elif opcode==11:
+                    fields=struct.unpack_from('<18I',packet,offset)
+                    uploads[fields[2],fields[4],fields[5]]=(fields,packet[fields[14]:fields[14]+fields[15]])
+                offset+=size
+            self.assertEqual(len(uploads),60)
+            for slot,format_id in ((0,5),(1,6)):
+                self.assertEqual(creates[10+slot][4:11],(format_id,16,16,1,2,5,1))
+                for level,mip in enumerate(manifest['textures'][slot]['mipmaps']):
+                    self.assertEqual(len({face['sha256'] for face in mip['faces']}),6)
+                    for face in mip['faces']:
+                        fields,data=uploads[10+slot,level,face['face']]
+                        self.assertEqual(fields[5:12],(face['face'],0,0,0,mip['width'],mip['height'],1))
+                        self.assertEqual(fields[12:14],(face['bytes_per_row'],face['bytes_per_image']))
+                        self.assertEqual(data,(folder/face['file']).read_bytes())
+            manifest['textures'][0]['mipmaps'][0]['faces'][5]['face']=0
+            with self.assertRaisesRegex(ValueError,'six unique faces'):
+                wire_packet(folder,manifest)
 
 
 if __name__=='__main__':unittest.main()
