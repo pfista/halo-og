@@ -78,6 +78,7 @@ symbols in this file:
 #include "bink_playback.h"
 #include "game.h"
 #include "game_engine.h"
+#include "game/players.h"
 #include "interface/first_person_weapons.h"
 #include "interface/interface.h"
 #include "editor_stubs.h"
@@ -86,6 +87,7 @@ symbols in this file:
 #include "effects/particle_systems.h"
 #include "effects/weather_particle_systems.h"
 #include "main/main.h"
+#include "cutscene/cinematics.h"
 #include "structures/structures.h"
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "render/teammate_view.h"
@@ -219,6 +221,18 @@ static void render_nonplayer_frame(
 		viewport, so not centered like the menus on a wide screen */
 		interface_draw_fullscreen_overlays();
 		rasterizer_debug_draw();
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (main_get_window_count() > 1)
+		{
+			/* Composite menus after every pane and the divider. The owning
+			 * player's controls stay attached to their original widget tree. */
+			render.local_player_index = local_player_get_next(NONE);
+			game_engine_post_rasterize_fullscreen_score();
+			halo_screen_ui_offset(TRUE);
+			render_ui_widgets_fullscreen(&window->rasterizer_camera.viewport_bounds);
+			halo_screen_ui_offset(FALSE);
+		}
+#endif
 		break;
 
 	case 1:
@@ -458,9 +472,14 @@ static void render_window(
 		{
 			interface_draw_screen();
 			rasterizer_screen_flash();
-			halo_screen_ui_offset(TRUE);
-			render_ui_widgets(local_player_index, &rasterizer_camera->viewport_bounds);
-			halo_screen_ui_offset(FALSE);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			if (main_get_window_count() <= 1)
+#endif
+			{
+				halo_screen_ui_offset(TRUE);
+				render_ui_widgets(local_player_index, &rasterizer_camera->viewport_bounds);
+				halo_screen_ui_offset(FALSE);
+			}
 		}
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		else if (rasterizer_target == _render_target_primary)

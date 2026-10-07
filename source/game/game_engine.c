@@ -588,6 +588,7 @@ symbols in this file:
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "game/starting_equipment.h"
 #include "game/fiesta_weapon_pool.h"
+#include "render/teammate_view.h"
 #endif
 
 /* network_game_globals.c's */
@@ -3069,7 +3070,11 @@ static void game_engine_post_rasterize_in_game(
 	}
 
 	fade = PIN(fade, 0.0f, 1.0f);
-	if (fade > 0.0f)
+	if (fade > 0.0f
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		&& !teammate_view_split_screen_active()
+#endif
+		)
 	{
 		real alpha = linear_to_non_linear_alpha(fade);
 
@@ -3080,6 +3085,28 @@ static void game_engine_post_rasterize_in_game(
 
 	return;
 }
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+void game_engine_post_rasterize_fullscreen_score(void)
+{
+	long local_player_index = render.local_player_index;
+	long player_index;
+	real fade;
+	if (!teammate_view_split_screen_active() || !game_engine ||
+		local_player_index == NONE ||
+		(game_engine_globals.postgame_state != game_engine_mode_active &&
+		 game_engine_globals.postgame_state != game_engine_mode_postgame_delay))
+		return;
+	player_index = local_player_get_player_index(local_player_index);
+	if (player_index == NONE || !player_try_and_get(player_index))
+		return;
+	/* The local pane still owns target names and updates its fade once. Only
+	 * the scoreboard is drawn again against the complete overlay canvas. */
+	fade = game_engine_globals.hud_message_timers[local_player_index];
+	if (fade > 0.0f)
+		game_engine_rasterize_in_game_score(player_index, linear_to_non_linear_alpha(fade));
+}
+#endif
 
 long game_engine_player_get_team_index(
 	long player_index)

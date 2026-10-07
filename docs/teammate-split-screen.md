@@ -15,7 +15,16 @@ or changing its HUD layout. A larger team shows one eligible teammate, keeping
 that target while it remains valid. Machines with multiple local controllers
 retain their existing player ownership and local split-screen layout.
 
+The remote prototype's scoreboard and menu now compose over the complete canvas
+after both views and their divider. In actual-controller split screen, a single
+owned menu is centered over the complete display with a shared dim. If multiple
+controllers open menus together, each menu keeps its owner's pane position;
+shared dialogs render once above them. Controller ownership stays with each
+existing widget tree. Actual-controller scoreboards stay in their player panes.
 
+These layout and overlay edits were included in the successful dual-renderer
+local Mac build. Gameplay testing remains pending. The validation records below
+describe the earlier prototype and do not establish the new behavior.
 
 This is a camera-only proof of concept. The teammate pane has a name label,
 fixed unzoomed field of view, no weapon hands, no HUD, no camera shake or damage

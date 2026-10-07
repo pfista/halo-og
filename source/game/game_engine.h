@@ -342,6 +342,11 @@ void game_engine_post_rasterize_objects(
 void game_engine_post_rasterize(
 	void);
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+void game_engine_post_rasterize_fullscreen_score(
+	void);
+#endif
+
 void game_engine_nonplayer_post_rasterize(
 	void);
 void game_engine_update(

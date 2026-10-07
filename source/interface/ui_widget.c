@@ -6320,6 +6320,121 @@ void render_ui_widgets(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+void render_ui_widgets_fullscreen(
+	rectangle2d const *window_bounds)
+{
+	boolean owners[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS] = { FALSE };
+	short owner_count = 0;
+	short widget_index, pass;
+	short canvas_width = window_bounds->x1 - window_bounds->x0;
+	short canvas_height = window_bounds->y1 - window_bounds->y0;
+
+	if (bink_playback_ui_rendering_inhibited())
+		return;
+	if (virtual_keyboard_active())
+	{
+		virtual_keyboard_render();
+		return;
+	}
+	for (widget_index = 0; widget_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; widget_index++)
+	{
+		struct widget_instance *widget = widget_globals.active_widgets[widget_index];
+		if (widget && !widget->render_regardless_of_controller_index &&
+			!widget->widget_is_error_dialog && widget->local_player_index >= 0 &&
+			widget->local_player_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS &&
+			!owners[widget->local_player_index])
+		{
+			owners[widget->local_player_index] = TRUE;
+			owner_count++;
+		}
+	}
+	/* Draw each root once. Independent controller menus remain visible in
+	 * their own panes when opened together; shared dialogs compose last. */
+	for (pass = 0; pass < 2; pass++)
+	{
+		for (widget_index = 0; widget_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; widget_index++)
+		{
+			struct widget_instance *widget = widget_globals.active_widgets[widget_index];
+			struct ui_widget_definition *definition;
+			rectangle2d bounds;
+			point2d offset = { 0, 0 };
+			boolean shared;
+			short previous;
+			if (!widget)
+				continue;
+			for (previous = 0; previous < widget_index; previous++)
+				if (widget_globals.active_widgets[previous] == widget)
+					break;
+			if (previous < widget_index)
+				continue;
+			shared = widget->render_regardless_of_controller_index ||
+				widget->widget_is_error_dialog || widget->local_player_index == NONE;
+			if ((shared ? 1 : 0) != pass)
+				continue;
+			definition = ui_widget_definition_get(widget->definition_tag_index);
+			bounds.x0 = bounds.y0 = 0;
+			bounds.x1 = canvas_width;
+			bounds.y1 = canvas_height;
+			if (!shared && owner_count > 1)
+			{
+				rectangle2d viewport, safe_bounds;
+				short local_index, pane = 0;
+				for (local_index = local_player_get_next(NONE); local_index != NONE &&
+					local_index != widget->local_player_index;
+					local_index = local_player_get_next(local_index))
+					pane++;
+				if (local_index == NONE)
+					continue;
+				compute_window_bounds(pane, local_player_count(), &viewport, &safe_bounds);
+				offset.x = viewport.x0 - window_bounds->x0;
+				offset.y = viewport.y0 - window_bounds->y0;
+				bounds.x1 = viewport.x1 - viewport.x0;
+				bounds.y1 = viewport.y1 - viewport.y0;
+			}
+			else if (!shared)
+			{
+				short width = definition->bounds.x1 - definition->bounds.x0;
+				short height = definition->bounds.y1 - definition->bounds.y0;
+				/* Keep authored artwork/font sizes. Center the one owned menu
+				 * across the complete display rather than stretching a pane. */
+				offset.x = MAX(0, (640 - width) / 2) - definition->bounds.x0;
+				offset.y = MAX(0, (canvas_height - height) / 2) - definition->bounds.y0;
+				if (widget->visible && (width < 640 || height < canvas_height))
+				{
+					rectangle2d dim = { 0, 0, 0, 0 };
+					dim.x0 = -(halo_screen_width() - 640) / 2;
+					dim.x1 = 640 + (halo_screen_width() - 640) / 2;
+					dim.y1 = canvas_height;
+					draw_quad(&dim, fast_ftol(128.0f *
+						widget_instance_get_cumulative_alpha_modifier(widget)) << 24);
+				}
+				bounds.x0 -= offset.x;
+				bounds.x1 -= offset.x;
+				bounds.y0 -= offset.y;
+				bounds.y1 -= offset.y;
+			}
+			local_player_index_for_draw_string_and_hack_in_icons =
+				widget->local_player_index == NONE ? 0 : widget->local_player_index;
+			ui_mouse_noting_targets = widget->local_player_index == NONE ||
+				widget->local_player_index == 0;
+			widget_instance_render_recursive(widget, &bounds, offset, TRUE, FALSE);
+			ui_mouse_noting_targets = FALSE;
+		}
+	}
+	if (widget_globals.fade_to_black >= 0.0f && widget_globals.fade_to_black <= 1.0f)
+	{
+		rectangle2d bounds = { 0, 0, 0, 0 };
+		bounds.x0 = -(halo_screen_width() - 640) / 2;
+		bounds.x1 = 640 + (halo_screen_width() - 640) / 2;
+		bounds.y1 = canvas_height;
+		if (widget_globals.fade_to_black >= 0.95f)
+			widget_globals.fade_to_black = 1.0f;
+		draw_quad(&bounds, fast_ftol(widget_globals.fade_to_black * 255.0f) << 24);
+	}
+}
+#endif
+
 /* ---------- private code */
 
 static void widget_instance_render_column_list(

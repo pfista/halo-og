@@ -196,6 +196,10 @@ void render_ui_widgets_postgame(
 void render_ui_widgets(
 	short local_player_index,
 	rectangle2d const *window_bounds);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+void render_ui_widgets_fullscreen(
+	rectangle2d const *window_bounds);
+#endif
 struct widget_instance *ui_widget_load_by_name_or_tag(
 	char const *name,
 	long tag_index,
