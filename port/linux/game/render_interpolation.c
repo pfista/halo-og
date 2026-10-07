@@ -743,6 +743,11 @@ static struct observer_result const *render_interpolation_direct_camera(
 	direct = &direct_cameras[local_player_index];
 	*direct = *observer;
 	player_control_get_facing_direction(local_player_index, &direct->forward);
+	/* The simulated aim is bounded relative to the body's animation, even
+	 * when explosion knockback leaves the body behind the player's facing.
+	 * Keep the live camera inside those same bounds so it cannot point at a
+	 * direction that unit_adjust_projectile_ray cannot fire toward. */
+	unit_clip_to_aiming_bounds(unit_index, &direct->forward, TRUE);
 	observer_up_from_forward(&direct->forward, &direct->up);
 	return direct;
 #endif
