@@ -1189,13 +1189,27 @@ boolean cache_files_map_present(
 
 		if (cache_files_precache_map_loaded(map_name))
 			return TRUE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* The managed Xbox-map overlay uses the same validated resolver as
+		loading. A map in that overlay need not also exist in maps. */
+		file = INVALID_HANDLE_VALUE;
+		if (native_map_get_path(native_map_cache_resolve(map_name), path, sizeof(path)))
+			file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+#else
 		snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), name);
 		file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+#endif
 		if (file != INVALID_HANDLE_VALUE)
 		{
 			CloseHandle(file);
 			return TRUE;
 		}
+#ifdef HALO_MACOS
+		/* Accept the host's map identity while its verified download is
+		pending. Normal precaching still keeps this client unready. */
+		if (native_map_download_pending(map_name) == 2)
+			return TRUE;
+#endif
 		/* (a host of another version of this port, which names a Custom
 		Edition map as the game's own maps are named) */
 		if (custom_edition_map_file_present(name))
