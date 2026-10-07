@@ -2587,6 +2587,8 @@ static void texture_border_key(struct nv2a_pixel_shader_key *key, int stage,
 
 static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale[4][4], DWORD texture_lod_bias[4])
 {
+	GLenum gl_targets[D3DTSS_MAXSTAGES];
+	GLuint gl_textures[D3DTSS_MAXSTAGES];
 	int stage;
 
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
@@ -2600,7 +2602,8 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 			D3D__TextureState[stage][D3DTSS_MIPMAPLODBIAS]);
 		if (!texture || !texture->Data || mode == 0 || mode == 0x04 || mode == 0x05 || mode == 0x11)
 		{
-			state_texture(stage, GL_TEXTURE_2D, 0);
+			gl_targets[stage] = GL_TEXTURE_2D;
+			gl_textures[stage] = 0;
 			key->sampler_type[stage] = mode == 0x11 ? _xgpu_sampler_2d : _xgpu_sampler_none;
 			continue;
 		}
