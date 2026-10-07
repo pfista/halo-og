@@ -33,6 +33,7 @@ static unsigned errors;
 #define error(...) (++errors)
 enum { game_engine_ctf=1, game_engine_slayer, game_engine_oddball, game_engine_king, game_engine_race };
 /* VARIANTS */
+/* UI CONSTANTS */
 #define __GAME_ENGINE_H
 #include "game/starting_equipment.h"
 #include "game/weapon_sets.h"
@@ -230,6 +231,8 @@ class FiestaMenuPreflightTests(unittest.TestCase):
     def test_production_selection_and_start_callbacks(self):
         engine = (ROOT / "source/game/game_engine.h").read_text()
         handlers = (ROOT / "source/interface/ui_widget_event_handler_functions.c").read_text()
+        ui_header = (ROOT / "source/interface/ui_widget_event_handler_functions.h").read_text()
+        ui_constants = re.search(r"enum \{ UI_WIDGET_GAME_TYPE_CREATE[^}]+\};", ui_header).group()
         variants = "\n".join(c_block(engine, signature) + ";" for signature in (
             "struct universal_variant\n", "struct ctf_variant\n", "struct slayer_variant\n",
             "struct king_variant\n", "struct oddball_variant\n", "struct race_variant\n",
@@ -244,7 +247,8 @@ class FiestaMenuPreflightTests(unittest.TestCase):
             private[map_start:map_end],
             c_block(private, "static boolean multiplayer_profile_set_for_game(\n"),
             c_block(private, "static boolean network_game_server_allow_game_start(\n")))
-        source = HARNESS.replace("/* VARIANTS */", variants).replace("/* CALLBACKS */", callbacks)
+        source = HARNESS.replace("/* VARIANTS */", variants).replace("/* UI CONSTANTS */", ui_constants)
+        source = source.replace("/* CALLBACKS */", callbacks)
         source = re.sub(r"\bunsigned long\b", "uint32_t", source)
         source = re.sub(r"\blong\b", "int32_t", source)
         with tempfile.TemporaryDirectory(prefix="halo-fiesta-menu-preflight-") as temporary:

@@ -20,6 +20,15 @@ hyphens; stock-name duplicates are skipped. Native disk caches are bounded at
 A v7 cache cannot be converted by renaming it or changing its version field.
 Passing header checks does not establish support for every tag or game mode.
 
+Replacing a map under the same name invalidates its persistent decompressed
+copy. Native builds verify the physical source file's SHA-256 at startup and
+each actual map-load request, alongside the cache header, before reusing a
+slot. A successful copy records that digest in a small `z/cacheNNN.source`
+sidecar; older slots without one are recopied automatically. This also handles
+authoring tools that leave the Xbox checksum at `0xFFFFFFFF`, and revisions
+whose header fields remain identical. Verification streams the file and can
+add load time for large maps. It does not modify the source map or its checksum.
+
 ## Managed storage and downloads
 
 Mac first launch accepts an original Xbox disc image or extracted maps folder.

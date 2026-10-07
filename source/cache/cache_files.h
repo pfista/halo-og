@@ -139,6 +139,10 @@ boolean cache_files_precache_is_copying_map(
 	char const *map_name);
 boolean cache_files_precache_map_loaded(
 	char const *map_name);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* Refresh the source-content certificate once per actual map-load request. */
+boolean cache_files_precache_map_validate(char const *map_name);
+#endif
 
 short cache_files_precache_map_status(
 	real *progress);

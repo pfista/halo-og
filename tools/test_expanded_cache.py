@@ -125,13 +125,16 @@ int native_map_get_original_path(char const *map,char *path,unsigned capacity) {
 struct cached_map_file { struct { char name[32]; } header; };
 static struct cached_map_file fixture_slots[NUMBER_OF_CACHED_MAP_FILES];
 static struct native_map_cache_selection expanded_cache_slots[NUMBER_OF_CACHED_MAP_FILES];
+static boolean native_cache_verified_slots[NUMBER_OF_CACHED_MAP_FILES];
 static struct cached_map_file *cached_map_file_get(short index) { return &fixture_slots[index]; }
 /* PRODUCTION CACHE LOOKUP */
 void fixture_slot(unsigned index,char const *name,struct native_map_cache_selection const *selection) {
     snprintf(fixture_slots[index].header.name,32,"%s",name);
+    native_cache_verified_slots[index]=TRUE;
     if(selection) expanded_cache_slots[index]=*selection;
     else memset(&expanded_cache_slots[index],0,sizeof(expanded_cache_slots[index]));
 }
+void fixture_slot_verified(unsigned index,int verified) { native_cache_verified_slots[index]=verified; }
 int fixture_find(char const *name) { return cached_map_files_find_map(name); }
 void fixture_reset(char const *directory) {
     snprintf(fixture_directory,sizeof(fixture_directory),"%s/",directory);
@@ -139,6 +142,7 @@ void fixture_reset(char const *directory) {
     memset(&original_cache,0,sizeof(original_cache));fixture_managed[0]=shown[0]=0;file_reads=download_requests=0;
     download_status=0;last_download_status=0;requested_map[0]=requested_base[0]=requested_cache[0]=0;
     memset(fixture_slots,0,sizeof(fixture_slots));memset(expanded_cache_slots,0,sizeof(expanded_cache_slots));
+    memset(native_cache_verified_slots,0,sizeof(native_cache_verified_slots));
 }
 int fixture_prepare(char const *map,int set,int fiesta,struct native_map_cache_selection *selection) {
     struct game_variant variant={0};variant.universal_variant.weapon_set=(short)set;variant.flags=fiesta?128:0;
@@ -240,6 +244,7 @@ class ExpandedCacheTests(unittest.TestCase):
         cls.lib.fixture_weapon.argtypes = [ctypes.c_uint]
         cls.lib.fixture_weapon.restype = ctypes.c_char_p
         cls.lib.fixture_slot.argtypes = [ctypes.c_uint, ctypes.c_char_p, ctypes.POINTER(Selection)]
+        cls.lib.fixture_slot_verified.argtypes = [ctypes.c_uint, ctypes.c_int]
         cls.lib.fixture_find.argtypes = [ctypes.c_char_p]
         cls.lib.fixture_layout.argtypes = [ctypes.c_uint]
         cls.lib.fixture_arena.argtypes = [ctypes.c_void_p, ctypes.c_uint]
@@ -370,6 +375,9 @@ class ExpandedCacheTests(unittest.TestCase):
         self.lib.native_map_cache_select(ctypes.byref(self.selection))
         self.assertEqual(self.lib.fixture_find(b"prisoner"),1)
         self.assertEqual(self.lib.fixture_find(b"ui"),3)
+        self.lib.fixture_slot_verified(1,0)
+        self.assertEqual(self.lib.fixture_find(b"prisoner"),-1)
+        self.lib.fixture_slot_verified(1,1)
         self.selection.sha256[0]^=1;self.lib.native_map_cache_select(ctypes.byref(self.selection))
         self.assertEqual(self.lib.fixture_find(b"prisoner"),-1)
         self.assertTrue(self.prepare(fiesta=0));self.lib.native_map_cache_select(ctypes.byref(self.selection))

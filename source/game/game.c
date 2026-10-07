@@ -745,6 +745,11 @@ void game_precache_new_map(
 {
 	long map_status;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Persistent slots must identify the current source bytes before a new
+	   map load can skip copying. Frequent networking probes stay memoized. */
+	cache_files_precache_map_validate(map_name);
+#endif
 	if (!cache_files_precache_map_loaded(map_name))
 	{
 		if (cache_files_precache_in_progress() &&

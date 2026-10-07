@@ -195,6 +195,7 @@ symbols in this file:
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "halo_custom_maps.h"
 #include "halo_expanded_cache.h"
+#include "halo_sha256.h"
 #endif
 
 /* ---------- constants */
@@ -434,6 +435,166 @@ static struct cache_file_runtime_globals cache_file_globals;
    currently verified full digest can satisfy this process's arsenal lookup. */
 static struct native_map_cache_selection expanded_cache_slots[NUMBER_OF_CACHED_MAP_FILES];
 static struct native_map_cache_selection expanded_cache_copy;
+static boolean native_cache_verified_slots[NUMBER_OF_CACHED_MAP_FILES];
+static unsigned char native_cache_source_digests[NUMBER_OF_CACHED_MAP_FILES][32];
+static boolean native_cache_copy_verified;
+static unsigned char native_cache_copy_digest[32];
+static struct cache_file_header native_cache_copy_header;
+
+/* A retail CRC can be absent or deliberately reused by an authoring tool.
+   It cannot by itself identify the bytes copied into a persistent slot. */
+static boolean native_cache_headers_equal(
+	struct cache_file_header const *cached,
+	struct cache_file_header const *source)
+{
+	return cached && source &&
+		cached->header_signature == source->header_signature &&
+		cached->footer_signature == source->footer_signature &&
+		cached->version == source->version &&
+		cached->file_length == source->file_length &&
+		cached->tag_data_offset == source->tag_data_offset &&
+		cached->tag_data_size == source->tag_data_size &&
+		cached->scenario_type == source->scenario_type &&
+		cached->checksum == source->checksum &&
+		!memcmp(cached->name, source->name, sizeof(cached->name)) &&
+		!memcmp(cached->build, source->build, sizeof(cached->build));
+}
+
+/* The source can be compressed, while the slot contains decompressed bytes
+   and padding. This certificate identifies the original physical source. */
+static void native_cache_certificate_path(short map_file_index, char *path)
+{
+	sprintf(path, "z:\\cache%03d.source", map_file_index);
+}
+
+static boolean native_cache_certificate_read(short map_file_index, unsigned char digest[32])
+{
+	static unsigned char const magic[8] = {'H', 'O', 'G', 'C', 'S', '0', '0', '1'};
+	unsigned char bytes[40];
+	unsigned long read, high;
+	char path[256];
+	HANDLE file;
+	boolean valid = FALSE;
+
+	native_cache_certificate_path(map_file_index, path);
+	file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+	if (file == INVALID_HANDLE_VALUE)
+		return FALSE;
+	if (GetFileSize(file, &high) == sizeof(bytes) && high == 0 &&
+		ReadFile(file, bytes, sizeof(bytes), &read, NULL) && read == sizeof(bytes) &&
+		!memcmp(bytes, magic, sizeof(magic)))
+	{
+		memcpy(digest, bytes + sizeof(magic), 32);
+		valid = TRUE;
+	}
+	CloseHandle(file);
+	return valid;
+}
+
+static boolean native_cache_certificate_remove(short map_file_index)
+{
+	char path[256];
+	unsigned long error_code;
+
+	native_cache_verified_slots[map_file_index] = FALSE;
+	memset(native_cache_source_digests[map_file_index], 0, 32);
+	native_cache_certificate_path(map_file_index, path);
+	if (DeleteFileA(path))
+		return TRUE;
+	error_code = GetLastError();
+	return error_code == ERROR_FILE_NOT_FOUND || error_code == ERROR_PATH_NOT_FOUND;
+}
+
+static boolean native_cache_certificate_write(short map_file_index, unsigned char const digest[32])
+{
+	static unsigned char const magic[8] = {'H', 'O', 'G', 'C', 'S', '0', '0', '1'};
+	unsigned char bytes[40];
+	unsigned long written;
+	char path[256];
+	HANDLE file;
+	boolean valid;
+
+	memcpy(bytes, magic, sizeof(magic));
+	memcpy(bytes + sizeof(magic), digest, 32);
+	native_cache_certificate_path(map_file_index, path);
+	file = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+	if (file == INVALID_HANDLE_VALUE)
+		return FALSE;
+	valid = WriteFile(file, bytes, sizeof(bytes), &written, NULL) && written == sizeof(bytes);
+	if (!CloseHandle(file))
+		valid = FALSE;
+	if (!valid)
+		DeleteFileA(path);
+	return valid;
+}
+
+static boolean native_cache_source_hash(char const *map_name, unsigned char digest[32])
+{
+	struct sha256 hash;
+	unsigned char bytes[4096];
+	unsigned long size, high = 0, after_size, after_high = 0, read, total = 0;
+	FILETIME created, written, after_created, after_written;
+	char path[256];
+	HANDLE file;
+	boolean valid = FALSE;
+
+	cache_file_get_map_path(map_name, path);
+	file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+	if (file == INVALID_HANDLE_VALUE)
+		return FALSE;
+	size = GetFileSize(file, &high);
+	if (size == INVALID_FILE_SIZE || high != 0 || size < sizeof(struct cache_file_header) ||
+		size > HALO_PORT_MULTIPLAYER_CACHE_SIZE ||
+		!GetFileTime(file, &created, NULL, &written))
+		goto finished;
+	sha256_begin(&hash);
+	while (total < size)
+	{
+		unsigned long count = size - total < sizeof(bytes) ? size - total : sizeof(bytes);
+		if (!ReadFile(file, bytes, count, &read, NULL) || !read || read > count)
+			goto finished;
+		sha256_add(&hash, bytes, (int)read);
+		total += read;
+	}
+	/* Reject truncation, appended bytes, and observable changes during hashing.
+	   Timestamps alone never authorize reuse at a map-load boundary. */
+	if (!ReadFile(file, bytes, 1, &read, NULL) || read != 0 ||
+		!GetFileTime(file, &after_created, NULL, &after_written))
+		goto finished;
+	after_size = GetFileSize(file, &after_high);
+	if (after_size == INVALID_FILE_SIZE || after_high || after_size != size ||
+		memcmp(&created, &after_created, sizeof(created)) ||
+		memcmp(&written, &after_written, sizeof(written)))
+		goto finished;
+	sha256_end(&hash, digest);
+	valid = TRUE;
+finished:
+	CloseHandle(file);
+	return valid;
+}
+
+static boolean native_cache_slot_validate(short map_file_index)
+{
+	struct cached_map_file *map_file = cached_map_file_get(map_file_index);
+	struct cache_file_header source_header;
+	unsigned char certified[32], actual[32];
+	boolean valid = map_file->header.name[0] &&
+		cache_file_read_header_from_dvd(map_file->header.name, &source_header) &&
+		native_cache_headers_equal(&map_file->header, &source_header) &&
+		native_cache_certificate_read(map_file_index, certified) &&
+		native_cache_source_hash(map_file->header.name, actual) &&
+		!memcmp(actual, certified, sizeof(actual));
+
+	native_cache_verified_slots[map_file_index] = valid;
+	if (valid)
+		memcpy(native_cache_source_digests[map_file_index], actual, sizeof(actual));
+	else
+	{
+		memset(native_cache_source_digests[map_file_index], 0, sizeof(actual));
+		memset(&map_file->header, 0, sizeof(map_file->header));
+	}
+	return valid;
+}
 #endif
 
 /* ---------- public code */
@@ -594,6 +755,29 @@ boolean cache_files_precache_map_loaded(
 	return cached_map_files_find_map(tag_name_strip_path(map_name)) != NONE;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+boolean cache_files_precache_map_validate(char const *map_name)
+{
+	short map_file_index;
+	boolean found = FALSE;
+
+	if (!map_name || !map_name[0])
+		return FALSE;
+	map_name = native_map_cache_resolve(map_name);
+	if (!map_name || !map_name[0])
+		return FALSE;
+	for (map_file_index = 0; map_file_index < NUMBER_OF_CACHED_MAP_FILES; map_file_index++)
+	{
+		if (!_stricmp(map_name, cached_map_file_get(map_file_index)->header.name))
+		{
+			if (native_cache_slot_validate(map_file_index))
+				found = TRUE;
+		}
+	}
+	return found;
+}
+#endif
+
 boolean cache_files_precache_map_begin(
 	const char *map_name,
 	boolean copy_map)
@@ -612,12 +796,28 @@ boolean cache_files_precache_map_begin(
 		if (cache_file_read_header_from_dvd(cache_map_name, &header))
 		{
 			long buffer_size = cache_copy_buffer_size(copy_map);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			void *buffer;
+#else
 			void *buffer = texture_cache_steal_memory(buffer_size);
+#endif
 			short map_file_index = cached_map_files_find_free_map(
 				header.file_length,
 				header.scenario_type);
 			struct cached_map_file *map_file = cached_map_file_get(map_file_index);
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			native_cache_copy_verified = FALSE;
+			if (!native_cache_source_hash(cache_map_name, native_cache_copy_digest) ||
+				!native_cache_certificate_remove(map_file_index))
+			{
+				error(_error_silent, "couldn't verify the source or invalidate its cache certificate for map '%s'", cache_map_name);
+				return FALSE;
+			}
+			native_cache_copy_header = header;
+			native_cache_copy_verified = TRUE;
+			buffer = texture_cache_steal_memory(buffer_size);
+#endif
 			memset(
 				&map_file->header,
 				0,
@@ -666,6 +866,9 @@ void cache_files_initialize(
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	memset(expanded_cache_slots, 0, sizeof(expanded_cache_slots));
 	memset(&expanded_cache_copy, 0, sizeof(expanded_cache_copy));
+	memset(native_cache_verified_slots, 0, sizeof(native_cache_verified_slots));
+	memset(native_cache_source_digests, 0, sizeof(native_cache_source_digests));
+	native_cache_copy_verified = FALSE;
 #endif
 	cache_file_globals.requests = match_malloc(
 		"c:\\halo\\SOURCE\\cache\\cache_files_windows.c",
@@ -695,9 +898,37 @@ void cache_files_precache_map_end(
 	cached_map_file_set_modification_date(cache_file_globals.copying_to_map_file_index);
 	cached_map_file_read_header(cache_file_globals.copying_to_map_file_index);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-	if (expanded_cache_copy.expanded && !strcmp(expanded_cache_copy.physical_name,
-		cached_map_file_get(cache_file_globals.copying_to_map_file_index)->header.name))
-		expanded_cache_slots[cache_file_globals.copying_to_map_file_index] = expanded_cache_copy;
+	{
+		short map_file_index = cache_file_globals.copying_to_map_file_index;
+		struct cached_map_file *map_file = cached_map_file_get(map_file_index);
+		struct cache_file_header source_header;
+		unsigned char after[32];
+		real progress;
+		boolean valid = native_cache_copy_verified &&
+			cache_copy_get_status(&progress) == _cache_copy_finished &&
+			native_cache_headers_equal(&map_file->header, &native_cache_copy_header) &&
+			cache_file_read_header_from_dvd(cache_file_globals.copying_to_map_file_name, &source_header) &&
+			native_cache_headers_equal(&map_file->header, &source_header) &&
+			native_cache_source_hash(cache_file_globals.copying_to_map_file_name, after) &&
+			!memcmp(after, native_cache_copy_digest, sizeof(after)) &&
+			native_cache_certificate_write(map_file_index, after);
+
+		native_cache_verified_slots[map_file_index] = valid;
+		if (valid)
+		{
+			memcpy(native_cache_source_digests[map_file_index], after, sizeof(after));
+			if (expanded_cache_copy.expanded && !strcmp(expanded_cache_copy.physical_name, map_file->header.name))
+				expanded_cache_slots[map_file_index] = expanded_cache_copy;
+		}
+		else
+		{
+			memset(&map_file->header, 0, sizeof(map_file->header));
+			memset(native_cache_source_digests[map_file_index], 0, sizeof(after));
+			native_cache_certificate_remove(map_file_index);
+			error(_error_silent, "map cache source verification or certificate write failed; map must be recopied");
+		}
+		native_cache_copy_verified = FALSE;
+	}
 #endif
 	cache_file_globals.copy_in_progress = FALSE;
 	cache_file_globals.copying_to_map_file_index = NONE;
@@ -972,6 +1203,9 @@ static void cache_files_open_cache_files(
 	boolean valid;
 	short map_file_index;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	memset(&blank_header, 0, sizeof(blank_header));
+#endif
 	cached_map_files_delete(NUMBER_OF_CACHED_MAP_FILES);
 	for (map_file_index = 0;
 		map_file_index < NUMBER_OF_CACHED_MAP_FILES;
@@ -1001,6 +1235,17 @@ static void cache_files_open_cache_files(
 			}
 			else
 			{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				/* A recreated slot cannot inherit proof for its old payload. */
+				if (!native_cache_certificate_remove(map_file_index))
+				{
+					CloseHandle(file);
+					map_file->file = INVALID_HANDLE_VALUE;
+					memset(&map_file->header, 0, sizeof(map_file->header));
+					error(_error_silent, "couldn't invalidate source certificate while recreating map cache slot");
+					continue;
+				}
+#endif
 				if (!deleted_stale_cache_files)
 				{
 					cached_map_files_delete(map_file_index);
@@ -1056,7 +1301,12 @@ static void cache_files_open_cache_files(
 
 			cached_map_file_read_header(map_file_index);
 			if (cache_file_read_header_from_dvd(cache_map_name, &dvd_header) &&
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				native_cache_headers_equal(&map_file->header, &dvd_header) &&
+				native_cache_slot_validate(map_file_index) &&
+#else
 				map_file->header.checksum == dvd_header.checksum &&
+#endif
 				valid)
 			{
 				continue;
@@ -1643,6 +1893,10 @@ static short cached_map_files_find_map(
 			   slot certificate, rather than its text prefix, distinguishes it. */
 			if (expanded ? !native_map_cache_selection_equal(selection, &expanded_cache_slots[map_file_index]) :
 				expanded_cache_slots[map_file_index].expanded)
+				continue;
+			/* Networking countdown probes use the certificate validated at
+			   startup, copy completion, or the explicit map-load boundary. */
+			if (!native_cache_verified_slots[map_file_index])
 				continue;
 #endif
 			return map_file_index;
