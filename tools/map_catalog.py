@@ -32,7 +32,7 @@ def validate_map(path):
         raise ValueError("Select an existing .map file: " + str(path))
     size = path.stat().st_size
     if size < 2048 or size > MAX_CACHE_BYTES:
-        raise ValueError("Map transfer size must be between 2048 bytes and 128 MiB: " + str(path))
+        raise ValueError("Map transfer size must be between 2048 bytes and 512 MiB: " + str(path))
     header = cache_header(path)
     with path.open("rb") as stream:
         data = stream.read(2048)

@@ -179,6 +179,19 @@ class CommunityPackageTests(unittest.TestCase):
                                              "declared_bytes": 65536, "tag_bytes": 4096})
         self.assertEqual(self.expected.read_bytes(), raw)
 
+    def test_native_cache_ceiling_is_512_mib_with_independent_package_and_asset_bounds(self):
+        # A 4 KiB synthetic header declares the decoded limit; no large asset is allocated.
+        raw = synthetic_map(self.expected, declared=512 * 1024 * 1024)
+        manifest = self.prepare()
+        self.assertEqual(manifest["output"]["declared_bytes"], 536870912)
+        self.assertEqual(manifest["output"]["size"], len(raw))
+        boundary = copy.deepcopy(manifest)
+        boundary["output"]["size"] = 512 * 1024 * 1024
+        self.assertEqual(packages._validate_manifest(boundary), boundary)
+        self.assertEqual(packages.MAX_FILE_BYTES, 128 * 1024 * 1024)
+        self.assertEqual(packages.MAX_PACKAGE_BYTES, 256 * 1024 * 1024)
+        self.assertEqual(packages.MAX_TAG_BYTES, 22 * 1024 * 1024)
+
     def test_container_truncation_magic_json_and_trailing_bytes_rejected(self):
         self.prepare()
         raw = self.package.read_bytes()
@@ -242,8 +255,8 @@ class CommunityPackageTests(unittest.TestCase):
             forged[key] = value
             with self.subTest(field=key, value=value):
                 self.assert_rejected_without_materialization(forged)
-        for field, value in (("size", -1), ("size", True), ("size", 128 * 1024 * 1024 + 1),
-                             ("declared_bytes", 128 * 1024 * 1024 + 1),
+        for field, value in (("size", -1), ("size", True), ("size", 512 * 1024 * 1024 + 1),
+                             ("declared_bytes", 512 * 1024 * 1024 + 1),
                              ("tag_bytes", 22 * 1024 * 1024 + 1)):
             forged = copy.deepcopy(valid)
             forged["output"][field] = value
@@ -338,7 +351,7 @@ class CommunityPackageTests(unittest.TestCase):
                 self.assertFalse(self.package.exists())
                 source.write_bytes(before)
         for values in ({"version": 7}, {"kind": 0}, {"name": "other"},
-                       {"declared": 128 * 1024 * 1024 + 1},
+                       {"declared": 512 * 1024 * 1024 + 1},
                        {"tag_bytes": 22 * 1024 * 1024 + 1},
                        {"tag_offset": 2047},
                        {"tag_offset": 4090, "tag_bytes": 10}):

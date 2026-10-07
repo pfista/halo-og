@@ -1,5 +1,6 @@
 #import "HaloMapDownloads.h"
 #include "../../linux/include/halo_expanded_cache.h"
+#include "../../linux/include/halo_port_capacity.h"
 #include <CommonCrypto/CommonDigest.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -47,8 +48,8 @@ BOOL HaloDownloadConfigurationIsValid(NSDictionary *config) {
     if (![config isKindOfClass:NSDictionary.class] || ![config[@"schema_version"] isEqual:@1] ||
         ![config[@"profile"] isEqual:@"stock-xbox-ntsc"] || ![config[@"cache_build"] isEqual:@"01.10.12.2276"] ||
         ![config[@"allowed_origins"] isKindOfClass:NSArray.class] ||
-        !numberInRange(config[@"max_catalog_bytes"], 1048576) || !numberInRange(config[@"max_map_bytes"], 134217728) ||
-        !numberInRange(config[@"max_cache_bytes"], 134217728) || !numberInRange(config[@"max_tag_bytes"], 23068672) ||
+        !numberInRange(config[@"max_catalog_bytes"], 1048576) || !numberInRange(config[@"max_map_bytes"], HALO_PORT_MULTIPLAYER_CACHE_SIZE) ||
+        !numberInRange(config[@"max_cache_bytes"], HALO_PORT_MULTIPLAYER_CACHE_SIZE) || !numberInRange(config[@"max_tag_bytes"], 23068672) ||
         !numberInRange(config[@"max_maps"], 115)) return NO;
     id catalog = config[@"catalog_url"], base = config[@"objects_base_url"], arsenal = config[@"arsenal_catalog_url"];
     if (!catalog || catalog == NSNull.null) return (!base || base == NSNull.null) &&

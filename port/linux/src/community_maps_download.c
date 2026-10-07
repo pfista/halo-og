@@ -25,6 +25,7 @@ int halo_arsenal_download_request(const char *logical_map,
 #include <stdlib.h>
 #include <string.h>
 #include "../include/halo_sha256.h"
+#include "../include/halo_port_capacity.h"
 #ifdef _WIN32
 #include <windows.h>
 #include <aclapi.h>
@@ -44,7 +45,7 @@ extern void platform_log(const char *format, ...);
 #define OBJECT_ORIGIN "https://dl.oghalo.com/"
 #define NTSC_BUILD "01.10.12.2276"
 #define MAX_CATALOG_BYTES (1024u * 1024u)
-#define MAX_MAP_BYTES (128u * 1024u * 1024u)
+#define MAX_MAP_BYTES ((unsigned long long)HALO_PORT_MULTIPLAYER_CACHE_SIZE)
 #define MAX_TAG_BYTES (22u * 1024u * 1024u)
 #define MAX_MAPS 115
 #define MAX_BATCH_BYTES (2ULL * 1024 * 1024 * 1024)

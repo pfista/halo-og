@@ -17,7 +17,7 @@ client's own objects take the upper half of the object array).
 
 /* Uncompressed multiplayer files can exceed the Xbox's 47 MiB disk-cache
    slots. This is a file capacity, not an increase to the 22 MiB tag arena. */
-#define HALO_PORT_MULTIPLAYER_CACHE_SIZE 0x08000000
+#define HALO_PORT_MULTIPLAYER_CACHE_SIZE 0x20000000 /* 512 MiB, streamed from disk */
 
 /* Original maps retain the Xbox texture budget. Only validated, hidden global
    Fiesta maps request the larger arena when loading; it is released on the next

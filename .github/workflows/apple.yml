@@ -83,7 +83,7 @@ jobs:
         run: python3 -m unittest tools.test_input_delay tools.test_performance_network tools.test_performance_variants tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_halo_fidelity tools.test_meeting_gameplay tools.test_refined_tag_effects
       - name: Expanded Fiesta cache lifecycle and authoring
         run: >-
-          python3 -m unittest tools.test_expanded_cache tools.test_fiesta_menu_preflight
+          python3 -m unittest tools.test_expanded_cache tools.test_fiesta_menu_preflight tools.test_cache_file_capacity
           tools.test_texture_cache_budget tools.test_weapon_pack_maps tools.test_android_asm_convert
           tools.test_arsenal_catalog tools.test_publish_map_catalog tools.test_desktop_arsenal_downloads
       - name: Spawn inventory, teleports, trails and lifecycle safety

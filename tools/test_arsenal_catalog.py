@@ -104,8 +104,8 @@ class ArsenalDeliveryTests(unittest.TestCase):
         for key, value in (("schema_version", True), ("generation", 2), ("profile", "stock-xbox-ntsc"),
                            ("weapon_list_sha256", "0" * 64), ("private_path", "/private/source"), ("arsenals", [])):
             changed = copy.deepcopy(good);changed[key] = value;cases.append(changed)
-        for key, value in (("manifest_bytes", True), ("manifest_bytes", 4097), ("cache_file_bytes", 134217729),
-                           ("cache_declared_bytes", 134217729), ("base_sha256", "A" * 64),
+        for key, value in (("manifest_bytes", True), ("manifest_bytes", 4097), ("cache_file_bytes", 536870913),
+                           ("cache_declared_bytes", 536870913), ("base_sha256", "A" * 64),
                            ("physical_map", "_fiesta_other"), ("logical_map", "../prisoner"),
                            ("cache_object_key", "arsenals/v1/../prisoner.map"), ("private_path", "/private/source")):
             changed = copy.deepcopy(good);changed["arsenals"][0][key] = value;cases.append(changed)
@@ -122,6 +122,27 @@ class ArsenalDeliveryTests(unittest.TestCase):
             catalog.validate_catalog(encoded(good) + b" " * catalog.MAX_CATALOG_BYTES)
         with self.assertRaises(shared.PublishError):
             catalog.validate_catalog(encoded(good).replace(b"prisoner", b"pris\\u006fner"))
+
+    def test_512_mib_cache_admission_keeps_independent_manifest_and_batch_limits(self):
+        boundary = {**self.manifest, "cache_file_bytes": 512 * 1024 * 1024,
+                    "cache_declared_bytes": 512 * 1024 * 1024}
+        self.assertEqual(catalog.validate_manifest(encoded(boundary)), boundary)
+        entry = catalog.entry_from_manifest(encoded(boundary))
+        self.assertEqual(catalog.validate_catalog(catalog.catalog_bytes([entry]))["arsenals"][0]["cache_file_bytes"], 536870912)
+        for field in ("cache_file_bytes", "cache_declared_bytes"):
+            with self.subTest(field=field), self.assertRaises(shared.PublishError):
+                catalog.validate_manifest(encoded({**boundary, field: 512 * 1024 * 1024 + 1}))
+        self.assertEqual(catalog.MAX_MANIFEST_BYTES, 4096)
+        self.assertEqual(catalog.MAX_BATCH_BYTES, 2 * 1024 * 1024 * 1024)
+        # Numbers in small JSON exercise transfer admission, without allocating maps.
+        entries = []
+        for index in range(5):
+            logical = "synthetic" + str(index)
+            value = {**boundary, "logical_map": logical, "physical_map": catalog.physical_name(logical),
+                     "base_sha256": format(index, "064x")}
+            entries.append(catalog.entry_from_manifest(encoded(value)))
+        with self.assertRaisesRegex(shared.PublishError, "2 GiB"):
+            catalog.catalog_bytes(entries)
 
     def test_flat_manifest_must_match_catalog_exactly(self):
         prepared = self.prepare()

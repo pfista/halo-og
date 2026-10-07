@@ -29,6 +29,8 @@ from tools.macos_sparkle import setup_sparkle
 def map_header(name, version=5, build="01.01.14.2342"):
     header = bytearray(2048)
     struct.pack_into("<4sII", header, 0, b"daeh", version, 2048)
+    # Header-only import fixtures have an empty tag range at the end of the file.
+    struct.pack_into("<II", header, 16, 2048, 0)
     header[32:32 + len(name)] = name.encode()
     header[64:64 + len(build)] = build.encode()
     header[-4:] = b"toof"

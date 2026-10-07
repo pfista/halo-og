@@ -15,7 +15,7 @@ appends custom maps sorted by name, up to 128 entries total. Headers must have
 a recognized regional build, multiplayer type and a name matching the filename,
 ignoring case. Names are 1–31 ASCII letters, numbers, spaces, underscores or
 hyphens; stock-name duplicates are skipped. Native disk caches are bounded at
-128 MiB and the original tag arena remains 22 MiB.
+512 MiB and the original tag arena remains 22 MiB.
 
 A v7 cache cannot be converted by renaming it or changing its version field.
 Passing header checks does not establish support for every tag or game mode.

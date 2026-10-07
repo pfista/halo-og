@@ -100,7 +100,7 @@ jobs:
 
       - name: Expanded Fiesta cache lifecycle and authoring
         run: >-
-          python -m unittest tools.test_expanded_cache tools.test_fiesta_menu_preflight
+          python -m unittest tools.test_expanded_cache tools.test_fiesta_menu_preflight tools.test_cache_file_capacity
           tools.test_texture_cache_budget tools.test_weapon_pack_maps tools.test_android_asm_convert
           tools.test_arsenal_catalog tools.test_publish_map_catalog tools.test_desktop_arsenal_downloads
 

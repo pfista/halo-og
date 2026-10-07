@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <CommonCrypto/CommonDigest.h>
 #include "../../linux/include/halo_expanded_cache.h"
+#include "../../linux/include/halo_port_capacity.h"
 
 static NSError *failure(NSString *message) {
     return [NSError errorWithDomain:@"HaloGameData" code:1
@@ -150,17 +151,25 @@ NSURL *HaloValidateGameData(NSURL *selection, NSError **error) {
         if (!header) return nil;
         const unsigned char *bytes = header.bytes;
         BOOL valid = header.length == 2048 && !memcmp(bytes, "daeh", 4) && !memcmp(bytes + 2044, "toof", 4);
-        uint32_t version = 0, length = 0;
+        uint32_t version = 0, length = 0, tagOffset = 0, tagSize = 0;
+        uint16_t scenarioType = 0;
         NSString *cacheName = nil, *build = nil;
         if (valid) {
             memcpy(&version, bytes + 4, 4);
             memcpy(&length, bytes + 8, 4);
+            memcpy(&tagOffset, bytes + 16, 4);
+            memcpy(&tagSize, bytes + 20, 4);
+            memcpy(&scenarioType, bytes + 96, 2);
             const unsigned char *nameEnd = memchr(bytes + 32, 0, 32), *buildEnd = memchr(bytes + 64, 0, 32);
             if (nameEnd && buildEnd) {
                 cacheName = [[NSString alloc] initWithBytes:bytes + 32 length:nameEnd - bytes - 32 encoding:NSASCIIStringEncoding];
                 build = [[NSString alloc] initWithBytes:bytes + 64 length:buildEnd - bytes - 64 encoding:NSASCIIStringEncoding];
             }
-            valid = version == 5 && length >= 2048 && length <= 0x11600000 &&
+            // Native multiplayer caches may have a larger streamed file while
+            // campaign/UI files and the fixed tag arena retain their limits.
+            uint32_t maximumLength = scenarioType == 1 ? HALO_PORT_MULTIPLAYER_CACHE_SIZE : 0x11600000;
+            valid = version == 5 && scenarioType <= 2 && length >= 2048 && length <= maximumLength &&
+                tagOffset >= 2048 && tagSize <= 22u * 1024u * 1024u && (uint64_t)tagOffset + tagSize <= length &&
                 [cacheName.lowercaseString isEqualToString:name.stringByDeletingPathExtension] &&
                 ([@"01.01.14.2342" isEqualToString:build] || [@"01.10.12.2276" isEqualToString:build]);
         }

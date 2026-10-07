@@ -19,7 +19,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "port/linux/src/community_maps_download.c"
-MAX_MAP = 128 * 1024 * 1024
+MAX_MAP = 512 * 1024 * 1024
 
 SDL_HEADER = r'''
 #ifndef SDL_TEST_STUB
@@ -312,6 +312,27 @@ class DesktopMapDownloadTests(unittest.TestCase):
                 result = self.run_fixture(raw=raw)
                 self.assertIn("maps=0", result.stdout)
                 self.assertFalse((self.data / "maps/authored.map").exists())
+
+    def test_large_declared_multiplayer_headers_keep_small_streamed_transfers(self):
+        # Disk size and declared/uncompressed cache size are distinct. These
+        # bounded fixtures exercise the production header acceptance without
+        # allocating or downloading a hundreds-of-megabytes body.
+        for name, declared in (("large-authored", 150 * 1024 * 1024),
+                               ("limit-authored", MAX_MAP)):
+            with self.subTest(declared=declared):
+                data = cache(name, declared=declared)
+                (self.fixtures / (name + ".map")).write_bytes(data)
+                self.catalog["maps"] = [entry(name, data)]
+                result = self.run_fixture()
+                self.assertIn("requests=2 maps=1", result.stdout)
+                self.assertEqual((self.data / "maps" / (name + ".map")).read_bytes(), data)
+
+    def test_exact_transfer_ceiling_accepts_catalog_but_short_body_never_publishes(self):
+        self.catalog["maps"][0]["file_bytes"] = MAX_MAP
+        result = self.run_fixture()
+        self.assertIn("requests=2 maps=1", result.stdout)
+        self.assertFalse((self.data / "maps/authored.map").exists())
+        self.assertIn("failed exact size", result.stderr)
 
     def test_hash_size_header_and_tag_bound_failures_publish_nothing(self):
         for mutation in ("sha", "short", "long", "pal", "campaign", "tag-offset", "tag-range", "tag-limit", "declared-limit", "magic"):

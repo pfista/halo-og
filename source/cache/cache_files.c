@@ -672,10 +672,27 @@ boolean cache_file_header_verify(
 	char const *scenario_name,
 	boolean fatal)
 {
+	long maximum_file_length = 0x11600000;
+#ifdef HALO_PORT_MULTIPLAYER_CACHE_SIZE
+	short scenario_type;
+	memcpy(&scenario_type, header->reserved60, sizeof(scenario_type));
+	if (scenario_type == 1) maximum_file_length = HALO_PORT_MULTIPLAYER_CACHE_SIZE;
+	/* Map resources stream from disk; a larger file does not enlarge the
+	 * fixed 22 MiB tag arena copied by scenario_tags_load. */
+	if (scenario_type < 0 || scenario_type > 2 ||
+		header->file_length < (long)sizeof(*header) ||
+		header->tag_data_offset < (long)sizeof(*header) ||
+		header->tag_data_size < (long)sizeof(struct cache_file_tag_header) ||
+		header->tag_data_size > 0x01600000 ||
+		header->tag_data_offset > header->file_length ||
+		header->tag_data_size > header->file_length - header->tag_data_offset ||
+		!memchr(header->name, 0, sizeof(header->name)))
+		return FALSE;
+#endif
 	if (header->header_signature != CACHE_FILE_HEADER_SIGNATURE ||
 		header->footer_signature != CACHE_FILE_FOOTER_SIGNATURE ||
 		header->file_length < 0 ||
-		header->file_length > 0x11600000 ||
+		header->file_length > maximum_file_length ||
 		csstrlen(header->name) > 31)
 	{
 		if (fatal)

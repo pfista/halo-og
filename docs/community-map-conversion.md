@@ -217,9 +217,10 @@ establish that every asset in that package is historical recovered content.
    record exact map and executable hashes. Stage only a completed map; local
    conversion/staging does not publish it or install it for other players.
 
-The native importer currently enforces a 128 MiB declared cache bound and a
+The native importer currently enforces a 512 MiB declared multiplayer cache bound and a
 22 MiB tag arena. Check the generated map's declared/uncompressed size and tag
-data size, not just its compressed disk size. A larger memory budget or new
+data size, not just its compressed disk size. Map resources stream from disk;
+the file bound does not reserve 512 MiB for each loaded map. A larger memory budget or new
 script/rendering API is an engine change, separate from this content recipe.
 
 HUD profiles fail closed: every selected source tag has an expected SHA-256,

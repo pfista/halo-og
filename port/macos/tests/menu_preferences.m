@@ -42,14 +42,14 @@ static NSString *fixtureSHA(NSData *data) {
 }
 static NSData *arsenalMapFixture(NSData *template, NSString *name, BOOL expanded) {
     NSMutableData *result = [template mutableCopy];
-    if (expanded) result.length = 2112;
+    if (expanded || result.length < 2112) result.length = 2112;
     unsigned char *bytes = result.mutableBytes;
     memset(bytes + 32, 0, 32);
     memcpy(bytes + 32, name.UTF8String, name.length);
     bytes[96] = 1;
     uint32_t length = (uint32_t)result.length, offset = 2048, tagSize = 64;
     memcpy(bytes + 8, &length, 4);
-    if (expanded) { memcpy(bytes + 16, &offset, 4); memcpy(bytes + 20, &tagSize, 4); }
+    memcpy(bytes + 16, &offset, 4); memcpy(bytes + 20, &tagSize, 4);
     return result;
 }
 static NSDictionary *writeArsenalFixture(NSURL *maps, NSData *template, NSString *logical) {

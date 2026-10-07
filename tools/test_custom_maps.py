@@ -238,8 +238,9 @@ class NativeMapTests(unittest.TestCase):
     def test_header_acceptance_and_capacity(self):
         self.assertTrue(self.valid(header()))
         self.assertTrue(self.valid(header(build="01.01.14.2342")))
-        self.assertTrue(self.valid(header(length=128 * 1024 * 1024)))
-        self.assertFalse(self.valid(header(length=128 * 1024 * 1024 + 1)))
+        self.assertTrue(self.valid(header(length=150 * 1024 * 1024)))
+        self.assertTrue(self.valid(header(length=512 * 1024 * 1024)))
+        self.assertFalse(self.valid(header(length=512 * 1024 * 1024 + 1)))
         self.assertFalse(self.valid(header(length=2047)))
         self.assertTrue(self.valid(header(), "DOWNRUSH.MAP"))
 

@@ -51,17 +51,17 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(result["maps"][0]["file_bytes"], 4096)
 
     def test_transfer_cap_and_exact_cache_tag_limits(self):
-        synthetic_map(self.source, declared=128 << 20, tag_offset=100 << 20, tag_bytes=22 << 20)
+        synthetic_map(self.source, declared=512 << 20, tag_offset=490 << 20, tag_bytes=22 << 20)
         self.assertEqual(map_catalog.validate_map(self.source)["tag_bytes"], 22 << 20)
         with self.source.open("r+b") as stream:
-            stream.truncate((128 << 20) + 1)
+            stream.truncate((512 << 20) + 1)
         with self.assertRaisesRegex(ValueError, "transfer size"):
             map_catalog.prepare_catalog([self.source], self.output)
         self.assertFalse(self.output.exists())
 
     def test_wrong_cache_identity_format_region_type_or_bounds_fail(self):
         cases = ({"name": "other"}, {"name": "../escape"}, {"version": 7}, {"build": "01.01.14.2342"},
-                 {"kind": 0}, {"declared": 134217729}, {"declared": 2047}, {"tag_offset": 2047},
+                 {"kind": 0}, {"declared": 536870913}, {"declared": 2047}, {"tag_offset": 2047},
                  {"tag_offset": 4090, "tag_bytes": 10}, {"declared": 134217728, "tag_bytes": 23068673})
         for values in cases:
             with self.subTest(values=values):

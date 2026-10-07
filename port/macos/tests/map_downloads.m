@@ -5,6 +5,7 @@
 #include <CommonCrypto/CommonDigest.h>
 #include <assert.h>
 #include "../../linux/include/halo_expanded_cache.h"
+#include "../../linux/include/halo_port_capacity.h"
 
 static NSMutableDictionary<NSString *, NSData *> *responses;
 static unsigned requests;
@@ -160,7 +161,7 @@ static void testArsenals(NSURL *root, NSURL *game, NSDictionary *config) {
     NSMutableDictionary *revision = [approved mutableCopy]; revision[@"base_sha256"] = hash(cache);
     assert(HaloValidateArsenalCatalog(arsenalCatalog(@[approved, revision]), config, &error).count == 2);
     for (NSDictionary *replacement in @[@{@"physical_map":@"prisoner"}, @{@"cache_file_bytes":@YES}, @{@"manifest_bytes":@4097},
-        @{@"cache_declared_bytes":@134217729}, @{@"base_sha256":@"bad"}, @{@"extra":@1},
+        @{@"cache_declared_bytes":@((uint64_t)HALO_PORT_MULTIPLAYER_CACHE_SIZE + 1)}, @{@"base_sha256":@"bad"}, @{@"extra":@1},
         @{@"cache_object_key":@"../unsafe"}, @{@"manifest_object_key":@"https://maps.test/unsafe"}]) {
         NSMutableDictionary *bad = [approved mutableCopy]; [bad addEntriesFromDictionary:replacement];
         assert(!HaloValidateArsenalCatalog(arsenalCatalog(@[bad]), config, &error));
@@ -182,6 +183,8 @@ static void testArsenals(NSURL *root, NSURL *game, NSDictionary *config) {
         assert(!HaloValidateArsenalCatalog([bad dataUsingEncoding:NSASCIIStringEncoding], config, &error));
     }
     NSMutableArray *overBudget = [NSMutableArray array];
+    // Every entry fits the per-file bound; seventeen 128 MiB files still
+    // exceed the independent 2 GiB batch budget after the capacity increase.
     for (unsigned i = 0; i < 17; i++) {
         NSMutableDictionary *large = [approved mutableCopy]; large[@"base_sha256"] = hash([@(i).stringValue dataUsingEncoding:NSASCIIStringEncoding]);
         large[@"cache_file_bytes"] = @134217728; [overBudget addObject:large];
@@ -375,7 +378,7 @@ int main(int argc, const char **argv) {
         assert(!HaloValidateMapCatalog(catalog(@[entry(@"DownRush", map)]), config, &error));
         assert(!HaloValidateMapCatalog(catalog(@[@3]), config, &error));
         for (NSDictionary *replacement in @[@{@"cache_version":@7}, @{@"cache_build":@"01.01.14.2342"},
-            @{@"file_bytes":@134217729}, @{@"object_key":@"../downrush.map"}, @{@"sha256":@"wrong"}]) {
+            @{@"file_bytes":@((uint64_t)HALO_PORT_MULTIPLAYER_CACHE_SIZE + 1)}, @{@"object_key":@"../downrush.map"}, @{@"sha256":@"wrong"}]) {
             NSMutableDictionary *bad = [approved mutableCopy]; [bad addEntriesFromDictionary:replacement];
             assert(!HaloValidateMapCatalog(catalog(@[bad]), config, &error));
         }

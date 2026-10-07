@@ -1274,7 +1274,7 @@ static short cached_map_files_find_free_map(
 		{
 			struct cached_map_file *map_file = cached_map_file_get(map_file_index);
 
-			if (cached_map_file_get_size(map_file_index) > file_length)
+			if (cached_map_file_get_size(map_file_index) >= file_length)
 			{
 				if (best_map_file_index == NONE ||
 					cached_map_file_get_size(map_file_index) < cached_map_file_get_size(best_map_file_index) ||
