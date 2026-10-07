@@ -68,8 +68,9 @@ static struct data_array server_data,client_data;
 static struct game_time_globals_struct game_time_storage;
 static struct game_time_globals_struct *game_time_globals=&game_time_storage;
 #define now game_time_storage.local_time
-static boolean paused,held,engine_running;
+static boolean paused,held,engine_running,menu_input_blocked[MAXIMUM_LOCAL_PLAYERS];
 static int connection;
+static boolean ui_widgets_inhibit_player_input(short seat) { return menu_input_blocked[seat]; }
 static long game_time_get(void) { return now; }
 static boolean game_time_initialized(void) { return TRUE; }
 static boolean game_time_get_paused(void) { return paused; }
@@ -110,6 +111,7 @@ static void update_client_handle_server_update(struct server_update *update,long
 }
 static boolean update_client_input_delay_enabled(void);
 static struct player_action update_client_take_local_action(short local_player_index,long update_number,struct player_action const *sampled);
+void update_queues_reset_local_input_delay(short local_player_index,real_vector3d const *new_facing);
 static void update_server_take_local_actions(void);
 static struct update *update_server_get_update(long update_number);
 static struct update *update_client_get_update(long update_number);
@@ -139,6 +141,7 @@ static void reset(void) {
     memset(server_queues,0,sizeof(server_queues));memset(client_queues,0,sizeof(client_queues));
     memset(players,0,sizeof(players));memset(units,0,sizeof(units));
     memset(control_facings,0,sizeof(control_facings));
+    memset(menu_input_blocked,0,sizeof(menu_input_blocked));
     memset(&game_time_storage,0,sizeof(game_time_storage));game_time_storage.initialized=TRUE;
     for(short i=0;i<MAXIMUM_LOCAL_PLAYERS;i++)local_players[i]=NONE;
     for(short i=0;i<MAXIMUM_NUMBER_OF_PLAYERS;i++)player_ids[i]=NONE;
@@ -396,6 +399,71 @@ static void clock_jump(void) {
     same(&a,&update_client_local_inputs[0].action);same(&a,&update_client_globals.saved_action_collection.actions[0]);
     assert(update_client_pending_control_flags[0]==a.control_flags && update_client_pending_primary_triggers[0]==.3f);
 }
+static void menu_pending(void) {
+    for(int delay=0;delay<=33;delay+=33) {
+        reset();variant.delay=delay;add(1,2,1);add(3,5,1);
+        control_facings[1]=(real_euler_angles2d){.4f,.2f};
+        struct player_action owner=sample(3,FLAG(_unit_control_weapon_primary_trigger_bit));
+        struct player_action other=sample(6,FLAG(_unit_control_weapon_primary_trigger_bit));
+        struct player_action idle={0};idle.desired_facing=control_facings[1];
+        idle.desired_weapon_index=idle.desired_grenade_index=idle.desired_zoom_level=NONE;
+        update_client_queue_push();update_client_queue(&owner);update_client_queue(&other);
+        if(delay) {
+            update_client_take_local_action(1,10,&owner);update_client_take_local_action(3,10,&other);
+            update_client_local_inputs[1].valid=update_client_local_inputs[3].valid=TRUE;
+        }
+        /* The menu opens on another display frame of this same simulation tick.
+           Its neutral action must erase the owner's earlier tap and trigger. */
+        menu_input_blocked[1]=TRUE;
+        update_client_queue_push();update_client_queue(&idle);update_client_queue(&other);
+        same(&idle,&update_client_globals.saved_action_collection.actions[1]);
+        same(&other,&update_client_globals.saved_action_collection.actions[3]);
+        assert(update_client_pending_control_flags[1]==0 && update_client_pending_primary_triggers[1]==0);
+        assert(update_client_pending_control_flags[3]==other.control_flags && update_client_pending_primary_triggers[3]==other.primary_trigger);
+        if(delay) {
+            assert(!update_client_input_delays[1].valid && update_client_input_delays[3].valid);
+            assert(!update_client_local_inputs[1].valid && update_client_local_inputs[3].valid);
+            struct player_action selected=update_client_take_local_action(1,11,&idle);
+            neutral(&selected,.4f,.2f);
+            selected=update_client_take_local_action(3,11,&other);same(&other,&selected);
+        }
+    }
+}
+static void menu_roles(void) {
+    for(int role=_game_connection_local;role<=_game_connection_network_server;role++)
+        for(int delay=0;delay<=33;delay+=33) {
+            reset();connection=role;variant.delay=delay;add(1,2,1);add(3,5,1);
+            control_facings[1]=(real_euler_angles2d){.4f,.2f};
+            struct player_action owner=sample(3,0),other=sample(6,0),fresh=sample(8,0);
+            struct player_action idle={0},out[MAXIMUM_NUMBER_OF_PLAYERS]={0};
+            idle.desired_facing=control_facings[1];
+            idle.desired_weapon_index=idle.desired_grenade_index=idle.desired_zoom_level=NONE;
+            update_client_queue_push();update_client_queue(&owner);update_client_queue(&other);
+            if(role==_game_connection_local)update_client_local_ticks(1);
+            else if(role==_game_connection_network_server)update_server_next_update();
+            assert(update_client_dequeue(out));
+            menu_input_blocked[1]=TRUE;
+            /* Host updates may already be built when the menu opens. */
+            if(delay && role==_game_connection_network_server)update_server_next_update();
+            update_client_queue_push();update_client_queue(&idle);update_client_queue(&other);
+            if(role==_game_connection_local)update_client_local_ticks(1);
+            else if(role==_game_connection_network_server && !delay)update_server_next_update();
+            now++;assert(update_client_dequeue(out));neutral(&out[2],.4f,.2f);same(&other,&out[5]);
+            /* Reopening/closing UI frames remain neutral; a fresh post-menu
+               action follows the configured Off or one-update selection. */
+            now++;menu_input_blocked[1]=FALSE;
+            update_client_queue_push();update_client_queue(&fresh);update_client_queue(&other);
+            if(role==_game_connection_local)update_client_local_ticks(1);
+            else if(role==_game_connection_network_server)update_server_next_update();
+            assert(update_client_dequeue(out));
+            if(delay)neutral(&out[2],.4f,.2f);else same(&fresh,&out[2]);
+            same(&other,&out[5]);
+            now++;update_client_queue_push();update_client_queue(&fresh);update_client_queue(&other);
+            if(role==_game_connection_local)update_client_local_ticks(1);
+            else if(role==_game_connection_network_server)update_server_next_update();
+            assert(update_client_dequeue(out));same(&fresh,&out[2]);same(&other,&out[5]);
+        }
+}
 int main(int argc,char **argv) {
     assert(argc==2);
     if(!strcmp(argv[1],"off"))helper_off();
@@ -412,6 +480,8 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"future"))future_actions();
     else if(!strcmp(argv[1],"spawn"))spawn_consumed_action();
     else if(!strcmp(argv[1],"clock"))clock_jump();
+    else if(!strcmp(argv[1],"menu-pending"))menu_pending();
+    else if(!strcmp(argv[1],"menu-roles"))menu_roles();
     else assert(0);
     return 0;
 }
@@ -528,6 +598,12 @@ class InputDelayTests(unittest.TestCase):
 
     def test_clock_jump_discards_local_pending_actions_without_resetting_remote_history(self):
         self.run_case("clock")
+
+    def test_menu_discards_same_tick_taps_and_delayed_actions_only_for_its_sparse_controller(self):
+        self.run_case("menu-pending")
+
+    def test_menu_blocks_stale_actions_and_resumes_fresh_input_in_local_client_and_host_roles(self):
+        self.run_case("menu-roles")
 
 
 if __name__ == "__main__":

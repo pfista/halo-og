@@ -613,6 +613,15 @@ void update_client_queue(
 		real *pending_primary_trigger = &update_client_pending_primary_triggers[
 			update_client_globals.current_local_player];
 
+		if (ui_widgets_inhibit_player_input((short)update_client_globals.current_local_player))
+		{
+			/* Discard gameplay taps accumulated earlier in this tick and any
+			 * delayed action sampled before this controller opened its menu. */
+			*pending = 0;
+			*pending_primary_trigger = 0.f;
+			update_queues_reset_local_input_delay(
+				(short)update_client_globals.current_local_player, NULL);
+		}
 		*saved = *action;
 		*pending |= action->control_flags;
 		*pending_primary_trigger = MAX(*pending_primary_trigger, action->primary_trigger);

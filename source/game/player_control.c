@@ -196,6 +196,7 @@ symbols in this file:
 #include "input/input.h"
 #include "input/input_abstraction.h"
 #include "interface/player_ui.h"
+#include "interface/ui_widget.h"
 #include "items/weapons.h"
 #include "main/main.h"
 #include "objects/objects.h"
@@ -616,6 +617,7 @@ static void handle_one_player_input(
 		struct game_globals_player_control);
 	struct input_blob input;
 	long current_weapon_index;
+	boolean menu_active = ui_widgets_inhibit_player_input(local_player_index);
 
 	csmemset(
 		&input,
@@ -733,7 +735,7 @@ static void handle_one_player_input(
 				player->zoom_level);
 		}
 
-		if (!director_inhibited_facing(local_player_index))
+		if (!menu_active && !director_inhibited_facing(local_player_index))
 		{
 			player_control_angle_step_ticks = time_delta_sec * TICKS_PER_SECOND;
 			player_control_modify_desired_angles(
@@ -745,7 +747,7 @@ static void handle_one_player_input(
 
 		if (unit->object.parent_object_index == NONE)
 		{
-			if (player_ui_autolevel_enabled(local_player_index) &&
+			if (!menu_active && player_ui_autolevel_enabled(local_player_index) &&
 				fabs(player->throttle.i) > 0.5 &&
 				input.facing_delta.pitch < 0.0001f &&
 				player->magnetism_level < 0.0001f)
@@ -1104,6 +1106,14 @@ static void get_local_player_input_blob(
 		struct player_datum *player = player_get(player_index);
 		short gamepad_index = player->local_player_index;
 		boolean is_primary_player = gamepad_index == debug_input_target;
+
+		/* UI events use the raw controller state. Keep that state available to
+		 * menus while producing no movement, look or actions for their player. */
+		if (ui_widgets_inhibit_player_input(local_player_index))
+		{
+			control->look_acceleration_time = 0.f;
+			return;
+		}
 
 		if (gamepad_index != NONE && input_has_gamepad(gamepad_index))
 		{

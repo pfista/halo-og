@@ -1450,6 +1450,7 @@ static boolean ui_check_for_pause_game(
 /* ---------- globals */
 
 static struct ui_widget_bss_prefix ui_widget_globals_storage;
+static word ui_widget_player_input_capture_mask;
 
 #define string_data ui_widget_globals_storage.string_data
 #define widget_globals ui_widget_globals_storage.widget_globals
@@ -2168,6 +2169,7 @@ void ui_widgets_initialize(
 	stack_memory_pool_reset(widget_memory_pool);
 
 	memset(&widget_globals, 0, sizeof(widget_globals));
+	ui_widget_player_input_capture_mask = 0;
 	widget_globals.main_menu_deferred_error_code = NONE;
 	widget_globals.deferred_dashboard_error_code = NONE;
 	for (local_player_index = 0;
@@ -2192,6 +2194,7 @@ void ui_widgets_dispose(
 	widget_memory_pool->base_address = NULL;
 	widget_memory_pool->size = 0;
 	memset(&widget_globals, 0, sizeof(widget_globals));
+	ui_widget_player_input_capture_mask = 0;
 
 	return;
 }
@@ -4227,7 +4230,8 @@ boolean ui_widgets_active_for_local_player(
 			widget_index++)
 		{
 			if (widget_globals.active_widgets[widget_index] &&
-				widget_globals.active_widgets[widget_index]->local_player_index == local_player_index)
+				(widget_globals.active_widgets[widget_index]->local_player_index == local_player_index ||
+					widget_globals.active_widgets[widget_index]->local_player_index == NONE))
 			{
 				result = TRUE;
 				break;
@@ -4236,6 +4240,30 @@ boolean ui_widgets_active_for_local_player(
 	}
 
 	return result;
+}
+
+boolean ui_widgets_inhibit_player_input(
+	short local_player_index)
+{
+	return ui_widgets_active_for_local_player(local_player_index) ||
+		(widget_globals.initialized &&
+			TEST_FLAG(ui_widget_player_input_capture_mask, local_player_index));
+}
+
+static void ui_widgets_capture_player_input(void)
+{
+	short local_player_index;
+
+	/* UI runs before gameplay sampling. Keep ownership through the frame in
+	 * which Resume or Back removes the last menu, consuming its closing input. */
+	ui_widget_player_input_capture_mask = 0;
+	for (local_player_index = 0;
+		local_player_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
+		++local_player_index)
+	{
+		SET_FLAG(ui_widget_player_input_capture_mask, local_player_index,
+			ui_widgets_active_for_local_player(local_player_index));
+	}
 }
 
 void display_error(
@@ -7209,6 +7237,7 @@ void process_ui_widgets(
 		644,
 		widget_globals.initialized);
 	widget_globals.current_system_milliseconds = system_milliseconds();
+	ui_widgets_capture_player_input();
 	ui_widgets_process_mouse();
 	if (widget_globals.initialization_thread)
 	{

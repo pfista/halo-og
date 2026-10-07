@@ -173,6 +173,11 @@ aspect selection and Direct Camera behavior are unchanged.
   Command-Q quits normally.
 
 Multiplayer networking continues while the local cursor is released.
+While an in-game menu is open, its player's movement, aiming and gameplay
+buttons are disabled, including actions waiting in the input delay buffer.
+The controller continues to navigate Pause and nested settings. Other local
+players in split-screen keep their controls unless a shared dialog is open.
+The input that closes the menu is consumed before gameplay controls resume.
 Campaign and co-op settings inherit the original pause menu's pause flag, so
 opening Audio, Video or nested Timer Audio keeps game time and game audio paused.
 Closing the menu releases that pause. Multiplayer settings retain the original

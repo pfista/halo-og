@@ -96,7 +96,11 @@ void widget_free(
 	void *ptr);
 boolean ui_widgets_active(
 	void);
+/* Includes shared widgets that accept input from any local controller. */
 boolean ui_widgets_active_for_local_player(
+	short local_player_index);
+/* Also consumes gameplay input on the frame that closes the last menu. */
+boolean ui_widgets_inhibit_player_input(
 	short local_player_index);
 void ui_widgets_inhibit_processing(
 	boolean inhibit);
