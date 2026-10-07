@@ -227,6 +227,18 @@ struct player_effect_globals_definition
 	long reference_time;
 };
 
+/* Native presentation state stays outside the Xbox saved-game layout. The
+ * first draw consumes transient timers, but its effect must remain visible
+ * in every display frame until the next simulation tick. */
+struct player_camera_effect_frame
+{
+	long tick;
+	short camera_impulse_time_left;
+	short camera_shake_time_left;
+	byte flags;
+	boolean valid;
+};
+
 typedef char player_effect_datum_size_assert[
 	sizeof(struct player_effect_datum) == 0xEC ? 1 : -1];
 typedef char player_effect_datum_screen_flash_offset_assert[
@@ -297,6 +309,7 @@ static void get_shake_matrix(
 /* ---------- globals */
 
 static struct player_effect_globals_definition *player_effect_globals;
+static struct player_camera_effect_frame player_camera_effect_frames[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
 
 static short render_screen_flash_type_map[NUMBER_OF_SCREEN_FLASH_TYPES] =
 {
@@ -342,6 +355,7 @@ void player_effect_initialize_for_new_map(
 	void)
 {
 	csmemset(player_effect_globals, 0, sizeof(struct player_effect_globals_definition));
+	csmemset(player_camera_effect_frames, 0, sizeof(player_camera_effect_frames));
 	player_effect_globals->screen_fade.ticks = NONE;
 	player_effect_globals->reference_time = game_time_get();
 
@@ -351,6 +365,7 @@ void player_effect_initialize_for_new_map(
 void player_effect_dispose_from_old_map(
 	void)
 {
+	csmemset(player_camera_effect_frames, 0, sizeof(player_camera_effect_frames));
 	return;
 }
 
@@ -551,6 +566,7 @@ static void player_effect_update_camera_shake(
 		effect->camera_shake_time_left = (short)effect->camera_shake.duration;
 		effect->camera_shake.periodic_period = time_factor * effect->camera_shake.periodic_period;
 		SET_FLAG(effect->flags, _player_effect_camera_shake_just_started_bit, TRUE);
+		player_camera_effect_frames[local_player_index].valid = FALSE;
 	}
 
 	return;
@@ -570,6 +586,7 @@ void player_effect_update(
 		{
 			player_effect_clear_damage_indicators(local_player_index);
 			csmemset(player_effect_get(local_player_index), 0, sizeof(struct player_effect_datum));
+			player_camera_effect_frames[local_player_index].valid = FALSE;
 			rumble_player_clear(local_player_index);
 		}
 	}
@@ -842,6 +859,8 @@ void player_effect_get_camera_effect_matrix(
 				&player_effect_globals->scripted_effect;
 			real intensity = scripted_effect->max_intensity;
 
+			player_camera_effect_frames[local_player_index].valid = FALSE;
+
 			*matrix = *global_identity4x3;
 
 			if (scripted_effect->timer > 0)
@@ -914,9 +933,34 @@ void player_effect_get_camera_effect_matrix(
 		else
 		{
 			struct player_effect_datum *effect = player_effect_get(local_player_index);
+			struct player_camera_effect_frame *frame = &player_camera_effect_frames[local_player_index];
 			real_matrix4x3 effect_matrix;
 			real_matrix4x3 const *source;
 			short camera_shake_ticks;
+			short remaining_impulse = effect->camera_impulse_time_left;
+			short remaining_shake = effect->camera_shake_time_left;
+			byte remaining_flags = effect->flags;
+			boolean repeated_draw = frame->valid && frame->tick == game_time_get();
+
+			if (repeated_draw)
+			{
+				/* Rebuild the relative effect from the tick's initial state.
+				 * Continuous sound effects still refresh and clear per frame. */
+				effect->camera_impulse_time_left = frame->camera_impulse_time_left;
+				effect->camera_shake_time_left = frame->camera_shake_time_left;
+				SET_FLAG(effect->flags, _player_effect_camera_impulse_just_started_bit,
+					TEST_FLAG(frame->flags, _player_effect_camera_impulse_just_started_bit));
+				SET_FLAG(effect->flags, _player_effect_camera_shake_just_started_bit,
+					TEST_FLAG(frame->flags, _player_effect_camera_shake_just_started_bit));
+			}
+			else
+			{
+				frame->tick = game_time_get();
+				frame->camera_impulse_time_left = remaining_impulse;
+				frame->camera_shake_time_left = remaining_shake;
+				frame->flags = remaining_flags;
+				frame->valid = TRUE;
+			}
 
 			if (effect->camera_impulse_time_left > 0 ||
 				TEST_FLAG(effect->flags, _player_effect_camera_impulse_just_started_bit))
@@ -1049,6 +1093,15 @@ void player_effect_get_camera_effect_matrix(
 
 				matrix4x3_multiply(matrix, &effect_matrix, matrix);
 			}
+
+			if (repeated_draw)
+			{
+				/* The first draw already advanced these timers. Later draws
+				 * must not advance them again or consume a new effect. */
+				effect->camera_impulse_time_left = remaining_impulse;
+				effect->camera_shake_time_left = remaining_shake;
+				effect->flags = remaining_flags;
+			}
 		}
 		*local_seed = saved_local_seed;
 	}
@@ -1137,6 +1190,7 @@ static void player_effect_update_camera_impulse(
 				effect->flags,
 				_player_effect_camera_impulse_just_started_bit,
 				TRUE);
+			player_camera_effect_frames[local_player_index].valid = FALSE;
 		}
 	}
 
