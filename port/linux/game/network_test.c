@@ -15,6 +15,8 @@ Automated system link sessions for testing the netcode without the menus
   difficulty, as the Map screen does for a campaign level;
 - "join" searches for games and joins the first it finds, as picking it in
   the system link list does.
+- "browse" opens the original System Link list and logs its remote rows
+  without joining or advertising a game.
 - debug.network_test_team selects Red (0) or Blue (1) through the normal
   lobby request; -1 retains the original host/opposite-client setup.
 - debug.network_test_team_view lets a test host select the saved Team View
@@ -90,6 +92,7 @@ enum
 	_network_test_off,
 	_network_test_host,
 	_network_test_join,
+	_network_test_browse,
 };
 
 static struct
@@ -122,6 +125,7 @@ static struct
 	char pickup_weapon[64];
 	long score_to_win;
 	long logged_time;
+	long browsed_count;
 } network_test;
 
 /* the variant at the index of the list (copied to name), FALSE past its end */
@@ -173,6 +177,10 @@ static void network_test_read_settings(
 	else if (!strcmp(setting, "join"))
 	{
 		network_test.mode = _network_test_join;
+	}
+	else if (!strcmp(setting, "browse"))
+	{
+		network_test.mode = _network_test_browse;
 	}
 	network_test.start_delay = (real)config_real("debug.network_test_start");
 	network_test.kill_interval = (real)config_real("debug.network_test_kill");
@@ -1003,6 +1011,28 @@ void network_test_update(
 				network_test.started = TRUE;
 				network_game_client_request_immediate_start();
 				platform_log("network test: starting the game");
+			}
+		}
+		break;
+	case _network_test_browse:
+		if (!network_test.set_up)
+		{
+			network_test.set_up = TRUE;
+			network_test.browsed_count = NONE;
+			ui_widgets_close_all();
+			ui_widget_load_by_name_or_tag(
+				"ui\\shell\\main_menu\\multiplayer_type_select\\connected\\server_list\\server_list_screen",
+				NONE, NULL, NONE, NONE, NONE, NONE);
+			platform_log("network test: browsing System Link without joining");
+		}
+		else if (global_network_game_client_get())
+		{
+			long count;
+			network_game_client_get_directory_games(global_network_game_client_get(), &count);
+			if (count != network_test.browsed_count)
+			{
+				network_test.browsed_count = count;
+				platform_log("network test: System Link remote games: %ld", count);
 			}
 		}
 		break;

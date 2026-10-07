@@ -269,7 +269,7 @@ static const struct config_setting config_settings[] =
 	/* OpenCE transport and host-authoritative co-op settings. File-only. */
 	{ "network.public_lobby", _config_boolean, "true", NULL, _environment_value, _platform_all,
 		"The server browser: public games are listed through the signalling\n"
-		"brokers, and Join Game > Server Browser shows them. False lists no\n"
+		"brokers, and the System Link game list shows them. False lists no\n"
 		"game of this machine's and shows none." },
 	{ "network.host_public", _config_boolean, "false", NULL, _environment_value, _platform_all,
 		"Whether a new game of Create Game > Internet starts as PUBLIC (listed\n"
@@ -344,7 +344,7 @@ static const struct config_setting config_settings[] =
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
 		"\"host:<map>\" hosts a game on that map, \"join\" joins the first game found;\n"
-		"empty for none." },
+		"\"browse\" shows the System Link list without joining; empty for none." },
 	{ "debug.network_test_start", _config_real, "15.0", "HALO_NETWORK_TEST_START", _environment_value, _platform_all,
 		"Seconds after hosting that an automated test game starts." },
 	{ "debug.network_test_team", _config_integer, "-1", NULL, _environment_value, _platform_all,
