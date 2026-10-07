@@ -141,8 +141,8 @@ int main(void) {
 }
 '''
 
-# These contexts and packet bytes are from the stock OpenCE v20 transport at
-# 76addf66, the compatibility branch's upstream baseline. They distinguish
+# These contexts and packet bytes are unchanged in stock OpenCE v22 transport
+# at 4e8ed2f1, the compatibility branch's upstream baseline. They distinguish
 # shared peer authentication from the intentionally private process handoff.
 PROTOCOL = r'''
 #include <assert.h>

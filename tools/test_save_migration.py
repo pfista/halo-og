@@ -53,6 +53,9 @@ static const char *config_string(const char *name) {
     return value ? value : (getenv("TEST_SAVE_CONFIG") ? getenv("TEST_SAVE_CONFIG") : "");
 }
 static const char *platform_data_root(void) { return getenv("TEST_DATA_ROOT") ? getenv("TEST_DATA_ROOT") : "."; }
+#if !defined(HALO_MACOS) && !defined(HALO_ANDROID)
+static const char *platform_custom_edition_root(void) { return getenv("TEST_CE_ROOT") ? getenv("TEST_CE_ROOT") : ""; }
+#endif
 static void platform_log(const char *format, ...) {
     va_list arguments; va_start(arguments, format); vfprintf(stderr, format, arguments); va_end(arguments);
     fputc('\n', stderr);
@@ -178,7 +181,7 @@ int posix_make_directory(const char *path) { return mkdir(path,0700); }
         self.addCleanup(self.temporary.cleanup)
         self.folder = Path(self.temporary.name).resolve()
         self.environ = os.environ.copy()
-        for key in ("HALO_SAVE_ROOT", "TEST_SAVE_CONFIG", "TEST_SAVE_FAIL_WRITE", "TEST_SAVE_RACE", "TEST_DATA_ROOT", "XDG_DATA_HOME", "APPDATA"):
+        for key in ("HALO_SAVE_ROOT", "TEST_SAVE_CONFIG", "TEST_SAVE_FAIL_WRITE", "TEST_SAVE_RACE", "TEST_DATA_ROOT", "TEST_CE_ROOT", "XDG_DATA_HOME", "APPDATA"):
             self.environ.pop(key, None)
         self.environ["HOME"] = str(self.folder / "home")
 
@@ -349,6 +352,31 @@ int posix_make_directory(const char *path) { return mkdir(path,0700); }
                                 env={**self.environ, "TEST_CONFIG_BASE": base, "HALO_SAVE_ROOT": str(self.folder / "custom")},
                                 capture_output=True, text=True, check=True)
         self.assertEqual(Path(result.stdout.strip()), self.folder / "portable/config.toml")
+
+    def test_custom_edition_drive_uses_its_install_without_reusing_data_or_saves(self):
+        _, saves = self.roots()
+        original, custom = self.folder / "original", self.folder / "custom edition"
+        for root, content in ((original, b"original cache"), (custom, b"custom edition cache")):
+            (root / "Maps").mkdir(parents=True)
+            (root / "Maps/Bloodgulch.map").write_bytes(content)
+        environment = {**self.environ, "TEST_DATA_ROOT": str(original), "TEST_CE_ROOT": str(custom)}
+        flavor = "windows" if sys.platform == "win32" else "linux"
+
+        def translate(path, selected_environment):
+            result = subprocess.run([str(self.executables[flavor]), "translate", path],
+                                    env=selected_environment, capture_output=True, text=True, check=True)
+            return Path(result.stdout.strip())
+
+        ce_cache = translate(r"H:\maps\bloodgulch.map", environment)
+        og_cache = translate(r"D:\maps\bloodgulch.map", environment)
+        self.assertTrue(ce_cache.samefile(custom / "Maps/Bloodgulch.map"))
+        self.assertTrue(og_cache.samefile(original / "Maps/Bloodgulch.map"))
+        self.assertEqual(ce_cache.read_bytes(), b"custom edition cache")
+        self.assertEqual(og_cache.read_bytes(), b"original cache")
+        self.assertFalse((saves / "h").exists())
+        self.assertEqual(translate(r"u:\profile.bin", environment), saves / "u/profile.bin")
+        self.assertEqual(translate(r"h:\cache.bin", {**environment, "TEST_CE_ROOT": ""}),
+                         saves / "h/cache.bin")
 
     @unittest.skipIf(sys.platform == "win32", "Apple/Android guest preprocessor probe")
     def test_mobile_host_selected_roots_have_no_desktop_migration_import(self):

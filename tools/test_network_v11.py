@@ -1,4 +1,4 @@
-"""Exercise production OpenCE v20 settings layout, reassembly and admission boundaries.
+"""Exercise production OpenCE v22 settings layout, reassembly and admission boundaries.
 
 The guest's long and wchar are 32/16 bits. Fixtures substitute fixed-width
 types for host execution; socket transport and full game loading need runtime
@@ -41,6 +41,8 @@ typedef float real;
 #define _stricmp strcmp
 #define csprintf(destination,...) snprintf(destination,sizeof(destination),__VA_ARGS__)
 #define VALID_INDEX(i,n) ((i)>=0 && (i)<(n))
+#define NUMBEROF(array) (sizeof(array)/sizeof((array)[0]))
+#define MAXIMUM_LOCAL_PLAYERS 4
 #define MAXIMUM_ODDBALLS 16
 #define MAXIMUM_NETWORK_MACHINE_COUNT 128
 #define MAXIMUM_NUMBER_OF_PLAYERS 128
@@ -61,7 +63,7 @@ enum { _performance_option_input_delay=32, _performance_option_hardcore=64, _per
 /* WEAPON SET IDS */
 /* DECLARATIONS */
 #include "game/game_variant_options.h"
-struct network_player { byte wire[32]; };
+/* PLAYER RECORD */
 /* RECORD */
 struct network_game_client { struct network_game game; int state; void *connection; };
 struct network_game_server_client_machine { unsigned supported; boolean joined,loading_late,closed,acknowledged,local,offered,loaded; word flags; };
@@ -72,6 +74,8 @@ static unsigned network_game_client_performance_host_capabilities;
 static struct network_game network_game_client_settings_staging;
 static int32_t network_game_client_settings_staging_size;
 static unsigned precaches, dialogs, applied, applied_flags, errors;
+static unsigned map_presence_checks;
+static boolean map_present=TRUE;
 static unsigned sent_capabilities, sent_settings_pieces, sent_offers, sent_ready;
 static struct native_map_cache_selection selected_cache, server_cache;
 static struct network_expanded_cache_identity network_game_client_cache_offer;
@@ -213,10 +217,12 @@ static boolean network_game_server_send_message_to_all_machines(
     }
     return result;
 }
-static int network_game_client_map_name_is_valid(const char *name, unsigned size) {
-    return name[0] && memchr(name,0,size)!=NULL;
-}
 static int network_game_is_splitscreen_local(void) { return 0; }
+/* Disk access is controlled here; map-name and player-record validation use
+ * the actual production code inserted below. Missing assets cannot precache. */
+static boolean cache_files_map_present(const char *name) {
+    assert(name && name[0]);map_presence_checks++;return map_present;
+}
 static int cache_files_map_plays_multiplayer(const char *map,char *build) {
     (void)map; (void)build; return 1;
 }
@@ -273,6 +279,11 @@ static void observer_obsolete_position(int32_t local) { assert(local==0); }
 HARNESS = r'''
 static struct network_game defaults(void) {
     struct network_game game={0};
+    for(unsigned i=0;i<NUMBEROF(game.players);i++) {
+        game.players[i].machine_index=NONE;game.players[i].controller_index=NONE;
+    }
+    game.players[0].machine_index=0;game.players[0].controller_index=0;
+    game.players[1].machine_index=1;game.players[1].controller_index=0;
     strcpy(game.map.name,"chillout"); game.machine_count=2; game.player_count=2; game.maximum_players=128;
     game.difficulty=1; game.variant.universal_variant.vehicle_set=2;
     game_variant_options_default(&game.variant,&game.variant_options);
@@ -293,10 +304,12 @@ static void reset(void) {
     capability_failure_target=NULL;
     network_game_settings_update_pending=FALSE;network_game_settings_update_time=0;
     network_game_client_settings_staging_size=0;
+    map_presence_checks=0;map_present=TRUE;
 }
 static void wire(void) {
     assert(HALO_PORT_NETWORK_VERSION==22);
     assert(sizeof(struct network_game)==13120);
+    assert(sizeof(struct network_player)==32);
     assert(offsetof(struct network_game,variant_options)==HALO_PORT_NETWORK_GAME_VARIANT_OPTIONS_OFFSET);
     assert(offsetof(struct network_game,local_data)==HALO_PORT_NETWORK_GAME_LOCAL_DATA_OFFSET);
     assert(sizeof(struct game_variant_options)==28);
@@ -355,6 +368,61 @@ static void admission(void) {
     }
     game=defaults(); game.player_count=16; game.variant.universal_variant.flags=4;
     assert(network_game_client_game_settings_updated(&client,&game));
+}
+static void player_record_validation(void) {
+    struct network_game game=defaults();reset();
+    assert(network_game_client_game_settings_updated(&client,&game));
+    struct network_game before=client.game;
+    game.players[1]=game.players[0]; /* Duplicate machine/controller slot. */
+    assert(!network_game_client_game_settings_updated(&client,&game));
+    assert(!memcmp(&client.game,&before,sizeof(before)) && precaches==1 && applied==1);
+    game=defaults();game.players[127]=game.players[0];
+    assert(!network_game_client_game_settings_updated(&client,&game));
+    assert(!memcmp(&client.game,&before,sizeof(before)) && precaches==1 && applied==1);
+    game=defaults();game.player_count=4;
+    for(short i=0;i<4;i++) {game.players[i].machine_index=0;game.players[i].controller_index=(char)i;}
+    assert(network_game_client_game_settings_updated(&client,&game));
+    before=client.game;game.players[4]=game.players[0];
+    assert(!network_game_client_game_settings_updated(&client,&game));
+    assert(!memcmp(&client.game,&before,sizeof(before)) && precaches==1 && applied==2);
+    /* Empty/invalid slots must never index the controller/machine arrays. */
+    game=defaults();game.players[2].machine_index=-1;game.players[2].controller_index=0;
+    game.players[3].machine_index=0;game.players[3].controller_index=4;
+    assert(network_game_client_game_record_is_valid(&game));
+    memset(game.name,0x41,sizeof(game.name));
+    memset(game.variant.human_readable_game_description,0x42,sizeof(game.variant.human_readable_game_description));
+    memset(game.machines[127].name,0x43,sizeof(game.machines[127].name));
+    memset(game.players[127].name,0x44,sizeof(game.players[127].name));
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(!client.game.name[NUMBEROF(game.name)-1]);
+    assert(!client.game.variant.human_readable_game_description[NUMBEROF(game.variant.human_readable_game_description)-1]);
+    assert(!client.game.machines[127].name[NUMBEROF(game.machines[127].name)-1]);
+    assert(!client.game.players[127].name[NUMBEROF(game.players[127].name)-1]);
+}
+static void map_validation(void) {
+    struct network_game game=defaults();reset();
+    assert(network_game_client_game_settings_updated(&client,&game));
+    struct network_game before=client.game;
+    const char *invalid[]={"","..","custom_maps\\..\\bloodgulch","maps/bloodgulch","custom_maps\\",
+                           "custom_maps\\. ","map:other","map\nforged"};
+    for(unsigned i=0;i<NUMBEROF(invalid);i++) {
+        game=defaults();snprintf(game.map.name,sizeof(game.map.name),"%s",invalid[i]);
+        assert(!network_game_client_game_settings_updated(&client,&game));
+        assert(!memcmp(&client.game,&before,sizeof(before)) && precaches==1 && applied==1);
+    }
+    game=defaults();memset(game.map.name,'a',sizeof(game.map.name));
+    assert(!network_game_client_game_settings_updated(&client,&game));
+    assert(!memcmp(&client.game,&before,sizeof(before)) && precaches==1 && applied==1);
+    game=defaults();strcpy(game.map.name,"custom_maps\\Map 1-v2.0_test");
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(!strcmp(client.game.map.name,game.map.name) && precaches==2);
+    reset();game=defaults();map_present=FALSE;before=client.game;
+    assert(!network_game_client_game_settings_updated(&client,&game));
+    assert(map_presence_checks==1 && !precaches && !applied);
+    assert(!memcmp(&client.game,&before,sizeof(before)));
+    map_present=TRUE;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(map_presence_checks==2 && precaches==1 && applied==1);
 }
 static void host_time_limit(void) {
     const short limits[]={0,1,10,32767};
@@ -885,16 +953,18 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"host-match-end")) host_match_end();
     else if(!strcmp(argv[1],"host-authority-options")) host_authority_options();
     else if(!strcmp(argv[1],"host-team-assignment")) host_team_assignment();
+    else if(!strcmp(argv[1],"player-record-validation")) player_record_validation();
+    else if(!strcmp(argv[1],"map-validation")) map_validation();
     else assert(0);
     return 0;
 }
 '''
 
 
-class NetworkV20Tests(unittest.TestCase):
+class NetworkV22Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.directory = tempfile.TemporaryDirectory(prefix="halo-v20-")
+        cls.directory = tempfile.TemporaryDirectory(prefix="halo-v22-")
         cls.addClassCleanup(cls.directory.cleanup)
         engine = (ROOT / "source/game/game_engine.h").read_text()
         names = ("universal_variant", "ctf_variant", "slayer_variant", "king_variant", "oddball_variant", "race_variant")
@@ -921,6 +991,11 @@ class NetworkV20Tests(unittest.TestCase):
         functions += "\n" + block(client, "static boolean network_game_client_defer_cache_settings(")
         functions += "\n" + block(client, "static boolean network_game_client_defer_cache_begin(")
         functions += "\n" + block(client, "static unsigned network_game_client_performance_settings_flags(\n")
+        functions += "\n" + block((ROOT / "source/networking/network_game_manager.c").read_text(),
+                                    "boolean network_player_is_valid(")
+        for validator in ("static boolean network_game_client_game_record_is_valid(",
+                          "static boolean network_game_client_map_name_is_valid("):
+            functions += "\n" + block(client[client.rindex(validator):], validator)
         functions += "\n" + block(client, "boolean network_game_client_game_settings_updated(\n")
         functions += "\n" + block(client, "static boolean network_game_client_retry_cache_settings(")
         functions += "\n" + block(handler, "static boolean network_game_client_receive_game_settings_piece(\n")
@@ -939,11 +1014,13 @@ class NetworkV20Tests(unittest.TestCase):
         functions += "\n" + block((ROOT / "source/game/game_engine.c").read_text(), "void game_engine_read_network_state(\n")
         functions += "\n" + block((ROOT / "source/game/players.c").read_text(), "void network_player_attach_unit(\n")
         source = PREFIX.replace("/* DECLARATIONS */", declarations).replace("/* RECORD */", record)
+        source = source.replace("/* PLAYER RECORD */", block(
+            (ROOT / "source/game/players.h").read_text(), "struct network_player\n") + ";")
         source = source.replace("/* WEAPON SET IDS */", block(weapons, "enum\n") + ";")
         source = source.replace("/* FUNCTIONS */", functions) + HARNESS
         source = re.sub(r"\blong\b", "int32_t", source).replace("unsigned int32_t", "uint32_t")
         source = source.replace("wchar_t", "uint16_t")
-        path = Path(cls.directory.name) / "v20.c"
+        path = Path(cls.directory.name) / "v22.c"
         path.write_text(source)
         cls.executable = path.with_suffix(".exe" if sys.platform == "win32" else "")
         compiler = shutil.which("clang") or shutil.which("cc")
@@ -951,7 +1028,10 @@ class NetworkV20Tests(unittest.TestCase):
             raise AssertionError("A native C compiler is required")
         flags = ["-D_CRT_SECURE_NO_WARNINGS"] if sys.platform == "win32" else ["-fsanitize=address,undefined"]
         result = subprocess.run([
-            compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", *flags,
+            compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+            # Upstream validates the signed char indices before subscripting.
+            # Its bounded short loops use the guest's sizeof-based NUMBEROF.
+            "-Wno-char-subscripts", "-Wno-sign-compare", *flags,
             "-I", str(ROOT / "source"), "-iquote", str(ROOT / "port/linux/include"),
             str(path), "-o", str(cls.executable),
         ], capture_output=True, text=True, timeout=30)
@@ -970,6 +1050,12 @@ class NetworkV20Tests(unittest.TestCase):
 
     def test_reject_before_precache_and_live_state_change(self):
         self.run_case("admission")
+
+    def test_player_record_validation_and_string_bounds(self):
+        self.run_case("player-record-validation")
+
+    def test_map_name_validation_and_missing_map_refusal(self):
+        self.run_case("map-validation")
 
     def test_fragment_reassembly_and_mixed_version_rejection(self):
         self.run_case("fragments")

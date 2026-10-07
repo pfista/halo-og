@@ -70,8 +70,8 @@ jobs:
       - name: Test
         run: python -m pytest -q tools/test_linux_port.py
 
-      - name: OpenCE protocol 20 compatibility fixtures
-        run: python -m unittest tools.test_opence_network tools.test_opence_gameplay tools.test_opence_platform tools.test_opence_discovery tools.test_game_directory_ui
+      - name: OpenCE protocol 22 compatibility fixtures
+        run: python -m unittest tools.test_opence_network tools.test_network_transport_origin tools.test_opence_gameplay tools.test_opence_platform tools.test_opence_discovery tools.test_game_directory_ui
 
       - name: Shared HUD assets, settings and GLES rendering
         run: |
@@ -265,8 +265,8 @@ jobs:
       - name: Release
         run: python tools/ci_build.py windows release
 
-      - name: OpenCE protocol 20 compatibility fixtures
-        run: python -m unittest tools.test_opence_network tools.test_opence_gameplay tools.test_opence_platform tools.test_opence_discovery tools.test_game_directory_ui
+      - name: OpenCE protocol 22 compatibility fixtures
+        run: python -m unittest tools.test_opence_network tools.test_network_transport_origin tools.test_opence_gameplay tools.test_opence_platform tools.test_opence_discovery tools.test_game_directory_ui
 
       - name: Shared HUD assets and settings
         run: |

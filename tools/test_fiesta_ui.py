@@ -92,6 +92,7 @@ static void setup_items(void) {
  authored.lists[3].strings=(struct tag_block){5,authored.other_values[1],NULL};
  authored.lists[4].strings=(struct tag_block){10,authored.other_values[2],NULL};
  cache_file_globals.tags_loaded=TRUE; cache_file_globals.tag_header=&item_header; global_tag_instances=item_tags;
+ global_tag_count=item_header.tag_count;
  original=authored;
 }
 static struct widget_instance *item_widget(long tag,struct widget_instance *parent) {
@@ -163,6 +164,7 @@ static void clone_and_help(void) {
  }
  free_item(menu);
  long old=mapped; scenario_tags_unload(); cache_file_globals.tags_loaded=TRUE; global_tag_instances=item_tags;
+ global_tag_count=item_header.tag_count;
  assert(fiesta_item_options_remap_tag(item_id(ITEM_SCREEN))!=old && !tag_index_is_group(old,'DeLa'));
  for(unsigned fail=1;fail<=10;fail++) {
    setup_items(); fail_registration=fail;
@@ -286,7 +288,13 @@ class FiestaUiTests(unittest.TestCase):
             self.assertEqual(result.stdout.strip(), expected)
 
     def test_cache_clones_help_and_reload(self):
-        source = fixture_source().split('#define EDIT_PREFIX "ui', 1)[0] + CLONE_HARNESS
+        source = fixture_source().split('#define EDIT_PREFIX "ui', 1)[0]
+        # Use upstream's actual bounded empty-tag fallback before its callers;
+        # this fixture supplies the tag count just as cache loading does.
+        cache = (ROOT / "source/cache/cache_files.c").read_text()
+        empty = c_block(cache, "static struct cache_file_tag_instance *cache_empty_tag_instance(\n\tlong tag_index)\n{")
+        caller = "static struct cache_file_tag_instance *cache_get_tag_instance(\n\tlong tag_index)\n{"
+        source = source.replace(caller, empty + "\n" + caller, 1) + CLONE_HARNESS
         self.run_fixture(source, "Fiesta item clone tests passed")
 
     def test_production_editor_callbacks(self):
