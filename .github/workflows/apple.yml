@@ -79,6 +79,14 @@ jobs:
         run: python3 -m unittest tools.test_input_bindings tools.test_direct_camera tools.test_controller_settings tools.test_menu_repeat tools.test_menu_keyboard tools.test_visibility_queries tools.test_geometry_cache tools.test_presentation tools.test_macos_preflight tools.test_macos_benchmark
       - name: Version 11 network protocol
         run: python3 -m unittest tools.test_network_pings tools.test_network_v11 tools.test_solo_multiplayer_start tools.test_game_directory tools.test_game_directory_worker
+      - name: Offline V5 map conversion tooling
+        run: >-
+          python3 -m unittest tools.test_build_map_asset_tools tools.test_community_toolchain
+          tools.test_map_pipeline tools.test_map_pipeline_assets tools.test_map_pipeline_backend
+          tools.test_map_pipeline_formats tools.test_map_pipeline_hud tools.test_map_pipeline_hud_anchors
+          tools.test_map_pipeline_hud_digits tools.test_map_pipeline_metadata tools.test_map_pipeline_presentation
+          tools.test_map_pipeline_stock_hud tools.test_map_pipeline_stock_weapons tools.test_map_pipeline_weapon_placements
+
       - name: Input timing and fidelity comparison fixtures
         run: python3 -m unittest tools.test_input_delay tools.test_performance_network tools.test_performance_variants tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_halo_fidelity tools.test_meeting_gameplay tools.test_refined_tag_effects
       - name: Expanded Fiesta cache lifecycle and authoring

@@ -1,5 +1,16 @@
 # Converting community maps and weapon sets
 
+For directory batches, start with the
+[offline map conversion pipeline](map-conversion-pipeline.md). It centralizes
+versioned profiles, source and output checksums, authored menu metadata and
+per-map builder diagnostics. The asset-specific findings below remain the
+evidence for scoped conversions and acceptance checks.
+
+The generic `og-multiplayer-v5` profile now supplies source-bound Vorbis/PCM,
+BC7, existing-mip and exact pixel-packing stages. The historical recipes below
+describe additional scoped decisions; they are not prerequisites for these
+format-based stages. See the pipeline guide for current policies and helper builds.
+
 Community conversion adapts imported content to Halo OG's Xbox-derived runtime.
 It does not make that content part of the original Xbox game. Keep original
 Xbox NTSC gameplay and presentation as the stock baseline; put custom weapons,

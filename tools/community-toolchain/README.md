@@ -1,6 +1,6 @@
 # Halo OG content helpers
 
-This source recipe builds only `invader-extract` and `invader-build`. It includes
+By default this source recipe builds `invader-extract` and `invader-build`. It includes
 the pinned Invader and RIAT revisions, exact dependency sources, the reviewed
 Cargo lockfile, offline vendored Rust crates, licenses and build customization.
 No Halo disc, original map, community tag or game data is part of this archive.
@@ -15,6 +15,24 @@ From the Halo OG repository root:
 ```
 python -m tools.community_toolchain --output build/content-tools-candidate
 ```
+
+Offline map authors can select the seven conversion helpers explicitly:
+
+```
+python -m tools.community_toolchain --toolset authoring --output build/map-tools-authoring
+```
+
+This selection adds `dependency`, `convert`, `refactor`, `edit` and `bludgeon`.
+It uses the same source pins and applies the checked-in starting-profile
+compiler repair needed for preserved Digsite HSC. Patch identity and compiler
+source hashes are recorded in `source-manifest.json`; the patch is included in
+the corresponding source archive. A generic scripted map conversion requires
+this source-patch record. See the [directory conversion guide](../../docs/map-conversion-pipeline.md).
+Desktop packaging continues to accept only the existing independently reviewed
+extract/build trust set. An authoring candidate is never bundled automatically.
+Use the same `--toolset` when finalizing an interrupted build; the authoring
+selection requires its original `toolset-build.json` receipt and unchanged
+patched compiler source.
 
 The output directory must not exist. The recipe never installs globally or
 changes application preferences. `--source-cache` optionally reuses a reviewed

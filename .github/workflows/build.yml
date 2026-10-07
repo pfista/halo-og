@@ -98,6 +98,14 @@ jobs:
           tools.test_map_lifecycle tools.test_network_client_lifecycle tools.test_solo_multiplayer_start tools.test_stale_player_references
           tools.test_input_delay tools.test_performance_variants tools.test_performance_network tools.test_network_v11 tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_meeting_gameplay tools.test_refined_tag_effects
 
+      - name: Offline V5 map conversion tooling
+        run: >-
+          python -m unittest tools.test_build_map_asset_tools tools.test_community_toolchain
+          tools.test_map_pipeline tools.test_map_pipeline_assets tools.test_map_pipeline_backend
+          tools.test_map_pipeline_formats tools.test_map_pipeline_hud tools.test_map_pipeline_hud_anchors
+          tools.test_map_pipeline_hud_digits tools.test_map_pipeline_metadata tools.test_map_pipeline_presentation
+          tools.test_map_pipeline_stock_hud tools.test_map_pipeline_stock_weapons tools.test_map_pipeline_weapon_placements
+
       - name: Expanded Fiesta cache lifecycle and authoring
         run: >-
           python -m unittest tools.test_expanded_cache tools.test_fiesta_menu_preflight tools.test_cache_file_capacity

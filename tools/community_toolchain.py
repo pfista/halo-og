@@ -1,4 +1,4 @@
-"""Build only pinned Invader extract/build helpers in a new private directory.
+"""Build pinned native Invader helpers in a new private directory.
 
 Developer/CI tool, never a game-side downloader. Source commits, dependency
 archives and Cargo checksums are checked before compiling. Builds emit review
@@ -27,10 +27,38 @@ CONFIG = ROOT / "tools/community-toolchain"
 PINS = CONFIG / "pins.json"
 MAX_ARCHIVE = 64 * 1024 * 1024
 TOOLS = ("extract", "build")
+TOOLSETS = {"desktop": TOOLS,
+            "authoring": ("extract", "dependency", "convert", "refactor", "edit", "bludgeon", "build")}
+STARTING_PROFILE_PATCH = ROOT / "tools/map_conversion/invader-starting-profile.patch"
+STARTING_PROFILE_PATCH_SHA256 = "f63f474725424241aa6c647d0062ef9b89f48c31536b5ebecbb45f90fae47d36"
+STARTING_PROFILE_SOURCE = "src/tag/parser/compile/scenario/pre_compile.cpp"
+STARTING_PROFILE_BEFORE = """                        case HEK::ScenarioScriptValueType::SCENARIO_SCRIPT_VALUE_TYPE_DEVICE_GROUP:
+                            new_node.data.short_int = find_thing(scenario.device_groups, n.string_data);
+                            break;
+
+                        case HEK::ScenarioScriptValueType::SCENARIO_SCRIPT_VALUE_TYPE_TRIGGER_VOLUME:"""
+STARTING_PROFILE_AFTER = STARTING_PROFILE_BEFORE.replace(
+    "                        case HEK::ScenarioScriptValueType::SCENARIO_SCRIPT_VALUE_TYPE_TRIGGER_VOLUME:",
+    """                        case HEK::ScenarioScriptValueType::SCENARIO_SCRIPT_VALUE_TYPE_STARTING_PROFILE:
+                            new_node.data.short_int = find_thing(scenario.player_starting_profile, n.string_data);
+                            break;
+
+                        case HEK::ScenarioScriptValueType::SCENARIO_SCRIPT_VALUE_TYPE_TRIGGER_VOLUME:""")
 OPTIONS = ("ARCHIVE", "BITMAP", "BLUDGEON", "BUILD", "COLLECTION", "COMPARE",
            "CONVERT", "CRC", "DEPENDENCY", "EDIT", "EDIT_QT", "EXTRACT", "FONT",
            "INDEX", "INFO", "LIGHTMAP", "MODEL", "RECOVER", "REFACTOR", "RESOURCE",
            "SCAN", "SCRIPT", "SOUND", "STRING", "STRIP")
+
+
+def toolset_names(toolset):
+    if toolset not in TOOLSETS:
+        raise ValueError("Unknown native toolset: " + str(toolset))
+    return TOOLSETS[toolset]
+
+
+def toolset_options(toolset):
+    enabled = {name.upper() for name in toolset_names(toolset)}
+    return ["-DINVADER_" + option + ("=ON" if option in enabled else "=OFF") for option in OPTIONS]
 
 
 def sha256(path):
@@ -39,6 +67,47 @@ def sha256(path):
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def apply_authoring_patches(source, toolset):
+    """Apply the checked-in compiler repair only to fresh authoring sources."""
+    toolset_names(toolset)
+    if toolset == "desktop":
+        return []
+    if STARTING_PROFILE_PATCH.is_symlink() or sha256(STARTING_PROFILE_PATCH) != STARTING_PROFILE_PATCH_SHA256:
+        raise RuntimeError("Reviewed starting-profile patch differs from its pin")
+    path = Path(source) / STARTING_PROFILE_SOURCE
+    text = path.read_text(encoding="utf-8")
+    if text.count(STARTING_PROFILE_BEFORE) != 1 or "case HEK::ScenarioScriptValueType::SCENARIO_SCRIPT_VALUE_TYPE_STARTING_PROFILE:" in text:
+        raise RuntimeError("Reviewed starting-profile compiler repair no longer applies")
+    before = sha256(path)
+    path.write_text(text.replace(STARTING_PROFILE_BEFORE, STARTING_PROFILE_AFTER), encoding="utf-8", newline="\n")
+    return [{"id": "scenario-starting-profile", "file": "tools/map_conversion/invader-starting-profile.patch",
+             "sha256": STARTING_PROFILE_PATCH_SHA256, "source_file": STARTING_PROFILE_SOURCE,
+             "source_sha256_before": before, "source_sha256_after": sha256(path)}]
+
+
+def review_build_receipt(output, toolset):
+    """Do not label an older or changed interrupted build as patched authoring."""
+    path = Path(output) / "toolset-build.json"
+    if not path.exists():
+        if toolset == "desktop":
+            return []  # Support the existing desktop-only interrupted recipe.
+        raise RuntimeError("Authoring finalization requires its original patched build receipt")
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    if receipt.get("toolset") != toolset:
+        raise RuntimeError("Selected toolset differs from the original build receipt")
+    patches = receipt.get("source_patches")
+    if toolset == "desktop":
+        if patches != []:
+            raise RuntimeError("Desktop build must use the existing unpatched compiler source")
+        return []
+    if (not isinstance(patches, list) or len(patches) != 1
+            or not isinstance(patches[0], dict) or patches[0].get("sha256") != STARTING_PROFILE_PATCH_SHA256
+            or patches[0].get("source_file") != STARTING_PROFILE_SOURCE
+            or sha256(Path(output) / "sources/invader" / STARTING_PROFILE_SOURCE) != patches[0].get("source_sha256_after")):
+        raise RuntimeError("Authoring build lacks the unchanged reviewed compiler repair")
+    return patches
 
 
 def host_platform():
@@ -297,7 +366,8 @@ def inspect_binary(binary, consumer):
     return libraries, "ubuntu-24.04-build-host"
 
 
-def build(output, source_cache=None, rust_bin=None, jobs=4):
+def build(output, source_cache=None, rust_bin=None, jobs=4, toolset="desktop"):
+    names = toolset_names(toolset)
     pins = read_pins()
     key = host_platform()
     if key not in pins["platforms"]:
@@ -337,6 +407,8 @@ def build(output, source_cache=None, rust_bin=None, jobs=4):
         def run(command, cwd=None):
             subprocess.run(list(map(str, command)), cwd=cwd, env=env, stdout=log, stderr=log, check=True)
         git_source(pins["invader_repository"], pins["invader_commit"], sources / "invader", archives / "invader.tar", source_cache, log, pins["invader_archive_sha256"])
+        patches = apply_authoring_patches(sources / "invader", toolset)
+        (output / "toolset-build.json").write_text(json.dumps({"toolset": toolset, "source_patches": patches}, indent=2) + "\n", encoding="utf-8")
         riat = sources / "invader/ext/riat"
         if riat.is_dir():
             riat.rmdir()
@@ -382,13 +454,13 @@ def build(output, source_cache=None, rust_bin=None, jobs=4):
         run([rust_bin / "cargo", "build", "--release", "--locked", "--offline", "--target", selected["rust_target"]], cwd=riat / "riatc")
         riat_library = output / "riat-build" / selected["rust_target"] / "release/libriatc.a"
         linker = "-framework Security -framework CoreFoundation -liconv" if consumer == "macos" else "-static" if consumer == "windows" else ""
-        options = ["-DINVADER_" + option + ("=ON" if option in ("EXTRACT", "BUILD") else "=OFF") for option in OPTIONS]
+        options = toolset_options(toolset)
         run(["cmake", "-S", sources / "invader", "-B", output / "build", *base,
              "-DPython3_EXECUTABLE=" + sys.executable, "-DHALO_CONTENT_PREFIX=" + str(prefix),
              "-DINVADER_RIATC_STATIC_LIBRARY=" + str(riat_library), "-DCMAKE_EXE_LINKER_FLAGS=" + linker,
              *options])
-        run(["cmake", "--build", output / "build", "--target", "invader-extract", "invader-build", "-j", str(jobs)])
-    return finalize_toolchain(output, rust_bin)
+        run(["cmake", "--build", output / "build", "--target", *["invader-" + name for name in names], "-j", str(jobs)])
+    return finalize_toolchain(output, rust_bin, toolset)
 
 
 def smoke_native_helper(path, name):
@@ -407,12 +479,13 @@ def smoke_native_helper(path, name):
     return {"argument": "--info", "exit_code": 0, "version": version}
 
 
-def finalize_toolchain(output, rust_bin):
+def finalize_toolchain(output, rust_bin, toolset="desktop"):
     """Create provenance/source delivery after a successful private native build.
 
     This also supports finishing the builder's own interrupted candidate. It
     never replaces an existing manifest/source delivery or invokes game code.
     """
+    names = toolset_names(toolset)
     pins = read_pins()
     selected = pins["platforms"][host_platform()]
     consumer = selected["consumer_platform"]
@@ -420,6 +493,7 @@ def finalize_toolchain(output, rust_bin):
     sources, archives = output / "sources", output / "archives"
     if any((output / name).exists() for name in ("source-manifest.json", "halo-content-tools-source.tar.gz", "Licenses")):
         raise FileExistsError("Finalized helper provenance already exists")
+    patches = review_build_receipt(output, toolset)
     versions = {}
     for name, command in (("rust", [str(rust_bin / "rustc"), "--version"]),
                           ("cmake", ["cmake", "--version"]), ("ninja", ["ninja", "--version"]),
@@ -429,7 +503,7 @@ def finalize_toolchain(output, rust_bin):
         versions["sdk"] = subprocess.check_output(["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-version"], text=True).strip()
     versions["build_host"] = platform.system() + " " + platform.release()
     binaries = {}
-    for name in TOOLS:
+    for name in names:
         path = output / "build" / ("invader-" + name + (".exe" if consumer == "windows" else ""))
         libraries, minimum = inspect_binary(path, consumer)
         startup = smoke_native_helper(path, name)
@@ -447,12 +521,13 @@ def finalize_toolchain(output, rust_bin):
     delivered_pins = output / "recipe-source-pins.json"
     delivered_pins.write_text(json.dumps(recipe_pins, indent=2) + "\n", encoding="utf-8")
     source_archive(sources, {"tools/community_toolchain.py": __file__, "tools/macos_content_tools.py": ROOT / "tools/macos_content_tools.py", "tools/community-toolchain/pins.json": delivered_pins,
+                            "tools/map_conversion/invader-starting-profile.patch": STARTING_PROFILE_PATCH,
                             "tools/community-toolchain/Cargo.lock": CONFIG / "Cargo.lock", "tools/community-toolchain/dependencies.cmake": CONFIG / "dependencies.cmake",
                             "tools/community-toolchain/notices.json": CONFIG / "notices.json",
                             "tools/community-toolchain/.gitattributes": CONFIG / ".gitattributes",
                             "tools/community-toolchain/README.md": CONFIG / "README.md"}, output / archive_name, pins["source_epoch"], archives)
     manifest = {key: pins[key] for key in ("schema", "invader_repository", "invader_commit", "riat_repository", "riat_commit", "rust_version")}
-    manifest.update({"consumer_platform": consumer, "architecture": selected["architecture"], "build_versions": versions,
+    manifest.update({"toolset": toolset, "source_patches": patches, "consumer_platform": consumer, "architecture": selected["architecture"], "build_versions": versions,
                      "compatible_package_producers": pins["compatible_package_producers"], "binaries": binaries,
                      "fresh_ci_ready": False, "notices_sha256": notices,
                      "corresponding_source": {"file": archive_name, "size": (output / archive_name).stat().st_size, "sha256": sha256(output / archive_name)}})
@@ -531,6 +606,8 @@ def main():
     parser.add_argument("--source-cache", type=Path, help="Optional existing reviewed source/archive cache; never modified")
     parser.add_argument("--rust-bin", type=Path, help="Pinned Rust compiler's bin directory")
     parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--toolset", choices=tuple(TOOLSETS), default="desktop",
+                        help="desktop: packaged extract/build; authoring: seven offline conversion helpers")
     parser.add_argument("--finalize-existing", action="store_true", help="Finish this recipe's interrupted build before provenance was created")
     args = parser.parse_args()
     if not 1 <= args.jobs <= 32:
@@ -538,9 +615,9 @@ def main():
     if args.finalize_existing:
         if not args.rust_bin:
             parser.error("--finalize-existing requires --rust-bin")
-        finalize_toolchain(args.output, args.rust_bin)
+        finalize_toolchain(args.output, args.rust_bin, args.toolset)
     else:
-        build(args.output, args.source_cache, args.rust_bin, args.jobs)
+        build(args.output, args.source_cache, args.rust_bin, args.jobs, args.toolset)
 
 
 if __name__ == "__main__":

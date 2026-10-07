@@ -1,4 +1,64 @@
-# Authored HUD conversion helper
+# Map conversion tooling
+
+Use `python3 tools/convert_maps.py <map-directory> --output <fresh-directory>`
+for offline directory batches. Add `--inspect` to inventory formats without
+compiling. [The pipeline guide](../../docs/map-conversion-pipeline.md) covers
+versioned profiles in `profiles/`, authored metadata, previews and builder
+reports. The orchestration modules live in `../map_pipeline/`; scoped asset
+converters and reviewed compiler patches remain in this directory.
+
+## Generic native asset stages
+
+The `og-multiplayer-v5` directory profile uses `convert_audio.cpp`,
+`convert_bitmaps.cpp`, `select_native_mips.cpp`, `pack_lossless_bitmaps.cpp`
+and `omit_mcc_extensions.cpp` through `map_pipeline/assets.py`, plus
+`normalize_mcc_hud.cpp` through `map_pipeline/hud.py`.
+These select reachable tags by encoding or native dimensions, without a map-name
+or source-hash whitelist. Hashes record provenance and input preservation.
+
+```sh
+python3 tools/build_map_asset_tools.py \
+  --toolchain /absolute/path/to/reviewed/toolchain \
+  --invader-manifest /absolute/path/to/reviewed/toolchain/source-manifest.json \
+  --tools all --output build/map-asset-tools/new
+```
+
+Pass the resulting `asset-tools.json` with `convert_maps.py --asset-manifest`.
+The builder uses pinned local Invader/RIAT libraries and records its exact inputs
+and commands. Existing output directories are refused. The native helper protocol
+is `--audit TAG_ROOT` (JSON lines for convertible or unsupported tags), then
+`--convert FRESH_OVERLAY` with independent `source-snapshots/`, `tags/` and
+`asset-paths.txt`. Every resulting tag is reparsed and checked against the
+permitted changes. All six sources are GPL-3.0-only.
+
+The HUD helper audits an index directory containing priority `roots.txt`,
+`required-tags.txt` and `stock-root.txt`. Its fresh conversion overlay contains
+`field-rules.tsv` and `bitmap-rules.tsv` plus independent source snapshots.
+MCC canvas and bitmap density semantics determine native display scaling;
+canonical sprite geometry supplies additional checks. Fixed-size number/icon
+atlases require physical conversion and complete reachable HUD consumer proof.
+The generic presentation stage also supplies stock pause assets and selected
+native multiplayer text through `map_pipeline/presentation.py`. It applies only
+to original MCC v13 inputs under `presentation_policy: native-xbox`.
+
+Audio converts Vorbis and PCM to Xbox ADPCM at the authored channels and rates,
+with no resampling, downmixing or normalization. BC7 converts to DXT5 per existing
+surface, with decoded pixel error measurements. Both codecs are lossy. Native mip
+selection drops only existing oversized leading levels, preserves retained bytes,
+and refuses usage that needs a HUD/sprite placement decision. Nonzero image
+registration points require a complete reachable consumer proof; currently only
+model/environment shader consumers qualify. Exact packing chooses a smaller
+native uncompressed representation only when Invader, native GPU and software
+channel decoders all preserve every pixel. This preserves channel data as well
+as visible art and leaves compressed/bump formats unchanged. The target-extension
+stage clears only proved MCC Anniversary HUD remaps, which Halo OG does not
+consume, while proving all other HUDGlobals metadata unchanged. It then recomputes
+dependencies so textures still used by any other field remain reachable.
+The [pipeline guide](../../docs/map-conversion-pipeline.md) documents the policies,
+capacity limits and reports. Specialized reviewed helpers below remain available
+for decisions outside those generic boundaries.
+
+## Authored HUD conversion helper
 
 `convert_hud.cpp` applies reviewed numeric tag edits and physical HUD atlas
 resizes inside a fresh output overlay. It preserves authored art rather than

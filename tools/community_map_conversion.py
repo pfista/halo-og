@@ -14,9 +14,14 @@ import shutil
 import subprocess
 import sys
 
-from community_maps import (Invader, MAX_CACHE_BYTES, NAME, NTSC_BUILD, ROOT,
-                            SCENARIO, TAG_ARENA_BYTES, cache_header, digest,
-                            output_directory, safe_tag)
+try:
+    from .community_maps import (Invader, MAX_CACHE_BYTES, NAME, NTSC_BUILD, ROOT,
+                                 SCENARIO, TAG_ARENA_BYTES, cache_header, digest,
+                                 output_directory, safe_tag)
+except ImportError:
+    from community_maps import (Invader, MAX_CACHE_BYTES, NAME, NTSC_BUILD, ROOT,
+                                SCENARIO, TAG_ARENA_BYTES, cache_header, digest,
+                                output_directory, safe_tag)
 
 SCHEMA = 1
 SCRIPT_SHA256 = digest(Path(__file__))
@@ -440,7 +445,10 @@ def compile_map(args):
     command = [str(binary), "-g", "xbox-ntsc"]
     for root in roots:
         command += ["-t", str(root)]
-    command += ["-d", str(data), "-m", str(maps), "-S", "data", "-E", scenario]
+    script_source = getattr(args, "script_source", "data")
+    if script_source not in {"data", "tags"}:
+        raise ValueError("Script source must be data or tags")
+    command += ["-d", str(data), "-m", str(maps), "-S", script_source, "-E", scenario]
     result = subprocess.run(command, capture_output=True, text=True)
     (logs / "compile.log").write_text(result.stdout + result.stderr)
     step = {"operation": "compile", "command": command, "compiler": compiler,
@@ -479,6 +487,8 @@ def main():
         if name == "compile":
             command.add_argument("--scenario", required=True)
             command.add_argument("--data", type=Path)
+            command.add_argument("--script-source", choices=("data", "tags"), default="data",
+                                 help="Recompile HSC from the data directory or embedded scenario sources")
             command.add_argument("--reviewed-build-manifest", type=Path)
         if name == "hud-overlay":
             command.add_argument("--profile", type=Path, required=True)

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "id": "authored-xbox-v5",
+  "version": "1.1.0",
+  "description": "Preserve authored content and recovered scripts; unsupported Xbox features require a reviewed recipe.",
+  "supported_formats": [5, 6, 7, 609, 13],
+  "target": {"engine": "xbox-ntsc", "build": "01.10.12.2276", "max_cache_bytes": 536870912, "max_tag_bytes": 23068672},
+  "dependency_policy": "authored-first",
+  "script_policy": "preserve",
+  "maps": [],
+  "overlays": []
+}

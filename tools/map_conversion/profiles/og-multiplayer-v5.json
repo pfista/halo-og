@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "og-multiplayer-v5",
+  "version": "1.10.0",
+  "description": "Convert multiplayer caches to Xbox NTSC v5 with original Halo 1 weapon lineage, native HUD/menu presentation and audited authored default weapon placements, omitting scenario scripts.",
+  "supported_formats": [5, 6, 7, 609, 13],
+  "target": {"engine": "xbox-ntsc", "build": "01.10.12.2276", "max_cache_bytes": 536870912, "max_tag_bytes": 23068672},
+  "dependency_policy": "authored-first",
+  "script_policy": "omit",
+  "presentation_policy": "native-xbox",
+  "weapon_policy": "bungie-originals",
+  "weapon_placement_policy": "authored-default",
+  "asset_policy": {"audio": "xbox-adpcm", "bitmaps": "bc7-to-dxt5", "dimensions": "existing-mip", "packing": "lossless", "extensions": "omit-mcc"},
+  "script_omission_reason": "Halo OG multiplayer conversion intentionally relies on engine-native multiplayer rules and omits scenario scripts, globals and embedded script source. Script-dependent custom features are excluded by this policy.",
+  "maps": [],
+  "overlays": []
+}

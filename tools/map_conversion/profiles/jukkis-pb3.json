@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "id": "jukkis-pb3",
+  "version": "1.0.0",
+  "description": "Reviewed PB3 scenarios with stock Xbox gameplay dependencies and exact script-cleanup policies from port/maps/jukkis-beta3.json.",
+  "supported_formats": [7],
+  "target": {"engine": "xbox-ntsc", "build": "01.10.12.2276", "max_cache_bytes": 134217728, "max_tag_bytes": 23068672},
+  "dependency_policy": "stock-first",
+  "script_policy": "reviewed",
+  "maps": [],
+  "overlays": []
+}

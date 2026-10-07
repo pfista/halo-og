@@ -14,6 +14,71 @@ from tools import community_toolchain as tools
 
 
 class ToolchainTests(unittest.TestCase):
+    def test_authoring_helpers_are_opt_in_and_desktop_trust_set_stays_small(self):
+        self.assertEqual(tools.toolset_names("desktop"), ("extract", "build"))
+        self.assertEqual(tools.TOOLS, ("extract", "build"))
+        self.assertEqual(set(tools.toolset_names("authoring")),
+                         {"extract", "build", "dependency", "convert", "refactor", "edit", "bludgeon"})
+        for toolset in tools.TOOLSETS:
+            options = tools.toolset_options(toolset)
+            self.assertEqual(len(options), len(tools.OPTIONS))
+            enabled = {option.removeprefix("-DINVADER_").removesuffix("=ON")
+                       for option in options if option.endswith("=ON")}
+            self.assertEqual(enabled, {name.upper() for name in tools.toolset_names(toolset)})
+            self.assertIn("-DINVADER_EDIT_QT=OFF", options)
+
+    def test_unknown_toolset_fails_before_creating_output(self):
+        output = self.root / "candidate"
+        with self.assertRaisesRegex(ValueError, "Unknown native toolset"):
+            tools.build(output, toolset="arbitrary")
+        self.assertFalse(output.exists())
+
+    def authoring_source(self):
+        source = self.root / "sources/invader"
+        path = source / tools.STARTING_PROFILE_SOURCE
+        path.parent.mkdir(parents=True)
+        path.write_text("// fixture\n" + tools.STARTING_PROFILE_BEFORE + "\n")
+        return source, path
+
+    def test_authoring_patch_is_pinned_scoped_and_records_input_output_hashes(self):
+        source, path = self.authoring_source()
+        original = path.read_bytes()
+        self.assertEqual(tools.apply_authoring_patches(source, "desktop"), [])
+        self.assertEqual(path.read_bytes(), original)
+        records = tools.apply_authoring_patches(source, "authoring")
+        self.assertEqual(records[0]["sha256"], tools.sha256(tools.STARTING_PROFILE_PATCH))
+        self.assertEqual(records[0]["source_sha256_before"], hashlib.sha256(original).hexdigest())
+        self.assertEqual(records[0]["source_sha256_after"], tools.sha256(path))
+        self.assertIn("find_thing(scenario.player_starting_profile, n.string_data)", path.read_text())
+        converted = path.read_bytes()
+        with self.assertRaisesRegex(RuntimeError, "no longer applies"):
+            tools.apply_authoring_patches(source, "authoring")
+        self.assertEqual(path.read_bytes(), converted)
+
+    def test_changed_authoring_patch_is_rejected_before_source_mutation(self):
+        source, path = self.authoring_source()
+        original = path.read_bytes()
+        changed = self.root / "changed.patch"
+        changed.write_bytes(b"different compiler decisions")
+        with patch.object(tools, "STARTING_PROFILE_PATCH", changed):
+            with self.assertRaisesRegex(RuntimeError, "differs from its pin"):
+                tools.apply_authoring_patches(source, "authoring")
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_authoring_finalization_requires_matching_unchanged_build_receipt(self):
+        source, path = self.authoring_source()
+        with self.assertRaisesRegex(RuntimeError, "original patched build receipt"):
+            tools.review_build_receipt(self.root, "authoring")
+        records = tools.apply_authoring_patches(source, "authoring")
+        receipt = self.root / "toolset-build.json"
+        receipt.write_text(json.dumps({"toolset": "authoring", "source_patches": records}))
+        self.assertEqual(tools.review_build_receipt(self.root, "authoring"), records)
+        with self.assertRaisesRegex(RuntimeError, "differs from the original"):
+            tools.review_build_receipt(self.root, "desktop")
+        path.write_text(path.read_text() + "\n// changed after build")
+        with self.assertRaisesRegex(RuntimeError, "unchanged reviewed compiler repair"):
+            tools.review_build_receipt(self.root, "authoring")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
