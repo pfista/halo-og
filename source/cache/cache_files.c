@@ -648,7 +648,10 @@ long tag_iterator_next(
 {
 	long result = NONE;
 
-	while (iterator->absolute_index < cache_file_globals.tag_header->tag_count)
+	/* Tag access uses a signed-short absolute index. Exhaustive scans must
+	   stop when the last addressable index wraps rather than dereferencing it. */
+	while (iterator->absolute_index >= 0 &&
+		iterator->absolute_index < cache_file_globals.tag_header->tag_count)
 	{
 		struct cache_file_tag_instance *tag_instance =
 			&global_tag_instances[iterator->absolute_index++];

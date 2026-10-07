@@ -866,6 +866,8 @@ static void game_engine_predict_resources(
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 static void handle_fiesta_starting_equipment(long unit_index);
+static boolean game_engine_map_has_authored_weapon_placements(void);
+static boolean game_engine_preserves_authored_weapon_placements(void);
 #endif
 
 static void game_engine_verify_current_map(
@@ -941,6 +943,12 @@ extern long timeout_for_endgame_sound;
 changes in the first, from this machine's own start, it only takes: the
 game types show what changes in the next) */
 static boolean game_engine_network_state_read = FALSE;
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* Explicit community-cache capability; retail caches retain their original
+   weapon substitutions. Recomputed for every map, never a saved game option. */
+static boolean native_authored_weapon_placements = FALSE;
+#endif
 
 /* ---------- public code */
 
@@ -3342,6 +3350,9 @@ static void game_engine_build_lighting(
 void game_engine_dispose_from_old_map(
 	void)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	native_authored_weapon_placements = FALSE;
+#endif
 	if (game_engine && game_engine->dispose_from_old_map)
 		game_engine->dispose_from_old_map();
 
@@ -6241,6 +6252,10 @@ void game_engine_initialize(
 void game_engine_initialize_for_new_map(
 	void)
 {
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Tags are resident before engine callbacks and authored object placement. */
+	native_authored_weapon_placements = game_engine_map_has_authored_weapon_placements();
+#endif
 	if (game_engine)
 	{
 		game_engine_verify_current_map();
@@ -6492,6 +6507,54 @@ long game_engine_remap_vehicle(
 	return result;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static boolean game_engine_map_has_authored_weapon_placements(void)
+{
+	static char const marker_name[] = "__native_policy\\authored_weapon_placements_v1";
+	static char const marker_value[] = "halo-og:authored-weapon-placements:v1";
+	struct tag_iterator iterator;
+	long tag_index;
+
+	/* Use the bounded cache iterator rather than an exhaustive tag_loaded scan.
+	   The converter also verifies that this marker is addressable after build. */
+	tag_iterator_new(&iterator, STRING_LIST_TAG);
+	while ((tag_index = tag_iterator_next(&iterator)) != NONE)
+	{
+		char const *name = tag_get_name(tag_index);
+		if (name && !csstrcmp(name, marker_name))
+		{
+			struct string_list *list = string_list_definition_get(tag_index);
+			struct string_list_entry *entry;
+			if (!list || list->strings.count != 1 || !list->strings.address)
+				return FALSE;
+			entry = TAG_BLOCK_GET_ELEMENT(&list->strings, 0, struct string_list_entry);
+			return entry && entry->string.address &&
+				entry->string.size == sizeof(marker_value) &&
+				!csmemcmp(entry->string.address, marker_value, sizeof(marker_value));
+		}
+	}
+	return FALSE;
+}
+
+static boolean game_engine_preserves_authored_weapon_placements(void)
+{
+	if (!native_authored_weapon_placements)
+		return FALSE;
+	/* Restricted sets keep the complete retail remap table. Unknown future
+	   modes also retain retail behavior until explicitly reviewed. */
+	switch (global_variant.universal_variant.weapon_set)
+	{
+	case _game_engine_weapons_normal:
+	case _game_engine_weapons_no_grenades:
+	case _game_engine_weapons_uncut:
+	case _game_engine_weapons_all:
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+#endif
+
 long game_engine_remap_weapon(
 	long weapon_definition_index)
 {
@@ -6505,7 +6568,11 @@ long game_engine_remap_weapon(
 		return weapon_definition_index;
 	}
 
-	if (weapon_list_index == _weapon_list_flamethrower)
+	if (weapon_list_index == _weapon_list_flamethrower
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		&& !game_engine_preserves_authored_weapon_placements()
+#endif
+		)
 		weapon_list_index = _weapon_list_rocket_launcher;
 
 	switch (global_variant.universal_variant.weapon_set)

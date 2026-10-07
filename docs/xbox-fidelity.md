@@ -92,6 +92,28 @@ requirements. Split cosmetic or gameplay changes from useful fixes; defer
 uncertain effects. The glyph-padding correction preserves original font pixels
 and is a renderer fix, not authorization to replace fonts.
 
+## Authored original weapons in converted community maps
+
+The reviewed `og-multiplayer-v5` conversion profile can explicitly select
+`weapon_placement_policy: authored-default`. A verified, compiled map capability
+preserves authored original Halo 1 weapon placements in Normal, No Grenades,
+Uncut and All weapon sets. This is a community compatibility departure from the
+retail rule that substitutes a Rocket Launcher for a registered Flamethrower.
+Every restricted weapon set retains the complete original remap behavior.
+Retail maps and profiles selecting `engine-native` retain the original rule.
+
+The inert `__native_policy/authored_weapon_placements_v1.string_list` marker is
+rooted through the Xbox multiplayer Soul collection. The runtime validates its
+exact version payload before enabling the capability and resets it on map
+unload. The converter verifies original weapon lineage, unchanged placements
+and registry, and compiled marker residency. It records substitutions and the
+required runtime capability in the builder report. All participants using this
+map policy need a Halo OG build supporting that capability.
+
+Source and offline production-function fixtures cover map capability lifetime,
+marker validation and weapon-set remapping. This does not establish gameplay
+or mixed-build network validation.
+
 ## Protocol compatibility
 
 Interoperability with cybersecurity clients and discovery services is a goal,

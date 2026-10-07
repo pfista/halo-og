@@ -88,7 +88,7 @@ jobs:
           tools.test_map_pipeline_stock_hud tools.test_map_pipeline_stock_weapons tools.test_map_pipeline_weapon_placements
 
       - name: Input timing and fidelity comparison fixtures
-        run: python3 -m unittest tools.test_input_delay tools.test_performance_network tools.test_performance_variants tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_halo_fidelity tools.test_meeting_gameplay tools.test_refined_tag_effects
+        run: python3 -m unittest tools.test_input_delay tools.test_performance_network tools.test_performance_variants tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_authored_weapon_placements tools.test_halo_fidelity tools.test_meeting_gameplay tools.test_refined_tag_effects
       - name: Expanded Fiesta cache lifecycle and authoring
         run: >-
           python3 -m unittest tools.test_expanded_cache tools.test_fiesta_menu_preflight tools.test_cache_file_capacity
