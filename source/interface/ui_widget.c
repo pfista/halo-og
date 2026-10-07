@@ -1368,6 +1368,32 @@ static void widget_instance_reload_recursive(
 	struct widget_instance *widget);
 static void ui_widget_reload_by_tag(
 	long tag_index);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* Selecting the creation card uses the same function, editor and widget
+ * history as the original Create Gametype entry, in both selection screens. */
+static struct ui_widget_event_handler_reference *game_type_create_route_handler(
+	struct widget_instance *widget, struct ui_widget_event_handler_reference *handler,
+	struct ui_widget_event_handler_reference *copy)
+{
+	long editor_tag;
+	if (!TEST_FLAG(handler->flags, _event_handler_run_function_bit) ||
+		(handler->event_type != _gamepad_analog_button_a && handler->event_type != _gamepad_binary_button_start) ||
+		!ui_widget_game_type_create_selected(widget, handler->function))
+		return handler;
+	editor_tag = tag_loaded(UI_WIDGET_DEFINITION_TAG,
+		"ui\\shell\\main_menu\\settings_select\\multiplayer_setup\\playlist_edit\\gametype_edit_screen");
+	if (editor_tag == NONE)
+		return handler;
+	*copy = *handler;
+	copy->flags = FLAG(_event_handler_run_function_bit) | FLAG(_event_handler_open_widget_bit);
+	copy->function = _ui_widget_create_game_type;
+	copy->widget_tag.group_tag = UI_WIDGET_DEFINITION_TAG;
+	copy->widget_tag.index = editor_tag;
+	copy->script[0] = 0;
+	return copy;
+}
+#endif
+
 static void event_handler_dispatch(
 	struct widget_instance *widget,
 	struct ui_widget_definition *definition,
@@ -3227,7 +3253,9 @@ static void event_handler_dispatch(
 	boolean close_all = FALSE;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	struct ui_widget_event_handler_reference settings_handler;
+	struct ui_widget_event_handler_reference create_handler;
 	handler = game_settings_route_handler(&widget, handler, &settings_handler);
+	handler = game_type_create_route_handler(widget, handler, &create_handler);
 #endif
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 	boolean resume_mouse = FALSE;
@@ -4414,6 +4442,39 @@ void display_error(
 					text_box->type == _ui_widget_type_text_box,
 					"expected a text box widget in the error widget");
 				text_box->parameters.text_box.string_list_index = PIN(error_code, 0, NUMBER_OF_ERROR_CODES - 1);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				if (error_code == _error_locked_game_type)
+				{
+					static wchar_t locked_text[] =
+						L"Team Slayer Pro is locked.\r\nChoose another game type to change the rules.";
+					static struct string_list_entry locked_entry;
+					static struct string_list locked_strings;
+					static struct ui_widget_definition locked_definition;
+					long strings_tag, text_tag;
+					csmemset(&locked_entry, 0, sizeof(locked_entry));
+					locked_entry.string.size = sizeof(locked_text);
+					locked_entry.string.address = locked_text;
+					csmemset(&locked_strings, 0, sizeof(locked_strings));
+					locked_strings.strings.count = 1;
+					locked_strings.strings.address = &locked_entry;
+					strings_tag = cache_files_register_runtime_ui_tag(UNICODE_STRING_LIST_TAG,
+						"ui\\native_pb\\locked_strings", &locked_strings);
+					locked_definition = *ui_widget_definition_get(text_box->definition_tag_index);
+					locked_definition.game_data_inputs.count = 0;
+					locked_definition.text_label_string_list.group_tag = UNICODE_STRING_LIST_TAG;
+					locked_definition.text_label_string_list.index = strings_tag;
+					locked_definition.string_list_index = 0;
+					text_tag = strings_tag == NONE ? NONE : cache_files_register_runtime_ui_tag(
+						UI_WIDGET_DEFINITION_TAG, "ui\\native_pb\\locked_message", &locked_definition);
+					if (text_tag != NONE)
+					{
+						text_box->definition_tag_index = text_tag;
+						text_box->parameters.text_box.string_list_index = 0;
+					}
+					else
+						text_box->parameters.text_box.string_list_index = _error_unknown;
+				}
+#endif
 				widget->widget_is_error_dialog = TRUE;
 				if (!widget->pause_game_time)
 				{

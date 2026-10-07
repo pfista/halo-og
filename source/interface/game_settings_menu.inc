@@ -28,10 +28,10 @@ static short const device_settings_deadzone_presets[] = {0, 3277, 6553, 9000, 98
 static char const *const device_settings_deadzone_labels[] = {"0%", "10%", "20%", "Xbox", "30%", "40%", "49%"};
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 8
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 8, 7, 3, 3};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 8, 7, 3, 4};
 #else
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 6
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 6, 5, 3, 3};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 6, 5, 3, 4};
 #endif
 static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX_PAGE_ROWS] = {
     {NONE, NONE, NONE, NONE},
@@ -50,7 +50,8 @@ static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX
      _device_setting_timer_minutes, _device_setting_timer_items},
 #endif
     {_device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone, _device_setting_look_acceleration},
-    {_device_setting_show_og_maps, _device_setting_show_community_maps, _device_setting_join_in_progress}};
+    {_device_setting_show_og_maps, _device_setting_show_community_maps, _device_setting_join_in_progress,
+     _device_setting_show_default_game_types}};
 static short const device_settings_page_titles[_ds_page_count] = {_ds_game_label, _ds_audio_label, _ds_video_label, _ds_timer_label, _ds_controller_label, _ds_multiplayer_label};
 static short const device_settings_page_help[_ds_page_count] = {_ds_back_help, _ds_audio_help, _ds_video_help, _ds_timer_help, _ds_controller_help, _ds_multiplayer_help};
 #define DEVICE_SETTINGS_STRING_COUNT (_ds_value_start + MAXIMUM_NUMBER_OF_LOCAL_PLAYERS * NUMBER_OF_DEVICE_SETTINGS)
@@ -403,7 +404,7 @@ static boolean device_settings_build_native_pages(long strings, long const *head
         L"Choose fullscreen, VSync\r\nand smooth motion settings.",
 #endif
         L"Choose stick deadzones\r\nand look acceleration\r\nfor this device.",
-        L"Choose map sets and allow\r\nnew players to join matches\r\nafter they start."};
+        L"Choose map sets and game types.\r\nAllow new players into matches\r\nafter they start."};
     struct ui_widget_definition *base[NUMBEROF(templates)];
     struct ui_widget_child_reference *chooser_rows;
     long i, tag, page, row;
@@ -602,6 +603,7 @@ static boolean device_settings_build(void)
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "RENDERER:", "RESOLUTION:", "FPS LIMIT:", "ANTI-ALIASING:"
 #endif
+        , "DEFAULT GAME TYPES:"
         };
     static char const *const help[] = {
         "Hear the whole battlefield.\r\nAdjust master game audio.",
@@ -633,11 +635,12 @@ static boolean device_settings_build(void)
         "Limit Native Metal render frames.\r\nSmooth Motion must be on.\r\nGame updates remain at 30 Hz.",
         "Smooth world edges with FXAA.\r\nOriginal HUD stays unchanged.\r\nRelaunch Halo to apply."
 #endif
+        , "Show original built-in game types.\r\nCustom types and Team Slayer Pro\r\nstay visible when this option is off."
         };
     static char const *const heading_names[] = {"ui\\native_settings\\game_title", "ui\\native_settings\\audio_title", "ui\\native_settings\\video_title", "ui\\native_settings\\timer_title", "ui\\native_settings\\controller_title", "ui\\native_settings\\multiplayer_title"};
     static char const *const footer_names[] = {"ui\\native_settings\\game_help", "ui\\native_settings\\audio_help", "ui\\native_settings\\video_help", "ui\\native_settings\\timer_help", "ui\\native_settings\\controller_help", "ui\\native_settings\\multiplayer_help"};
-    struct ui_widget_definition *bases[_ds_layout_count] = {0};
-    struct ui_widget_definition *style;
+    struct ui_widget_definition const *bases[_ds_layout_count] = {0};
+    struct ui_widget_definition const *style;
     long tag, strings, font, layout, page, row, i, profile_tag = NONE;
     long *heading_tags = device_settings.heading_tags;
     long column_tags[_ds_layout_count][_ds_page_count];
@@ -1069,6 +1072,7 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "Renderer", "Resolution", "FPS Limit", "AA"
 #endif
+        , "Default Game Types"
         };
     short row, local = (short)(draft - device_settings_drafts);
 #if defined(HALO_MACOS) && !defined(HALO_IOS)

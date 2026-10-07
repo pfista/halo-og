@@ -64,6 +64,8 @@ symbols in this file:
 #include "math/real_math.h"
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "../../port/linux/game/performance_options.h"
+#include "game/game_engine.h"
+#include "saved games/playlist_profile.h"
 #include "../../port/linux/game/performance_sound.h"
 #include "performance_audio.h"
 #endif

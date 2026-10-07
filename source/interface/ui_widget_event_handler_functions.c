@@ -916,6 +916,7 @@ symbols in this file:
 #include "interface/marketing_and_strategic_business_development.h"
 #include "interface/player_ui.h"
 #include "interface/ui_widget.h"
+#include "interface/ui_widget_event_handler_functions.h"
 #include "main/console.h"
 #include "main/main.h"
 #include "networking/network_game_globals.h"
@@ -3067,17 +3068,26 @@ static boolean playlist_profile_begin_editing(
 			"expected 3 list items for 'multiplayer profile list' widget");
 	}
 	widget = widget->child;
+	if (!widget->generated_list || widget->generated_count <= 0)
+	{
+		ui_play_audio_feedback_sound(4);
+		return FALSE;
+	}
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1909,
 		widget->data3C.selected_index >= 0 &&
 		widget->data3C.selected_index < (unsigned short)widget->generated_count,
 		"invalid multiplayer profile specified from 'multiplayer profile list' list widget");
 	profile_index = ((long *)widget->generated_list)[widget->data3C.selected_index];
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (profile_index == UI_WIDGET_GAME_TYPE_CREATE)
+		return FALSE;
+#endif
 	if (profile_index != NONE)
 	{
 		if (profile_index & 0x80000000)
 		{
 			player_ui_begin_editing_profile(profile_index);
-			result = TRUE;
+			result = player_ui_get_edit_playlist_profile() != NULL;
 		}
 		else
 		{
@@ -3356,6 +3366,11 @@ static boolean multiplayer_profiles_list_initialize(
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1385,
 		definition->child_count == 3,
 		"expected 3 list items for 'multiplayer settings list' widget");
+	/* Only an empty enumeration needs a creation card. A single entry keeps
+	 * the original placeholders; two or more real types use their exact count.
+	 * Y retains the normal creation flow. */
+	widget->data3C.selected_index = 0;
+	widget->generated_count = 0;
 	widget->generated_list = ui_widget_realloc(widget->generated_list, 0x190,
 		"c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1390);
 	profile_indices = widget->generated_list;
@@ -3365,7 +3380,20 @@ static boolean multiplayer_profiles_list_initialize(
 
 		profile_count = 100;
 		playlist_profiles_enumerate_available_to_local_player_index(0, &profile_count, profile_indices);
-		if ((word)profile_count < 3)
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if ((word)profile_count == 0)
+		{
+			profile_indices[0] = UI_WIDGET_GAME_TYPE_CREATE;
+			profile_count = 1;
+		}
+#endif
+		if ((word)profile_count
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			== 1
+#else
+			< 3
+#endif
+			)
 		{
 			long *profile_index_pointer;
 			long remaining_profile_count;
@@ -3396,8 +3424,28 @@ static boolean multiplayer_profiles_list_initialize(
 			}
 		}
 	}
-	return TRUE;
+	return profile_indices != NULL;
 }
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+boolean ui_widget_game_type_create_selected(struct widget_instance *widget, word function_index)
+{
+	struct widget_instance *list;
+	ui_widget_event_handler_function function;
+	if (!widget || function_index >= 102)
+		return FALSE;
+	function = event_handler_function_list.functions[function_index];
+	if (function == playlist_profile_begin_editing)
+		list = widget->child;
+	else if (function == multiplayer_profile_set_for_game)
+		list = widget->child ? widget->child->child : NULL;
+	else
+		return FALSE;
+	return list && list->type == 2 && list->generated_list &&
+		list->data3C.selected_index >= 0 && list->data3C.selected_index < list->generated_count &&
+		((long *)list->generated_list)[list->data3C.selected_index] == UI_WIDGET_GAME_TYPE_CREATE;
+}
+#endif
 
 boolean ui_widget_event_handler_function_invoke(
 	struct widget_instance *widget,
@@ -3410,8 +3458,26 @@ boolean ui_widget_event_handler_function_invoke(
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 478,
 		widget != NULL && widget_deleted != NULL,
 		"(widget != NULL) && (widget_deleted != NULL)");
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (function_index == _ui_widget_create_game_type)
+		return create_and_begin_editing_new_gametype_profile(widget, event, widget_deleted);
+#endif
 	if ((short)function_index >= 0 && function_index < 102)
 	{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		ui_widget_event_handler_function function = event_handler_function_list.functions[(short)function_index];
+		if (player_ui_edit_playlist_profile_is_locked() &&
+			(function == playlist_profile_set_game_engine || function == playlist_profile_change_name ||
+			 function == playlist_profile_change_ctf_rules || function == playlist_profile_change_koth_rules ||
+			 function == playlist_profile_change_slayer_rules || function == playlist_profile_change_oddball_rules ||
+			 function == playlist_profile_change_racing_rules || function == playlist_profile_change_player_options ||
+			 function == playlist_profile_change_item_options || function == playlist_profile_change_indicator_options ||
+			 function == playlist_profile_save_changes))
+		{
+			display_error_deferred(_error_locked_game_type, NONE, TRUE, FALSE);
+			return FALSE;
+		}
+#endif
 		result = event_handler_function_list.functions[(short)function_index](widget, event, widget_deleted);
 		if (!result)
 			console_warning("event handler '%s' failed", event_handler_function_list.names[(short)function_index]);
@@ -5790,11 +5856,20 @@ static boolean multiplayer_profile_set_for_game(
 		definition->child_count == 3,
 		"expected 3 list items for 'multiplayer profile list' widget");
 	profile_list = widget->child->child;
+	if (!profile_list->generated_list || profile_list->generated_count <= 0)
+	{
+		ui_play_audio_feedback_sound(4);
+		return FALSE;
+	}
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1483,
 		profile_list->data3C.selected_index >= 0 &&
 		profile_list->data3C.selected_index < (unsigned short)profile_list->generated_count,
 		"invalid multiplayer profile specified from 'multiplayer profile list' list widget");
 	profile_index = ((long *)profile_list->generated_list)[profile_list->data3C.selected_index];
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (profile_index == UI_WIDGET_GAME_TYPE_CREATE)
+		return FALSE;
+#endif
 	if (profile_index == NONE)
 	{
 		ui_play_audio_feedback_sound(4);

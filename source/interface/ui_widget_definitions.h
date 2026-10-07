@@ -11,6 +11,7 @@ January-derived UI widget tag-definition prefix.
 /* ---------- headers */
 
 #include "tag_files/tag_groups.h"
+#include "integer_math.h"
 
 /* ---------- constants */
 
@@ -38,7 +39,9 @@ enum
 struct ui_widget_definition
 {
 	short type;                         /* 0x000 */
-	byte unknown002[0x52];              /* 0x002 */
+	byte unknown002[0x22];              /* 0x002 */
+	rectangle2d bounds;                 /* 0x024 */
+	byte unknown02C[0x28];              /* 0x02C */
 	struct tag_block event_handlers;    /* 0x054 */
 	byte unknown060[0xF0];              /* 0x060 */
 	long list_flags;                    /* 0x150 */

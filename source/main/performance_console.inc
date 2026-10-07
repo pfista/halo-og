@@ -29,10 +29,10 @@ static void performance_console_status(void)
 	console_printf(FALSE, "PB: movement sounds %s | weapon sounds %s",
 		(flags & _performance_option_silent_movement) ? "SILENT" : "NORMAL",
 		(flags & _performance_option_silent_weapon_ready) ? "SILENT" : "NORMAL");
-	console_printf(FALSE, "Hardcore: %s (selected before the match)",
+	console_printf(FALSE, "Precision Spread: %s (selected before the match)",
         (flags & _performance_option_hardcore) ? "ON" : "OFF");
 	console_printf(FALSE, "Camo: %s (selected before the match)",
-        (flags & _performance_option_hardcore_camo) ? "HARDCORE" : "NORMAL");
+        (flags & _performance_option_hardcore_camo) ? "STRONGER" : "NORMAL");
 	console_printf(FALSE, "timer recordings: %s", halo_performance_audio_available() ? "installed" : "missing");
 	performance_options_timer_statistics(&timer_statistics);
 	console_printf(FALSE, "PB timer: prefs=%u countdown=%lu beeps=%lu minutes=%lu items=%lu last=%s",
@@ -51,10 +51,11 @@ static void performance_console_status(void)
 
 static void performance_console_help(void)
 {
-	console_printf(FALSE, "PB controls: pb stock | pb practice | pb status");
+	console_printf(FALSE, "PB controls: pb default | pb practice | pb pro | pb status");
 	console_printf(FALSE, "pb timer|markers|audio on|off|toggle");
 	console_printf(FALSE, "pb movement|weapons normal|silent|toggle");
 	console_printf(FALSE, "Host changes apply to this session; guests can view settings.");
+	console_printf(FALSE, "Presets here change aids only; select Pro match rules before play.");
 }
 
 boolean console_process_native_command(char const *command)
@@ -90,11 +91,13 @@ boolean console_process_native_command(char const *command)
 			if (flags > PERFORMANCE_OPTIONS_MASK) goto usage;
 		}
 	}
-	else if (!strcmp(option, "stock") || !strcmp(option, "practice"))
+	else if (!strcmp(option, "default") || !strcmp(option, "stock") ||
+		!strcmp(option, "practice") || !strcmp(option, "pro"))
 	{
 		if (*value) goto usage;
 		flags = (flags & PERFORMANCE_MATCH_RULE_FLAGS) |
-			(!strcmp(option, "stock") ? 0 : PERFORMANCE_PRACTICE_FLAGS);
+			(!strcmp(option, "pro") ? PERFORMANCE_PRO_FLAGS & ~PERFORMANCE_MATCH_RULE_FLAGS :
+			 !strcmp(option, "practice") ? PERFORMANCE_PRACTICE_FLAGS : 0);
 	}
 	else
 	{
@@ -116,6 +119,11 @@ boolean console_process_native_command(char const *command)
 	}
 	if (!performance_options_set_host_flags(flags))
 	{
+		if (playlist_profile_variant_is_locked(game_engine_get_variant()))
+		{
+			console_printf(FALSE, "Team Slayer Pro is locked. Choose another game type to change the rules.");
+			return TRUE;
+		}
 		console_printf(FALSE, "performance options change refused: host and compatible peers required");
 		if ((flags & _performance_option_timer_audio) && !halo_performance_audio_available())
 			console_printf(FALSE, "Timer recordings are missing. Install the complete timer pack and restart Halo, or use pb audio off.");
@@ -125,7 +133,7 @@ boolean console_process_native_command(char const *command)
 	return TRUE;
 usage:
 	if (numeric)
-		console_printf(FALSE, "usage: performance_options [0..%d] (timer=1, markers=2, audio=4, silent movement=8, silent weapons=16, input delay=32, Hardcore=64, Fiesta=128, Hardcore Camo=256)", PERFORMANCE_OPTIONS_MASK);
+		console_printf(FALSE, "usage: performance_options [0..%d] (timer=1, markers=2, audio=4, silent movement=8, silent weapons=16, input delay=32, precision spread=64, Fiesta=128, stronger camo=256)", PERFORMANCE_OPTIONS_MASK);
 	else performance_console_help();
 	return TRUE;
 }
@@ -136,7 +144,7 @@ static short performance_console_complete(char *input, char **token, char **matc
 	boolean *native_only)
 {
 	static char *commands[] = {"pb", "performance_options"};
-	static char *options[] = {"stock", "practice", "status", "help", "timer", "markers", "audio", "movement", "weapons"};
+	static char *options[] = {"default", "practice", "pro", "stock", "status", "help", "timer", "markers", "audio", "movement", "weapons"};
 	static char *values[] = {"on", "off", "toggle"};
 	static char *sound_values[] = {"normal", "silent", "toggle"};
 	static char *numbers[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9",

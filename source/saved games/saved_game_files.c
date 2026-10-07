@@ -456,7 +456,7 @@ static long build_saved_game_file_index(
 static boolean enumerate_saved_game_files_end(
 	word memory_unit);
 static short enumerate_default_playlist_profiles(
-	void);
+	boolean team_slayer_pro_only);
 static short enumerate_default_player_profiles(
 	void);
 static boolean get_nth_entry_in_mapfile(
@@ -1332,7 +1332,7 @@ static boolean set_nth_entry_in_mapfile(
 static short enumerate_default_profiles(
 	void)
 {
-	short number_of_playlist_files = enumerate_default_playlist_profiles();
+	short number_of_playlist_files = enumerate_default_playlist_profiles(FALSE);
 	short number_of_player_profile_files = enumerate_default_player_profiles();
 
 	return number_of_playlist_files+number_of_player_profile_files;
@@ -1627,6 +1627,13 @@ void saved_game_files_enumerate_available_to_local_player_index(
 	struct enumerated_saved_game_file file;
 	long number_of_available_profiles = 0;
 	word memory_unit_index = _memory_unit_hard_drive;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	char team_slayer_pro_path[MAXIMUM_FILENAME_LENGTH + 1];
+
+	csprintf(team_slayer_pro_path,
+		"z:\\saved\\playlists\\default_playlist\\%02d\\blam.lst",
+		PLAYLIST_PROFILE_TEAM_SLAYER_PRO);
+#endif
 
 	match_assert(
 		"c:\\halo\\SOURCE\\saved games\\saved_game_files.c",
@@ -1659,7 +1666,14 @@ void saved_game_files_enumerate_available_to_local_player_index(
 					}
 
 					if (file.type == saved_game_file_type &&
-						((include_default_profiles == TRUE) || !file.read_only))
+						((include_default_profiles == TRUE) || !file.read_only
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+						/* Our locked preset remains visible when retail presets are
+						 * hidden. Filter before the caller's capacity is exhausted. */
+						|| (saved_game_file_type == _saved_game_file_type_game_variant &&
+						!_stricmp(file.path, team_slayer_pro_path))
+#endif
+						))
 					{
 						player_profile_indices[number_of_available_profiles] =
 							build_saved_game_file_index(saved_game_file_type, memory_unit_index,
@@ -1794,6 +1808,9 @@ void saved_game_files_delete_all_custom_profiles(
 					}
 				}
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				number_of_enumerated_files += enumerate_default_playlist_profiles(TRUE);
+#endif
 				number_of_enumerated_files += enumerate_default_profiles();
 			}
 
@@ -1828,6 +1845,11 @@ static void enumerate_memory_units(
 				if (memory_unit_index == _memory_unit_hard_drive)
 				{
 					char root_path[MEMORY_UNIT_ROOT_PATH_SIZE] = {0};
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+					/* Reserve our always-visible preset before custom saves and
+					 * retail defaults can fill the shared 100-entry mapfile. */
+					number_of_enumerated_files += enumerate_default_playlist_profiles(TRUE);
+#endif
 					find_handle = XFindFirstSaveGame(
 						wide_to_ascii(memory_unit_root_path[memory_unit_index], root_path, sizeof(root_path)),
 						&find_data);
@@ -2211,7 +2233,7 @@ static long build_saved_game_file_index(
 }
 
 static short enumerate_default_playlist_profiles(
-	void)
+	boolean team_slayer_pro_only)
 {
 	byte block[SAVED_GAME_FILE_BLOCK_SIZE];
 	char path[MAXIMUM_FILENAME_LENGTH+1];
@@ -2220,12 +2242,28 @@ static short enumerate_default_playlist_profiles(
 	short number_of_profiles = playlist_profile_number_of_default_profiles_on_disk();
 	long string_list_index = tag_loaded(UNICODE_STRING_LIST_TAG, "ui\\default_multiplayer_game_setting_names");
 	short profile_index = 0;
+	short first_profile_index;
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (team_slayer_pro_only)
+	{
+		profile_index = PLAYLIST_PROFILE_TEAM_SLAYER_PRO;
+		if (number_of_profiles > PLAYLIST_PROFILE_TEAM_SLAYER_PRO + 1)
+			number_of_profiles = PLAYLIST_PROFILE_TEAM_SLAYER_PRO + 1;
+	}
+	else if (number_of_profiles > PLAYLIST_PROFILE_TEAM_SLAYER_PRO)
+		number_of_profiles = PLAYLIST_PROFILE_TEAM_SLAYER_PRO;
+#else
+	(void)team_slayer_pro_only;
+#endif
+	first_profile_index = profile_index;
 
 	if (string_list_index != NONE)
 	{
 		while (profile_index < number_of_profiles)
 		{
-			wchar_t *display_name = unicode_string_list_get_string(string_list_index, profile_index);
+			wchar_t *display_name = playlist_profile_default_display_name(profile_index);
+			if (!display_name) break;
 
 			_snprintf(path, MAXIMUM_FILENAME_LENGTH, "z:\\saved\\playlists\\default_playlist\\%02d\\blam.lst", profile_index);
 
@@ -2285,7 +2323,7 @@ static short enumerate_default_playlist_profiles(
 		error(_error_silent, "failed to enumerate default playlist files because their name string list tag was not loaded");
 	}
 
-	return profile_index;
+	return profile_index - first_profile_index;
 }
 
 static short enumerate_default_player_profiles(

@@ -57,6 +57,9 @@ enum
 	_error_unable_to_create_player_profile,
 	_error_unable_to_create_multiplayer_game_file,
 	_error_saved_game_state_corrupt,
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	_error_locked_game_type,
+#endif
 	NUMBER_OF_ERROR_CODES
 };
 

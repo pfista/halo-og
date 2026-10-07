@@ -2,8 +2,8 @@
 
 Performance Options provides explicitly selected multiplayer practice aids: an
 elapsed match timer, spawn markers, timer announcements, and optional silent
-movement or weapon equip sounds, plus optional Hardcore precision spread and
-**Camo: Normal / Hardcore**.
+movement or weapon equip sounds, plus optional **Precision Spread: Off / On** and
+**Camo: Normal / Stronger**.
 All optional rules and aids are **off by default**.
 The host also selects **Input Delay: Off / 33ms** before the match. It is
 independent of the practice aids and applies to every player.
@@ -14,26 +14,39 @@ In **Multiplayer → Edit Gametypes → select a game type**, **Performance** ap
 below **Indicator Options**. The submenu is titled **Performance**.
 Its native game widgets use the existing menu fonts, navigation and help text.
 Choose a preset or change the options individually. Game-type selection cards
-show **Camo: Hardcore** when Hardcore camo is enabled, **Hardcore: On** for
-precision spread, or **Performance options active**
+show **Performance: Pro** for the Pro preset, **Camo: Stronger** for stronger
+camo, **Precision Spread: On** for precision spread, or **Performance options active**
 when another saved aid is enabled. [Fiesta](fiesta.md) is selected separately
 under **Item Options → Starting Equipment**; cards identify that choice too.
 
 | Preset | Match Timer | Spawn Markers | Timer Sounds | Movement / Weapon Sounds |
 | --- | --- | --- | --- | --- |
-| Stock | Off | Off | Off | Normal / Normal |
+| Default | Off | Off | Off | Normal / Normal |
 | Practice | On | On | On | Normal / Normal |
+| Pro | On | Off | On | Silent / Silent |
 | Custom | Individually selected | Individually selected | Individually selected | Individually selected |
 
-The preset is a convenience over the practice-aid bits. Reopening the page shows
-Stock when all aids are off, Practice when just the original three aids are on,
-and Custom for any other aid selection. There is no separate saved preset
-identifier. Selecting either Silent rule therefore shows Custom. Input Delay
-and Hardcore precision spread or camo do not change the preset label. Fiesta is also independent of
-the preset label. Selecting Stock or Practice
-preserves these independently selected match rules.
+**Pro** also sets Input Delay Off, Precision Spread On and Camo Stronger.
+Default and Practice keep independently selected input-delay, precision and
+camo rules; all of those rules start at their original defaults. Fiesta remains
+independent of every preset. The preset name is derived from the saved options,
+with no extra saved identifier. A complete Pro selection shows Pro; other aid
+combinations show Default, Practice or Custom. Each option has a short field-note
+description in the original help widget.
 
-Changes on this page are staged. **Accept** puts them into the game type being
+The original built-in game types are hidden by default. **Team Slayer Pro** and
+custom types remain visible; enable **Default Game Types** in Game Settings to
+show the originals. The standard types appear first when visible.
+Team Slayer Pro uses teams, 50 kills, normal weapons, generic starting equipment,
+Warthogs, instant respawns and a ten-second suicide penalty. Radar is disabled
+and friendly indicators remain on. It applies the Pro options above and disables
+Team Split Screen. This dedicated preset is locked against editing, renaming,
+saving changes and live rule changes. Existing retail Slayer Pro, CTF Pro and
+King Pro retain their original definitions. Use a custom game type to change the
+rules. The variant format limits its network name to eleven characters
+(`TeamSlayPro`); the selection card displays **Team Slayer** above **Pro**.
+
+For editable game types, changes on this page are staged. **Accept** puts them into the game type being
 edited; finish the existing **Save Changes** flow to persist that variant.
 The existing variant copy, rename and save-as paths retain the options. Editing
 a saved variant does not immediately change a running match.
@@ -45,10 +58,14 @@ see the host's current choices with the controls disabled. Session changes do
 not write the saved game type back to disk; use Edit Gametypes to save a
 preset for later.
 
-Input Delay, Hardcore precision spread and Camo are available only in Edit Gametypes, before starting
-a match. The pause page omits their controls; Apply and either preset preserve
+Input Delay, Precision Spread and Camo are available only in Edit Gametypes, before starting
+a match. The pause page omits their controls; Apply and every preset preserve
 the match's existing rules, including Fiesta starting equipment. Other
 practice aids remain adjustable during play.
+Team Slayer Pro keeps these controls read-only for hosts and clients.
+Choosing Pro during play applies its timer and sound choices; if the fixed
+match rules differ from Pro, the page shows Custom. Choose the full preset
+before starting a match.
 
 The editor and pause pages are native game widgets registered in the loaded
 cache's runtime UI table. Retail map files are not rewritten. Performance Options uses
@@ -73,9 +90,9 @@ while shots use delayed actions. Buffered actions are cleared for a new unit,
 pause, teleport, or clock resynchronization; a teleport retains the destination
 facing.
 
-## Hardcore precision spread
+## Precision spread
 
-**Hardcore: Off / On** is a host-selected game-type rule, default Off. On sets
+**Precision Spread: Off / On** is a host-selected game-type rule, default Off. On sets
 initial projectile spread to zero for the pistol and unscoped sniper rifle.
 Sustained fire still builds toward the tag's original maximum spread; release
 and recovery remain unchanged. The scoped sniper path, other weapons, secondary
@@ -90,18 +107,18 @@ Saved settings from an older host cannot enable the rule without that host's
 capability acknowledgement. It is fixed for each match; the pause menu and
 console aid presets preserve it.
 
-## Hardcore camo
+## Stronger camo
 
 **Multiplayer → Edit Gametypes → select a game type → Performance → Camo**
-offers **Normal / Hardcore**. Normal is the default and retains the map's
-original active-camouflage tint. Hardcore removes the RGB tint, including
+offers **Normal / Stronger**. Normal is the default and retains the map's
+original active-camouflage tint. Stronger removes the RGB tint, including
 the blue tint on stock maps, so a camouflaged player is harder to spot.
 The renderer uses a neutral white color multiplier to remove the tint.
 It retains refraction, distortion, opacity, camo duration, firing reveal and
 regrowth. Campaign camo retains its original behavior.
 
-This choice is independent of the precision-spread Hardcore option and the
-Stock/Practice presets. Accept and Save Changes persist it with the game
+This choice is independent of Precision Spread and the
+Default/Practice presets; Pro enables it. Accept and Save Changes persist it with the game
 type. The host selects it before starting; every player must support it,
 including players joining a running match. It is locked for the match.
 The shared camo draw path applies it to both ANGLE and Native Metal.
@@ -316,8 +333,10 @@ client session clears the effective options.
 ## Debug controls and device settings
 
 Press **F2** for the existing developer console. `pb` shows settings and help;
-`pb stock` disables the practice aids and `pb practice` enables the original
-three aids. Both preserve Input Delay, Hardcore precision, Fiesta and Hardcore camo. Use
+`pb default` disables the practice aids (`pb stock` remains an alias),
+`pb practice` enables the original three aids, and `pb pro` applies Pro's
+live timer/sound aids. All three preserve the fixed Input Delay, Precision
+Spread, Fiesta and Camo rules. Select the complete Pro rules before play. Use
 `pb timer on`, `pb markers off`, or `pb audio toggle` for individual controls.
 Those accept `on`, `off` or `toggle`. Use `pb movement silent` or
 `pb weapons normal` for sound rules; these accept `normal`, `silent` or `toggle`.

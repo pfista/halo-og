@@ -341,6 +341,7 @@ symbols in this file:
 #include "interface/ui_widget.h"
 #include "interface/ui_widget_definitions.h"
 #include "interface/ui_widget_game_data_input_functions.h"
+#include "interface/ui_widget_event_handler_functions.h"
 #include "interface/hud_messaging.h"
 #include "interface/player_ui.h"
 #include "game/game_engine.h"
@@ -362,6 +363,7 @@ symbols in this file:
 #include "halo_custom_maps.h"
 #include "game/performance_variant.h"
 #include "game/weapon_sets.h"
+#include "cache/cache_files.h"
 #endif
 
 /* ---------- constants */
@@ -3338,7 +3340,11 @@ static void variant_profile_update_cache_for_nwide_list(
 
 	for (requested_index = 0; requested_index < profile_index_count; requested_index++)
 	{
-		if (profile_indices[requested_index] == NONE)
+		if (profile_indices[requested_index] == NONE
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			|| profile_indices[requested_index] == UI_WIDGET_GAME_TYPE_CREATE
+#endif
+			)
 			continue;
 
 		for (cache_index = 0; cache_index < (long)NUMBEROF(cached_variant_profile); cache_index++)
@@ -3376,20 +3382,77 @@ static void variant_profile_update_cache_for_nwide_list(
 }
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-/* The card has 256 UTF-16 characters and room for one more small-ui line.
-Prioritize Hardcore Camo, then starting equipment and precision rules. */
+/* Each authored card position has its own title definition. Keep those
+ * definitions separate when giving the Pro/empty-state titles a second line. */
+static void playlist_profile_card_title_layout(struct widget_instance *widget, boolean two_line_title)
+{
+	static struct
+	{
+		boolean active;
+		long original_tag, title_tag;
+		char name[64];
+		struct ui_widget_definition title;
+	} layouts[12];
+	short layout_index = NONE, free_index = NONE, index;
+	long original_tag = widget->definition_tag_index;
+
+	for (index = 0; index < (short)NUMBEROF(layouts); index++)
+	{
+		/* Runtime tags disappear when their cache is unloaded. Reuse those
+		 * entries rather than restoring a tag from a previous menu cache. */
+		if (layouts[index].active &&
+			tag_loaded(UI_WIDGET_DEFINITION_TAG, layouts[index].name) != layouts[index].title_tag)
+			layouts[index].active = FALSE;
+		if (!layouts[index].active)
+		{
+			if (free_index == NONE) free_index = index;
+			continue;
+		}
+		if (original_tag == layouts[index].title_tag)
+		{
+			original_tag = layouts[index].original_tag;
+			widget->definition_tag_index = original_tag;
+			layout_index = index;
+			break;
+		}
+		if (original_tag == layouts[index].original_tag)
+			layout_index = index;
+	}
+	if (!two_line_title)
+		return;
+	if (layout_index == NONE)
+	{
+		if (free_index == NONE) return;
+		layout_index = free_index;
+		layouts[layout_index].original_tag = original_tag;
+		layouts[layout_index].title = *ui_widget_definition_get(original_tag);
+		if (layouts[layout_index].title.bounds.y1 - layouts[layout_index].title.bounds.y0 < 64)
+			layouts[layout_index].title.bounds.y1 = layouts[layout_index].title.bounds.y0 + 64;
+		_snprintf(layouts[layout_index].name, sizeof(layouts[layout_index].name),
+			"ui\\native_pb\\game_type_card_title_%d", layout_index);
+		layouts[layout_index].name[sizeof(layouts[layout_index].name) - 1] = 0;
+		layouts[layout_index].title_tag = cache_files_register_runtime_ui_tag(
+			UI_WIDGET_DEFINITION_TAG, layouts[layout_index].name, &layouts[layout_index].title);
+		layouts[layout_index].active = layouts[layout_index].title_tag != NONE;
+	}
+	if (layouts[layout_index].active)
+		widget->definition_tag_index = layouts[layout_index].title_tag;
+}
+
+/* The card has 256 UTF-16 characters and room for one more small-ui line. */
 static void playlist_profile_append_performance_status(
 	wchar_t *description,
 	struct playlist_profile const *profile)
 {
 	static wchar_t const status[] = L"\r\nPerformance options active";
-	static wchar_t const hardcore_status[] = L"\r\nHardcore: On";
+	static wchar_t const hardcore_status[] = L"\r\nPrecision Spread: On";
 	static wchar_t const fiesta_status[] = L"\r\nStarting Equipment: Fiesta";
-	static wchar_t const fiesta_hardcore_status[] = L"\r\nFiesta / Hardcore: On";
+	static wchar_t const fiesta_hardcore_status[] = L"\r\nFiesta / Precision: On";
 	/* Keep the All-only spelling inside the authored narrow game-type cards. */
 	static wchar_t const pfiesta_status[] = L"\r\nEquipment: Pfiesta";
-	static wchar_t const pfiesta_hardcore_status[] = L"\r\nPfiesta/Hardcore: On";
-	static wchar_t const camo_status[] = L"\r\nCamo: Hardcore";
+	static wchar_t const pfiesta_hardcore_status[] = L"\r\nPfiesta/Precision: On";
+	static wchar_t const camo_status[] = L"\r\nCamo: Stronger";
+	static wchar_t const pro_status[] = L"\r\nPerformance: Pro";
 	unsigned flags;
 	unsigned long length;
 	wchar_t const *suffix;
@@ -3397,11 +3460,16 @@ static void playlist_profile_append_performance_status(
 
 	if (!description)
 		return;
+	/* This card already names Pro above its compact two-line description. */
+	if (TEST_FLAG(profile->flags, 0) && (profile->flags >> 8) == PLAYLIST_PROFILE_TEAM_SLAYER_PRO)
+		return;
 	flags = performance_variant_get_flags((struct game_variant const *)profile);
 	if (!flags)
 		return;
 	length = ustrnlen(description, 0x100);
-	if (flags & _performance_option_hardcore_camo)
+	if (performance_variant_preset(flags) == 2 && !(flags & _performance_option_fiesta))
+		suffix = pro_status;
+	else if (flags & _performance_option_hardcore_camo)
 		suffix = camo_status;
 	else if (flags & _performance_option_fiesta)
 	{
@@ -3441,10 +3509,27 @@ static void mutliplayer_settings_select_list_update_displayed_items(
 		0x67E,
 		definition->child_count == 3,
 		"expected 3 children (list items) for 'multiplayer settings select' widget");
+	if (!list_widget->parameters.list.list_items || !list_widget->parameters.list.number_of_items)
+	{
+		struct widget_instance *item;
+		for (item = list_widget->child; item; item = item->next)
+			item->visible = FALSE;
+		return;
+	}
 
 	spinner_list_3wide_determine_displayed_item_indices(
 		list_widget,
 		displayed_item_indices);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (list_widget->parameters.list.number_of_items == 2)
+	{
+		/* The retail spinner wraps three positions. With two real types,
+		 * keep the focused card and its neighbor without drawing a duplicate
+		 * or inserting an empty item into the navigation sequence. */
+		short unused_slot = list_widget->focused_child == list_widget->child->next->next ? 0 : 2;
+		displayed_item_indices[unused_slot] = NONE;
+	}
+#endif
 	for (item_index = 0; item_index < 3; item_index++)
 	{
 		if (displayed_item_indices[item_index] != NONE)
@@ -3459,10 +3544,7 @@ static void mutliplayer_settings_select_list_update_displayed_items(
 		profile_indices,
 		NUMBEROF(profile_indices));
 
-	for (item_index = 0;
-		item_index < 3 &&
-			displayed_item_indices[item_index] != NONE;
-		item_index++)
+	for (item_index = 0; item_index < 3; item_index++)
 	{
 		struct widget_instance *item = widget_instance_get_nth_child(
 			list_widget,
@@ -3474,6 +3556,12 @@ static void mutliplayer_settings_select_list_update_displayed_items(
 		struct playlist_profile *profile = NULL;
 		long profile_index;
 		long cache_index;
+		if (displayed_item_indices[item_index] == NONE)
+		{
+			item->visible = FALSE;
+			continue;
+		}
+		item->visible = TRUE;
 
 		definition = ui_widget_definition_get(item->definition_tag_index);
 		match_vassert(
@@ -3517,6 +3605,23 @@ static void mutliplayer_settings_select_list_update_displayed_items(
 		}
 
 		description_container->visible = FALSE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		playlist_profile_card_title_layout(description_box, profile_index == UI_WIDGET_GAME_TYPE_CREATE ||
+			(profile && TEST_FLAG(profile->flags, 0) && (profile->flags >> 8) == PLAYLIST_PROFILE_TEAM_SLAYER_PRO));
+		if (profile_index == UI_WIDGET_GAME_TYPE_CREATE)
+		{
+			description_box->parameters.text_box.text = ui_widget_realloc(
+				description_box->parameters.text_box.text, 0x100, __FILE__, __LINE__);
+			label_box->parameters.text_box.text = ui_widget_realloc(
+				label_box->parameters.text_box.text, 0x200, __FILE__, __LINE__);
+			if (description_box->parameters.text_box.text)
+				ustrncpy(description_box->parameters.text_box.text, L"Create a\r\ngame type", 0x7F);
+			if (label_box->parameters.text_box.text)
+				ustrncpy(label_box->parameters.text_box.text, L"Name it. Set the rules.\r\nSelect to create.", 0xFF);
+			icon->animation.current_frame_index = _multiplayer_game_bitmap_unknown;
+			continue;
+		}
+#endif
 		if (profile)
 		{
 			description_box->parameters.text_box.text = ui_widget_realloc(
@@ -3528,6 +3633,11 @@ static void mutliplayer_settings_select_list_update_displayed_items(
 			{
 				ustrncpy(description_box->parameters.text_box.text, profile->name, 0x7F);
 				description_box->parameters.text_box.text[0x7F] = 0;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				if (TEST_FLAG(profile->flags, 0) && (profile->flags >> 8) == PLAYLIST_PROFILE_TEAM_SLAYER_PRO)
+					ustrncpy(description_box->parameters.text_box.text,
+						L"Team Slayer\r\nPro", 0x7F);
+#endif
 			}
 
 			icon->animation.current_frame_index = _multiplayer_game_bitmap_unknown;
@@ -3542,6 +3652,7 @@ static void mutliplayer_settings_select_list_update_displayed_items(
 			if (TEST_FLAG(profile->flags, 0))
 			{
 				long string_index = (profile->flags >> 8) + 10;
+				wchar_t *native_description = playlist_profile_default_description((short)(profile->flags >> 8));
 
 				switch (profile->engine_type)
 				{
@@ -3562,11 +3673,11 @@ static void mutliplayer_settings_select_list_update_displayed_items(
 					break;
 				}
 
-				if (descriptions_tag_index != NONE && label_box->parameters.text_box.text)
+				if ((native_description || descriptions_tag_index != NONE) && label_box->parameters.text_box.text)
 				{
 					ustrncpy(
 						label_box->parameters.text_box.text,
-						unicode_string_list_get_string(
+						native_description ? native_description : unicode_string_list_get_string(
 							descriptions_tag_index,
 							string_index),
 						0xFF);

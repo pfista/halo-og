@@ -22,11 +22,27 @@ enum
 	PERFORMANCE_MATCH_RULE_FLAGS = 480,
 	/* The existing Practice preset keeps the original movement/weapon audio. */
 	PERFORMANCE_PRACTICE_FLAGS = 7,
+	/* Pro keeps markers and input delay off, with precise opening shots,
+	 * stronger camouflage and quiet movement/equip sounds. */
+	PERFORMANCE_PRO_FLAGS = _performance_option_match_timer |
+		_performance_option_timer_audio | _performance_option_silent_movement |
+		_performance_option_silent_weapon_ready | _performance_option_hardcore |
+		_performance_option_hardcore_camo,
 	PERFORMANCE_OPTIONS_MASK = 511,
 	/* Nominal Xbox duration; one 30 Hz simulation update is 33.333 ms.
 	 * Preserve this duration if simulation frequency changes in the future. */
 	PERFORMANCE_INPUT_DELAY_MILLISECONDS = 33,
 };
+
+/* Preset names are derived from the saved rules. Fiesta is a separate loadout;
+ * Default and Practice retain their existing independent match-rule behavior. */
+static inline short performance_variant_preset(unsigned flags)
+{
+	if ((flags & ~_performance_option_fiesta) == PERFORMANCE_PRO_FLAGS)
+		return 2;
+	flags &= ~PERFORMANCE_MATCH_RULE_FLAGS;
+	return flags == 0 ? 0 : flags == PERFORMANCE_PRACTICE_FLAGS ? 1 : 3;
+}
 
 /* These six named padding bytes are unused by the retail variant. Keeping the
  * extension here preserves the 104-byte ABI, existing save signature, editor

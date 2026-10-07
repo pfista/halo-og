@@ -32,6 +32,7 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
     , "display.renderer", "display.render_height", "display.frame_limit", "display.anti_aliasing"
 #endif
+    , "game.show_default_game_types"
 };
 
 static int device_setting_is_finite(double value)

@@ -18,8 +18,8 @@ static struct
     struct ui_widget_event_handler_reference entry_events[2], menu_events[3];
     struct ui_widget_game_data_input_reference list_input, menu_input;
     struct string_list strings[9];
-    struct string_list_entry string_entries[9][19];
-    wchar_t string_text[9][19][256];
+    struct string_list_entry string_entries[9][20];
+    wchar_t string_text[9][20][256];
     long root_tag, list_tag, menu_tag, spinner_tag[_pb_editor_row_count];
     short last_preset;
     unsigned last_flags;
@@ -71,32 +71,33 @@ static long pb_editor_register(char const *name, struct ui_widget_definition *de
 static boolean pb_editor_build(void)
 {
     static char const *const labels[] = {"PERFORMANCE", "PRESET:", "MATCH TIMER:", "SPAWN MARKERS:", "TIMER SOUNDS:",
-        "MOVEMENT SOUNDS:", "WEAPON SOUNDS:", "INPUT DELAY:", "HARDCORE:", "CAMO:", "PERFORMANCE"};
-    static char const *const presets[] = {"STOCK", "PRACTICE", "CUSTOM"};
+        "MOVEMENT SOUNDS:", "WEAPON SOUNDS:", "INPUT DELAY:", "PRECISION SPREAD:", "CAMO:", "PERFORMANCE"};
+    static char const *const presets[] = {"DEFAULT", "PRACTICE", "PRO", "CUSTOM"};
     static char const *const toggles[] = {"OFF", "ON"};
     static char const *const sounds[] = {"NORMAL", "SILENT"};
     static char const *const delays[] = {"OFF", "33MS"};
-    static char const *const camo[] = {"NORMAL", "HARDCORE"};
+    static char const *const camo[] = {"NORMAL", "STRONGER"};
     static char const *const help[] = {
-        "Practice aids are off.\r\nMatch rules are chosen separately.",
-        "Practice with a timer, sounds and spawn markers.\r\nThe host controls these options for all players.",
-        "Choose each performance option individually.",
-        "The match timer is hidden.",
-        "Show elapsed match time using\r\nthe host's game clock.",
-        "Spawn markers are hidden.",
-        "Show spawn locations, including on stock maps.",
-        "Timer announcements are silent.",
-        "Play NHE countdowns and minute announcements.\r\nWorks independently of the visible match timer.",
-        "Normal footsteps, jumps and landings.\r\nCombat sounds are unchanged.",
-        "Silent footsteps, jumps and landings.\r\nCombat sounds are unchanged.",
-        "Normal equip and switch sounds.\r\nFiring and reloading are unchanged.",
-        "Silent equip and switch sounds.\r\nFiring and reloading are unchanged.",
-        "No added action delay.\r\nThe host selects this before the match.",
-        "Fixed delay of about 33.3ms at 30Hz.\r\nSelected before the match for all players.",
-        "Original precision weapon spread.",
-        "Zero initial spread for pistol and unscoped sniper rifle.\r\nSustained fire still increases spread.",
-        "Original active camouflage blue tint.\r\nDistortion and visibility timing are unchanged.",
-        "Remove the blue tint from active camouflage.\r\nDistortion and visibility timing are unchanged."};
+        "The familiar battlefield. Practice aids off.\r\nMatch rules stay as selected below.",
+        "Learn the ground before you hold it.\r\nTimer, announcements and spawn markers on.",
+        "Quiet feet. Sharp aim. No added delay.\r\nTimer on, markers off, precision on, stronger camo.",
+        "Your battlefield, your rules.\r\nChoose each option below.",
+        "No clock watching.\r\nThe match timer is hidden.",
+        "Every second counts.\r\nShow elapsed time on the host's game clock.",
+        "Know the ground by heart.\r\nSpawn markers are hidden.",
+        "A little field intelligence.\r\nMark player spawns, including on original maps.",
+        "Keep your own count.\r\nTimer announcements are silent.",
+        "A voice in your helmet.\r\nCountdowns and minute calls, with or without the clock.",
+        "Let them hear you coming.\r\nOriginal footsteps, jumps and landings.",
+        "Walk softly. Carry the same firepower.\r\nMute movement sounds; combat sounds stay normal.",
+        "Lock and load, loud and clear.\r\nOriginal equip and switch sounds.",
+        "No warning before the first shot.\r\nMute equip and switch; firing and reloads stay normal.",
+        "Ready when you are.\r\nNo added delay to player actions.",
+        "One beat before the action.\r\nAdd one 30 Hz tick (about 33ms) for every player.",
+        "A familiar margin of error.\r\nOriginal pistol and unscoped sniper spread.",
+        "Make the first shot count.\r\nZero initial pistol/sniper spread; rapid fire still spreads.",
+        "The familiar blue shimmer.\r\nOriginal active camouflage tint.",
+        "Now you see me...\r\nRemove the blue tint; reveal timing stays the same."};
     static char const *const row_names[] = {"ui\\native_pb\\preset_row", "ui\\native_pb\\timer_row", "ui\\native_pb\\markers_row", "ui\\native_pb\\audio_row", "ui\\native_pb\\movement_row", "ui\\native_pb\\weapon_row", "ui\\native_pb\\delay_row", "ui\\native_pb\\hardcore_row", "ui\\native_pb\\camo_row"};
     static char const *const label_names[] = {"ui\\native_pb\\preset_label", "ui\\native_pb\\timer_label", "ui\\native_pb\\markers_label", "ui\\native_pb\\audio_label", "ui\\native_pb\\movement_label", "ui\\native_pb\\weapon_label", "ui\\native_pb\\delay_label", "ui\\native_pb\\hardcore_label", "ui\\native_pb\\camo_label"};
     static char const *const spinner_names[] = {"ui\\native_pb\\preset_spinner", "ui\\native_pb\\timer_spinner", "ui\\native_pb\\markers_spinner", "ui\\native_pb\\audio_spinner", "ui\\native_pb\\movement_spinner", "ui\\native_pb\\weapon_spinner", "ui\\native_pb\\delay_spinner", "ui\\native_pb\\hardcore_spinner", "ui\\native_pb\\camo_spinner"};
@@ -264,8 +265,7 @@ static struct widget_instance *pb_editor_spinner(struct widget_instance *menu, s
 
 static short pb_editor_preset(unsigned flags)
 {
-    flags &= ~PERFORMANCE_MATCH_RULE_FLAGS;
-    return flags == 0 ? 0 : flags == PERFORMANCE_PRACTICE_FLAGS ? 1 : 2;
+    return performance_variant_preset(flags);
 }
 
 static void pb_editor_sync(struct widget_instance *menu)
@@ -274,6 +274,7 @@ static void pb_editor_sync(struct widget_instance *menu)
     /* Fiesta is edited in Item Options and has no Performance spinner. */
     unsigned flags = pb_editor.last_flags & _performance_option_fiesta;
     short row;
+    if (player_ui_edit_playlist_profile_is_locked()) return;
     for (row = 0; row < _pb_editor_row_count; row++)
     {
         spinners[row] = pb_editor_spinner(menu, row);
@@ -284,11 +285,12 @@ static void pb_editor_sync(struct widget_instance *menu)
     if (spinners[0]->parameters.list.selected_index != pb_editor.last_preset)
     {
         short preset = spinners[0]->parameters.list.selected_index;
-        if (preset < 2)
+        if (preset < 3)
         {
-            /* Match rules are selected independently of the practice aids. */
-            flags = (flags & PERFORMANCE_MATCH_RULE_FLAGS) |
-                (preset ? PERFORMANCE_PRACTICE_FLAGS : 0);
+            /* Pro selects its complete pregame rules. Default and Practice
+             * retain independently selected match rules. Fiesta is separate. */
+            flags = preset == 2 ? (flags & _performance_option_fiesta) | PERFORMANCE_PRO_FLAGS :
+                (flags & PERFORMANCE_MATCH_RULE_FLAGS) | (preset ? PERFORMANCE_PRACTICE_FLAGS : 0);
             for (row = 1; row < _pb_editor_row_count; row++)
                 spinners[row]->parameters.list.selected_index = (flags & pb_editor_option_flags[row - 1]) != 0;
         }
@@ -313,12 +315,14 @@ static boolean performance_editor_event(struct widget_instance *widget, short fu
         {
             struct widget_instance *spinner = pb_editor_spinner(widget, i);
             if (!spinner) return FALSE;
+            spinner->disabled = player_ui_edit_playlist_profile_is_locked();
             spinner->parameters.list.selected_index = i == 0 ? pb_editor.last_preset : (flags & pb_editor_option_flags[i - 1]) != 0;
         }
         return TRUE;
     }
     if (function == _pb_editor_accept)
     {
+        if (player_ui_edit_playlist_profile_is_locked()) return FALSE;
         pb_editor_sync(widget);
         performance_variant_set_flags(variant, pb_editor.last_flags);
         return TRUE;

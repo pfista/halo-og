@@ -180,6 +180,9 @@ static const struct config_setting config_settings[] =
 	{ "game.language", _config_string, "\"\"", "HALO_LANGUAGE", _environment_value, _platform_all,
 		"The language the game asks the Xbox for: \"ja\", \"de\", \"fr\", \"es\" or \"it\";\n"
 		"empty for English. The game data decides what is translated." },
+	{ "game.show_default_game_types", _config_boolean, "false", NULL, _environment_value, _platform_all,
+		"Show the original built-in game types in game-type menus. Custom game\n"
+		"types and locked Team Slayer Pro remain visible when this is false." },
 
 	{ "maps.show_og", _config_boolean, "true", NULL, _environment_value, _platform_all,
 		"Show original Xbox maps in the host map-selection menu. Keep at least\n"

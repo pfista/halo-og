@@ -70,11 +70,17 @@ remain separate. See [menu repeat](menu-repeat.md).
 | OG Maps | `maps.show_og` | On | Show the original Xbox maps when hosting |
 | Community Maps | `maps.show_community` | On | Show installed community maps, including alternate/refined imports |
 | Join In Progress | `network.join_in_progress` | On | Permit new players to join a running hosted match |
+| Default Game Types | `game.show_default_game_types` | Off | Show the original built-in game types in game-type menus |
 
 Map visibility affects the host's map-selection list. Hidden maps remain
 available for joining and approved downloads. At least one set must remain
 On; if no visible community map is installed, the list falls back to OG maps.
 Separate alternate/refined categories require reviewed catalog metadata.
+
+Default Game Types controls the local game-type lists. The original built-in
+types are hidden by default; turn it On to show them. Custom game types and
+locked Team Slayer Pro remain visible with either choice. Accept saves this
+preference for later launches; Cancel keeps the previous choice.
 
 Join In Progress is a local host preference. Off closes admission and reports
 a running match as closed in discovery/invites; pregame lobby joining remains

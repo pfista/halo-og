@@ -86,6 +86,10 @@ symbols in this file:
 #include "game/game_engine_playlist.h"
 #include "text/text_group.h"
 #include "tag_files/tag_groups.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "game/performance_variant.h"
+#include "port_config.h"
+#endif
 /* the saved game file checksum is an XDK content signature. */
 #include <xtl.h>
 
@@ -281,7 +285,42 @@ void playlist_profiles_enumerate_available_to_local_player_index(
 		_saved_game_file_type_game_variant,
 		number_of_profiles,
 		playlist_profile_indices,
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		config_boolean("game.show_default_game_types"));
+#else
 		TRUE);
+#endif
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* Keep the familiar standards together at the front of the Xbox cards.
+	 * IDs, stock definitions and the ordering of other saved types stay intact. */
+	{
+		static short const standard_profiles[] = {25, PLAYLIST_PROFILE_TEAM_SLAYER_PRO, 17, 12};
+		word front = 0;
+		short standard;
+		for (standard = 0; standard < (short)NUMBEROF(standard_profiles); standard++)
+		{
+			wchar_t *name = playlist_profile_default_display_name(standard_profiles[standard]);
+			word position;
+			if (!name) continue;
+			for (position = front; position < *number_of_profiles; position++)
+			{
+				long index = playlist_profile_indices[position];
+				wchar_t *display_name;
+				if (index == NONE || !TEST_FLAG(index, _saved_game_file_index_read_only_bit)) continue;
+				display_name = saved_game_file_get_display_name(index);
+				if (display_name && !ustrcmp(display_name, name))
+				{
+					word move;
+					for (move = position; move > front; move--)
+						playlist_profile_indices[move] = playlist_profile_indices[move - 1];
+					playlist_profile_indices[front++] = index;
+					break;
+				}
+			}
+		}
+	}
+#endif
 
 	return;
 }
@@ -426,6 +465,43 @@ boolean playlist_profile_get_display_name(
 	return FALSE;
 }
 
+wchar_t *playlist_profile_default_display_name(short default_profile_index)
+{
+	long string_list_index;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	static wchar_t team_slayer_pro[] = L"Team Slayer Pro";
+	if (default_profile_index == PLAYLIST_PROFILE_TEAM_SLAYER_PRO)
+		return team_slayer_pro;
+#endif
+	if (default_profile_index < 0 || default_profile_index >= NUMBER_OF_DEFAULT_PLAYLIST_PROFILES)
+		return NULL;
+	string_list_index = tag_loaded(UNICODE_STRING_LIST_TAG, "ui\\default_multiplayer_game_setting_names");
+	return string_list_index == NONE ? NULL :
+		unicode_string_list_get_string(string_list_index, default_profile_index);
+}
+
+wchar_t *playlist_profile_default_description(short default_profile_index)
+{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	static wchar_t team_slayer_pro[] =
+		L"Two teams. 50 kills.\r\nKeep your ears open.";
+	if (default_profile_index == PLAYLIST_PROFILE_TEAM_SLAYER_PRO)
+		return team_slayer_pro;
+#endif
+	return NULL;
+}
+
+boolean playlist_profile_variant_is_locked(struct game_variant const *variant)
+{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	return variant &&
+		TEST_FLAG(variant->flags, _game_variant_is_system_default_bit) &&
+		(variant->flags >> 8) == PLAYLIST_PROFILE_TEAM_SLAYER_PRO;
+#else
+	return FALSE;
+#endif
+}
+
 boolean playlist_profile_get(
 	long playlist_profile_index,
 	struct game_variant *variant)
@@ -486,14 +562,25 @@ static void playlist_profile_create_default_profiles_on_disk(
 		long profile_index;
 
 		for (profile_index = 0;
-			profile_index < NUMBER_OF_DEFAULT_PLAYLIST_PROFILES;
+			profile_index < NUMBER_OF_DEFAULT_PLAYLIST_PROFILES
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				+ 1
+#endif
+				;
 			profile_index++)
 		{
 			wchar_t *display_name;
 			boolean file_written = FALSE;
 
-			variant = *playlist_profile_default_data.default_variant_building_functions[
-				profile_index](&temporary);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			if (profile_index == PLAYLIST_PROFILE_TEAM_SLAYER_PRO)
+			{
+				variant = *build_game_variant_team_slayer_pro(&temporary);
+			}
+			else
+#endif
+				variant = *playlist_profile_default_data.default_variant_building_functions[
+					profile_index](&temporary);
 
 			_snprintf(path, MAXIMUM_FILENAME_LENGTH, "z:\\saved\\playlists\\default_playlist\\%02d", profile_index);
 			path[MAXIMUM_FILENAME_LENGTH] = 0;
@@ -501,9 +588,7 @@ static void playlist_profile_create_default_profiles_on_disk(
 			csstrncat(path, "\\blam.lst", MAXIMUM_FILENAME_LENGTH);
 			path[MAXIMUM_FILENAME_LENGTH] = 0;
 
-			display_name = unicode_string_list_get_string(
-				string_list_index,
-				(short)profile_index);
+			display_name = playlist_profile_default_display_name((short)profile_index);
 
 			csmemcpy(
 				block,
@@ -511,7 +596,7 @@ static void playlist_profile_create_default_profiles_on_disk(
 				sizeof(struct game_variant));
 			ustrncpy(
 				(wchar_t *)block,
-				display_name,
+				profile_index == PLAYLIST_PROFILE_TEAM_SLAYER_PRO ? L"TeamSlayPro" : display_name,
 				MAXIMUM_GAME_VARIANT_NAME_LENGTH - 1);
 			((struct game_variant *)block)->human_readable_game_description[MAXIMUM_GAME_VARIANT_NAME_LENGTH - 1] = 0;
 			((struct game_variant *)block)->flags |= (short)(profile_index << 8);

@@ -456,6 +456,7 @@ symbols in this file:
 #include "game/performance_variant.h"
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "../../port/linux/game/performance_options.h"
+#include "saved games/playlist_profile.h"
 #include "performance_audio.h"
 #include "port_config.h"
 #endif
@@ -1102,6 +1103,9 @@ boolean performance_options_set_host_flags(
 	struct native_map_cache_selection selection;
 
 	if (!server || (flags & ~((unsigned long)PERFORMANCE_OPTIONS_MASK))) return FALSE;
+	if (playlist_profile_variant_is_locked(&server->game.variant) &&
+		performance_variant_get_flags(&server->game.variant) != flags)
+		return FALSE;
 	proposed = server->game.variant;
 	performance_variant_set_flags(&proposed, (unsigned)flags);
 	if (!network_game_server_input_delay_change_allowed(server, (unsigned)flags) ||

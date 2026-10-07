@@ -14,6 +14,8 @@ header included in hcex build.
 
 /* ---------- constants */
 
+enum { PLAYLIST_PROFILE_TEAM_SLAYER_PRO = 26 };
+
 /* ---------- macros */
 
 /* ---------- structures */
@@ -45,6 +47,12 @@ boolean playlist_profile_get_from_path(
 boolean playlist_profile_get_display_name(
 	long playlist_profile_index,
 	wchar_t *display_name);
+wchar_t *playlist_profile_default_display_name(
+	short default_profile_index);
+wchar_t *playlist_profile_default_description(
+	short default_profile_index);
+boolean playlist_profile_variant_is_locked(
+	struct game_variant const *variant);
 void playlist_profiles_enumerate_available_to_local_player_index(
 	short local_player_index,
 	word *number_of_profiles,

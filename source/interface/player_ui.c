@@ -359,11 +359,24 @@ struct player_profile *player_ui_get_edit_player_profile(
 	return result;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+boolean player_ui_edit_playlist_profile_is_locked(void)
+{
+	return player_ui_globals.edit_profile_index != NONE &&
+		saved_game_file_get_type(player_ui_globals.edit_profile_index) == _saved_game_file_type_game_variant &&
+		playlist_profile_variant_is_locked(&player_ui_globals.edit_profile.original.variant);
+}
+#endif
+
 struct game_variant *player_ui_get_edit_playlist_profile(
 	void)
 {
 	struct game_variant *result;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (player_ui_edit_playlist_profile_is_locked())
+		return NULL;
+#endif
 	if (saved_game_file_get_type(player_ui_globals.edit_profile_index) == _saved_game_file_type_game_variant)
 		result = &player_ui_globals.edit_profile.current.variant;
 	else
@@ -711,6 +724,13 @@ void player_ui_begin_editing_profile(
 				profile_index,
 				&player_ui_globals.edit_profile.original.variant))
 			{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				if (playlist_profile_variant_is_locked(&player_ui_globals.edit_profile.original.variant))
+				{
+					display_error_deferred(_error_locked_game_type, NONE, TRUE, FALSE);
+					return;
+				}
+#endif
 				csmemcpy(
 					&player_ui_globals.edit_profile.current.variant,
 					&player_ui_globals.edit_profile.original.variant,
@@ -738,6 +758,13 @@ boolean player_ui_save_profile(
 	boolean result = FALSE;
 	char directory_path[256];
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (player_ui_edit_playlist_profile_is_locked())
+	{
+		display_error_deferred(_error_locked_game_type, NONE, TRUE, FALSE);
+		return FALSE;
+	}
+#endif
 	switch (saved_game_file_get_type(player_ui_globals.edit_profile_index))
 	{
 		case _saved_game_file_type_player_profile:
@@ -906,6 +933,13 @@ boolean player_ui_prompt_user_to_rename_edit_profile(
 {
 	boolean result;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (player_ui_edit_playlist_profile_is_locked())
+	{
+		display_error_deferred(_error_locked_game_type, NONE, TRUE, FALSE);
+		return FALSE;
+	}
+#endif
 	result = FALSE;
 	if (player_ui_globals.edit_profile_index != NONE)
 	{

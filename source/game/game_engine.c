@@ -586,9 +586,12 @@ symbols in this file:
 #include "units/bipeds.h"
 #include "units/units.h"
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "game/game_engine_playlist.h"
 #include "game/starting_equipment.h"
 #include "game/fiesta_weapon_pool.h"
+#include "game/teammate_view_variant.h"
 #include "render/teammate_view.h"
+#include "saved games/playlist_profile.h"
 #endif
 
 /* network_game_globals.c's */
@@ -598,6 +601,8 @@ void network_distributed_player_killed(long *killing_player_index, long *killing
 	long dead_player_index, boolean *friendly_fire);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 void network_distributed_player_teleported(long player_index);
+/* port/linux/src/port_config.c's */
+int config_boolean(char const *name);
 #endif
 /* port/linux/game/network_damage.c's */
 boolean network_damage_killer_score(long player_index, long *score);
@@ -4366,6 +4371,16 @@ void game_engine_playlist_next(
 
 	if (player_ui_game_variant_specified(&variant))
 		csmemcpy(&global_stage.variant, &variant, sizeof(global_stage.variant));
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	else if (!config_boolean("game.show_default_game_types") &&
+		TEST_FLAG(global_stage.variant.flags, 0) &&
+		(global_stage.variant.flags >> 8) < PLAYLIST_PROFILE_TEAM_SLAYER_PRO)
+	{
+		/* A fresh lobby clears the explicit selection but retains its stage.
+		 * Replace a now-hidden original default; custom types and Pro remain. */
+		build_game_variant_team_slayer_pro(&global_stage.variant);
+	}
+#endif
 
 	return;
 }
@@ -4905,6 +4920,38 @@ struct game_variant *build_game_variant_team_slayer(
 
 	return variant;
 }
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+struct game_variant *build_game_variant_team_slayer_pro(
+	struct game_variant *variant)
+{
+	build_game_variant_team_slayer(variant);
+	variant->flags = 1 | (PLAYLIST_PROFILE_TEAM_SLAYER_PRO << 8);
+	variant->game_engine_variant.slayer.no_death_bonus = TRUE;
+	variant->game_engine_variant.slayer.no_kill_penalty = TRUE;
+	variant->game_engine_variant.slayer.kill_in_order = FALSE;
+	variant->universal_variant.score_to_win = 50;
+	variant->universal_variant.teams = TRUE;
+	teammate_view_variant_set_enabled(variant, FALSE);
+	variant->universal_variant.lives = 0;
+	variant->universal_variant.health = 1.0f;
+	SET_FLAG(variant->universal_variant.flags, _game_variant_no_shields_bit, FALSE);
+	variant->universal_variant.respawn_time = 0;
+	variant->universal_variant.respawn_time_growth = 0;
+	variant->universal_variant.odd_man_out = FALSE;
+	SET_FLAG(variant->universal_variant.flags, _game_variant_always_invisible_bit, FALSE);
+	variant->universal_variant.suicide_penalty = 10 * TICKS_PER_SECOND;
+	SET_FLAG(variant->universal_variant.flags, _game_variant_infinite_grenades_bit, FALSE);
+	variant->universal_variant.vehicle_set = _game_engine_vehicles_warthog;
+	variant->universal_variant.weapon_set = _game_engine_weapons_normal;
+	starting_equipment_set(variant, _starting_equipment_generic);
+	variant->universal_variant.goal_radar = _radar_none;
+	SET_FLAG(variant->universal_variant.flags, _game_variant_draw_object_in_motion_sensor_bit, FALSE);
+	SET_FLAG(variant->universal_variant.flags, _game_variant_allow_friendly_navpoints_bit, TRUE);
+	performance_variant_set_flags(variant, PERFORMANCE_PRO_FLAGS);
+	return variant;
+}
+#endif
 
 struct game_variant *build_game_variant_elimination(
 	struct game_variant *variant)

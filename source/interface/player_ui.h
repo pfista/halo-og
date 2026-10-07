@@ -45,6 +45,10 @@ struct player_profile *player_ui_get_edit_player_profile(
 	void);
 struct game_variant *player_ui_get_edit_playlist_profile(
 	void);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+boolean player_ui_edit_playlist_profile_is_locked(
+	void);
+#endif
 boolean player_ui_edit_profile_is_dirty(
 	void);
 boolean player_ui_save_profile(

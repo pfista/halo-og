@@ -33,6 +33,7 @@ enum
     _device_setting_frame_limit,
     _device_setting_anti_aliasing,
 #endif
+    _device_setting_show_default_game_types,
     NUMBER_OF_DEVICE_SETTINGS
 };
 
