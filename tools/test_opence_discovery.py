@@ -35,8 +35,8 @@ typedef uint8_t byte;typedef uint16_t word;typedef int boolean;
 #define FALSE 0
 #define NONE (-1)
 #define HALO_PORT_MAXIMUM_NETWORK_PLAYERS 128
-#define HALO_PORT_NETWORK_VERSION 20
-#define NETWORK_PERFORMANCE_ADVERTISED_VERSION 0x8014
+#define HALO_PORT_NETWORK_VERSION 22
+#define NETWORK_PERFORMANCE_ADVERTISED_VERSION 0x8016
 #define MAXIMUM_NETWORK_ADVERTISED_GAMES 9
 #define NETWORK_GAME_NAME_LENGTH 16
 #define NETWORK_GAME_MAP_NAME_LENGTH 64
@@ -111,7 +111,7 @@ static void real_advertisement(struct network_advertised_game *ad,const byte *id
 int main(void) {
  struct network_game_client client={.state=2};long count;struct network_advertised_game *rows;
  strcpy(og[0].name,"OG host");strcpy(og[0].map,"bloodgulch");strcpy(og[0].gametype,"Slayer");
- set_invite(og[0].invite,'a','0');og[0].network_version=20;og[0].max_players=16;
+ set_invite(og[0].invite,'a','0');og[0].network_version=22;og[0].max_players=16;
  og[0].open=1;og[0].player_count=1;og[0].score_limit=25;og[0].lifetime_seconds=80;og_count=1;
  stock[0]=listing('a');stock[1]=listing('b');stock_count=2;
  rows=network_game_client_get_directory_games(&client,&count);
@@ -127,7 +127,7 @@ int main(void) {
  assert(network_game_client_directory_begin_join(&rows[0]) && !requested);
  og[0].network_version=0x800B;network_game_client_get_directory_games(&client,&count);
  assert(count==2 && !rows[0].open);
- og[0].network_version=20;network_game_client_get_directory_games(&client,&count);
+ og[0].network_version=22;network_game_client_get_directory_games(&client,&count);
  /* Selecting a signed listing starts the normal invite path; no listing can
     supply keys or gameplay options directly to the original join handler. */
  assert(network_game_client_directory_begin_join(&rows[1]) && requested==1);
@@ -150,7 +150,7 @@ int main(void) {
  og_count=stock_count=0;network_game_client_get_directory_games(&client,&count);assert(!count);
  stock[0]=listing('b');stock_count=1;
  struct p2p_listing valid=stock[0];
- for(int invalid=0;invalid<11;invalid++) {
+ for(int invalid=0;invalid<13;invalid++) {
   stock[0]=valid;
   switch(invalid) {
   case 0:stock[0].maximum_player_count=0;break;
@@ -164,9 +164,25 @@ int main(void) {
   case 8:stock[0].open=2;break;
   case 9:memset(stock[0].invite,'X',sizeof(stock[0].invite));break;
   case 10:stock[0].identifier[0]=0;break;
+  case 11:memset(stock[0].gametype,'X',sizeof(stock[0].gametype));break;
+  case 12:stock[0].gametype[0]='\n';break;
   }
   network_game_client_get_directory_games(&client,&count);assert(!count);
  }
+ /* Live stock listings may omit gametype; retain the row and use its engine. */
+ stock[0]=valid;stock[0].gametype[0]=0;
+ network_game_client_get_directory_games(&client,&count);
+ assert(count==1 && rows[0].open && rows[0].engine_type==2);
+ assert(!strcmp(directory_metadata[0].gametype,"Slayer"));
+ stock[0].engine_type=0;
+ network_game_client_get_directory_games(&client,&count);
+ assert(count==1 && rows[0].engine_type==0 && !strcmp(directory_metadata[0].gametype,"Co-op"));
+ stock[0]=valid;stock[0].name[0]=0;
+ network_game_client_get_directory_games(&client,&count);
+ assert(count==1 && rows[0].open && !wcscmp(rows[0].game_name,L"OpenCE Game"));
+ stock[0].locked=1;stock[0].invite[0]=0;
+ network_game_client_get_directory_games(&client,&count);
+ assert(count==1 && !rows[0].open && !wcsncmp(rows[0].game_name,L"Password: ",10));
  stock[0]=valid;stock[0].engine_type=0;strcpy(stock[0].map,"a10");strcpy(stock[0].gametype,"Co-op");
  network_game_client_get_directory_games(&client,&count);assert(count==1 && rows[0].engine_type==0);
  stock[0]=valid;stock[0].locked=1;stock[0].invite[0]=0;

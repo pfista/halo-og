@@ -135,18 +135,19 @@ struct network_advertised_game *network_game_client_get_directory_games(
                 metadata.name[index + 8] = snapshot[i].name[index];
             metadata.name[index + 8] = 0;
             /* Useful discovery of the original app's hosts, without claiming
-               its protocol11 game packets are interchangeable with20. */
+               its protocol11 game packets are interchangeable with22. */
             metadata.open = FALSE;
         }
         directory_game_add(client, &metadata, (short)halo_directory_engine(snapshot[i].gametype), identity, TRUE);
     }
-    /* This API exposes only protocol20 listings whose Ed25519 signature, key
+    /* This API exposes only protocol22 listings whose Ed25519 signature, key
        hash, sequence and retained timestamp passed OpenCE's cache validation.
        Its worker removes expired games; snapshot withdrawal removes the row. */
     input_count = p2p_lobby_games(public_games, HALO_DIRECTORY_MAX_GAMES);
     for (i = 0; i < input_count && i < HALO_DIRECTORY_MAX_GAMES; i++)
     {
         struct p2p_listing const *listing = &public_games[i];
+        static char const *engine_names[] = { "Co-op", "CTF", "Slayer", "Oddball", "King", "Race" };
         struct halo_directory_game metadata;
         unsigned char identity[6];
         if ((listing->identifier[0] & 3) != 2 ||
@@ -154,18 +155,23 @@ struct network_advertised_game *network_game_client_get_directory_games(
             listing->maximum_player_count > HALO_PORT_MAXIMUM_NETWORK_PLAYERS ||
             listing->player_count > listing->maximum_player_count ||
             listing->open > 1 || listing->in_progress > 1 || listing->has_teams > 1 || listing->locked > 1 ||
-            !directory_listing_text_valid(listing->name, sizeof(listing->name)) ||
+            !memchr(listing->name, 0, sizeof(listing->name)) ||
+            (listing->name[0] && !directory_listing_text_valid(listing->name, sizeof(listing->name))) ||
             !directory_listing_text_valid(listing->map, sizeof(listing->map)) ||
-            !directory_listing_text_valid(listing->gametype, sizeof(listing->gametype)) ||
+            !memchr(listing->gametype, 0, sizeof(listing->gametype)) ||
+            (listing->gametype[0] && !directory_listing_text_valid(listing->gametype, sizeof(listing->gametype))) ||
             strchr(listing->map, '/') || strstr(listing->map, "..")) continue;
         if (!listing->locked &&
             (!memchr(listing->invite, 0, sizeof(listing->invite)) ||
              !p2p_invite_identity(listing->invite, identity) || csmemcmp(identity, listing->identifier, 6))) continue;
         if (listing->locked) csmemcpy(identity, listing->identifier, 6);
         csmemset(&metadata, 0, sizeof(metadata));
-        csstrncpy(metadata.name, listing->name, sizeof(metadata.name) - 1);
+        csstrncpy(metadata.name, listing->name[0] ? listing->name : "OpenCE Game", sizeof(metadata.name) - 1);
         csstrncpy(metadata.map, listing->map, sizeof(metadata.map) - 1);
-        csstrncpy(metadata.gametype, listing->gametype, sizeof(metadata.gametype) - 1);
+        /* OpenCE permits an absent variant label. The authenticated engine
+           still identifies its type; an empty label must not hide the game. */
+        csstrncpy(metadata.gametype, listing->gametype[0] ? listing->gametype : engine_names[listing->engine_type],
+            sizeof(metadata.gametype) - 1);
         csstrncpy(metadata.invite, listing->invite, sizeof(metadata.invite) - 1);
         metadata.player_count = listing->player_count;
         metadata.max_players = listing->maximum_player_count;
@@ -179,8 +185,9 @@ struct network_advertised_game *network_game_client_get_directory_games(
         {
             unsigned index;
             csstrncpy(metadata.name, "Password: ", sizeof(metadata.name) - 1);
-            for (index = 0; index < sizeof(metadata.name) - 11 && listing->name[index]; index++)
-                metadata.name[index + 10] = listing->name[index];
+            char const *name = listing->name[0] ? listing->name : "OpenCE Game";
+            for (index = 0; index < sizeof(metadata.name) - 11 && name[index]; index++)
+                metadata.name[index + 10] = name[index];
             metadata.name[index + 10] = 0;
         }
         directory_game_add(client, &metadata, listing->engine_type, identity, FALSE);
