@@ -1,7 +1,7 @@
 # OpenCE compatibility branch
 
 This is the `pfister/open-ce` compatibility branch: latest complete OpenCE
-protocol-20 gameplay and networking with Halo OG's original menus, visual
+protocol-22 gameplay and networking with Halo OG's original menus, visual
 presentation and native ports. Its app and saves are separate from Halo OG main.
 The inherited documentation below describes main's features and historical
 protocol-11 testing. See [the branch policy and validation boundary](docs/open-ce-compatibility.md)

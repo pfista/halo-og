@@ -1,7 +1,7 @@
 # OpenCE compatibility branch
 
 `pfister/open-ce` starts from complete OpenCE upstream
-`76addf661f02e2fd090d7b00f9dd12c29e562a9b` and reapplies Halo OG main
+`4e8ed2f196e0edd1f2830a4de9841686aabbf466` (checked October 7, 2026) and reapplies Halo OG main
 `20787ea03e7d99e261cd525a009f9aa11b8d5f41` as a fresh patch series. The original
 main history remains available unchanged. The net overlay includes changes
 previously made inside merge resolutions, which replaying only individual
@@ -16,7 +16,7 @@ Do not treat a conflict-free application as proof of compatibility.
 
 - Keep Halo OG's original Xbox menus, HUD, fonts, local input choices, native
   Metal/ANGLE support, map tools and original hosting defaults.
-- Use OpenCE's actual protocol-20 codecs, co-op messages, host settings,
+- Use OpenCE's actual protocol-22 codecs, co-op messages, host settings,
   admission, transport and shared gameplay readers. Never make clients lie
   about their protocol version to admit a mismatched peer.
 - Received host rules take precedence over conflicting local game behavior.
@@ -24,7 +24,7 @@ Do not treat a conflict-free application as proof of compatibility.
   settings even when our own hosting menus do not expose them.
 - OG-specific input delay, Hardcore, Fiesta and expanded arsenals retain their
   own capability checks. Stock OpenCE clients must reject incompatible modes.
-  Extended sessions use advertisement `0x8014` and the separate `HPCE` control
+  Extended sessions use advertisement `0x8016` and the separate `HPCE` control
   magic, so older protocol-11 OG clients cannot falsely acknowledge support.
 - OpenCE's canonical weapon sets 11, 12 and 13 are Covenant, Classic and Heavy.
   OG's restored Uncut and All sets use 14 and 15 on this branch. Do not infer
@@ -50,6 +50,26 @@ These experimental builds do not use main's automatic release feed. Build
 artifacts remain manual updates. Publishing tags, releases or services requires
 the user's separate explicit authorization.
 
+## Custom Edition maps
+
+The upstream loader reads genuine CE version-609 caches and their `bitmaps.map`,
+`sounds.map` and `loc.map` resources from `custom_maps` or the configured CE
+installation. It converts supported tag, model, geometry, texture and sound
+data in memory while loading; the files on disk are unchanged. This is separate
+from Halo OG's offline tools that rebuild Xbox version-5 community caches.
+See [the upstream CE loader guide](custom_edition_caches.md) for limits.
+
+CE level names keep their `custom_maps\\` namespace throughout discovery,
+network settings and cache loading. Halo OG full arsenal caches apply to Xbox
+maps; CE maps retain their own weapon tags and use standard weapon sets.
+Ordinary Xbox community maps continue to use Halo OG's managed map storage.
+
+The desktop Mac guest now has the upstream 512 MiB game-memory budget and
+256 MiB texture cache. Its image moved to `0xA0000000`, with ABI `0x10002`,
+and the CE tag region at `0x40440000` is reserved without overwriting another
+mapping. Android and iOS retain their 128 MiB guest window and image placement.
+Both ANGLE and Metal apply CE texture channel mappings.
+
 ## Original System Link discovery
 
 The original System Link list combines LAN advertisements, Halo OG's HTTPS
@@ -57,6 +77,8 @@ directory and OpenCE's signed public MQTT listings. Upstream's listing provider
 validates protocol, signature, key hash, sequence and expiry. The menu adapter
 also checks bounded names/maps/player counts and deduplicates by authenticated
 host identity. Hidden lists stop both Internet discovery providers.
+OpenCE permits empty server-name and game-type labels. Display those as
+`OpenCE Game` and the signed engine's game type rather than hiding the game.
 
 Selecting a compatible remote row starts the existing invite connection, then
 waits for the authenticated host's address and actual game advertisement.
@@ -82,6 +104,8 @@ play, complete campaign/co-op coverage or retail Xbox fidelity. Record actual
 verification and any unresolved boundary here before distributing this branch.
 
 ## October 6 verification
+
+These checks describe the previous protocol-20 baseline at `76addf66`.
 
 - Both full Apple Silicon game images and native hosts compile: ANGLE and
   native Metal. Local SDL was built for macOS 26; the linker warns about the
@@ -113,6 +137,37 @@ verification and any unresolved boundary here before distributing this branch.
   authenticated-address join and timeout. Public listings were verified through
   production fixtures; a live stock-host listing and mixed-peer join remain
   part of the interoperability playtest.
+
+## October 7 refresh verification
+
+- Rebasing the overlay from `76addf66` onto complete upstream `4e8ed2f1`
+  retains upstream protocol 22 and the committed main snapshot `20787ea0`.
+  Later uncommitted work in the main checkout is separate from this snapshot.
+- Both full Mac renderer/guest pairs build with the new memory ABI. Each
+  completed a 45-second encrypted two-instance Blood Gulch Slayer run, including
+  deaths/respawns, with clean exits, exchanged updates and no assertion/fault.
+  Both peers were compatibility builds; an unmodified OpenCE peer was not used.
+- A read-only run loaded the original Xbox System Link screen and displayed
+  nine live public games, captured in the original UI, without joining or
+  advertising a game. The optional-label fix has a production adapter regression.
+  All eight protocol-20 listings examined during diagnosis had empty game-type
+  labels, explaining why the previous adapter hid them.
+- Production listing parsing, Ed25519 signatures, topic/key binding and
+  600-second freshness checks verified eleven protocol-22 games on each of
+  the four packaged brokers. The OG HTTPS directory returned HTTP 200 with
+  an empty list at that moment. Game counts are time-sensitive observations.
+- CE cache/resource/malformed-data fixtures passed 126 tests, with four tests
+  skipped for optional real game data. Native Metal CE channel tests matched
+  all three channel orders with zero float error on the current Mac.
+- ABI/link and native Darwin allocation, protection, write-watch and mapping
+  probes pass, including collision rejection for the separate CE tag region.
+  Production wire/admission/transport-origin fixtures and retained map,
+  menu, Fiesta, interpolation, save and packaging checks pass.
+
+Real CE map gameplay, mixed-client play against unmodified OpenCE, complete
+co-op coverage, other operating systems and older macOS execution remain
+outside this local verification. The macOS 26 SDL/macOS 14 linker warning
+described above remains applicable.
 
 Future upstream refreshes can rebase this new patch series from the recorded
 upstream base onto the new upstream head. Fold subsequent `main` changes in as
