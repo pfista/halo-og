@@ -1423,7 +1423,7 @@ short main_get_window_count(
 	boolean single_window = game_engine_force_single_screen() || cinematic_in_progress();
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-	if (!single_window && teammate_view_find_player() != NONE)
+	if (!single_window && teammate_view_split_screen_active())
 		return 2;
 #endif
 	return single_window ? 1 : PIN(local_player_count(), 1, MAXIMUM_WINDOWS);
@@ -3016,7 +3016,7 @@ static void main_game_render(
 	player_window_count = window_count;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	teammate_view_player_index = teammate_view_find_player();
-	if (teammate_view_player_index != NONE)
+	if (teammate_view_split_screen_active())
 		player_window_count = 2;
 #endif
 	if (force_single_screen || cinematic_in_progress())

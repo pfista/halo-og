@@ -227,6 +227,22 @@ static void render_nonplayer_frame(
 		halo_screen_ui_offset(FALSE);
 		break;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	case 2:
+		/* An unavailable teammate keeps a deliberate empty pane instead of
+		 * rendering the origin camera or assigning another local HUD/input. */
+		{
+			rectangle2d bounds = { 0, 0, 0, 0 };
+			bounds.x1 = window->rasterizer_camera.viewport_bounds.x1 -
+				window->rasterizer_camera.viewport_bounds.x0;
+			bounds.y1 = window->rasterizer_camera.viewport_bounds.y1 -
+				window->rasterizer_camera.viewport_bounds.y0;
+			draw_quad(&bounds, 0xFF000000);
+			teammate_view_draw_label(render.window_index);
+		}
+		break;
+#endif
+
 	default:
 		match_assert("c:\\halo\\SOURCE\\render\\render.c", 287, !"unreachable");
 		break;
@@ -688,6 +704,10 @@ void render_frame(
 		else
 		{
 			window_type = 1;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			if (window_index == 1 && teammate_view_split_screen_active())
+				window_type = 2;
+#endif
 		}
 
 		render_nonplayer_frame(window, window_type);

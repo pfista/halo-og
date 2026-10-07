@@ -13,6 +13,13 @@ static boolean teammate_view_available(void)
 		teammate_view_variant_enabled(game_engine_get_variant());
 }
 
+boolean teammate_view_split_screen_active(void)
+{
+	/* Keep the local viewport and HUD layout stable while the teammate dies,
+	 * respawns, changes teams or temporarily has no usable camera. */
+	return teammate_view_available();
+}
+
 static boolean teammate_view_valid_player(long player_index)
 {
 	long self_index;
@@ -64,7 +71,7 @@ short teammate_view_hud_player_count(void)
 {
 	/* Select retail split HUD assets for the extra display pane, while all
 	 * ordinary/local modes retain their exact previous visual count. */
-	return teammate_view_find_player() != NONE ? 2 : local_player_count();
+	return teammate_view_split_screen_active() ? 2 : local_player_count();
 }
 
 static void teammate_view_camera(long player_index, struct observer_result *observer)
@@ -85,7 +92,8 @@ void teammate_view_draw_label(short window_index)
 	rectangle2d bounds = render.camera.window_bounds;
 	char text[64] = "TEAMMATE: ";
 	short i;
-	if (player_index == NONE || !hud_globals || hud_globals->messaging.single_player_font.index == NONE)
+	if (window_index != 1 || !teammate_view_split_screen_active() ||
+		!hud_globals || hud_globals->messaging.single_player_font.index == NONE)
 		return;
 	/* Text bounds are relative to the current pane's viewport. */
 	bounds.x0 -= render.camera.viewport_bounds.x0;
@@ -95,12 +103,19 @@ void teammate_view_draw_label(short window_index)
 	bounds.x0 += 8;
 	bounds.y0 += 8;
 	bounds.y1 = MIN(bounds.y1, bounds.y0 + 24);
-	for (i = 0; i < 11 && player_get(player_index)->name[i]; i++)
+	if (player_index == NONE)
 	{
-		wchar_t c = player_get(player_index)->name[i];
-		text[10 + i] = c >= 32 && c < 127 ? (char)c : '?';
+		strcpy(text, "TEAMMATE UNAVAILABLE");
 	}
-	text[10 + i] = 0;
+	else
+	{
+		for (i = 0; i < 11 && player_get(player_index)->name[i]; i++)
+		{
+			wchar_t c = player_get(player_index)->name[i];
+			text[10 + i] = c >= 32 && c < 127 ? (char)c : '?';
+		}
+		text[10 + i] = 0;
+	}
 	rasterizer_hud_begin();
 	draw_string_render_label(hud_globals->messaging.single_player_font.index, &bounds,
 		global_real_argb_white, text);

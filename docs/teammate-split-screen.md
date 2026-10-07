@@ -6,13 +6,16 @@ Screen** to **On** and save the variant. CTF always has teams, so its Rules
 menu includes the option directly. The System Link host selects that variant.
 The default is Off.
 
-Each prototype-enabled machine with one local player shows its own view above
-one living remote teammate's view. Targets must remain on the player's current
-team. A teammate's death, departure, team change or entry into a vehicle removes
-that pane when no eligible on-foot teammate remains. A larger team currently
-shows one eligible teammate, keeping that target while it remains valid.
-Machines with multiple local controllers retain their existing local split
-screen. Campaign and offline Split Screen retain their existing behavior.
+Each prototype-enabled machine with one local player reserves its own view above
+one remote teammate pane throughout the active match. Targets must remain on the
+player's current team. When death, departure, team change or a vehicle leaves no
+eligible on-foot teammate, the lower pane stays black and shows **TEAMMATE
+UNAVAILABLE**. Respawning restores the view without resizing the local viewport
+or changing its HUD layout. A larger team shows one eligible teammate, keeping
+that target while it remains valid. Machines with multiple local controllers
+retain their existing player ownership and local split-screen layout.
+
+
 
 This is a camera-only proof of concept. The teammate pane has a name label,
 fixed unzoomed field of view, no weapon hands, no HUD, no camera shake or damage
