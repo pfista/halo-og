@@ -2,7 +2,7 @@
 #include "release_discovery.h"
 #include <string.h>
 
-static NSString *const HaloPublishedReleases = @"https://github.com/pfista/halo-og/actions?query=branch%3Apfister%2Fopen-ce";
+static NSString *const HaloPublishedReleases = @"https://github.com/pfista/halo-og/actions?query=branch%3Apfista%2Fopen-ce";
 
 static BOOL validBuildIdentity(NSString *sha, NSString *date) {
     if (![sha isKindOfClass:NSString.class] || ![date isKindOfClass:NSString.class] ||

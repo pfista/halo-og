@@ -1,6 +1,6 @@
 # Distributed netcode
 
-This inherited design document describes Halo OG main. The `pfister/open-ce`
+This inherited design document describes Halo OG main. The `pfista/open-ce`
 branch uses OpenCE protocol 22, its complete gameplay/network baseline, and
 separately negotiated OG extensions. See
 [the compatibility branch notes](../../docs/open-ce-compatibility.md) for the

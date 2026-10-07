@@ -1,9 +1,9 @@
 # Original Xbox fidelity
 
-On `pfister/open-ce`, the full upstream baseline is
-`76addf661f02e2fd090d7b00f9dd12c29e562a9b` (October 6, 2026), with Halo OG main
-`c9a8a3619ec654143ddd61742f25e9be1658840b` reapplied for OpenCE interoperability.
-This branch preserves our menus and visuals while adopting upstream protocol 20
+On `pfista/open-ce`, the full upstream baseline is
+`4e8ed2f196e0edd1f2830a4de9841686aabbf466` (October 7, 2026), with Halo OG main
+`20787ea03e7d99e261cd525a009f9aa11b8d5f41` reapplied for OpenCE interoperability.
+This branch preserves our menus and visuals while adopting upstream protocol 22
 and shared gameplay when necessary. The selective ledger below describes the
 historical `main` decisions; excluded shared gameplay is present on this branch
 where required by its explicit compatibility scope. See

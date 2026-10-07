@@ -1,7 +1,7 @@
 # Multiplayer interoperability
 
 This document records Halo OG main's historical protocol-11 review. On
-`pfister/open-ce`, the complete upstream protocol-20 gameplay and network code
+`pfista/open-ce`, the complete upstream protocol-22 gameplay and network code
 is integrated. See [the branch policy and validation boundary](open-ce-compatibility.md)
 for current behavior; the historical limitations below do not describe this
 branch's implemented host-option support.

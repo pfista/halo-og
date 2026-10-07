@@ -2,7 +2,7 @@
 
 ## OpenCE compatibility branch
 
-On `pfister/open-ce`, the October 6, 2026 user instruction explicitly authorizes
+On `pfista/open-ce`, the October 6, 2026 user instruction explicitly authorizes
 a complete upstream base with Halo OG's current changes reapplied as a fresh
 patch series. This branch uses OpenCE's current network protocol and shared
 gameplay behavior wherever a Halo OG choice would break mixed-client sessions.

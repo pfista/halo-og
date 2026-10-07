@@ -1,6 +1,6 @@
 # OpenCE compatibility branch
 
-`pfister/open-ce` starts from complete OpenCE upstream
+`pfista/open-ce` starts from complete OpenCE upstream
 `4e8ed2f196e0edd1f2830a4de9841686aabbf466` (checked October 7, 2026) and reapplies Halo OG main
 `20787ea03e7d99e261cd525a009f9aa11b8d5f41` as a fresh patch series. The original
 main history remains available unchanged. The net overlay includes changes

@@ -2,7 +2,7 @@ name: Apple regression checks
 
 on:
   push:
-    branches: [main, pfister/open-ce]
+    branches: [main, pfista/open-ce]
     paths:
       - 'source/**'
       - 'port/**'

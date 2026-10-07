@@ -1,6 +1,6 @@
 # Halo OG invite links
 
-On `pfister/open-ce`, shared invite text is
+On `pfista/open-ce`, shared invite text is
 `halo://join/<64 hexadecimal digits>`, which stock OpenCE understands. The whole
 URI is 76 ASCII bytes. The OS handler uses the isolated `halo-og-opence://`
 scheme. Delivery buffers hold 87 bytes including the terminator, enough for
