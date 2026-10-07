@@ -32,7 +32,8 @@ class DualRendererTests(unittest.TestCase):
         frameworks = root / "angle"
         sdl = root / "sdl"
         sparkle = root / "sparkle/Sparkle.framework"
-        for directory in (inputs, native, sdl / "lib", sparkle / "Versions/B", root / "port/macos"):
+        for directory in (inputs, native, sdl / "lib", sparkle / "Versions/B", root / "port/macos",
+                          root / "port/assets/network"):
             directory.mkdir(parents=True, exist_ok=True)
         for directory, label in ((inputs, b"angle"), (native, b"metal")):
             (directory / "halo").write_bytes(label + b" host")
@@ -45,6 +46,7 @@ class DualRendererTests(unittest.TestCase):
             binary.write_bytes(b"synthetic ANGLE library")
         (root / "port/macos/map-downloads.json").write_text("{}")
         (root / "port/macos/release-config.json").write_text("{}")
+        (root / "port/assets/network/brokers.txt").write_text("fixture-broker.example:1883\n")
         app = root / "Halo OG.app"
         commands = []
         with ExitStack() as stack:
@@ -60,6 +62,8 @@ class DualRendererTests(unittest.TestCase):
             stack.enter_context(patch.object(build, "run", side_effect=lambda *args: commands.append(tuple(map(str, args)))))
             build.package_into(app, None, sign_identity="-", release=False,
                                version=build.APP_VERSION, build="11")
+        self.assertEqual((app / "Contents/Resources/brokers.txt").read_text(),
+                         "fixture-broker.example:1883\n")
         return app, commands
 
     def test_dual_package_records_both_guests_and_signs_native_host(self):
