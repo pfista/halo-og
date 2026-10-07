@@ -82,7 +82,8 @@ void performance_timer_items_initialize(void)
 	}
 }
 
-unsigned performance_timer_items_due(long previous, long current)
+unsigned performance_timer_items_upcoming(long previous, long current,
+	long lead, long deadlines[3])
 {
 	short index;
 	unsigned result = 0;
@@ -90,7 +91,25 @@ unsigned performance_timer_items_due(long previous, long current)
 	for (index = 0; index < performance_item_wave_count; index++)
 	{
 		struct performance_item_wave const *wave = &performance_item_waves[index];
-		if (current / wave->period > previous / wave->period) result |= wave->category;
+		long advance = lead < wave->period / 2 ? lead : wave->period / 2;
+		long upcoming = (current + advance) / wave->period;
+		if (upcoming > (previous + advance) / wave->period)
+		{
+			long deadline = upcoming * wave->period -
+				(advance > 10 * TICKS_PER_SECOND ? 10 * TICKS_PER_SECOND : 0);
+			short category;
+			result |= wave->category;
+			if (deadlines)
+				for (category = 0; category < 3; category++)
+					if ((wave->category & (1u << category)) &&
+						(deadlines[category] == NONE || deadline < deadlines[category]))
+						deadlines[category] = deadline;
+		}
 	}
 	return result;
+}
+
+unsigned performance_timer_items_due(long previous, long current)
+{
+	return performance_timer_items_upcoming(previous, current, 0, NULL);
 }

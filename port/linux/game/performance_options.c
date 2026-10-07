@@ -46,13 +46,18 @@ static long performance_audio_previous_tick = NONE;
 static struct performance_timer_statistics performance_timer_statistics;
 static long performance_audio_busy_until;
 static long performance_item_pending[3] = {NONE, NONE, NONE};
+static long performance_item_deadline[3] = {NONE, NONE, NONE};
 
 static void performance_timer_audio_reset(void)
 {
 	short index;
 	performance_audio_previous_tick = NONE;
 	performance_audio_busy_until = 0;
-	for (index = 0; index < 3; index++) performance_item_pending[index] = NONE;
+	for (index = 0; index < 3; index++)
+	{
+		performance_item_pending[index] = NONE;
+		performance_item_deadline[index] = NONE;
+	}
 }
 
 
@@ -220,6 +225,7 @@ static void performance_timer_audio_update(long ticks)
 	char const *cue;
 	short index;
 	unsigned due;
+	long deadlines[3] = {NONE, NONE, NONE};
 	if (preferences != performance_timer_statistics.preferences || ticks < performance_audio_previous_tick ||
 		(ticks > performance_audio_previous_tick && ticks - performance_audio_previous_tick > TICKS_PER_SECOND))
 	{
@@ -228,22 +234,31 @@ static void performance_timer_audio_update(long ticks)
 	}
 	performance_timer_statistics.preferences = preferences;
 	cue = performance_timer_cue_masked(performance_audio_previous_tick, ticks, preferences);
-	due = (preferences & 8) ? performance_timer_items_due(performance_audio_previous_tick, ticks) : 0;
+	/* Name the upcoming items before the ten-to-one countdown. The twenty-
+	 * second lead leaves room for simultaneous item names and timer warnings. */
+	due = (preferences & 8) ? performance_timer_items_upcoming(
+		performance_audio_previous_tick, ticks, 20 * TICKS_PER_SECOND, deadlines) : 0;
 	for (index = 0; index < 3; index++)
-		if (due & (1u << index)) performance_item_pending[index] = ticks;
+		if (due & (1u << index))
+		{
+			performance_item_pending[index] = ticks;
+			performance_item_deadline[index] = deadlines[index];
+		}
 	if (cue)
 	{
 		performance_timer_audio_play(cue, FALSE, ticks);
 	}
-	/* Announce recent waves once, between ordinary timer calls. Reserve the
+	/* Announce upcoming waves once, between ordinary timer calls. Reserve the
 	 * exact recording duration so item names neither overlap nor cut off the
-	 * countdown. Expire crowded reminders instead of announcing stale items. */
+	 * countdown. Expire crowded reminders at their deadline instead of
+	 * letting them play after the countdown or after an item's spawn. */
 	for (index = 0; index < 3; index++)
 	{
 		long duration, next;
 		boolean fits = TRUE;
 		if (performance_item_pending[index] == NONE) continue;
-		if (ticks - performance_item_pending[index] > 6 * TICKS_PER_SECOND)
+		if (ticks >= performance_item_deadline[index] ||
+			((preferences & _performance_timer_countdown) && ticks % (60 * TICKS_PER_SECOND) >= 50 * TICKS_PER_SECOND))
 		{
 			performance_item_pending[index] = NONE;
 			continue;
@@ -251,6 +266,7 @@ static void performance_timer_audio_update(long ticks)
 		if (cue || ticks < performance_audio_busy_until || halo_performance_audio_busy()) continue;
 		duration = halo_performance_audio_duration_ticks(item_cues[index]);
 		if (duration <= 0) { performance_item_pending[index] = NONE; continue; }
+		if (ticks + duration > performance_item_deadline[index]) continue;
 		for (next = ticks + 1; next <= ticks + duration; next++)
 			if (performance_timer_cue_masked(next - 1, next, preferences)) { fits = FALSE; break; }
 		if (!fits) continue;

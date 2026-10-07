@@ -142,9 +142,14 @@ Item Cues announces scheduled rocket, active-camouflage and overshield waves.
 The runtime reads the map's actual spawn periods, game-type filters and active
 weapon/powerup remaps. It skips mixed random collections. These are schedule
 reminders, not pickup tracking or a promise of successful object allocation.
-Simultaneous item names play once each between common timer calls, using the
-recordings' exact duration; a reminder that cannot fit within six seconds is
-dropped. A missing optional item recording is skipped. No scripts, gameplay
+Upcoming item names are queued twenty seconds before the map's scheduled wave
+(or half a spawn period for shorter periods), in rocket, camo, overshield order.
+They play between common timer calls using the recordings' exact duration and
+finish before the wave's ten-second countdown; short-period reminders expire
+at the wave itself. Pending names are dropped when the common countdown begins
+or when they cannot finish before their deadline, so they never follow the
+countdown as stale spawn announcements. A missing optional item recording is
+skipped. No scripts, gameplay
 random values or new gameplay objects are involved.
 
 Joining, enabling the option, clock reversal and long update gaps do not replay
