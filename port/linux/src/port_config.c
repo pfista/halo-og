@@ -161,12 +161,6 @@ static const struct config_setting config_settings[] =
 		"Keep the original map-authored held-stick horizontal turning boost.\n"
 		"Controller settings call this Xbox; Off removes only this timed boost.\n"
 		"Sensitivity, pitch response and direct mouse aiming stay separate." },
-	{ "input.fast_menu_repeat", _config_boolean, "false", NULL, _environment_value, _platform_all,
-		"Faster moves once immediately, then repeats after a 500 ms hold, every\n"
-		"100 ms. Original retains the existing 250 ms menu behavior.\n"
-		"Controller settings call this Menu Repeat: Original or Faster. Applies\n"
-		"to arrows, D-pad and sticks in menus and the on-screen keyboard only." },
-
 	/* Bindings are config-only: they do not need application environment variables. */
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define BINDING(name, mac, other, comment) { "bindings." #name, _config_string, "\"" mac "\"", NULL, _environment_value, _platform_all, comment },
@@ -799,7 +793,9 @@ static void config_report_unknown_keys(toml_datum_t table)
 			char name[128];
 
 			snprintf(name, sizeof(name), "%s.%s", table.u.tab.key[section_index], section.u.tab.key[key_index]);
-			if (config_setting_index(name) < 0)
+			/* Older installations saved this retired preference. Navigation is
+			always fast now; accept the legacy key without exposing a setting. */
+			if (config_setting_index(name) < 0 && strcmp(name, "input.fast_menu_repeat"))
 				platform_log("config.toml line %d: unknown setting %s", section.u.tab.value[key_index].lineno, name);
 		}
 	}

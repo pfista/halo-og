@@ -28,10 +28,10 @@ static short const device_settings_deadzone_presets[] = {0, 3277, 6553, 9000, 98
 static char const *const device_settings_deadzone_labels[] = {"0%", "10%", "20%", "Xbox", "30%", "40%", "49%"};
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 8
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 8, 7, 4, 3};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 8, 7, 3, 3};
 #else
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 6
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 6, 5, 4, 3};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 6, 5, 3, 3};
 #endif
 static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX_PAGE_ROWS] = {
     {NONE, NONE, NONE, NONE},
@@ -49,8 +49,7 @@ static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX
     {_device_setting_timer_volume, _device_setting_timer_countdown, _device_setting_timer_beeps,
      _device_setting_timer_minutes, _device_setting_timer_items},
 #endif
-    {_device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone, _device_setting_look_acceleration,
-     _device_setting_fast_menu_repeat},
+    {_device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone, _device_setting_look_acceleration},
     {_device_setting_show_og_maps, _device_setting_show_community_maps, _device_setting_join_in_progress}};
 static short const device_settings_page_titles[_ds_page_count] = {_ds_game_label, _ds_audio_label, _ds_video_label, _ds_timer_label, _ds_controller_label, _ds_multiplayer_label};
 static short const device_settings_page_help[_ds_page_count] = {_ds_back_help, _ds_audio_help, _ds_video_help, _ds_timer_help, _ds_controller_help, _ds_multiplayer_help};
@@ -599,21 +598,21 @@ static boolean device_settings_build(void)
         "MASTER VOLUME:", "MUSIC VOLUME:", "EFFECTS VOLUME:", "DIALOGUE VOLUME:", "TIMER VOLUME:",
         "MENU MUSIC:", "FULLSCREEN:", "VSYNC:", "SMOOTH MOTION:",
         "COUNTDOWN:", "BEEPS:", "MINUTE ANNOUNCEMENTS:", "ITEM CUES:", "TIMER POSITION:", "TIMER SIZE:",
-        "OG MAPS:", "COMMUNITY MAPS:", "JOIN IN PROGRESS:", "LEFT STICK DEADZONE:", "RIGHT STICK DEADZONE:", "LOOK ACCELERATION:", "MENU REPEAT:", "ASSET QUALITY:"
+        "OG MAPS:", "COMMUNITY MAPS:", "JOIN IN PROGRESS:", "LEFT STICK DEADZONE:", "RIGHT STICK DEADZONE:", "LOOK ACCELERATION:", "", "ASSET QUALITY:"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "RENDERER:", "RESOLUTION:", "FPS LIMIT:", "ANTI-ALIASING:"
 #endif
         };
     static char const *const help[] = {
-        "Adjust the volume of all game audio.",
-        "Adjust the volume of music.",
-        "Adjust sound effects, ambience and\r\nmultiplayer announcer volume.",
-        "Adjust spoken dialogue volume.",
+        "Hear the whole battlefield.\r\nAdjust master game audio.",
+        "Set the mood.\r\nAdjust music volume.",
+        "Listen for trouble.\r\nEffects, ambience and multiplayer calls.",
+        "Orders, clearly received.\r\nAdjust spoken dialogue volume.",
         "Adjust timer announcements volume.\r\nHost Timer Sounds must be on.\r\nAudio Accept saves all changes.",
-        "Turn main-menu music on or off.",
-        "Switch between fullscreen and\r\nwindowed play.",
-        "Sync presentation with the display\r\nto reduce screen tearing.",
-        "Smooth motion between game updates.\r\nOriginal game timing stays the same.",
+        "A familiar welcome.\r\nTurn main-menu music on or off.",
+        "Fill the visor.\r\nSwitch fullscreen or windowed play.",
+        "Keep the picture together.\r\nSync with the display to reduce tearing.",
+        "Keep your eyes on the action.\r\nSmooth motion; original game timing.",
         "Play timer countdown announcements.\r\nHost Timer Sounds must be on.",
         "Play timer countdown beeps.\r\nHost Timer Sounds must be on.",
         "Announce elapsed minutes.\r\nHost Timer Sounds must be on.",

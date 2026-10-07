@@ -26,8 +26,9 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
     "display.timer_position", "display.timer_scale",
     "maps.show_og", "maps.show_community", "network.join_in_progress",
     "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration",
-    /* Asset Quality retains the legacy key so enabled HUD choices become Upres. */
-    "input.fast_menu_repeat", "display.high_res_hud"
+    /* Keep the retired menu-speed slot so device-setting IDs stay stable.
+     * Asset Quality retains the legacy key so enabled HUD choices become Upres. */
+    NULL, "display.high_res_hud"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
     , "display.renderer", "display.render_height", "display.frame_limit", "display.anti_aliasing"
 #endif
@@ -44,6 +45,7 @@ double device_settings_get(short setting)
 {
     double value;
     if (setting < 0 || setting >= NUMBER_OF_DEVICE_SETTINGS) return 0.0;
+    if (setting == _device_setting_fast_menu_repeat) return 1.0;
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
     if (setting == _device_setting_renderer)
     {
@@ -107,6 +109,8 @@ int device_settings_apply(unsigned long changed_mask,
     {
         double old;
         if (!(changed_mask & (1UL << setting))) continue;
+        /* No draft or old saved preference can disable the fixed cadence. */
+        if (setting == _device_setting_fast_menu_repeat) continue;
         if (!device_setting_is_finite(values[setting])) return 0;
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         if (setting == _device_setting_render_height)

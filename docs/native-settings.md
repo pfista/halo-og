@@ -56,15 +56,12 @@ deflection. Off removes that timed boost and clears its accumulated time.
 Profile sensitivity, the underlying stick-response curve, vertical turning,
 zoom scaling and direct mouse aiming retain their existing behavior.
 
-**Menu Repeat** offers **Original** (existing 250 ms timing) and **Faster**
-(one immediate movement, a 500 ms hold delay, then 100 ms repeats).
-Original is the default. This controls held arrow keys, D-pad directions and
-stick navigation in menus and the on-screen name-entry keyboard. Accept saves
-and applies it immediately for all local players; Cancel discards the draft.
-Faster resets on release or stick neutral and preserves separate keyboard
-presses; Original retains its existing input and menu behavior.
-It saves as `input.fast_menu_repeat` (default `false`) and does not change
-gameplay input or simulation timing. See [menu repeat](menu-repeat.md).
+Menu navigation uses one immediate movement, a 500 ms hold delay, then 100 ms
+repeats for held arrow keys, D-pad directions and sticks, including the
+on-screen name-entry keyboard. Release or stick neutral resets the hold.
+This fixed behavior has no settings row or saved preference; an older
+`input.fast_menu_repeat` value is ignored. Gameplay input and simulation timing
+remain separate. See [menu repeat](menu-repeat.md).
 
 ## Multiplayer
 

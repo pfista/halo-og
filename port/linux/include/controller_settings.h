@@ -11,19 +11,19 @@
 #define HALO_CONTROLLER_AXIS_RIGHT_X 4u
 #define HALO_CONTROLLER_AXIS_RIGHT_Y 8u
 
-/* Local menu-only opt-in; the original quarter-second cadence remains default.
- * Read live so accepting Controller settings takes effect without a restart. */
+/* Menu navigation always uses the immediate-press, deliberate-hold cadence.
+ * This is presentation/input navigation only, never gameplay button timing. */
 #define HALO_MENU_REPEAT_INITIAL_DELAY 500UL
 #define HALO_MENU_REPEAT_FAST_INTERVAL 100UL
 
 static __inline int halo_menu_repeat_is_fast(void)
 {
-	return config_boolean("input.fast_menu_repeat");
+	return 1;
 }
 
 static __inline unsigned long halo_menu_repeat_milliseconds(void)
 {
-	return halo_menu_repeat_is_fast() ? HALO_MENU_REPEAT_FAST_INTERVAL : 250UL;
+	return HALO_MENU_REPEAT_FAST_INTERVAL;
 }
 
 static __inline short halo_controller_deadzone(long value)
