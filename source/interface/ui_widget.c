@@ -1469,6 +1469,7 @@ static boolean ui_check_for_pause_game(
 #include "fiesta_item_options_menu.inc"
 #include "teammate_view_menu.inc"
 #include "native_pause_frame.inc"
+#include "native_multiplayer_pause.inc"
 #include "performance_pause_menu.inc"
 #include "game_settings_menu.inc"
 #endif
@@ -3263,8 +3264,22 @@ static void event_handler_dispatch(
 	if ((handler->event_type == _gamepad_analog_button_a ||
 		handler->event_type == _gamepad_binary_button_start) && event_widget_name &&
 		(!csstrcmp(event_widget_name, "ui\\shell\\multiplayer_game\\pause_game\\resume_game_button") ||
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		 !csstrcmp(event_widget_name, native_multiplayer_pause_resume_name) ||
+#endif
 		 !csstrcmp(event_widget_name, "ui\\shell\\solo_game\\pause_game\\resume_game_button")))
 		resume_mouse = TRUE;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (performance_pause_ready &&
+		(handler->event_type == _widget_event_b_button ||
+		 handler->event_type == _widget_event_back_button ||
+		 handler->event_type == _gamepad_binary_button_start) &&
+		TEST_FLAG(handler->flags, _event_handler_close_current_widget_bit) &&
+		(widget->definition_tag_index == performance_pause_tags[_pp_pause_1p] ||
+		 widget->definition_tag_index == performance_pause_tags[_pp_pause_2p] ||
+		 widget->definition_tag_index == performance_pause_tags[_pp_pause_4p]))
+		resume_mouse = TRUE;
+#endif
 #endif
 
 	if (TEST_FLAG(handler->flags, _event_handler_run_scenario_script_bit) &&
@@ -7284,10 +7299,26 @@ static boolean ui_check_for_pause_game(
 						widget_name = NULL;
 						break;
 					}
+					/* Native pause composition does not need an authored root tag.
+					 * Controller ownership still follows the original local layout. */
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+					long native_pause_tag = NONE;
+					if (widget_name && performance_pause_build())
+					{
+						short layout = local_player_count == 1 ? 0 :
+							(local_player_count == 2 || (local_player_count == 3 && pressed_by_first_local_player)) ? 1 : 2;
+						native_pause_tag = performance_pause_tags[_pp_pause_1p + layout];
+					}
+#endif
 					if (widget_name &&
 						!ui_widget_load_by_name_or_tag(
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+							native_pause_tag == NONE ? widget_name : NULL,
+							native_pause_tag,
+#else
 							widget_name,
 							NONE,
+#endif
 							NULL,
 							controller_index,
 							NONE,

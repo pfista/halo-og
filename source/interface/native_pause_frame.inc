@@ -11,9 +11,74 @@ static long native_pause_frame_indices[3];
 static long native_pause_frame_bitmaps[3];
 static boolean native_pause_frame_ready;
 
+/* Keep the regular resident art when an imported map moved a tag to another
+ * directory. A basename must identify one tag; arbitrary art is never guessed. */
+static long native_pause_resident_tag(long group, char const *path)
+{
+	struct tag_iterator iterator;
+	long tag = tag_loaded(group, path), candidate = NONE, index;
+	char const *basename = path, *cursor;
+	if (tag != NONE) return tag;
+	for (cursor = path; *cursor; cursor++)
+		if (*cursor == '\\') basename = cursor + 1;
+	tag_iterator_new(&iterator, group);
+	while ((index = tag_iterator_next(&iterator)) != NONE)
+	{
+		char const *name = tag_get_name(index), *leaf = name;
+		if (!name) continue;
+		for (cursor = name; *cursor; cursor++)
+			if (*cursor == '\\') leaf = cursor + 1;
+		if (csstrcmp(leaf, basename)) continue;
+		if (candidate != NONE) return NONE;
+		candidate = index;
+	}
+	return candidate;
+}
+
 static long native_pause_legend_tag(void)
 {
-	return tag_loaded(UI_WIDGET_DEFINITION_TAG, "ui\\shell\\main_menu\\button_key_sm");
+	static char const strings_name[] = "ui\\native_settings\\pause_legend_labels";
+	static char const widget_name[] = "ui\\native_settings\\pause_legend";
+	static wchar_t text[] = L"A Select    B Back";
+	static struct string_list_entry entry;
+	static struct string_list strings;
+	static struct ui_widget_definition legend;
+	static long legend_tag = NONE;
+	long tag = native_pause_resident_tag(UI_WIDGET_DEFINITION_TAG,
+		"ui\\shell\\main_menu\\button_key_sm");
+	long font, labels;
+	if (tag != NONE) return tag;
+	if (legend_tag != NONE && tag_loaded(UI_WIDGET_DEFINITION_TAG, widget_name) == legend_tag)
+		return legend_tag;
+	font = native_pause_resident_tag(FONT_GROUP_TAG, "ui\\small_ui");
+	if (font == NONE) font = native_pause_resident_tag(FONT_GROUP_TAG, "ui\\large_ui");
+	if (font == NONE) return NONE;
+	csmemset(&entry, 0, sizeof(entry));
+	entry.string.address = text;
+	entry.string.size = (ustrlen(text) + 1) * sizeof(wchar_t);
+	csmemset(&strings, 0, sizeof(strings));
+	strings.strings.count = 1;
+	strings.strings.address = &entry;
+	labels = cache_files_register_runtime_ui_tag(UNICODE_STRING_LIST_TAG, strings_name, &strings);
+	if (labels == NONE) return NONE;
+	csmemset(&legend, 0, sizeof(legend));
+	legend.type = _ui_widget_type_text_box;
+	legend.controller_index = _widget_controller_any;
+	legend.bounds = (rectangle2d){0, 0, 25, 170};
+	legend.background_bitmap.index = NONE;
+	legend.text_label_string_list.group_tag = UNICODE_STRING_LIST_TAG;
+	legend.text_label_string_list.index = labels;
+	legend.text_font.group_tag = FONT_GROUP_TAG;
+	legend.text_font.index = font;
+	legend.text_color.alpha = 1.0f;
+	legend.text_color.red = 40.0f / 255.0f;
+	legend.text_color.green = 150.0f / 255.0f;
+	legend.text_color.blue = 1.0f;
+	legend.justification = _text_justification_center;
+	legend.list_header_bitmap.index = legend.list_footer_bitmap.index = NONE;
+	legend.extended_description_widget.index = NONE;
+	legend_tag = cache_files_register_runtime_ui_tag(UI_WIDGET_DEFINITION_TAG, widget_name, &legend);
+	return legend_tag;
 }
 
 static long native_pause_frame_tag(short height)
@@ -33,10 +98,9 @@ static long native_pause_frame_tag(short height)
 	native_pause_frame_ready = FALSE;
 	for (index = 0; index < 3; index++)
 	{
-		native_pause_frame_bitmaps[index] = tag_loaded('bitm', names[index]);
+		native_pause_frame_bitmaps[index] = native_pause_resident_tag('bitm', names[index]);
 		if (native_pause_frame_bitmaps[index] == NONE) return NONE;
 	}
-	if (native_pause_legend_tag() == NONE) return NONE;
 	for (index = 0; index < 3; index++)
 	{
 		definition = &native_pause_frame_definitions[index];

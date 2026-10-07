@@ -48,19 +48,21 @@ static wchar_t performance_pause_text[][64] =
 	L"PERFORMANCE OPTIONS", L"APPLY", L"RETURN",
 	L"Apply to change host settings.",
 	L"Host settings (view only).",
-	L"Preset: < Stock >", L"Preset: < Practice >", L"Preset: < Custom >",
+	L"Preset: < Default >", L"Preset: < Practice >", L"Preset: < Pro >", L"Preset: < Custom >",
 	L"Match timer: < Off >", L"Match timer: < On >",
 	L"Markers: < Off >", L"Markers: < On >",
 	L"PERFORMANCE OPTIONS",
 	L"Timer sounds: <Off>", L"Timer sounds: <On>", L"GAME SETTINGS",
 	L"Movement: <Normal>", L"Movement: <Silent>",
 	L"Weapon: < Normal >", L"Weapon: < Silent >",
-	L"Movement sounds only:\r\nfootsteps, jumps and landings.",
-	L"Equip and switch sounds only.\r\nFiring and reloading unchanged.",
-	L"Spawn markers show player\r\nspawn locations.",
-	L"The host controls timer sounds.\r\nLocal options are in Audio.",
+	L"Walk softly.\r\nFootsteps, jumps and landings.",
+	L"No warning before the first shot.\r\nEquip and switch sounds only.",
+	L"A little field intelligence.\r\nMark player spawn locations.",
+	L"A voice in your helmet.\r\nLocal volume and cues: Audio.",
+	L"Pro rules are set before play.\r\nHere, change timer and sounds.",
+	L"Team Slayer Pro is locked.\r\nUse another game type to edit.",
 };
-static struct string_list_entry performance_pause_strings[24];
+static struct string_list_entry performance_pause_strings[27];
 static struct string_list performance_pause_string_lists[7];
 static char const *const performance_pause_string_names[7] =
 {
@@ -130,6 +132,7 @@ static void performance_pause_child(
 static void performance_pause_clear_definition(struct ui_widget_definition *definition)
 {
 	csmemset(definition, 0, sizeof(*definition));
+	definition->controller_index = _widget_controller_any;
 	performance_pause_reference(&definition->background_bitmap, 'bitm', NONE);
 	performance_pause_reference(&definition->text_label_string_list, UNICODE_STRING_LIST_TAG, NONE);
 	performance_pause_reference(&definition->text_font, FONT_GROUP_TAG, NONE);
@@ -140,13 +143,11 @@ static void performance_pause_clear_definition(struct ui_widget_definition *defi
 
 static boolean performance_pause_build(void)
 {
-	struct ui_widget_definition *original_roots[3];
-	struct ui_widget_definition *original_list;
-	struct ui_widget_definition *original_resume;
-	struct ui_widget_child_reference *original_list_children;
-	long list_tag, font, frame_tag, legend_tag, index, layout;
-	static short const string_starts[7] = {0, 5, 8, 10, 13, 16, 18};
-	static short const string_counts[7] = {24, 3, 2, 2, 2, 2, 2};
+	struct ui_widget_definition const *button_style;
+	long font, pause_frame_tag, frame_tag, legend_tag, index, layout;
+	static short const string_starts[7] = {0, 5, 9, 11, 14, 17, 19};
+	static short const string_counts[7] = {27, 4, 2, 2, 2, 2, 2};
+	static short const pause_frame_y[3] = {164, 52, 46};
 
 	/* Runtime registrations are invalidated at every scenario unload. A tag
 	 * name lookup avoids dereferencing stale map definitions after a reload. */
@@ -156,31 +157,17 @@ static boolean performance_pause_build(void)
 		return TRUE;
 	performance_pause_ready = FALSE;
 	csmemset(performance_pause_drafts, 0, sizeof(performance_pause_drafts));
-	list_tag = tag_loaded(UI_WIDGET_DEFINITION_TAG,
-		"ui\\shell\\multiplayer_game\\pause_game\\mp_pause_list");
-	font = tag_loaded(FONT_GROUP_TAG, "ui\\small_ui");
-	if (list_tag == NONE || font == NONE)
+	if (!native_multiplayer_pause_build())
 		return FALSE;
-	original_list = ui_widget_definition_get(list_tag);
-	if (original_list->child_widgets.count != 2)
+	button_style = native_multiplayer_pause_button_style();
+	font = native_pause_resident_tag(FONT_GROUP_TAG, "ui\\small_ui");
+	if (!button_style || font == NONE)
 		return FALSE;
-	original_list_children = original_list->child_widgets.address;
-	if (original_list_children[0].widget_tag.index == NONE)
-		return FALSE;
-	original_resume = ui_widget_definition_get(original_list_children[0].widget_tag.index);
-	for (layout = 0; layout < 3; layout++)
-	{
-		long root_tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, performance_pause_original_names[layout]);
-		if (root_tag == NONE)
-			return FALSE;
-		original_roots[layout] = ui_widget_definition_get(root_tag);
-		if (original_roots[layout]->child_widgets.count != 3)
-			return FALSE;
-	}
+	pause_frame_tag = native_pause_frame_tag(159);
 	frame_tag = native_pause_frame_tag(240);
 	legend_tag = native_pause_legend_tag();
-	if (frame_tag == NONE || legend_tag == NONE) return FALSE;
-	for (index = 0; index < 24; index++)
+	if (pause_frame_tag == NONE || frame_tag == NONE || legend_tag == NONE) return FALSE;
+	for (index = 0; index < (long)NUMBEROF(performance_pause_strings); index++)
 	{
 		csmemset(&performance_pause_strings[index], 0, sizeof(performance_pause_strings[index]));
 		performance_pause_strings[index].string.address = performance_pause_text[index];
@@ -207,8 +194,8 @@ static boolean performance_pause_build(void)
 			return FALSE;
 	}
 
-	/* Native pause entries retain Resume, Quit, their actions and all three
-	 * original viewport placements. The list gains performance and local settings. */
+	/* All maps use the regular Xbox frame, four known rows and the same
+	 * viewport placements. Authored map lists cannot add or rearrange rows. */
 	for (layout = 0; layout < 3; layout++)
 	{
 		struct ui_widget_definition *pause = &performance_pause_definitions[_pp_pause_1p + layout];
@@ -216,46 +203,45 @@ static boolean performance_pause_build(void)
 		struct ui_widget_definition *entry = &performance_pause_definitions[_pp_entry_1p + layout];
 		struct ui_widget_definition *settings = &performance_pause_definitions[_pp_settings_1p + layout];
 		struct ui_widget_definition *options = &performance_pause_definitions[_pp_options_1p + layout];
-		struct ui_widget_child_reference *children = original_roots[layout]->child_widgets.address;
-		boolean found_list = FALSE;
-		short x = (original_roots[layout]->bounds.x1 - 202) / 2;
-		short y = (original_roots[layout]->bounds.y1 - 240) / 2;
-		*pause = *original_roots[layout];
-		csmemcpy(performance_pause_children[layout], children, sizeof(performance_pause_children[layout]));
-		for (index = 0; index < 3; index++)
-		{
-			if (performance_pause_children[layout][index].widget_tag.index == list_tag)
-			{
-				performance_pause_children[layout][index].widget_tag.index = performance_pause_tags[_pp_list_1p + layout];
-				performance_pause_children[layout][index].vertical_offset -= 28;
-				found_list = TRUE;
-			}
-		}
-		if (!found_list)
-			return FALSE;
+		struct ui_widget_definition const *pause_style = native_multiplayer_pause_root((short)layout);
+		short x, pause_y, y;
+		if (!pause_style) return FALSE;
+		*pause = *pause_style;
+		x = (pause->bounds.x1 - 202) / 2 - 1;
+		pause_y = pause_frame_y[layout];
+		y = (pause->bounds.y1 - 240) / 2;
+		performance_pause_child(&performance_pause_children[layout][0], pause_frame_tag, x - 8, pause_y);
+		performance_pause_child(&performance_pause_children[layout][1],
+			performance_pause_tags[_pp_list_1p + layout], x, pause_y + 15);
+		performance_pause_child(&performance_pause_children[layout][2], legend_tag, x + 17, pause_y + 134);
 		performance_pause_block(&pause->child_widgets, 3, performance_pause_children[layout]);
-		*list = *original_list;
-		list->bounds.y1 = list->bounds.y0 + 111;
-		performance_pause_list_children[layout][0] = original_list_children[0];
-		performance_pause_list_children[layout][3] = original_list_children[1];
-		performance_pause_list_children[layout][0].vertical_offset = 0;
-		performance_pause_list_children[layout][3].vertical_offset = 84;
+		list->type = _ui_widget_type_column_list;
+		list->flags = FLAG(_widget_pass_unhandled_events_to_children_bit) |
+			FLAG(_widget_dpad_updown_tabs_thru_list_items_bit);
+		list->bounds.x1 = 202;
+		list->bounds.y1 = 111;
+		performance_pause_child(&performance_pause_list_children[layout][0],
+			native_multiplayer_pause_resume_tag(), 0, 0);
+		performance_pause_child(&performance_pause_list_children[layout][3],
+			native_multiplayer_pause_leave_tag(), 0, 84);
 		performance_pause_child(&performance_pause_list_children[layout][1],
 			performance_pause_tags[_pp_entry_1p + layout], 0, 28);
 		performance_pause_child(&performance_pause_list_children[layout][2],
 			performance_pause_tags[_pp_settings_1p + layout], 0, 56);
 		performance_pause_block(&list->child_widgets, 4, performance_pause_list_children[layout]);
-		*entry = *original_resume;
+		*entry = *button_style;
 		performance_pause_reference(&entry->text_label_string_list, UNICODE_STRING_LIST_TAG,
 			performance_pause_string_tags[0]);
 		entry->string_list_index = 0;
+		/* Both longer labels use the regular small_ui font and button bounds. */
+		entry->text_font.index = font;
 		performance_pause_event_definition(&performance_pause_entry_events[layout][0],
 			_gamepad_analog_button_a, 0, FLAG(_event_handler_open_widget_bit), performance_pause_tags[_pp_options_1p + layout]);
 		performance_pause_event_definition(&performance_pause_entry_events[layout][1],
 			_gamepad_binary_button_start, 0, FLAG(_event_handler_open_widget_bit), performance_pause_tags[_pp_options_1p + layout]);
 		performance_pause_block(&entry->event_handlers, 2, performance_pause_entry_events[layout]);
 		*settings = *entry;
-		settings->string_list_index = 15;
+		settings->string_list_index = 16;
 		{
 			long settings_tag = game_settings_pause_tag((short)layout);
 			if (settings_tag == NONE) return FALSE;
@@ -265,10 +251,6 @@ static boolean performance_pause_build(void)
 				_gamepad_binary_button_start, 0, FLAG(_event_handler_open_widget_bit), settings_tag);
 			performance_pause_block(&settings->event_handlers, 2, performance_pause_settings_events[layout]);
 		}
-		/* The full label is 224 px in large_ui; small_ui fits the resident
-		 * 202 px button while retaining its authored bitmap and placement. */
-		entry->text_font.index = font;
-
 		options->type = _ui_widget_type_container;
 		/* Opening a submenu must keep the local player who invoked it. The
 		 * launch path treats a zero controller index as an explicit player 0. */
@@ -313,16 +295,16 @@ static boolean performance_pause_build(void)
 		definition->type = _ui_widget_type_text_box;
 		definition->bounds.x1 = 202;
 		definition->bounds.y1 = 27;
-		definition->text_font = original_resume->text_font;
-		definition->horizontal_offset = original_resume->horizontal_offset;
-		definition->vertical_offset = original_resume->vertical_offset;
-		definition->text_color = original_resume->text_color;
+		definition->text_font = button_style->text_font;
+		definition->horizontal_offset = button_style->horizontal_offset;
+		definition->vertical_offset = button_style->vertical_offset;
+		definition->text_color = button_style->text_color;
 		definition->justification = _text_justification_center;
 		performance_pause_reference(&definition->text_label_string_list,
 			UNICODE_STRING_LIST_TAG, performance_pause_string_tags[0]);
 		if (index <= _pp_apply)
 		{
-			definition->background_bitmap = original_resume->background_bitmap;
+			definition->background_bitmap = button_style->background_bitmap;
 			performance_pause_child(&performance_pause_column_children[index - _pp_preset],
 				performance_pause_tags[index], 0, (index - _pp_preset) * 27);
 		}
@@ -342,7 +324,7 @@ static boolean performance_pause_build(void)
 	performance_pause_definitions[_pp_title].bounds.y1 = 22;
 	performance_pause_definitions[_pp_title].horizontal_offset = 0;
 	performance_pause_definitions[_pp_title].vertical_offset = 0;
-	performance_pause_definitions[_pp_title].string_list_index = 12;
+	performance_pause_definitions[_pp_title].string_list_index = 13;
 	/* The native small_ui font has a 20-pixel line advance. */
 	performance_pause_definitions[_pp_footer].bounds.y1 = 40;
 	performance_pause_definitions[_pp_footer].bounds.x1 = 284;
@@ -378,8 +360,7 @@ static boolean performance_pause_is_spinner(struct widget_instance *widget)
 
 static short performance_pause_preset(unsigned flags)
 {
-	flags &= ~PERFORMANCE_MATCH_RULE_FLAGS;
-	return flags == 0 ? 0 : (flags == PERFORMANCE_PRACTICE_FLAGS ? 1 : 2);
+	return performance_variant_preset(flags);
 }
 
 static struct performance_pause_draft *performance_pause_draft_for(struct widget_instance *widget)
@@ -404,7 +385,8 @@ static void performance_pause_update(struct widget_instance *widget)
 {
 	struct performance_pause_draft *draft = performance_pause_draft_for(widget);
 	struct widget_instance *preset, *timer, *markers, *audio, *movement, *weapon, *apply, *footer, *focus;
-	boolean editable = global_network_game_server_get() != NULL;
+	boolean locked = playlist_profile_variant_is_locked(game_engine_get_variant());
+	boolean editable = global_network_game_server_get() != NULL && !locked;
 	unsigned flags;
 	if (!draft || !draft->root)
 		return;
@@ -431,6 +413,14 @@ static void performance_pause_update(struct widget_instance *widget)
 			draft->flags &= PERFORMANCE_MATCH_RULE_FLAGS;
 		else if (draft->preset == 1)
 			draft->flags = (draft->flags & PERFORMANCE_MATCH_RULE_FLAGS) | PERFORMANCE_PRACTICE_FLAGS;
+		else if (draft->preset == 2)
+		{
+			/* Input delay, spread and camouflage stay locked in a live game.
+			 * A full Pro match is selected in Edit Gametypes before starting. */
+			draft->flags = (draft->flags & PERFORMANCE_MATCH_RULE_FLAGS) |
+				(PERFORMANCE_PRO_FLAGS & ~PERFORMANCE_MATCH_RULE_FLAGS);
+			draft->preset = performance_pause_preset(draft->flags);
+		}
 	}
 	else
 	{
@@ -455,14 +445,15 @@ static void performance_pause_update(struct widget_instance *widget)
 	weapon->parameters.list.selected_index = (draft->flags & _performance_option_silent_weapon_ready) != 0;
 	preset->disabled = timer->disabled = markers->disabled = audio->disabled = movement->disabled = weapon->disabled = !editable;
 	apply->parameters.text_box.string_list_index = editable ? 1 : 2;
-	if (footer) footer->parameters.text_box.string_list_index = editable ? 3 : 4;
+	if (footer) footer->parameters.text_box.string_list_index = locked ? 26 : editable ? 3 : 4;
 	if (footer && editable)
 		for (focus = widget; focus; focus = focus->focused_child)
 		{
-			if (focus == markers) footer->parameters.text_box.string_list_index = 22;
-			if (focus == audio) footer->parameters.text_box.string_list_index = 23;
-			if (focus == movement) footer->parameters.text_box.string_list_index = 20;
-			if (focus == weapon) footer->parameters.text_box.string_list_index = 21;
+			if (focus == preset) footer->parameters.text_box.string_list_index = 25;
+			if (focus == markers) footer->parameters.text_box.string_list_index = 23;
+			if (focus == audio) footer->parameters.text_box.string_list_index = 24;
+			if (focus == movement) footer->parameters.text_box.string_list_index = 21;
+			if (focus == weapon) footer->parameters.text_box.string_list_index = 22;
 		}
 }
 
@@ -505,9 +496,12 @@ static boolean performance_pause_event(struct widget_instance *widget, short fun
 		performance_pause_update(widget);
 		/* Guests can return with A but cannot write; the server setter also
 		 * rechecks authority and peer capability at the moment of Apply. */
-		return global_network_game_server_get() == NULL || performance_options_set_host_flags(draft->flags);
+		return global_network_game_server_get() == NULL ||
+			playlist_profile_variant_is_locked(game_engine_get_variant()) ||
+			performance_options_set_host_flags(draft->flags);
 	}
-	if (function == _performance_pause_next && global_network_game_server_get() != NULL)
+	if (function == _performance_pause_next && global_network_game_server_get() != NULL &&
+		!playlist_profile_variant_is_locked(game_engine_get_variant()))
 	{
 		boolean deleted = FALSE;
 		struct event_record event = {0};

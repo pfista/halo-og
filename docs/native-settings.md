@@ -17,12 +17,18 @@ pages clone the original Advanced Controls editor: blue option rows, separate
 labels and values, the original arrow graphics, contextual help, and the native
 Accept/Cancel legend. There are no replacement fonts or new artwork.
 
-Campaign and multiplayer maps do not contain the main-menu editor artwork.
-Their in-game settings use the resident pause artwork: original 202×27 buttons,
+In-game settings use the resident pause artwork: original 202×27 buttons,
 original bitmap fonts and text baseline, and the blue frame with its native
 Select/Back legend. Taller option pages extend the middle of the frame while
 preserving its corners and footer divider. Split-screen pages fit within their
 local viewport; focused help appears beneath the frame in full-screen layouts.
+
+Multiplayer uses shared, fixed Xbox-style pause layouts for one, two and four
+local players. Game Settings and Performance share the same button style,
+independent of a map's authored pause-menu children. Imported main-menu editor
+tags do not switch in-game settings to the main-menu layout. Campaign and
+cooperative play retain their authored pause roots. The dual-renderer local
+build completed; in-game validation remains pending.
 
 Audio, Video, Controller and Multiplayer preferences belong to the local installation. They are not
 part of a player profile, map or network gametype. Performance Options remain saved

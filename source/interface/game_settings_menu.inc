@@ -627,7 +627,7 @@ static boolean device_settings_build(void)
         "Ignore small left-stick movements.\r\nXbox keeps the original deadzone.\r\nLower values may allow stick drift.",
         "Ignore small right-stick movements.\r\nXbox keeps the original deadzone.\r\nLower values may allow stick drift.",
         "Xbox builds horizontal turn speed.\r\nOff removes that held-stick speedup.\r\nBase turn speed stays the same.",
-        "Menus and on-screen keyboard:\r\nHeld arrows/D-pad/sticks. 250/100ms.\r\nAll local players. Accept saves.",
+        "",
         "Choose original assets or upres\r\nHUD, fonts and menu artwork.\r\nRelaunch Halo to apply."
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "Choose ANGLE or Native Metal.\r\nNative Metal is experimental.\r\nAccept saves for the next launch.",
@@ -654,12 +654,14 @@ static boolean device_settings_build(void)
     for (row = 0; row < NUMBER_OF_DEVICE_SETTINGS; row++) device_settings_native.spinner_tags[row] = NONE;
     for (layout = 0; layout < _ds_layout_count; layout++)
         for (page = 0; page < _ds_page_count; page++) device_settings.screen_tags[layout][page] = NONE;
-    font = tag_loaded(FONT_GROUP_TAG, "ui\\small_ui");
-    tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, DEVICE_OPTIONS_PREFIX "indicator_options_screen");
-    main_menu = tag != NONE;
+    main_menu = main_menu_is_active();
+    font = main_menu ? tag_loaded(FONT_GROUP_TAG, "ui\\small_ui") :
+        native_pause_resident_tag(FONT_GROUP_TAG, "ui\\small_ui");
     if (font == NONE) return FALSE;
     if (main_menu)
     {
+        tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, DEVICE_OPTIONS_PREFIX "indicator_options_screen");
+        if (tag == NONE) return FALSE;
         bases[_ds_main] = ui_widget_definition_get(tag);
         tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, DEVICE_OPTIONS_PREFIX "indicator_options_players_on_radar_label");
         profile_tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, DEVICE_PROFILE_PICKER);
@@ -668,16 +670,31 @@ static boolean device_settings_build(void)
     }
     else
     {
-        boolean multiplayer = tag_loaded(UI_WIDGET_DEFINITION_TAG, performance_pause_original_names[0]) != NONE;
-        for (layout = multiplayer ? _ds_pause_1p : _ds_solo; layout < (multiplayer ? _ds_solo : _ds_layout_count); layout++)
+        if (game_engine_running())
         {
-            tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, multiplayer ? performance_pause_original_names[layout - 1] : device_settings_campaign_roots[layout - _ds_solo]);
-            if (tag == NONE) return FALSE;
-            bases[layout] = ui_widget_definition_get(tag);
+            /* Imported map menus may have extra actions or editor tags. Use
+             * the shared Xbox pause layout instead of their authored roots. */
+            if (!native_multiplayer_pause_build()) return FALSE;
+            for (layout = _ds_pause_1p; layout < _ds_solo; layout++)
+            {
+                bases[layout] = native_multiplayer_pause_root((short)(layout - _ds_pause_1p));
+                if (!bases[layout]) return FALSE;
+            }
+            style = native_multiplayer_pause_button_style();
+            if (!style) return FALSE;
         }
-        tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, multiplayer ? "ui\\shell\\multiplayer_game\\pause_game\\resume_game_button" : "ui\\shell\\solo_game\\pause_game\\resume_game_button");
-        if (tag == NONE) return FALSE;
-        style = ui_widget_definition_get(tag);
+        else
+        {
+            for (layout = _ds_solo; layout < _ds_layout_count; layout++)
+            {
+                tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, device_settings_campaign_roots[layout - _ds_solo]);
+                if (tag == NONE) return FALSE;
+                bases[layout] = ui_widget_definition_get(tag);
+            }
+            tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, "ui\\shell\\solo_game\\pause_game\\resume_game_button");
+            if (tag == NONE) return FALSE;
+            style = ui_widget_definition_get(tag);
+        }
     }
     text_definition = main_menu ? device_settings_text_definition : device_settings_pause_text_definition;
     csmemset(device_settings_drafts, 0, sizeof(device_settings_drafts));
