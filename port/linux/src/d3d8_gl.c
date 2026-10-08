@@ -59,6 +59,7 @@ static void metal_frame_visibility(const char *kind, unsigned long slot, unsigne
 
 void d3d8_surface_initialize(D3DSurface *surface, D3DFORMAT format, unsigned long width, unsigned long height);
 void d3d8_surface_resize(D3DSurface *surface, D3DFORMAT format, unsigned long width, unsigned long height);
+long halo_screen_commit(void);
 
 #ifdef HALO_ANDROID
 /* OpenGL ES 3 (port/android/README.md): the desktop formats, enumerants
