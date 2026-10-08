@@ -714,7 +714,9 @@ static boolean network_game_server_send_performance_capability(
 		!network_game_server_performance_supported(machine, _performance_option_fiesta) &&
 		!network_game_server_performance_supported(machine, _performance_option_hardcore_camo) &&
 		!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY) &&
-		!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY))
+		!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY) &&
+		!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_SELF_MOVEMENT_FLAG) &&
+		!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_SELF_WEAPON_READY_FLAG))
 		return TRUE;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	supported = network_performance_runtime_supported_flags(TRUE, halo_performance_audio_available());
@@ -727,7 +729,9 @@ static boolean network_game_server_send_performance_capability(
 		network_game_server_performance_supported(machine, _performance_option_hardcore_camo),
 		network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY),
 		network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY),
-		network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_DOWNLOAD_WAIT_CAPABILITY));
+		network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_DOWNLOAD_WAIT_CAPABILITY),
+		network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_SELF_MOVEMENT_FLAG) ||
+			network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_SELF_WEAPON_READY_FLAG));
 
 	/* A saved variant may contain flags this host cannot interpret. Confirm
 	 * runtime support before the full record, on the same reliable stream;

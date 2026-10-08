@@ -18,8 +18,8 @@ static struct
     struct ui_widget_event_handler_reference entry_events[2], menu_events[3];
     struct ui_widget_game_data_input_reference list_input, menu_input;
     struct string_list strings[9];
-    struct string_list_entry string_entries[9][20];
-    wchar_t string_text[9][20][256];
+    struct string_list_entry string_entries[9][22];
+    wchar_t string_text[9][22][256];
     long root_tag, list_tag, menu_tag, spinner_tag[_pb_editor_row_count];
     short last_preset;
     unsigned last_flags;
@@ -74,28 +74,30 @@ static boolean pb_editor_build(void)
         "MOVEMENT SOUNDS:", "WEAPON SOUNDS:", "INPUT DELAY:", "PRECISION SPREAD:", "CAMO:", "PERFORMANCE"};
     static char const *const presets[] = {"DEFAULT", "PRACTICE", "PRO", "CUSTOM"};
     static char const *const toggles[] = {"OFF", "ON"};
-    static char const *const sounds[] = {"NORMAL", "SILENT"};
+    static char const *const sounds[] = {"NORMAL", "JUST ME", "SILENT"};
     static char const *const delays[] = {"OFF", "33MS"};
     static char const *const camo[] = {"NORMAL", "STRONGER"};
     static char const *const help[] = {
         "The familiar battlefield. Practice aids off.\r\nMatch rules stay as selected below.",
         "Learn the ground before you hold it.\r\nTimer, announcements and spawn markers on.",
-        "Quiet feet. Sharp aim. No added delay.\r\nTimer on, markers off, precision on, stronger camo.",
+        "Hear your own feet and weapons. Sharp aim.\r\nTimer on, markers off, precision on, stronger camo.",
         "Your battlefield, your rules.\r\nChoose each option below.",
         "No clock watching.\r\nThe match timer is hidden.",
         "Every second counts.\r\nShow elapsed time on the host's game clock.",
         "Know the ground by heart.\r\nSpawn markers are hidden.",
         "A little field intelligence.\r\nMark player spawns, including on original maps.",
         "Keep your own count.\r\nTimer announcements are silent.",
-        "A voice in your helmet.\r\nCountdowns and minute calls, with or without the clock.",
+        "A voice in your helmet.\r\nCountdowns and minute calls, even with the timer off.",
         "Let them hear you coming.\r\nOriginal footsteps, jumps and landings.",
-        "Walk softly. Carry the same firepower.\r\nMute movement sounds; combat sounds stay normal.",
+        "Hear your own footsteps, jumps and landings.\r\nOther players cannot hear them.",
+        "Walk softly. Carry the same firepower.\r\nMute movement for everyone; combat stays normal.",
         "Lock and load, loud and clear.\r\nOriginal equip and switch sounds.",
-        "No warning before the first shot.\r\nMute equip and switch; firing and reloads stay normal.",
+        "Hear your own equip and switch sounds.\r\nOther players cannot hear them.",
+        "Mute equip and switch for everyone.\r\nFiring and reloads stay normal.",
         "Ready when you are.\r\nNo added delay to player actions.",
         "One beat before the action.\r\nAdd one 30 Hz tick (about 33ms) for every player.",
         "A familiar margin of error.\r\nOriginal pistol and unscoped sniper spread.",
-        "Make the first shot count.\r\nZero initial pistol/sniper spread; rapid fire still spreads.",
+        "Make the first shot count.\r\nZero initial pistol/sniper spread; rapid fire spreads.",
         "The familiar blue shimmer.\r\nOriginal active camouflage tint.",
         "Now you see me...\r\nRemove the blue tint; reveal timing stays the same."};
     static char const *const row_names[] = {"ui\\native_pb\\preset_row", "ui\\native_pb\\timer_row", "ui\\native_pb\\markers_row", "ui\\native_pb\\audio_row", "ui\\native_pb\\movement_row", "ui\\native_pb\\weapon_row", "ui\\native_pb\\delay_row", "ui\\native_pb\\hardcore_row", "ui\\native_pb\\camo_row"};
@@ -268,6 +270,28 @@ static short pb_editor_preset(unsigned flags)
     return performance_variant_preset(flags);
 }
 
+static short pb_editor_option_selection(unsigned flags, short row)
+{
+    if (row == 4)
+        return performance_variant_sound_mode(flags, _performance_option_silent_movement,
+            _performance_option_self_movement);
+    if (row == 5)
+        return performance_variant_sound_mode(flags, _performance_option_silent_weapon_ready,
+            _performance_option_self_weapon_ready);
+    return (flags & pb_editor_option_flags[row - 1]) != 0;
+}
+
+static unsigned pb_editor_option_selection_flags(short row, short selection)
+{
+    if (row == 4)
+        return performance_variant_sound_flags(selection, _performance_option_silent_movement,
+            _performance_option_self_movement);
+    if (row == 5)
+        return performance_variant_sound_flags(selection, _performance_option_silent_weapon_ready,
+            _performance_option_self_weapon_ready);
+    return selection ? pb_editor_option_flags[row - 1] : 0;
+}
+
 static void pb_editor_sync(struct widget_instance *menu)
 {
     struct widget_instance *spinners[_pb_editor_row_count];
@@ -279,8 +303,8 @@ static void pb_editor_sync(struct widget_instance *menu)
     {
         spinners[row] = pb_editor_spinner(menu, row);
         if (!spinners[row]) return;
-        if (row && spinners[row]->parameters.list.selected_index)
-            flags |= pb_editor_option_flags[row - 1];
+        if (row)
+            flags |= pb_editor_option_selection_flags(row, spinners[row]->parameters.list.selected_index);
     }
     if (spinners[0]->parameters.list.selected_index != pb_editor.last_preset)
     {
@@ -292,7 +316,7 @@ static void pb_editor_sync(struct widget_instance *menu)
             flags = preset == 2 ? (flags & _performance_option_fiesta) | PERFORMANCE_PRO_FLAGS :
                 (flags & PERFORMANCE_MATCH_RULE_FLAGS) | (preset ? PERFORMANCE_PRACTICE_FLAGS : 0);
             for (row = 1; row < _pb_editor_row_count; row++)
-                spinners[row]->parameters.list.selected_index = (flags & pb_editor_option_flags[row - 1]) != 0;
+                spinners[row]->parameters.list.selected_index = pb_editor_option_selection(flags, row);
         }
     }
     else if (flags != pb_editor.last_flags)
@@ -316,7 +340,7 @@ static boolean performance_editor_event(struct widget_instance *widget, short fu
             struct widget_instance *spinner = pb_editor_spinner(widget, i);
             if (!spinner) return FALSE;
             spinner->disabled = player_ui_edit_playlist_profile_is_locked();
-            spinner->parameters.list.selected_index = i == 0 ? pb_editor.last_preset : (flags & pb_editor_option_flags[i - 1]) != 0;
+            spinner->parameters.list.selected_index = i == 0 ? pb_editor.last_preset : pb_editor_option_selection(flags, i);
         }
         return TRUE;
     }

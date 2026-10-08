@@ -1974,7 +1974,8 @@ static void biped_make_footstep(
 		if (object_get_marker_by_name(biped_index, contact_point->marker_name, &marker, 1))
 		{
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-			unsigned previous_sound_role = performance_sound_push(_performance_sound_movement);
+			struct performance_sound_scope previous_sound_role = performance_sound_push(
+				_performance_sound_movement, biped->unit.player_index);
 #endif
 			material_effect_new_from_point(
 				definition->biped.material_effects.index,

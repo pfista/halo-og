@@ -411,7 +411,7 @@ static void active_input_delay(void) {
     assert(client.game.variant.flags==263 && applied_flags==263);
 }
 static void host_delay_acknowledgement(void) {
-    const unsigned unknown_flags[]={32,39,64,96,127,128,135,255,256,263,511};
+    const unsigned unknown_flags[]={32,39,64,96,127,128,135,255,256,263,511,4096,8192,12295,12549};
     for(unsigned i=0;i<sizeof(unknown_flags)/sizeof(unknown_flags[0]);i++) {
         struct network_game game=defaults(); reset();
         client.state=_network_game_client_state_pregame;
@@ -531,6 +531,50 @@ static void normal_start_delay_acknowledgement(void) {
     assert(!network_game_server_send_game_settings_to_all_machines(&host,&host.game,sizeof(host.game)));
     assert(sent_capabilities==2 && sent_settings_pieces>1 && applied==1 && applied_flags==32);
     assert(host.machines[0].closed && !host.machines[1].closed && network_game_settings_update_pending);
+}
+static void self_audio_acknowledgement(void) {
+    /* The real reliable serializer acknowledges the new generation before
+     * full-record settings, for both direct joins and lobby broadcasts. */
+    const unsigned flags[]={4096,8192,12288,4101,12549};
+    for(unsigned i=0;i<sizeof(flags)/sizeof(flags[0]);i++) {
+        struct network_game_server host={.game=defaults()};
+        struct network_game_server_client_machine peer={.supported=16383};
+        host.game.variant.flags=flags[i];
+        assert(network_game_variant_required_capabilities(&host.game.variant)==flags[i]);
+        assert(!network_performance_can_join(flags[i],4095));
+        assert(network_performance_can_join(flags[i],16383));
+        reset();client.state=_network_game_client_state_pregame;
+        assert(network_game_server_send_game_settings_to_client_machine(&host,&peer,&host.game,sizeof(host.game)));
+        assert(sent_capabilities==1 && sent_settings_pieces>1);
+        assert(network_game_client_performance_host_capabilities==16383);
+        assert(client.game.variant.flags==flags[i] && applied_flags==flags[i]);
+        host.machines[1]=(struct network_game_server_client_machine){.supported=16383,.joined=TRUE};
+        reset();client.state=_network_game_client_state_pregame;
+        assert(network_game_server_send_game_settings_to_all_machines(&host,&host.game,sizeof(host.game)));
+        assert(sent_capabilities==1 && sent_settings_pieces>1 && applied_flags==flags[i]);
+        assert(network_game_client_performance_host_capabilities==16383);
+        /* An older host forwards the same saved bytes with only v5 support.
+         * A new client follows the host's Off behavior for that extension. */
+        reset();client.state=_network_game_client_state_pregame;peer.supported=4095;
+        assert(network_game_server_send_game_settings_to_client_machine(&host,&peer,&host.game,sizeof(host.game)));
+        assert(network_game_client_performance_host_capabilities==4095);
+        assert(client.game.variant.flags==0 && applied_flags==0);
+    }
+    /* Actor-only aids can change live while preselected match rules remain
+     * fixed through a full-record update on the same reliable stream. */
+    struct network_game game=defaults();
+    reset();client.state=_network_game_client_state_ingame;
+    client.game=defaults();
+    network_game_client_performance_host_capabilities=16383;
+    client.game.variant.flags=256;game.variant.flags=12288;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(client.game.variant.flags==12544 && applied_flags==12544);
+    game.variant.flags=24;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(client.game.variant.flags==280 && applied_flags==280);
+    game.variant.flags=0;
+    assert(network_game_client_game_settings_updated(&client,&game));
+    assert(client.game.variant.flags==256 && applied_flags==256);
 }
 static void expanded_weapon_acknowledgement(void) {
     for(int set=GAME_WEAPON_SET_UNCUT;set<=GAME_WEAPON_SET_ALL;set++) {
@@ -869,6 +913,7 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"active-input-delay")) active_input_delay();
     else if(!strcmp(argv[1],"host-delay-acknowledgement")) host_delay_acknowledgement();
     else if(!strcmp(argv[1],"normal-start-delay-acknowledgement")) normal_start_delay_acknowledgement();
+    else if(!strcmp(argv[1],"self-audio-acknowledgement")) self_audio_acknowledgement();
     else if(!strcmp(argv[1],"expanded-weapon-acknowledgement")) expanded_weapon_acknowledgement();
     else if(!strcmp(argv[1],"global-cache-identity")) global_cache_identity();
     else if(!strcmp(argv[1],"global-cache-ready-admission")) global_cache_ready_admission();
@@ -977,6 +1022,9 @@ class NetworkV11Tests(unittest.TestCase):
 
     def test_normal_start_broadcast_acknowledges_before_settings(self):
         self.run_case("normal-start-delay-acknowledgement")
+
+    def test_actor_only_audio_requires_acknowledged_host_and_peer_support(self):
+        self.run_case("self-audio-acknowledgement")
 
     def test_expanded_weapon_sets_require_host_ack_before_loading(self):
         self.run_case("expanded-weapon-acknowledgement")

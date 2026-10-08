@@ -9762,7 +9762,8 @@ static short unit_animation_update(
 	if (sound_index!=NONE)
 	{
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-		unsigned previous_sound_role = performance_sound_push(animation_sound_role);
+		struct performance_sound_scope previous_sound_role = performance_sound_push(
+			animation_sound_role, unit->unit.player_index);
 #endif
 		object_impulse_sound_new(
 			unit_index,

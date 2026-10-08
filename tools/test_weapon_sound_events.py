@@ -47,11 +47,11 @@ struct animation_graph_first_person_weapon_animations { struct tag_block animati
 struct animation_graph_weapon_class { const char *hand_marker_name, *grip_marker_name; };
 struct animation_graph_unit_seat { struct tag_block weapon_classes; };
 struct animation_graph { struct tag_block first_person_weapon_animations, animations, sound_references, unit_seats; };
-struct weapon_datum { long definition_index; struct { int state, state_timer, control_flags; long overheated_effect_index; int rounds; } weapon; };
+struct weapon_datum { long definition_index; struct { long parent_object_index; } object; struct { int state, state_timer, control_flags; long overheated_effect_index; int rounds; } weapon; };
 struct weapon_definition { struct { struct tag_reference ready_effect; struct { struct tag_reference first_person_animations; } interface_definition; } weapon; };
 struct unit_definition { struct { struct tag_reference animation_graph; } object; };
 struct unit_datum { long definition_index; struct {
-    int current_weapon_index, desired_weapon_index;
+    int current_weapon_index, desired_weapon_index; long player_index;
     long weapon_last_used_at_game_time[2];
     struct { short seat_index, weapon_index, action; struct animation_state action_animation, base_animation, soft_ping_animation, overlay_action_animation; } animation;
 } unit; };
@@ -84,6 +84,10 @@ static struct weapon_definition *weapon_definition_get(long i) { assert(i>=0 && 
    ready effect and sound provenance, which prefetch must leave unchanged. */
 static void weapon_precache_projectile_trails(long definition) { assert(definition>=0 && definition<2); }
 #endif
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static long player_index_from_unit_index(long i) { assert(i==10); return unit.unit.player_index; }
+static long local_player_get_player_index(short i) { assert(i==0); return unit.unit.player_index; }
+#endif
 static struct unit_datum *unit_get(long i) { assert(i==10); return &unit; }
 static struct unit_definition *unit_definition_get(long i) { assert(i==20); return &unit_definition; }
 static struct animation_graph *animation_graph_definition_get(long i) { assert(i==30); return &graph; }
@@ -96,9 +100,13 @@ static long object_impulse_sound_new(long object,long sound,short node,const voi
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
     assert(performance_sound_current()==expected_role);
     assert(performance_sound_role(_performance_sound_voice,last_sound)==expected_role);
-    assert(performance_sound_gain(last_sound,silence)==((expected_role & silence)?0.0f:1.0f));
+    assert(performance_sound_gain(last_sound,silence,0,NONE)==((expected_role & silence)?0.0f:1.0f));
+    assert(performance_sound_player(_performance_sound_voice,last_sound)==(expected_role ? unit.unit.player_index:NONE));
+    assert(performance_sound_gain(last_sound,0,3,unit.unit.player_index)==1.0f);
+    assert(performance_sound_gain(last_sound,0,3,0x40004)==(expected_role ? 0.0f:1.0f));
+    assert(performance_sound_gain(last_sound,0,3,NONE)==(expected_role ? 0.0f:1.0f));
 #else
-    assert(performance_sound_current()==0 && performance_sound_gain(last_sound,silence)==1.0f);
+    assert(performance_sound_current()==0 && performance_sound_gain(last_sound,silence,0,NONE)==1.0f);
 #endif
     return last_sound;
 }
@@ -169,10 +177,10 @@ static void setup(void) {
     graph.unit_seats=(struct tag_block){1,&seat}; seat.weapon_classes=(struct tag_block){1,&weapon_class};
     fp_animations.animations=(struct tag_block){40,animation_indices}; references[0].sound.index=99;
     for(int i=0;i<40;i++) { animation_indices[i].animation_index=(short)i; animations[i].sound_index=0; }
-    for(int i=0;i<2;i++) { weapons[i].definition_index=i; weapons[i].weapon.rounds=17;
+    for(int i=0;i<2;i++) { weapons[i].definition_index=i; weapons[i].object.parent_object_index=10; weapons[i].weapon.rounds=17;
         weapons[i].weapon.overheated_effect_index=NONE; weapon_definitions[i].weapon.ready_effect.index=77;
         weapon_definitions[i].weapon.interface_definition.first_person_animations.index=30; }
-    unit.definition_index=20; unit_definition.object.animation_graph.index=30;
+    unit.definition_index=20; unit.unit.player_index=0x30004; unit_definition.object.animation_graph.index=30;
     fp.weapon_index=0; fp.current_sound_index=NONE;
 }
 static void check_local(short state,unsigned role,int frame,boolean audible,boolean finish) {
@@ -247,11 +255,12 @@ int main(int argc,char **argv) {
     unit.unit.animation.action=3; unit.unit.animation.action_animation.frame_index=1; before=voices;
     assert(unit_animation_update(10,30,&unit.unit.animation.action_animation)==_animation_no_key_frame && voices==before);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-    unsigned previous=performance_sound_push(_performance_sound_movement);
+    struct performance_sound_scope previous=performance_sound_push(_performance_sound_movement,0x30005);
 #endif
     expected_role=_performance_sound_weapon_ready; weapon_play_first_person_weapon_sound(0,_first_person_weapon_message_ready);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-    assert(performance_sound_current()==_performance_sound_movement); performance_sound_pop(previous);
+    assert(performance_sound_current()==_performance_sound_movement && performance_sound_current_player()==0x30005);
+    performance_sound_pop(previous);
 #endif
     assert(gameplay_rng==0x13579bdf && performance_sound_current()==0);
     printf("%d %u %u %.1f %d %d %d %d\n",voices,gameplay_rng,local_rng,scale_sum,

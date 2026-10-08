@@ -21,14 +21,14 @@ typedef int boolean;
 #define FALSE 0
 #define NONE (-1)
 #define NUMBEROF(a) (sizeof(a)/sizeof((a)[0]))
-enum { _performance_option_match_timer=1, _performance_option_spawn_markers=2,
-       _performance_option_timer_audio=4, _performance_option_silent_movement=8,
-       _performance_option_silent_weapon_ready=16, _performance_option_input_delay=32, _performance_option_hardcore=64,
-       _performance_option_fiesta=128, _performance_option_hardcore_camo=256, PERFORMANCE_MATCH_RULE_FLAGS=480,
-       PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=511 };
+/* PRODUCTION SOUND MODES */
 static unsigned long flags;
 static unsigned mutation_calls, peer_support=63;
 static boolean host=TRUE;
+static boolean locked=FALSE;
+struct game_variant;
+static struct game_variant *game_engine_get_variant(void) { return NULL; }
+static boolean playlist_profile_variant_is_locked(struct game_variant const *variant) { (void)variant; return locked; }
 static int recordings=1;
 int halo_performance_audio_available(void) { return recordings; }
 void performance_sound_get_statistics(struct performance_sound_statistics *s) {
@@ -45,7 +45,8 @@ static short performance_options_markers_visible_count(void) { return (flags&2) 
 static short performance_options_markers_supported_count(void) { return 24; }
 static boolean performance_options_set_host_flags(unsigned long value) {
     mutation_calls++;
-    if (!host || ((value&4) && !recordings) || !network_performance_can_join(value,peer_support)) return FALSE;
+    if (!host || locked || !performance_variant_flags_valid(value) ||
+        ((value&4) && !recordings) || !network_performance_can_join(value,peer_support)) return FALSE;
     flags=value; return TRUE;
 }
 static void console_printf(boolean clear,const char *format,...) {
@@ -132,7 +133,7 @@ int main(void) {
     flags=96;peer_support=127;
     change("pb practice",103);
     change("pb stock",96);
-    inspect("pb status");assert(strstr(output,"Hardcore: ON"));
+    inspect("pb status");assert(strstr(output,"Precision Spread: ON"));
     /* Item Options owns Fiesta. Existing preset and live aid controls must
      * retain that match rule, with and without Hardcore and Input Delay. */
     peer_support=255;
@@ -154,24 +155,52 @@ int main(void) {
         change("pb movement silent",256|extras|8);
         change("pb weapons silent",256|extras|24);
         change("pb stock",256|extras);
-        inspect("pb status"); assert(strstr(output,"Camo: HARDCORE"));
+        inspect("pb status"); assert(strstr(output,"Camo: STRONGER"));
     }
     change("performance_options 256",256);
     change("performance_options 511",511);
     inspect("performance_options 512");
+    flags=0; peer_support=16383;
+    change("pb movement self",4096);
+    assert(strstr(output,"movement sounds JUST ME"));
+    change("pb weapons self",12288);
+    assert(strstr(output,"weapon sounds JUST ME"));
+    change("pb movement silent",8192|8);
+    change("pb movement toggle",8192);
+    change("pb movement toggle",12288);
+    change("pb weapons silent",4096|16);
+    change("pb weapons normal",4096);
+    change("pb movement normal",0);
+    change("pb weapons toggle",8192);
+    change("pb weapons toggle",16);
+    change("pb weapons toggle",0);
+    change("performance_options 12288",12288);
+    inspect("performance_options 4104"); /* conflicting movement modes */
+    inspect("performance_options 8208"); /* conflicting weapon modes */
+    change("pb practice",7);
+    change("pb pro",PERFORMANCE_PRO_FLAGS & ~PERFORMANCE_MATCH_RULE_FLAGS);
+    assert(strstr(output,"movement sounds JUST ME | weapon sounds JUST ME"));
+    locked=TRUE;
+    unsigned long before_locked=flags;
+    run("pb movement normal"); assert(flags==before_locked && strstr(output,"Team Slayer Pro is locked"));
+    locked=FALSE;
+    flags=0;peer_support=4095;
+    run("pb movement self"); assert(flags==0 && strstr(output,"change refused"));
     flags=3; peer_support=3;
     run("pb audio on"); assert(flags==3 && strstr(output,"change refused"));
     run("pb practice"); assert(flags==3 && strstr(output,"change refused"));
     change("pb timer off",2);
     change("pb stock",0);
     char *matches[16],token[128]; boolean native_only;
-    assert(complete("pb ",matches,&native_only,token)==9 && native_only);
+    assert(complete("pb ",matches,&native_only,token)==11 && native_only);
     assert(complete("pb mar",matches,&native_only,token)==1 && !strcmp(matches[0],"markers"));
     assert(!strcmp(token,"mar"));
     assert(complete("pb markers ",matches,&native_only,token)==3 && native_only);
     assert(complete("pb audio tog",matches,&native_only,token)==1 && !strcmp(matches[0],"toggle"));
     assert(complete("performance_options ",matches,&native_only,token)==16 && native_only);
-    assert(complete("pb movement s",matches,&native_only,token)==1 && !strcmp(matches[0],"silent"));
+    assert(complete("pb movement s",matches,&native_only,token)==2 && !strcmp(matches[0],"self") && !strcmp(matches[1],"silent"));
+    assert(complete("pb movement self",matches,&native_only,token)==1 && !strcmp(matches[0],"self"));
+    assert(complete("pb weapons ",matches,&native_only,token)==4);
     assert(complete("pb weapons n",matches,&native_only,token)==1 && !strcmp(matches[0],"normal"));
     assert(complete("performance_options 3",matches,&native_only,token)==11);
     assert(complete("performance_options 63",matches,&native_only,token)==1 && !strcmp(matches[0],"63"));
@@ -190,7 +219,9 @@ class PerformanceConsoleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="halo-pb-console-") as temporary:
             source = Path(temporary) / "console_test.c"
             binary = Path(temporary) / ("console_test.exe" if sys.platform == "win32" else "console_test")
-            source.write_text(HARNESS)
+            header = (ROOT / "source/game/performance_variant.h").read_text()
+            declarations = header[header.index("enum\n{"):header.index("/* Preset names")]
+            source.write_text(HARNESS.replace("/* PRODUCTION SOUND MODES */", declarations))
             compiler = shutil.which("clang") or shutil.which("cc")
             if not compiler:
                 self.fail("A native C compiler is required")

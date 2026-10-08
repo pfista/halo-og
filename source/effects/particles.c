@@ -1049,8 +1049,8 @@ void particles_update(
 		struct particle_definition *definition = particle_definition_get(particle->definition_index);
 		boolean was_new = (particle->age == 0.0f);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-		unsigned previous_sound_role = performance_sound_push(
-			performance_sound_role(_performance_sound_particle, particle_index));
+		struct performance_sound_scope previous_sound_role = performance_sound_push_recorded(
+			_performance_sound_particle, particle_index);
 #endif
 
 		if (render.frame_index - particle->last_rendered_frame_index >

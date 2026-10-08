@@ -53,16 +53,25 @@ static wchar_t performance_pause_text[][64] =
 	L"Markers: < Off >", L"Markers: < On >",
 	L"PERFORMANCE OPTIONS",
 	L"Timer sounds: <Off>", L"Timer sounds: <On>", L"GAME SETTINGS",
-	L"Movement: <Normal>", L"Movement: <Silent>",
-	L"Weapon: < Normal >", L"Weapon: < Silent >",
-	L"Walk softly.\r\nFootsteps, jumps and landings.",
-	L"No warning before the first shot.\r\nEquip and switch sounds only.",
+	L"Movement: <Normal>", L"Movement: <Just Me>", L"Movement: <Silent>",
+	L"Weapon: < Normal >", L"Weapon: < Just Me >", L"Weapon: < Silent >",
+	L"Original footsteps,\r\njumps and landings.",
+	L"Just Me: hear your movement.\r\nOthers cannot hear it.",
+	L"Silent: no movement sounds.\r\nCombat sounds stay normal.",
+	L"Original equip and switch.\r\nEveryone hears them.",
+	L"Just Me: hear equip and switch.\r\nOthers cannot hear them.",
+	L"Silent: no equip or switch.\r\nCombat sounds stay normal.",
 	L"A little field intelligence.\r\nMark player spawn locations.",
 	L"A voice in your helmet.\r\nLocal volume and cues: Audio.",
 	L"Pro rules are set before play.\r\nHere, change timer and sounds.",
 	L"Team Slayer Pro is locked.\r\nUse another game type to edit.",
 };
-static struct string_list_entry performance_pause_strings[27];
+enum
+{
+	_pp_help_movement = 23, _pp_help_weapon = 26, _pp_help_markers = 29,
+	_pp_help_audio, _pp_help_preset, _pp_help_locked,
+};
+static struct string_list_entry performance_pause_strings[NUMBEROF(performance_pause_text)];
 static struct string_list performance_pause_string_lists[7];
 static char const *const performance_pause_string_names[7] =
 {
@@ -145,8 +154,8 @@ static boolean performance_pause_build(void)
 {
 	struct ui_widget_definition const *button_style;
 	long font, pause_frame_tag, frame_tag, legend_tag, index, layout;
-	static short const string_starts[7] = {0, 5, 9, 11, 14, 17, 19};
-	static short const string_counts[7] = {27, 4, 2, 2, 2, 2, 2};
+	static short const string_starts[7] = {0, 5, 9, 11, 14, 17, 20};
+	static short const string_counts[7] = {NUMBEROF(performance_pause_text), 4, 2, 2, 2, 3, 3};
 	static short const pause_frame_y[3] = {164, 52, 46};
 
 	/* Runtime registrations are invalidated at every scenario unload. A tag
@@ -429,8 +438,10 @@ static void performance_pause_update(struct widget_instance *widget)
 			(timer->parameters.list.selected_index ? _performance_option_match_timer : 0) |
 			(markers->parameters.list.selected_index ? _performance_option_spawn_markers : 0) |
 			(audio->parameters.list.selected_index ? _performance_option_timer_audio : 0) |
-			(movement->parameters.list.selected_index ? _performance_option_silent_movement : 0) |
-			(weapon->parameters.list.selected_index ? _performance_option_silent_weapon_ready : 0);
+			performance_variant_sound_flags(movement->parameters.list.selected_index,
+				_performance_option_silent_movement, _performance_option_self_movement) |
+			performance_variant_sound_flags(weapon->parameters.list.selected_index,
+				_performance_option_silent_weapon_ready, _performance_option_self_weapon_ready);
 		if (flags != draft->flags)
 		{
 			draft->flags = flags;
@@ -441,19 +452,23 @@ static void performance_pause_update(struct widget_instance *widget)
 	timer->parameters.list.selected_index = (draft->flags & _performance_option_match_timer) != 0;
 	markers->parameters.list.selected_index = (draft->flags & _performance_option_spawn_markers) != 0;
 	audio->parameters.list.selected_index = (draft->flags & _performance_option_timer_audio) != 0;
-	movement->parameters.list.selected_index = (draft->flags & _performance_option_silent_movement) != 0;
-	weapon->parameters.list.selected_index = (draft->flags & _performance_option_silent_weapon_ready) != 0;
+	movement->parameters.list.selected_index = performance_variant_sound_mode(draft->flags,
+		_performance_option_silent_movement, _performance_option_self_movement);
+	weapon->parameters.list.selected_index = performance_variant_sound_mode(draft->flags,
+		_performance_option_silent_weapon_ready, _performance_option_self_weapon_ready);
 	preset->disabled = timer->disabled = markers->disabled = audio->disabled = movement->disabled = weapon->disabled = !editable;
 	apply->parameters.text_box.string_list_index = editable ? 1 : 2;
-	if (footer) footer->parameters.text_box.string_list_index = locked ? 26 : editable ? 3 : 4;
+	if (footer) footer->parameters.text_box.string_list_index = locked ? _pp_help_locked : editable ? 3 : 4;
 	if (footer && editable)
 		for (focus = widget; focus; focus = focus->focused_child)
 		{
-			if (focus == preset) footer->parameters.text_box.string_list_index = 25;
-			if (focus == markers) footer->parameters.text_box.string_list_index = 23;
-			if (focus == audio) footer->parameters.text_box.string_list_index = 24;
-			if (focus == movement) footer->parameters.text_box.string_list_index = 21;
-			if (focus == weapon) footer->parameters.text_box.string_list_index = 22;
+			if (focus == preset) footer->parameters.text_box.string_list_index = _pp_help_preset;
+			if (focus == markers) footer->parameters.text_box.string_list_index = _pp_help_markers;
+			if (focus == audio) footer->parameters.text_box.string_list_index = _pp_help_audio;
+			if (focus == movement) footer->parameters.text_box.string_list_index =
+				_pp_help_movement + movement->parameters.list.selected_index;
+			if (focus == weapon) footer->parameters.text_box.string_list_index =
+				_pp_help_weapon + weapon->parameters.list.selected_index;
 		}
 }
 
@@ -484,8 +499,10 @@ static boolean performance_pause_event(struct widget_instance *widget, short fun
 		timer->parameters.list.selected_index = (draft->flags & _performance_option_match_timer) != 0;
 		markers->parameters.list.selected_index = (draft->flags & _performance_option_spawn_markers) != 0;
 		audio->parameters.list.selected_index = (draft->flags & _performance_option_timer_audio) != 0;
-		movement->parameters.list.selected_index = (draft->flags & _performance_option_silent_movement) != 0;
-		weapon->parameters.list.selected_index = (draft->flags & _performance_option_silent_weapon_ready) != 0;
+		movement->parameters.list.selected_index = performance_variant_sound_mode(draft->flags,
+			_performance_option_silent_movement, _performance_option_self_movement);
+		weapon->parameters.list.selected_index = performance_variant_sound_mode(draft->flags,
+			_performance_option_silent_weapon_ready, _performance_option_self_weapon_ready);
 		performance_pause_update(widget);
 		return TRUE;
 	}

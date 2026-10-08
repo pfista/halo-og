@@ -140,6 +140,12 @@ struct event_record { short type; };
 static struct game_variant *player_ui_get_edit_playlist_profile(void) {
     return player_ui_globals.edit_profile_index==NONE ? NULL : &player_ui_globals.edit_profile.current.variant;
 }
+static boolean playlist_profile_variant_is_locked(struct game_variant const *variant) { (void)variant; return FALSE; }
+static boolean player_ui_edit_playlist_profile_is_locked(void) { return FALSE; }
+enum { _error_locked_game_type = 1 };
+static void display_error_deferred(int error, int32_t index, boolean a, boolean b) {
+    (void)error; (void)index; (void)a; (void)b; assert(0);
+}
 /* PRODUCTION FUNCTIONS */
 '''
 
@@ -160,7 +166,8 @@ static void format_and_default(void) {
         _performance_option_timer_audio == 4 && _performance_option_silent_movement == 8 &&
         _performance_option_silent_weapon_ready == 16 && _performance_option_input_delay == 32 && _performance_option_hardcore == 64 && _performance_option_fiesta == 128 && _performance_option_hardcore_camo == 256 &&
         PERFORMANCE_MATCH_RULE_FLAGS == 480 &&
-        PERFORMANCE_PRACTICE_FLAGS == 7 && PERFORMANCE_OPTIONS_MASK == 511 &&
+        PERFORMANCE_PRACTICE_FLAGS == 7 && PERFORMANCE_OPTIONS_MASK == 12799 &&
+        _performance_option_self_movement == 4096 && _performance_option_self_weapon_ready == 8192 &&
         PERFORMANCE_INPUT_DELAY_MILLISECONDS == 33);
     assert(performance_variant_get_flags(NULL) == 0);
     assert(performance_variant_get_input_delay_milliseconds(NULL) == 0);
@@ -316,6 +323,59 @@ static void editor_dirty(void) {
     assert(!player_ui_edit_profile_is_dirty());
     player_ui_globals.edit_profile.current.variant.flags = 0xabcd;
     assert(!player_ui_edit_profile_is_dirty());
+    performance_variant_set_flags(&player_ui_globals.edit_profile.current.variant, 4096);
+    assert(player_ui_edit_profile_is_dirty());
+    performance_variant_set_flags(&player_ui_globals.edit_profile.current.variant, 8192);
+    assert(player_ui_edit_profile_is_dirty());
+}
+
+static void self_sound_modes(void) {
+    struct game_variant variant, loaded;
+    const unsigned offsets[] = {29,30,31,41,42,43};
+    const int32_t profile = (int32_t)FLAG(_saved_game_file_index_valid_bit);
+    assert(PERFORMANCE_PRO_FLAGS == (1u|4u|64u|256u|4096u|8192u));
+    for (short movement = 0; movement < 3; movement++)
+    for (short weapon = 0; weapon < 3; weapon++) {
+        unsigned sound_flags = performance_variant_sound_flags(movement,8,4096) |
+            performance_variant_sound_flags(weapon,16,8192);
+        assert(performance_variant_sound_mode(sound_flags,8,4096) == movement);
+        assert(performance_variant_sound_mode(sound_flags,16,8192) == weapon);
+        for (unsigned extras = 0; extras <= 511; extras++) {
+            if (extras & 24) continue;
+            unsigned flags = extras | sound_flags;
+            build_game_variant_slayer(&variant);
+            performance_variant_set_flags(&variant, flags);
+            assert(performance_variant_get_flags(&variant) == flags);
+            assert(performance_variant_flags_valid(flags));
+            if (!(flags & PERFORMANCE_SELF_SOUND_FLAGS)) continue;
+            assert((variant.universal_variant.pad4 & 3) == 3);
+            assert(variant.universal_variant.pad6 == (byte)(variant.universal_variant.pad5 ^ 0xA5 ^ variant.universal_variant.pad4));
+            /* Previous readers reject the new format instead of confusing it
+             * with Normal or Silent. Every single-bit padding mutation fails. */
+            assert(variant.universal_variant.pad4 != 1 && variant.universal_variant.pad4 != 2);
+            for (unsigned n = 0; n < NUMBEROF(offsets); n++) for (unsigned bit = 0; bit < 8; bit++) {
+                struct game_variant damaged = variant;
+                ((byte *)&damaged)[offsets[n]] ^= 1u << bit;
+                assert(performance_variant_get_flags(&damaged) == 0);
+            }
+            playlist_profile_save(profile, &variant);
+            assert(playlist_profile_get(profile, &loaded));
+            assert(!memcmp(&variant, &loaded, sizeof(variant)));
+            assert(performance_variant_get_flags(&loaded) == flags);
+            loaded.human_readable_game_description[0] = 'S';
+            playlist_profile_save(profile | 1, &loaded);
+            assert(playlist_profile_get(profile | 1, &variant));
+            assert(performance_variant_get_flags(&variant) == flags);
+            assert(variant.human_readable_game_description[0] == 'S');
+        }
+    }
+    const unsigned malformed[] = {4096u|8u,8192u|16u,512u,1024u,2048u,16384u};
+    for (unsigned i = 0; i < NUMBEROF(malformed); i++) {
+        assert(!performance_variant_flags_valid(malformed[i]));
+        performance_variant_set_flags(&variant, malformed[i]);
+        assert(performance_variant_get_flags(&variant) == 0);
+        for (unsigned n = 0; n < NUMBEROF(offsets); n++) assert(((byte *)&variant)[offsets[n]] == 0);
+    }
 }
 
 static void expanded_weapon_sets(void) {
@@ -422,7 +482,7 @@ static void selecting_game_engine(void) {
     }
 }
 
-int main(void) { format_and_default(); input_delay_duration(); starting_equipment_choices(); persistence(); editor_dirty(); editor_save_and_cancel(); selecting_game_engine(); expanded_weapon_sets(); return 0; }
+int main(void) { format_and_default(); input_delay_duration(); starting_equipment_choices(); persistence(); editor_dirty(); editor_save_and_cancel(); selecting_game_engine(); expanded_weapon_sets(); self_sound_modes(); return 0; }
 '''
 
 

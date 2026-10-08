@@ -1808,7 +1808,8 @@ static void first_person_weapon_update(
 			director_get_perspective(local_player_index)==_director_perspective_first_person)
 		{
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-			unsigned previous_sound_role = performance_sound_push(animation_sound_role);
+			struct performance_sound_scope previous_sound_role = performance_sound_push(
+				animation_sound_role, local_player_get_player_index(local_player_index));
 #endif
 			first_person_weapon->current_sound_index= object_impulse_sound_new(
 				first_person_weapon->weapon_index,
@@ -2146,10 +2147,12 @@ static void weapon_play_first_person_weapon_sound(
 							if (definition_index!=NONE)
 							{
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-								unsigned previous_sound_role = performance_sound_push(
+								struct performance_sound_scope previous_sound_role = performance_sound_push(
 									message_type==_first_person_weapon_message_ready ||
 									message_type==_first_person_weapon_message_put_away ?
-										_performance_sound_weapon_ready : _performance_sound_normal);
+										_performance_sound_weapon_ready : _performance_sound_normal,
+									weapon->object.parent_object_index != NONE ?
+										player_index_from_unit_index(weapon->object.parent_object_index) : NONE);
 #endif
 								object_impulse_sound_new(
 									weapon_index,

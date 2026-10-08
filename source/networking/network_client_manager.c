@@ -3092,7 +3092,8 @@ static boolean network_game_client_idle_joining(
 
 				/* Earlier hosts reject unknown capability bits. Announce each
 				 * supported generation first: timer/markers, then timer audio,
-				 * then sound rules, input delay, Hardcore precision, Fiesta, camo and expanded weapons. Each host
+				 * then sound rules, input delay, Hardcore precision, Fiesta,
+				 * camo, expanded weapons, download wait, and actor-only audio. Each host
 				 * retains the newest capability it understands before the
 				 * reliable join request. */
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY, 3);
@@ -3130,6 +3131,10 @@ static boolean network_game_client_idle_joining(
 					return FALSE;
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
 					supported & 2047);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported & 4095);
 				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
 					return FALSE;
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,

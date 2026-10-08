@@ -70,7 +70,8 @@ void performance_options_apply_host_flags(unsigned long flags)
 {
 	unsigned long old_flags = performance_flags;
 	/* A malformed extension must never enable the known subset. */
-	performance_flags = (flags & ~PERFORMANCE_OPTIONS_MASK) ? 0 : flags;
+	performance_flags = (flags & ~PERFORMANCE_OPTIONS_MASK) ||
+		!performance_variant_flags_valid((unsigned)flags) ? 0 : flags;
 	if ((old_flags ^ performance_flags) & _performance_option_timer_audio)
 	{
 		performance_timer_audio_reset();

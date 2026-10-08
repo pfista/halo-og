@@ -969,10 +969,11 @@ static boolean network_game_server_performance_peers_support(
 	long index;
 
 #ifndef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-	if (flags & (PERFORMANCE_MATCH_RULE_FLAGS | NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY | NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY))
+	if (flags & (PERFORMANCE_MATCH_RULE_FLAGS | NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY |
+		NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY | NETWORK_PERFORMANCE_SELF_AUDIO_FLAGS))
 	{
 		platform_show_message("Halo: match rules unavailable",
-			"This build does not support Input Delay, Hardcore, Fiesta, Hardcore Camo, or expanded weapon sets. Turn these options off, or use a compatible build.");
+			"This build does not support Input Delay, Hardcore, Fiesta, Hardcore Camo, expanded weapon sets, or Just Me audio. Turn these options off, or use a compatible build.");
 		return FALSE;
 	}
 #endif
@@ -1002,6 +1003,14 @@ static boolean network_game_server_performance_peers_support(
 			!network_game_server_client_machine_is_local(server, machine) &&
 			!network_game_server_performance_supported(machine, flags))
 		{
+			if ((flags & NETWORK_PERFORMANCE_SELF_AUDIO_FLAGS) &&
+				!network_game_server_performance_supported(machine, flags & NETWORK_PERFORMANCE_SELF_AUDIO_FLAGS))
+			{
+				platform_show_message("Halo: Just Me audio unavailable",
+					"A connected player does not support Just Me audio. Choose Normal or Silent for Movement Sounds and Weapon Ready Sounds, "
+					"or have that player update before enabling Just Me.");
+				return FALSE;
+			}
 			if ((flags & NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY) &&
 				!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY))
 			{
@@ -1102,7 +1111,8 @@ boolean performance_options_set_host_flags(
 	struct game_variant proposed;
 	struct native_map_cache_selection selection;
 
-	if (!server || (flags & ~((unsigned long)PERFORMANCE_OPTIONS_MASK))) return FALSE;
+	if (!server || (flags & ~((unsigned long)PERFORMANCE_OPTIONS_MASK)) ||
+		!performance_variant_flags_valid((unsigned)flags)) return FALSE;
 	if (playlist_profile_variant_is_locked(&server->game.variant) &&
 		performance_variant_get_flags(&server->game.variant) != flags)
 		return FALSE;

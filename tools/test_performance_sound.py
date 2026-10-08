@@ -92,12 +92,12 @@ struct sound_pitch_range { real playback_rate; struct tag_block permutations; };
 struct sound_definition { short sound_class; real zero_gain_modifier,one_gain_modifier,gain_modifier;
  real inner_cone_angle,outer_cone_angle,outer_cone_gain; struct tag_block pitch_ranges; };
 struct sound_datum { long definition_index; struct { real scale,gain; } source; real pitch;
- short playing_channel_index,pitch_range_index,permutation_index; };
+ short playing_channel_index,pitch_range_index,permutation_index,listener_index; };
 struct sound_channel_datum { long sound_index; struct sound_permutation *playing_permutation; };
 static struct sound_permutation permutation={0.8f};
 static struct sound_pitch_range pitch_range={1.0f,{1,&permutation}};
 static struct sound_definition definition={0,0.75f,1.25f,0.9f,0,0,1,{1,&pitch_range}};
-static struct sound_datum voice={77,{0.5f,0.5f},1.0f,NONE,0,0};
+static struct sound_datum voice={77,{0.5f,0.5f},1.0f,NONE,0,0,0};
 static struct sound_channel_datum engine_channel={0x10001,&permutation};
 static struct sound_channel dsound_channel;
 static struct sdl_stream stream;
@@ -113,6 +113,7 @@ static struct { void (*channel_update)(short); } platform_definition={update};
 static struct { void *unused; __typeof__(platform_definition) *platform_definition; } sound_manager_globals={0,&platform_definition};
 static struct sound_datum *sound_get(long index) { assert(index==engine_channel.sound_index); return &voice; }
 static struct sound_definition *sound_definition_get(long index) { assert(index==77); return &definition; }
+static long local_player_get_player_index(short i) { assert(i>=0 && i<2); return i ? 0x30005:0x30004; }
 static unsigned long performance_options_get_flags(void) { return selected_flags; }
 static real sound_manager_master_gain(short sound_class) { (void)sound_class; return category_gain; }
 static real sound_definition_get_minimum_distance(long index) { assert(index==77); return 3.0f; }
@@ -168,7 +169,7 @@ int main(int argc,char **argv) {
  unsigned frames=8192;
  float normal[2048]={0},silent[2048]={0},control[2048]={0};
  for(unsigned role=0;role<3;role++) {
-  performance_sound_record(_performance_sound_voice,engine_channel.sound_index,role);
+  performance_sound_record(_performance_sound_voice,engine_channel.sound_index,role,0x30004);
   for(unsigned flags=0;flags<=24;flags+=8) {
    prepare_stream(samples,frames); selected_flags=flags; unsigned before=queued;
    update_channel_for_impulse_sound(0,0.8f); assert(queued==before+1);
@@ -184,9 +185,25 @@ int main(int argc,char **argv) {
   }
  }
  assert(!memcmp(normal,control,sizeof(normal))); /* Same shared tag used by ordinary audio. */
+ /* Self-only mode reaches the same production mixer, preserving the actor's
+    gain while producing exact zero for another player's listener. */
+ for(unsigned role=0;role<3;role++) for(short listener=0;listener<2;listener++) {
+  performance_sound_record(_performance_sound_voice,engine_channel.sound_index,role,0x30004);
+  voice.listener_index=listener;
+  selected_flags=_performance_option_self_movement | _performance_option_self_weapon_ready;
+  prepare_stream(samples,frames); unsigned before=queued;update_channel_for_impulse_sound(0,0.8f);
+  assert(queued==before+1);
+  unsigned muted=role && listener!=0;
+  float output[2048]={0};mix_voice(&stream,output,1024);
+  float peak=0;for(unsigned i=0;i<2048;i++) peak=MAX(peak,fabsf(output[i]));
+  assert(muted ? peak==0:peak>0);
+  assert(fabs(stream.cursor-1024.0*22050/OUTPUT_RATE)<0.001);
+  if(role==1 && listener==0) assert(!memcmp(output,normal,sizeof(normal)));
+ }
+ voice.listener_index=0;
  /* Live toggles preserve cursor and the channel: one existing click-free ramp,
     then exact zero, then the original gain is restored without requeueing. */
- performance_sound_record(_performance_sound_voice,engine_channel.sound_index,1);
+ performance_sound_record(_performance_sound_voice,engine_channel.sound_index,1,0x30004);
  selected_flags=0; prepare_stream(samples,frames); update_channel_for_impulse_sound(0,0.8f);
  float output[2048]={0};mix_voice(&stream,output,1024); unsigned before=queued;
  selected_flags=8; update_channel_for_impulse_sound(0,0.8f); assert(queued==before);
@@ -212,13 +229,15 @@ int main(int argc,char **argv) {
    definition.sound_class=(short)atoi(argv[10]);voice.source.scale=(real)atof(argv[11]);
   }
   category_gain=voice.source.gain=1.0f;
-  char path[4096]; const char *names[]={"normal.f32","silent.f32","shared-control.f32","restored.f32"};
+  char path[4096]; const char *names[]={"normal.f32","silent.f32","shared-control.f32","restored.f32",
+   "just-me.f32","just-me-other.f32"};
   unsigned output_frames=(unsigned)ceil((double)frames*OUTPUT_RATE/input_rate);
   float *output=calloc(output_frames*2,sizeof(float)); assert(output);
-  for(unsigned i=0;i<4;i++) {
+  for(unsigned i=0;i<6;i++) {
    memset(output,0,output_frames*2*sizeof(float));
-   performance_sound_record(_performance_sound_voice,engine_channel.sound_index,i==2?0:export_role);
-   selected_flags=i?24:0; prepare_stream(samples,frames);
+   performance_sound_record(_performance_sound_voice,engine_channel.sound_index,i==2?0:export_role,0x30004);
+   selected_flags=i>=4 ? _performance_option_self_movement | _performance_option_self_weapon_ready:i?24:0;
+   voice.listener_index=i==5 ? 1:0;prepare_stream(samples,frames);
    update_channel_for_impulse_sound(0,1.0f);
    if(i==3) { unsigned queues=queued;selected_flags=0;update_channel_for_impulse_sound(0,1.0f);assert(queued==queues); }
    mix(output,output_frames);
@@ -332,7 +351,7 @@ int main(void) {
  for(unsigned role=0;role<3;role++) {
   memset(effect_pool,0,sizeof(effect_pool));effect_count=voice_count=particle_emits=random_calls=0;random_seed=0;
   for(unsigned owner=0;owner<3;owner++) performance_sound_reset(owner);
-  unsigned previous=performance_sound_push(role);
+  struct performance_sound_scope previous=performance_sound_push(role,0x30004);
   long index=effect_allocate(77,NONE,FALSE);
   effect_get(index)->object_index=NONE;effect_get(index)->location.cluster_index=0;
   effect_update(index,0); /* Same immediate update used by effect_new_* APIs. */
@@ -343,13 +362,19 @@ int main(void) {
   effect_update(index,0.2f);assert(voice_count==1 && particle_emits==1 && performance_sound_current()==0);
   assert(performance_sound_role(_performance_sound_voice,0x10000)==role);
   assert(performance_sound_role(_performance_sound_particle,first_particle)==role);
+  assert(performance_sound_player(_performance_sound_voice,0x10000)==(role ? 0x30004:NONE));
+  assert(performance_sound_player(_performance_sound_particle,first_particle)==(role ? 0x30004:NONE));
   particles_update(1.0f/30);assert(performance_sound_current()==0 && last_nested_effect!=NONE);
   assert(performance_sound_role(_performance_sound_effect,last_nested_effect)==role);
+  assert(performance_sound_player(_performance_sound_effect,last_nested_effect)==(role ? 0x30004:NONE));
   effect_update(last_nested_effect,0.3f);assert(voice_count==2);
   assert(performance_sound_role(_performance_sound_voice,0x10001)==role);
+  assert(performance_sound_player(_performance_sound_voice,0x10001)==(role ? 0x30004:NONE));
+  assert(performance_sound_gain(0x10001,0,3,0x30004)==1);
+  assert(performance_sound_gain(0x10001,0,3,0x40004)==(role ? 0:1));
   performance_sound_capture_voice(0x10002,77);
-  assert(performance_sound_gain(0x10002,3)==1); /* Same shared tag outside event chain. */
-  assert(performance_sound_gain(0x10001,3)==(role?0:1));
+  assert(performance_sound_gain(0x10002,3,0,NONE)==1); /* Same shared tag outside event chain. */
+  assert(performance_sound_gain(0x10001,3,0,NONE)==(role?0:1));
   assert(performance_sound_current()==0 && random_calls==4 && random_seed==4);
  }
  return 0;
@@ -359,35 +384,225 @@ int main(void) {
 
 
 class PerformanceSoundTests(unittest.TestCase):
+    def test_production_movement_hook_captures_actor_without_changing_event_creation(self):
+        bipeds = (ROOT / "source/units/bipeds.c").read_text()
+        source = PREFIX + r'''
+#define MAXIMUM_COLLISION_USER_STACK_DEPTH 4
+enum { _collision_user_bipeds=3 };
+struct tag_reference { long index; };
+struct biped_contact_point { const char *marker_name; };
+struct biped_datum { long definition_index;struct { long player_index; } unit;
+ struct { real_point3d bounding_sphere_center; } object; };
+struct biped_definition { struct { struct tag_block contact_points;struct tag_reference material_effects; } biped; };
+struct object_marker { struct { real_point3d position; } matrix; };
+static struct biped_datum biped={77,{0x30004},{{0,0,0}}};
+static struct biped_contact_point contact={"foot"};
+static struct biped_definition definition={{{1,&contact},{99}}};
+static int global_current_collision_user_depth=1,global_current_collision_users[4];
+static long next_voice=0x10000;
+static unsigned created;
+static struct biped_datum *biped_get(long i) { assert(i==10);return &biped; }
+static struct biped_definition *biped_definition_get(long i) { assert(i==77);return &definition; }
+static boolean material_effect_visible(const real_point3d *p) { (void)p;return TRUE; }
+static boolean object_get_marker_by_name(long i,const char *n,struct object_marker *m,int count) {
+ assert(i==10 && !strcmp(n,"foot") && count==1);memset(m,0,sizeof(*m));return TRUE;
+}
+static void material_effect_new_from_point(long i,short event,const real_point3d *p,real scale) {
+ (void)p;assert(i==99 && event>=0 && event<6 && scale==0);++created;
+ assert(performance_sound_current()==_performance_sound_movement);
+ assert(performance_sound_current_player()==biped.unit.player_index);
+ performance_sound_capture_voice(next_voice++,77);
+ performance_sound_capture(_performance_sound_effect,0x10001);
+}
+'''
+        source += function(bipeds, "static void biped_make_footstep(\n")
+        source += r'''
+int main(void) {
+ for(int actor=0;actor<2;actor++) for(short event=0;event<6;event++) {
+  biped.unit.player_index=0x30004+actor;
+  biped_make_footstep(10,event,0);
+  assert(global_current_collision_user_depth==1 && performance_sound_current()==0);
+  assert(performance_sound_current_player()==NONE);
+  assert(performance_sound_player(_performance_sound_voice,next_voice-1)==biped.unit.player_index);
+  assert(performance_sound_player(_performance_sound_effect,0x10001)==biped.unit.player_index);
+  assert(performance_sound_gain(next_voice-1,0,1,biped.unit.player_index)==1);
+  assert(performance_sound_gain(next_voice-1,0,1,0x40004)==0);
+  assert(performance_sound_gain(next_voice-1,1,0,biped.unit.player_index)==0);
+ }
+ biped_make_footstep(10,0,1);assert(created==12);
+ performance_sound_capture_voice(next_voice,77);
+ assert(performance_sound_gain(next_voice,3,3,NONE)==1);
+ return 0;
+}
+'''
+        compile_run(source)
+
+    def test_pickup_feedback_already_belongs_to_local_player(self):
+        players = (ROOT / "source/game/players.c").read_text()
+        equipment = (ROOT / "source/items/equipment.c").read_text()
+        source = PREFIX + r'''
+enum { _network_pickup_weapon,_network_pickup_ammunition,_network_pickup_grenade,
+ _network_pickup_equipment,_network_pickup_powerup,WEAPON_DEFINITION_TAG=1,EQUIPMENT_DEFINITION_TAG=2 };
+enum { _equipment_powerup_overshield=1,_equipment_powerup_health=2,_equipment_powerup_active_camouflage=3 };
+struct tag_reference { long index; };
+struct player_datum { short local_player_index;long unit_index; };
+struct weapon_definition { struct { struct tag_reference pickup_sound; } weapon; };
+struct equipment_definition { struct { short powerup_type;struct tag_reference pickup_sound; } equipment; };
+static struct player_datum player={0,10};
+static struct weapon_definition weapon_definition={{{99}}};
+static struct equipment_definition equipment_definition={{1,{99}}};
+static unsigned voices,hud_events,flashes;
+static struct player_datum *player_get(long i) { assert(i==0x30004);return &player; }
+boolean tag_index_is_group(long i,long group) { assert(i==77);return group==EQUIPMENT_DEFINITION_TAG; }
+static struct weapon_definition *weapon_definition_get(long i) { assert(i==77);return &weapon_definition; }
+static struct equipment_definition *equipment_definition_get(long i) { assert(i==77);return &equipment_definition; }
+static void hud_picked_up_weapon(short i,long tag) { (void)i;(void)tag;++hud_events; }
+static void hud_picked_up_ammunition(short i,long tag,short count) { (void)i;(void)tag;(void)count;++hud_events; }
+static void hud_picked_up_grenade(short i,long tag) { assert(i==0 && tag==77);++hud_events; }
+static void hud_picked_up_powerup(short i,long tag) { assert(i==0 && tag==77);++hud_events; }
+static void player_control_unzoom(long i) { assert(i==10); }
+static void player_over_shield_screen_effect(long i) { assert(i==0x30004);++flashes; }
+static void player_health_pack_screen_effect(long i) { assert(i==0x30004);++flashes; }
+static void player_active_camo_screen_effect(long i) { assert(i==0x30004);++flashes; }
+static void unspatialized_impulse_sound_new(long i,real scale) {
+ assert(i==99 && scale==1);performance_sound_capture_voice(0x10000+(long)++voices,i);
+ assert(performance_sound_gain(0x10000+(long)voices,3,3,NONE)==1);
+}
+'''
+        source += function(equipment, "void equipment_definition_handle_pickup(\n")
+        source += function(players, "void network_player_show_pickup(\n")
+        source += r'''
+int main(void) {
+ for(short powerup=1;powerup<=3;powerup++) {
+  equipment_definition.equipment.powerup_type=powerup;
+  player.local_player_index=NONE;
+  network_player_show_pickup(0x30004,_network_pickup_powerup,77,0);
+  assert(voices==(unsigned)powerup-1 && flashes==(unsigned)powerup-1);
+  player.local_player_index=0;
+  network_player_show_pickup(0x30004,_network_pickup_powerup,77,0);
+  assert(voices==(unsigned)powerup && flashes==(unsigned)powerup);
+ }
+ assert(hud_events==3 && performance_sound_current()==0);
+ return 0;
+}
+'''
+        compile_run(source)
+
+    def test_self_only_routes_to_actor_listener_including_split_screen(self):
+        manager = (ROOT / "source/sound/sound_manager.c").read_text()
+        variant = (ROOT / "source/game/performance_variant.h").read_text()
+        source = PREFIX + block(variant, "enum\n{") + ";\n"
+        source += r'''
+#define MAXIMUM_NUMBER_OF_LOCAL_PLAYERS 4
+enum { _sound_spatialization_mode_none,_sound_spatialization_mode_absolute,_sound_spatialization_mode_relative };
+struct sound_source { short spatialization_mode; real occlusion, distance_squared[4]; };
+struct sound_listener { int valid; };
+static struct sound_listener listeners[4]={{1},{1},{0},{0}};
+static long listener_players[4]={0x30004,0x30005,NONE,NONE};
+static unsigned long selected_flags;
+static short obstruction_listener;
+static unsigned source_calls;
+static struct sound_listener *listener_get(short i) { return &listeners[i]; }
+static long local_player_get_player_index(short i) { return listener_players[i]; }
+static unsigned long performance_options_get_flags(void) { return selected_flags; }
+static real source_distance_squared(short i,struct sound_source *source) { return source->distance_squared[i]; }
+static void compute_sound_obstruction(short i,struct sound_source *source,real distance) {
+ (void)distance;obstruction_listener=i;source->occlusion=0;
+}
+static real square_root(real n) { return sqrtf(n); }
+static short source_audible(struct sound_source *source,real maximum_distance) {
+ ++source_calls;
+ if(source->spatialization_mode==_sound_spatialization_mode_none) return 0;
+ if(source->spatialization_mode==_sound_spatialization_mode_relative)
+  return source->distance_squared[0]<maximum_distance ? 0:NONE;
+ short nearest=NONE;real distance=maximum_distance*maximum_distance;
+ for(short i=0;i<4;i++) if(listeners[i].valid && source->distance_squared[i]<distance) {
+  nearest=i;distance=source->distance_squared[i];
+ }
+ return nearest;
+}
+'''
+        source += function(manager, "static short source_audible_for_performance(\n")
+        source += r'''
+int main(void) {
+ struct sound_source source={_sound_spatialization_mode_absolute,0,{1,4,100,100}};
+ selected_flags=_performance_option_self_movement | _performance_option_self_weapon_ready;
+ /* Actor is listener 1 even while listener 0 is nearer. */
+ assert(source_audible_for_performance(&source,10,1,0x30005)==1 && obstruction_listener==1);
+ assert(source_audible_for_performance(&source,10,2,0x30005)==1);
+ assert(source_audible_for_performance(&source,10,0,0x30005)==0);
+ /* Remote, unknown and stale salted ownership keep stock creation while gain
+    filtering rejects them; no camera position can make the owner match. */
+ for(int i=0;i<3;i++) {
+  long actor=i==0 ? 0x40005:i==1 ? NONE:0x30006;
+  assert(source_audible_for_performance(&source,10,1,actor)==0);
+  performance_sound_record(_performance_sound_voice,0x10001,1,actor);
+  assert(performance_sound_gain(0x10001,0,1,listener_players[0])==0);
+ }
+ selected_flags=0;
+ assert(source_audible_for_performance(&source,10,1,0x30005)==0);
+ selected_flags=_performance_option_self_movement | _performance_option_silent_movement;
+ assert(source_audible_for_performance(&source,10,1,0x30005)==0);
+ selected_flags=_performance_option_self_movement;
+ source.spatialization_mode=_sound_spatialization_mode_none;
+ assert(source_audible_for_performance(&source,10,1,0x30005)==1);
+ source.spatialization_mode=_sound_spatialization_mode_relative;
+ assert(source_audible_for_performance(&source,10,1,0x30005)==1);
+ source.distance_squared[0]=100;
+ assert(source_audible_for_performance(&source,10,1,0x30005)==NONE);
+ source.spatialization_mode=_sound_spatialization_mode_absolute;
+ source.distance_squared[0]=1;source.distance_squared[1]=1000;
+ assert(source_audible_for_performance(&source,10,1,0x30005)==0);
+ listeners[1].valid=0;source.distance_squared[1]=4;
+ assert(source_audible_for_performance(&source,10,1,0x30005)==0);
+ assert(source_calls==13);
+ return 0;
+}
+'''
+        compile_run(source)
+
     def test_salted_event_provenance_scope_reset_and_late_restoration(self):
         compile_run(PREFIX + r'''
 int main(void) {
  performance_sound_reset(_performance_sound_voice);
- unsigned outer=performance_sound_push(_performance_sound_movement);
+ struct performance_sound_scope outer=performance_sound_push(_performance_sound_movement,0x30004);
  performance_sound_capture(_performance_sound_effect,0x10001);
- unsigned inner=performance_sound_push(_performance_sound_weapon_ready);
+ struct performance_sound_scope inner=performance_sound_push(_performance_sound_weapon_ready,0x30005);
  performance_sound_capture_voice(0x10001,77); performance_sound_pop(inner);
  performance_sound_capture(_performance_sound_particle,0x10001);
  performance_sound_pop(outer); assert(performance_sound_current()==0);
  /* A later effect/particle tick inherits its creation role, even after
     the originating scope ended; an identical sound tag stays per-event. */
- outer=performance_sound_push(performance_sound_role(_performance_sound_particle,0x10001));
+ outer=performance_sound_push_recorded(_performance_sound_particle,0x10001);
  performance_sound_capture(_performance_sound_effect,0x10002); performance_sound_pop(outer);
- outer=performance_sound_push(performance_sound_role(_performance_sound_effect,0x10002));
+ outer=performance_sound_push_recorded(_performance_sound_effect,0x10002);
  performance_sound_capture_voice(0x10002,77); performance_sound_pop(outer);
  performance_sound_capture_voice(0x10003,77);
- assert(performance_sound_gain(0x10001,1)==1 && performance_sound_gain(0x10001,2)==0);
- assert(performance_sound_gain(0x10002,1)==0 && performance_sound_gain(0x10002,2)==1);
- assert(performance_sound_gain(0x10003,3)==1);
- assert(performance_sound_gain(0x10002,0)==1); /* Live restoration. */
+ assert(performance_sound_gain(0x10001,1,0,NONE)==1 && performance_sound_gain(0x10001,2,0,NONE)==0);
+ assert(performance_sound_gain(0x10002,1,0,NONE)==0 && performance_sound_gain(0x10002,2,0,NONE)==1);
+ assert(performance_sound_gain(0x10003,3,0,NONE)==1);
+ assert(performance_sound_gain(0x10001,0,2,0x30005)==1);
+ assert(performance_sound_gain(0x10001,0,2,0x30004)==0);
+ assert(performance_sound_gain(0x10001,0,2,0x40005)==0); /* Salted actor mismatch. */
+ assert(performance_sound_gain(0x10001,2,2,0x30005)==0); /* Silent takes precedence. */
+ assert(performance_sound_gain(0x10002,0,1,0x30004)==1);
+ assert(performance_sound_gain(0x10002,0,1,0x30005)==0);
+ assert(performance_sound_gain(0x10002,0,0,NONE)==1); /* Live restoration. */
  assert(performance_sound_role(_performance_sound_effect,0x20001)==0);
  performance_sound_capture(_performance_sound_effect,0x20001);
  assert(performance_sound_role(_performance_sound_effect,0x10001)==0);
- performance_sound_record(_performance_sound_voice,0x20002,2);
+ performance_sound_record(_performance_sound_voice,0x20002,2,0x30004);
  performance_sound_forget(_performance_sound_voice,0x10002);
- assert(performance_sound_gain(0x20002,2)==0); /* Stale deletion cannot erase reused slot. */
+ assert(performance_sound_gain(0x20002,2,0,NONE)==0); /* Stale deletion cannot erase reused slot. */
+ assert(performance_sound_player(_performance_sound_voice,0x10002)==NONE);
+ assert(performance_sound_player(_performance_sound_voice,0x20002)==0x30004);
+ performance_sound_record(_performance_sound_voice,0x20003,1,NONE);
+ assert(performance_sound_gain(0x20003,0,1,NONE)==0); /* Unknown actor stays private. */
+ performance_sound_record(_performance_sound_voice,0x20003,0,0x30004);
+ assert(performance_sound_gain(0x20003,0,3,0x30004)==1);
+ assert(performance_sound_player(_performance_sound_voice,0x20003)==NONE);
  for(unsigned owner=0;owner<3;owner++) {
-  performance_sound_record(owner,-1,3); performance_sound_record(owner,0x1ffff,3);
+  performance_sound_record(owner,-1,3,0x30004); performance_sound_record(owner,0x1ffff,3,0x30004);
   assert(performance_sound_role(owner,-1)==0 && performance_sound_role(owner,0x1ffff)==0);
   performance_sound_reset(owner); assert(performance_sound_role(owner,0x10001)==0);
  }

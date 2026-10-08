@@ -166,6 +166,14 @@ unsigned performance_timer_items_due(long previous,long current) {
     if(previous<0 || current<=previous || current-previous>30) return 0;
     return previous<item_due_tick && current>=item_due_tick ? item_due_mask:0;
 }
+/* Synthetic upcoming-wave events let this fixture exercise mixer deadlines;
+ * production wave timing is covered by test_performance_timer_items. */
+unsigned performance_timer_items_upcoming(long previous,long current,long lead,long deadlines[3]) {
+    assert(lead==20*TICKS_PER_SECOND);
+    unsigned due=performance_timer_items_due(previous,current);
+    for(unsigned i=0;i<3;i++) if(due & (1u<<i)) deadlines[i]=item_due_tick+10*TICKS_PER_SECOND;
+    return due;
+}
 static float cosine(float angle) { return cosf(angle); }
 static float sine(float angle) { return sinf(angle); }
 static void rasterizer_debug_line(const real_point3d *from,const real_point3d *to,const real_argb_color *color) {
@@ -244,6 +252,9 @@ int main(void) {
     assert(performance_options_get_flags()==(_performance_option_fiesta|_performance_option_spawn_markers));
     performance_options_apply_host_flags(256); assert(performance_options_get_flags() == 256);
     performance_options_apply_host_flags(512); assert(performance_options_get_flags() == 0);
+    performance_options_apply_host_flags(4096|8192); assert(performance_options_get_flags() == (4096|8192));
+    performance_options_apply_host_flags(4096|8); assert(performance_options_get_flags() == 0);
+    performance_options_apply_host_flags(8192|16); assert(performance_options_get_flags() == 0);
     /* Reload discards old ownership and re-reads the authoritative variant. */
     performance_options_dispose_from_old_map(); assert(performance_options_markers_supported_count() == 0);
     variant.flags = 3|_performance_option_fiesta; performance_options_initialize_for_new_map();
@@ -556,6 +567,7 @@ class PerformanceRuntime(unittest.TestCase):
             block(engine_header, "enum game_engine_type\n") + ";",
             block(engine[engine.rfind("enum\n", 0, engine.index("_game_engine_all =")):], "enum\n") + ";",
             block(variants, "enum\n") + ";",
+            block(variants, "static inline boolean performance_variant_flags_valid("),
             block(scenarios, "struct player_starting_location\n") + ";",
             block(options, "struct performance_timer_statistics\n") + ";",
         ))

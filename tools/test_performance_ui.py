@@ -33,10 +33,9 @@ struct game_variant { unsigned flags; };
 static struct game_variant edited;
 static boolean editing=TRUE;
 static unsigned mutation_calls,help_calls;
-enum { _performance_option_match_timer=1, _performance_option_spawn_markers=2, _performance_option_timer_audio=4,
-       _performance_option_silent_movement=8, _performance_option_silent_weapon_ready=16,
-       _performance_option_input_delay=32, _performance_option_hardcore=64, _performance_option_fiesta=128, _performance_option_hardcore_camo=256,
-       PERFORMANCE_PRACTICE_FLAGS=7, PERFORMANCE_OPTIONS_MASK=511, PERFORMANCE_MATCH_RULE_FLAGS=480 };
+/* PERFORMANCE DECLARATIONS */
+static boolean locked;
+static boolean player_ui_edit_playlist_profile_is_locked(void) { return locked; }
 static struct game_variant *player_ui_get_edit_playlist_profile(void) { return editing ? &edited : NULL; }
 static unsigned performance_variant_get_flags(const struct game_variant *v) { return v->flags; }
 static void performance_variant_set_flags(struct game_variant *v,unsigned f) { mutation_calls++; v->flags=f; }
@@ -94,7 +93,7 @@ static void setup(void) {
     }
     memset(&stock,0,sizeof(stock)); memset(&pb_editor,0,sizeof(pb_editor));
     memset(stock_tags,0,sizeof(stock_tags));
-    editing=TRUE; edited.flags=mutation_calls=register_calls=fail_registration=help_calls=0;
+    editing=TRUE; locked=FALSE; edited.flags=mutation_calls=register_calls=fail_registration=help_calls=0;
     for(unsigned i=0;i<STOCK_WIDGET_COUNT;i++) {
         struct ui_widget_definition *d=&stock.defs[i];
         d->background_bitmap.index=d->text_label_string_list.index=d->text_font.index=NONE;
@@ -223,15 +222,15 @@ static void shapes_and_preservation(void) {
         assert(pb_editor.spinner_tag[i]!=NONE && pb_editor.row_children[i][1].horizontal_offset==300);
         assert(pb_editor.spinner[i].bounds.x1==142 && pb_editor.spinner[i].list_footer_bounds.x1==148);
     }
-    assert(!wcscmp(string_at(&pb_editor.spinner[0],0),L"STOCK") && !wcscmp(string_at(&pb_editor.spinner[0],1),L"PRACTICE") && !wcscmp(string_at(&pb_editor.spinner[0],2),L"CUSTOM"));
+    assert(!wcscmp(string_at(&pb_editor.spinner[0],0),L"DEFAULT") && !wcscmp(string_at(&pb_editor.spinner[0],1),L"PRACTICE") && !wcscmp(string_at(&pb_editor.spinner[0],2),L"PRO") && !wcscmp(string_at(&pb_editor.spinner[0],3),L"CUSTOM"));
     assert(!wcscmp(string_at(&pb_editor.spinner[1],0),L"OFF") && !wcscmp(string_at(&pb_editor.spinner[1],1),L"ON"));
-    for(unsigned i=4;i<6;i++) assert(!wcscmp(string_at(&pb_editor.spinner[i],0),L"NORMAL") && !wcscmp(string_at(&pb_editor.spinner[i],1),L"SILENT"));
+    for(unsigned i=4;i<6;i++) assert(!wcscmp(string_at(&pb_editor.spinner[i],0),L"NORMAL") && !wcscmp(string_at(&pb_editor.spinner[i],1),L"JUST ME") && !wcscmp(string_at(&pb_editor.spinner[i],2),L"SILENT"));
     assert(!wcscmp(string_at(&pb_editor.label[6],7),L"INPUT DELAY:"));
     assert(!wcscmp(string_at(&pb_editor.spinner[6],0),L"OFF") && !wcscmp(string_at(&pb_editor.spinner[6],1),L"33MS"));
-    assert(!wcscmp(string_at(&pb_editor.label[7],8),L"HARDCORE:"));
+    assert(!wcscmp(string_at(&pb_editor.label[7],8),L"PRECISION SPREAD:"));
     assert(!wcscmp(string_at(&pb_editor.spinner[7],0),L"OFF") && !wcscmp(string_at(&pb_editor.spinner[7],1),L"ON"));
     assert(!wcscmp(string_at(&pb_editor.label[8],9),L"CAMO:"));
-    assert(!wcscmp(string_at(&pb_editor.spinner[8],0),L"NORMAL") && !wcscmp(string_at(&pb_editor.spinner[8],1),L"HARDCORE"));
+    assert(!wcscmp(string_at(&pb_editor.spinner[8],0),L"NORMAL") && !wcscmp(string_at(&pb_editor.spinner[8],1),L"STRONGER"));
     assert(pb_editor.menu_children[8].vertical_offset+28<321); /* Clear of stock help. */
     for(unsigned i=0;i<7;i++) {
         if(i==5) assert(!wcscmp(string_at(&pb_editor.preview_text,i),
@@ -242,15 +241,15 @@ static void shapes_and_preservation(void) {
 static void selection_and_staging(void) {
     setup(); assert(pb_editor_build());
     for(unsigned flags=0;flags<=PERFORMANCE_OPTIONS_MASK;flags++) {
+        if (!performance_variant_flags_valid(flags)) continue;
         struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL); edited.flags=flags;
         assert(performance_editor_event(menu,_pb_editor_initialize));
-        unsigned aids=flags&31;
-        assert(pb_editor_spinner(menu,0)->parameters.list.selected_index==(aids==0 ? 0:aids==7 ? 1:2));
+        assert(pb_editor_spinner(menu,0)->parameters.list.selected_index==performance_variant_preset(flags));
         assert(pb_editor_spinner(menu,1)->parameters.list.selected_index==!!(flags&1));
         assert(pb_editor_spinner(menu,2)->parameters.list.selected_index==!!(flags&2));
         assert(pb_editor_spinner(menu,3)->parameters.list.selected_index==!!(flags&4));
-        assert(pb_editor_spinner(menu,4)->parameters.list.selected_index==!!(flags&8));
-        assert(pb_editor_spinner(menu,5)->parameters.list.selected_index==!!(flags&16));
+        assert(pb_editor_spinner(menu,4)->parameters.list.selected_index==performance_variant_sound_mode(flags,8,4096));
+        assert(pb_editor_spinner(menu,5)->parameters.list.selected_index==performance_variant_sound_mode(flags,16,8192));
         assert(pb_editor_spinner(menu,6)->parameters.list.selected_index==!!(flags&32));
         assert(pb_editor_spinner(menu,7)->parameters.list.selected_index==!!(flags&64));
         assert(pb_editor_spinner(menu,8)->parameters.list.selected_index==!!(flags&256)); dispose(menu);
@@ -260,10 +259,10 @@ static void selection_and_staging(void) {
     struct widget_instance *p=pb_editor_spinner(menu,0),*t=pb_editor_spinner(menu,1),*m=pb_editor_spinner(menu,2),*a=pb_editor_spinner(menu,3);
     p->parameters.list.selected_index=1; performance_editor_input(menu,32001);
     assert(t->parameters.list.selected_index==1 && m->parameters.list.selected_index==1 && a->parameters.list.selected_index==1 && edited.flags==0 && mutation_calls==0);
-    t->parameters.list.selected_index=0; performance_editor_input(menu,32001); assert(p->parameters.list.selected_index==2);
-    m->parameters.list.selected_index=0; performance_editor_input(menu,32001); assert(p->parameters.list.selected_index==2);
+    t->parameters.list.selected_index=0; performance_editor_input(menu,32001); assert(p->parameters.list.selected_index==3);
+    m->parameters.list.selected_index=0; performance_editor_input(menu,32001); assert(p->parameters.list.selected_index==3);
     a->parameters.list.selected_index=0; performance_editor_input(menu,32001); assert(p->parameters.list.selected_index==0);
-    t->parameters.list.selected_index=1; performance_editor_input(menu,32001); assert(p->parameters.list.selected_index==2);
+    t->parameters.list.selected_index=1; performance_editor_input(menu,32001); assert(p->parameters.list.selected_index==3);
     p->parameters.list.selected_index=0; performance_editor_input(menu,32001); assert(!t->parameters.list.selected_index && !m->parameters.list.selected_index && !a->parameters.list.selected_index);
     p->parameters.list.selected_index=1; performance_editor_input(menu,32001);
     assert(!performance_editor_event(menu,999)); assert(edited.flags==0);
@@ -273,40 +272,53 @@ static void selection_and_staging(void) {
     pb_editor_spinner(menu,1)->parameters.list.selected_index=1;
     assert(performance_editor_event(menu,_pb_editor_accept)); assert(edited.flags==1 && mutation_calls==1);
     dispose(menu); menu=instantiate(pb_editor.menu_tag,NULL); assert(performance_editor_event(menu,_pb_editor_initialize));
-    assert(pb_editor_spinner(menu,0)->parameters.list.selected_index==2 && pb_editor_spinner(menu,1)->parameters.list.selected_index==1 && pb_editor_spinner(menu,2)->parameters.list.selected_index==0);
+    assert(pb_editor_spinner(menu,0)->parameters.list.selected_index==3 && pb_editor_spinner(menu,1)->parameters.list.selected_index==1 && pb_editor_spinner(menu,2)->parameters.list.selected_index==0);
     editing=FALSE; assert(!performance_editor_event(menu,_pb_editor_accept)); assert(mutation_calls==1); editing=TRUE;
     dispose(menu); assert(!memcmp(&snapshot,&stock,sizeof(stock)));
 }
 static void sound_rules_and_presets(void) {
     setup(); assert(pb_editor_build());
     for(unsigned flags=0;flags<=PERFORMANCE_OPTIONS_MASK;flags++) {
+        if (!performance_variant_flags_valid(flags)) continue;
         edited.flags=flags;
         struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL);
         assert(performance_editor_event(menu,_pb_editor_initialize));
         assert(performance_editor_event(menu,_pb_editor_accept));
-        assert(edited.flags==flags); /* Every sound-rule combination survives Accept unchanged. */
+        assert(edited.flags==flags); /* Every valid sound combination survives Accept unchanged. */
         dispose(menu);
     }
     edited.flags=0; mutation_calls=0;
     struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL);
     assert(performance_editor_event(menu,_pb_editor_initialize));
     struct widget_instance *p=pb_editor_spinner(menu,0),*movement=pb_editor_spinner(menu,4),*weapon=pb_editor_spinner(menu,5);
-    movement->parameters.list.selected_index=1; performance_editor_input(menu,32001);
-    assert(p->parameters.list.selected_index==2 && pb_editor.last_flags==8 && !edited.flags && !mutation_calls);
-    weapon->parameters.list.selected_index=1; performance_editor_input(menu,32001);
-    assert(pb_editor.last_flags==24 && !edited.flags && !mutation_calls);
-    dispose(menu); menu=instantiate(pb_editor.menu_tag,NULL); assert(performance_editor_event(menu,_pb_editor_initialize));
-    assert(!pb_editor_spinner(menu,4)->parameters.list.selected_index && !pb_editor_spinner(menu,5)->parameters.list.selected_index);
-    pb_editor_spinner(menu,4)->parameters.list.selected_index=1;
-    pb_editor_spinner(menu,5)->parameters.list.selected_index=1;
+    for(short m=0;m<3;m++) for(short w=0;w<3;w++) {
+        movement->parameters.list.selected_index=m; weapon->parameters.list.selected_index=w;
+        performance_editor_input(menu,32001);
+        unsigned expected=performance_variant_sound_flags(m,8,4096)|performance_variant_sound_flags(w,16,8192);
+        assert(pb_editor.last_flags==expected && !edited.flags && !mutation_calls);
+        assert(p->parameters.list.selected_index==(expected ? 3:0));
+        assert(movement->parameters.list.selected_index==m && weapon->parameters.list.selected_index==w);
+    }
     assert(performance_editor_event(menu,_pb_editor_accept) && edited.flags==24 && mutation_calls==1);
-    p=pb_editor_spinner(menu,0); p->parameters.list.selected_index=1; performance_editor_input(menu,32001);
-    assert(pb_editor.last_flags==PERFORMANCE_PRACTICE_FLAGS && edited.flags==24 && mutation_calls==1);
-    assert(!pb_editor_spinner(menu,4)->parameters.list.selected_index && !pb_editor_spinner(menu,5)->parameters.list.selected_index);
-    assert(performance_editor_event(menu,_pb_editor_accept) && edited.flags==7 && mutation_calls==2);
-    pb_editor_spinner(menu,4)->parameters.list.selected_index=1; performance_editor_input(menu,32001);
+    p->parameters.list.selected_index=2; performance_editor_input(menu,32001);
+    assert(pb_editor.last_flags==PERFORMANCE_PRO_FLAGS && edited.flags==24 && mutation_calls==1);
+    assert(movement->parameters.list.selected_index==1 && weapon->parameters.list.selected_index==1);
+    assert(performance_editor_event(menu,_pb_editor_accept) && edited.flags==PERFORMANCE_PRO_FLAGS && mutation_calls==2);
+    p->parameters.list.selected_index=1; performance_editor_input(menu,32001);
+    assert(pb_editor.last_flags==((PERFORMANCE_PRO_FLAGS&PERFORMANCE_MATCH_RULE_FLAGS)|7));
+    assert(!movement->parameters.list.selected_index && !weapon->parameters.list.selected_index);
     p->parameters.list.selected_index=0; performance_editor_input(menu,32001);
-    assert(pb_editor.last_flags==0 && !pb_editor_spinner(menu,4)->parameters.list.selected_index && !pb_editor_spinner(menu,5)->parameters.list.selected_index);
+    assert(pb_editor.last_flags==(PERFORMANCE_PRO_FLAGS&PERFORMANCE_MATCH_RULE_FLAGS));
+    dispose(menu);
+    /* Locked Team Slayer Pro cannot stage or save changes to any sound mode. */
+    locked=TRUE; menu=instantiate(pb_editor.menu_tag,NULL);
+    assert(performance_editor_event(menu,_pb_editor_initialize));
+    movement=pb_editor_spinner(menu,4); weapon=pb_editor_spinner(menu,5);
+    assert(movement->disabled && weapon->disabled);
+    movement->parameters.list.selected_index=2; weapon->parameters.list.selected_index=0;
+    performance_editor_input(menu,32001);
+    assert(pb_editor.last_flags==PERFORMANCE_PRO_FLAGS && !performance_editor_event(menu,_pb_editor_accept));
+    assert(edited.flags==PERFORMANCE_PRO_FLAGS && mutation_calls==2);
     dispose(menu);
 }
 static void preview_and_help(void) {
@@ -321,15 +333,18 @@ static void preview_and_help(void) {
     dispose(list);
     struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL); assert(performance_editor_event(menu,_pb_editor_initialize));
     entry=menu->child;
+    short offset=0;
     for(short row=0;row<9;row++,entry=entry->next) {
         menu->focused_child=entry;
         struct widget_instance *spinner=pb_editor_spinner(menu,row);
-        for(short selected=0;selected<(row ? 2:3);selected++) {
+        for(short selected=0;selected<(short)spinner->parameters.list.number_of_items;selected++) {
             spinner->parameters.list.selected_index=selected; performance_editor_input(menu,32001);
-            assert(menu->parameters.list.extended_description->parameters.text_box.string_list_index==(row==0 ? selected:1+2*row+selected));
+            assert(menu->parameters.list.extended_description->parameters.text_box.string_list_index==offset+selected);
         }
+        offset+=spinner->parameters.list.number_of_items;
     }
-    assert(help_calls==19); menu->focused_child=NULL; performance_editor_input(menu,32001); assert(help_calls==19);
+    assert(offset==22 && help_calls==22);
+    menu->focused_child=NULL; performance_editor_input(menu,32001); assert(help_calls==22);
     dispose(menu);
 }
 static void independent_match_start_delay(void) {
@@ -354,8 +369,8 @@ static void independent_match_start_delay(void) {
 }
 static void independent_hardcore_rule(void) {
     setup(); assert(pb_editor_build());
-    assert(!wcscmp(string_at(&pb_editor.help,15),L"Original precision weapon spread."));
-    assert(!wcscmp(string_at(&pb_editor.help,16),L"Zero initial spread for pistol and unscoped sniper rifle.\r\nSustained fire still increases spread."));
+    assert(!wcscmp(string_at(&pb_editor.help,18),L"A familiar margin of error.\r\nOriginal pistol and unscoped sniper spread."));
+    assert(!wcscmp(string_at(&pb_editor.help,19),L"Make the first shot count.\r\nZero initial pistol/sniper spread; rapid fire spreads."));
     for(unsigned timing=0;timing<=32;timing+=32) {
         edited.flags=64|timing|8; mutation_calls=0;
         struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL);
@@ -379,8 +394,8 @@ static void independent_hardcore_rule(void) {
 }
 static void independent_camo_rule(void) {
     setup(); assert(pb_editor_build());
-    assert(!wcscmp(string_at(&pb_editor.help,17),L"Original active camouflage blue tint.\r\nDistortion and visibility timing are unchanged."));
-    assert(!wcscmp(string_at(&pb_editor.help,18),L"Remove the blue tint from active camouflage.\r\nDistortion and visibility timing are unchanged."));
+    assert(!wcscmp(string_at(&pb_editor.help,20),L"The familiar blue shimmer.\r\nOriginal active camouflage tint."));
+    assert(!wcscmp(string_at(&pb_editor.help,21),L"Now you see me...\r\nRemove the blue tint; reveal timing stays the same."));
     for(unsigned extras=0;extras<=224;extras+=32) {
         edited.flags=256|extras|8; mutation_calls=0;
         struct widget_instance *menu=instantiate(pb_editor.menu_tag,NULL);
@@ -490,7 +505,15 @@ def fixture_source():
     tree += '\n#pragma clang diagnostic push\n#pragma clang diagnostic ignored "-Wsometimes-uninitialized"\n'
     tree += generic_help.replace("definition->child_count", "definition->child_widgets.count").replace("selected_list_item_index", "selected_index")
     tree += "\n#pragma clang diagnostic pop\n"
-    return cache_prefix + PREFIX.replace("/* STRUCTURES */", "\n".join(structures)).replace("/* TREE HELPERS */", tree) + HARNESS
+    variant_header = (ROOT / "source/game/performance_variant.h").read_text()
+    enum_end = variant_header.index("static inline short performance_variant_sound_mode")
+    performance_declarations = variant_header[variant_header.index("enum\n{"):enum_end]
+    for signature in ("static inline short performance_variant_sound_mode(",
+                      "static inline unsigned performance_variant_sound_flags(",
+                      "static inline boolean performance_variant_flags_valid(",
+                      "static inline short performance_variant_preset("):
+        performance_declarations += c_block(variant_header, signature) + "\n"
+    return cache_prefix + PREFIX.replace("/* PERFORMANCE DECLARATIONS */", performance_declarations).replace("/* STRUCTURES */", "\n".join(structures)).replace("/* TREE HELPERS */", tree) + HARNESS
 
 
 class NativePerformanceEditorTests(unittest.TestCase):
@@ -503,14 +526,15 @@ class NativePerformanceEditorTests(unittest.TestCase):
             self.skipTest("owned Xbox cache assets required for font metrics")
         source = (ROOT / "source/interface/performance_editor_menu.inc").read_text()
         arrays = {}
-        for name in ("labels", "help", "camo"):
+        for name in ("labels", "help", "camo", "sounds"):
             array = source.split(f"static char const *const {name}[] = {{", 1)[1].split("};", 1)[0]
             arrays[name] = [ast.literal_eval(value) for value in re.findall(r'"(?:\\.|[^"\\])*"', array)]
         for path in paths:
             cache = Cache(path)
             for font_path, strings, limit in (
                 (r"ui\large_ui", arrays["labels"][:1], 219),
-                (r"ui\large_ui", arrays["help"][-4:], 482),
+                (r"ui\large_ui", arrays["help"], 482),
+                (r"ui\large_ui", arrays["sounds"], 140),
                 (r"ui\large_ui", arrays["camo"], 140),
             ):
                 font = cache.by_path[font_path]

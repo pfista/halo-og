@@ -620,7 +620,10 @@ void weapon_ready(
 	first_person_weapon_message_from_weapon(weapon_index, _first_person_weapon_message_ready);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	{
-		unsigned previous_sound_role = performance_sound_push(_performance_sound_weapon_ready);
+		struct performance_sound_scope previous_sound_role = performance_sound_push(
+			_performance_sound_weapon_ready,
+			weapon->object.parent_object_index != NONE ?
+				player_index_from_unit_index(weapon->object.parent_object_index) : NONE);
 
 		/* Keep the ready effect, including visuals and deferred events. */
 #endif

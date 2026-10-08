@@ -15,6 +15,7 @@ static boolean performance_console_word(char const **text, char *word, unsigned 
 
 static void performance_console_status(void)
 {
+	static char const *const sound_modes[] = {"NORMAL", "JUST ME", "SILENT"};
 	unsigned long flags = performance_options_get_flags();
 	struct performance_sound_statistics sound_statistics;
 	struct performance_timer_statistics timer_statistics;
@@ -27,8 +28,10 @@ static void performance_console_status(void)
 		(flags & _performance_option_spawn_markers) ? "ON" : "OFF",
 		(flags & _performance_option_timer_audio) ? "ON" : "OFF");
 	console_printf(FALSE, "PB: movement sounds %s | weapon sounds %s",
-		(flags & _performance_option_silent_movement) ? "SILENT" : "NORMAL",
-		(flags & _performance_option_silent_weapon_ready) ? "SILENT" : "NORMAL");
+		sound_modes[performance_variant_sound_mode(flags,
+			_performance_option_silent_movement, _performance_option_self_movement)],
+		sound_modes[performance_variant_sound_mode(flags,
+			_performance_option_silent_weapon_ready, _performance_option_self_weapon_ready)]);
 	console_printf(FALSE, "Precision Spread: %s (selected before the match)",
         (flags & _performance_option_hardcore) ? "ON" : "OFF");
 	console_printf(FALSE, "Camo: %s (selected before the match)",
@@ -53,7 +56,7 @@ static void performance_console_help(void)
 {
 	console_printf(FALSE, "PB controls: pb default | pb practice | pb pro | pb status");
 	console_printf(FALSE, "pb timer|markers|audio on|off|toggle");
-	console_printf(FALSE, "pb movement|weapons normal|silent|toggle");
+	console_printf(FALSE, "pb movement|weapons normal|self|silent|toggle (self = Just Me)");
 	console_printf(FALSE, "Host changes apply to this session; guests can view settings.");
 	console_printf(FALSE, "Presets here change aids only; select Pro match rules before play.");
 }
@@ -61,7 +64,7 @@ static void performance_console_help(void)
 boolean console_process_native_command(char const *command)
 {
 	char name[32], option[24], value[24], extra[2];
-	unsigned long flags, bit = 0;
+	unsigned long flags, bit = 0, self_bit = 0;
 	boolean numeric;
 	char const *text = command;
 	if (!performance_console_word(&text, name, sizeof(name))) return FALSE;
@@ -90,6 +93,7 @@ boolean console_process_native_command(char const *command)
 			flags = flags * 10 + (unsigned long)(option[index] - '0');
 			if (flags > PERFORMANCE_OPTIONS_MASK) goto usage;
 		}
+		if (!performance_variant_flags_valid((unsigned)flags)) goto usage;
 	}
 	else if (!strcmp(option, "default") || !strcmp(option, "stock") ||
 		!strcmp(option, "practice") || !strcmp(option, "pro"))
@@ -104,16 +108,35 @@ boolean console_process_native_command(char const *command)
 		if (!strcmp(option, "timer")) bit = _performance_option_match_timer;
 		else if (!strcmp(option, "markers")) bit = _performance_option_spawn_markers;
 		else if (!strcmp(option, "audio")) bit = _performance_option_timer_audio;
-		else if (!strcmp(option, "movement")) bit = _performance_option_silent_movement;
-		else if (!strcmp(option, "weapons")) bit = _performance_option_silent_weapon_ready;
+		else if (!strcmp(option, "movement"))
+		{
+			bit = _performance_option_silent_movement;
+			self_bit = _performance_option_self_movement;
+		}
+		else if (!strcmp(option, "weapons"))
+		{
+			bit = _performance_option_silent_weapon_ready;
+			self_bit = _performance_option_self_weapon_ready;
+		}
 		else goto usage;
 		if (!*value)
 		{
 			performance_console_status();
 			return TRUE;
 		}
-		if (!strcmp(value, bit >= _performance_option_silent_movement ? "silent" : "on")) flags |= bit;
-		else if (!strcmp(value, bit >= _performance_option_silent_movement ? "normal" : "off")) flags &= ~bit;
+		if (self_bit)
+		{
+			short mode = performance_variant_sound_mode(flags, (unsigned)bit, (unsigned)self_bit);
+			if (!strcmp(value, "normal")) mode = _performance_sound_mode_normal;
+			else if (!strcmp(value, "self")) mode = _performance_sound_mode_self;
+			else if (!strcmp(value, "silent")) mode = _performance_sound_mode_silent;
+			else if (!strcmp(value, "toggle")) mode = (short)((mode + 1) % 3);
+			else goto usage;
+			flags = (flags & ~(bit | self_bit)) |
+				performance_variant_sound_flags(mode, (unsigned)bit, (unsigned)self_bit);
+		}
+		else if (!strcmp(value, "on")) flags |= bit;
+		else if (!strcmp(value, "off")) flags &= ~bit;
 		else if (!strcmp(value, "toggle")) flags ^= bit;
 		else goto usage;
 	}
@@ -133,7 +156,7 @@ boolean console_process_native_command(char const *command)
 	return TRUE;
 usage:
 	if (numeric)
-		console_printf(FALSE, "usage: performance_options [0..%d] (timer=1, markers=2, audio=4, silent movement=8, silent weapons=16, input delay=32, precision spread=64, Fiesta=128, stronger camo=256)", PERFORMANCE_OPTIONS_MASK);
+		console_printf(FALSE, "usage: performance_options [flags, mask=%d] (timer=1, markers=2, audio=4, silent movement=8, silent weapons=16, input delay=32, precision spread=64, Fiesta=128, stronger camo=256, self movement=4096, self weapons=8192; choose one sound mode per role)", PERFORMANCE_OPTIONS_MASK);
 	else performance_console_help();
 	return TRUE;
 }
@@ -146,7 +169,7 @@ static short performance_console_complete(char *input, char **token, char **matc
 	static char *commands[] = {"pb", "performance_options"};
 	static char *options[] = {"default", "practice", "pro", "stock", "status", "help", "timer", "markers", "audio", "movement", "weapons"};
 	static char *values[] = {"on", "off", "toggle"};
-	static char *sound_values[] = {"normal", "silent", "toggle"};
+	static char *sound_values[] = {"normal", "self", "silent", "toggle"};
 	static char *numbers[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
 		"10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23",
 		"24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37",

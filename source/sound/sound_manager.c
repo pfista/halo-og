@@ -686,6 +686,13 @@ static short sound_find_best_channel(
 static short source_audible(
 	struct sound_source *source,
 	real maximum_distance);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static short source_audible_for_performance(
+	struct sound_source *source,
+	real maximum_distance,
+	unsigned role,
+	long player_index);
+#endif
 static void refresh_sounds(
 	void);
 static void refresh_listener(
@@ -876,7 +883,6 @@ void sound_initialize_for_new_map(
 {
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	performance_sound_reset(_performance_sound_voice);
-	performance_sound_pop(_performance_sound_normal);
 #endif
 	return;
 }
@@ -1570,7 +1576,7 @@ static long update_potentially_audible_looping_sound(
 				struct sound_datum *sound = sound_get(sound_index);
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-				performance_sound_record(_performance_sound_voice, sound_index, _performance_sound_normal);
+				performance_sound_record(_performance_sound_voice, sound_index, _performance_sound_normal, NONE);
 #endif
 				sound->listener_index = listener_index;
 				sound->definition_index = definition_index;
@@ -2307,13 +2313,19 @@ static void update_channel_for_impulse_sound(
 	{
 		unsigned long flags = performance_options_get_flags();
 		unsigned silent_roles = 0;
+		unsigned self_roles = 0;
 		if (flags & _performance_option_silent_movement)
 			silent_roles |= _performance_sound_movement;
 		if (flags & _performance_option_silent_weapon_ready)
 			silent_roles |= _performance_sound_weapon_ready;
+		if (flags & _performance_option_self_movement)
+			self_roles |= _performance_sound_movement;
+		if (flags & _performance_option_self_weapon_ready)
+			self_roles |= _performance_sound_weapon_ready;
 		/* Silence this occurrence only, after authored scale modifiers. The
 		 * channel, samples, RNG and callbacks continue on their stock path. */
-		gain *= performance_sound_gain(channel->sound_index, silent_roles);
+		gain *= performance_sound_gain(channel->sound_index, silent_roles, self_roles,
+			sound->listener_index != NONE ? local_player_get_player_index(sound->listener_index) : NONE);
 	}
 #endif
 
@@ -2460,9 +2472,15 @@ long sound_new_impulse(
 
 					if (sound_definition_is_playable(definition_index))
 					{
-						short listener_index = source_audible(
+						short listener_index =
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+							source_audible_for_performance(source, maximum_distance,
+								performance_sound_current(), performance_sound_current_player());
+#else
+							source_audible(
 							source,
 							maximum_distance);
+#endif
 
 						if (listener_index != NONE)
 						{
@@ -3266,6 +3284,50 @@ static short source_audible(
 	return nearest_listener_index;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* Stock audio uses the nearest local listener. Just Me must choose the actor's
+ * listener explicitly, including in split-screen, rather than treat whoever
+ * happens to be nearest as the owner. A remote/unknown actor retains the stock
+ * voice path and is muted at channel dispatch, preserving sample/RNG callbacks.
+ * Local listeners share a physical speaker mix, so this cannot isolate ears on
+ * the same machine. No player or serialized sound data layout changes here. */
+static short source_audible_for_performance(
+	struct sound_source *source,
+	real maximum_distance,
+	unsigned role,
+	long player_index)
+{
+	short stock_listener = source_audible(source, maximum_distance);
+	unsigned long flags = performance_options_get_flags();
+	unsigned self_roles = 0;
+	short listener_index;
+	if ((flags & _performance_option_self_movement) && !(flags & _performance_option_silent_movement))
+		self_roles |= _performance_sound_movement;
+	if ((flags & _performance_option_self_weapon_ready) && !(flags & _performance_option_silent_weapon_ready))
+		self_roles |= _performance_sound_weapon_ready;
+	if (!(role & self_roles) || player_index == NONE)
+		return stock_listener;
+	for (listener_index = 0; listener_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; ++listener_index)
+	{
+		if (listener_get(listener_index)->valid &&
+			local_player_get_player_index(listener_index) == player_index)
+		{
+			if (source->spatialization_mode == _sound_spatialization_mode_relative && stock_listener == NONE)
+				return NONE;
+			if (source->spatialization_mode == _sound_spatialization_mode_absolute)
+			{
+				real distance_squared = source_distance_squared(listener_index, source);
+				compute_sound_obstruction(listener_index, source, square_root(distance_squared));
+				if (distance_squared > maximum_distance * maximum_distance || source->occlusion == 1.f)
+					return stock_listener;
+			}
+			return listener_index;
+		}
+	}
+	return stock_listener;
+}
+#endif
+
 static void refresh_sounds(
 	void)
 {
@@ -3295,10 +3357,18 @@ static void refresh_sounds(
 
 		if (!stop_sound)
 		{
-			short listener_index = source_audible(
+			short listener_index =
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				source_audible_for_performance(&sound->source,
+					sound_definition_get_maximum_distance(sound->definition_index),
+					performance_sound_role(_performance_sound_voice, sound_index),
+					performance_sound_player(_performance_sound_voice, sound_index));
+#else
+				source_audible(
 				&sound->source,
 				sound_definition_get_maximum_distance(
 					sound->definition_index));
+#endif
 
 			render_debug_sound(sound_index);
 

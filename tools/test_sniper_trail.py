@@ -90,7 +90,7 @@ struct weapon_magazine_definition { short rounds_total_initial,rounds_loaded_max
 struct weapon_definition { struct { struct tag_block triggers,magazines; struct tag_reference ready_effect; } weapon; };
 struct weapon_trigger { long charging_effect_index; short idle_ticks; };
 struct weapon_magazine { short rounds_loaded,rounds_total; };
-struct weapon_datum { long definition_index; struct { short state,state_timer; long overheated_effect_index;
+struct weapon_datum { long definition_index; struct { long parent_object_index; } object; struct { short state,state_timer; long overheated_effect_index;
     struct weapon_trigger triggers[2]; struct weapon_magazine magazines[1]; } weapon; };
 struct xbox_texture_cache_texture { boolean loaded,used; int hardware_format; short read_request_handle; };
 static struct xbox_texture_cache_texture textures[2];
@@ -181,8 +181,10 @@ static struct weapon_trigger *weapon_trigger_get(struct weapon_datum *weapon,sho
 static void weapon_reset(long index) { assert(index>=0 && index<2); }
 static void weapon_set_state(long index,short state,boolean immediate) { assert(immediate); weapons[index].weapon.state=state; }
 static void first_person_weapon_message_from_weapon(long index,short message) { assert(index>=0 && index<2 && message==12); }
-static unsigned performance_sound_push(unsigned role) { assert(role==1); return 0; }
-static void performance_sound_pop(unsigned role) { assert(role==0); }
+struct performance_sound_scope { unsigned role; long player_index; };
+static long player_index_from_unit_index(long index) { assert(index==10); return 20; }
+static struct performance_sound_scope performance_sound_push(unsigned role,long player) { assert(role==1 && player==20); return (struct performance_sound_scope){0,NONE}; }
+static void performance_sound_pop(struct performance_sound_scope previous) { assert(previous.role==0 && previous.player_index==NONE); }
 static void weapon_effect_new(long index,long definition,real scale,real error) { assert(index>=0 && index<2 && definition==99 && scale==0 && error==0); ready_effects++; }
 static short weapon_get_first_person_animation_time(long index,short slot,short animation,short type) { assert(index>=0 && index<2 && slot==0 && animation==10 && type==NONE); return 8; }
 /* PRODUCTION */
@@ -195,6 +197,7 @@ static void cold_cache(void) {
     requests=draws=yields=touches=ready_effects=0;
     render.camera.position=(real_point3d){0,2,0}; cache_open=TRUE;
     weapons[0].definition_index=weapons[1].definition_index=3;
+    weapons[0].object.parent_object_index=weapons[1].object.parent_object_index=10;
     contrail.frame_index=0;
 }
 static void complete_reads(void) {

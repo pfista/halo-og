@@ -38,9 +38,11 @@ enum { _game_variant_draw_object_in_motion_sensor_bit=0, _game_variant_infinite_
 #define network_event(...) ((void)0)
 #define error(...) ((void)0)
 #define ustrncpy wcsncpy
-enum { _performance_option_timer_audio=4, _performance_option_input_delay=32, _performance_option_hardcore=64,
+enum { _performance_option_timer_audio=4, _performance_option_silent_movement=8,
+       _performance_option_silent_weapon_ready=16, _performance_option_input_delay=32, _performance_option_hardcore=64,
        _performance_option_fiesta=128, _performance_option_hardcore_camo=256,
-       PERFORMANCE_MATCH_RULE_FLAGS=480, PERFORMANCE_OPTIONS_MASK=511,
+       _performance_option_self_movement=4096, _performance_option_self_weapon_ready=8192,
+       PERFORMANCE_MATCH_RULE_FLAGS=480, PERFORMANCE_OPTIONS_MASK=12799,
        _network_game_server_state_pregame=1, _network_game_server_state_ingame=2,
        _network_game_server_state_postgame=3, _message_server_begin_game=2,
        _network_game_client_state_joining=1, _network_game_client_state_pregame=2, _network_game_client_state_ingame=3,
@@ -68,7 +70,7 @@ static word network_game_server_performance_capabilities[MAXIMUM_NETWORK_MACHINE
 static int network_game_server_start_players[16];
 static boolean network_game_server_started_with_five_players;
 static int recordings=1,apply_calls,override_calls,pregame_sends,setting_sends,start_sends,opened;
-static unsigned runtime_flags,capabilities[10],capability_count;
+static unsigned runtime_flags,capabilities[11],capability_count;
 static unsigned network_game_client_performance_host_capabilities;
 static char shown[512];
 int halo_performance_audio_available(void) {return recordings;}
@@ -81,6 +83,8 @@ static int network_game_server_client_machine_is_local(struct network_game_serve
     struct network_game_server_client_machine *m) {(void)s;return m->local;}
 static struct network_game_server *global_network_game_server_get(void) {return active;}
 static struct game_variant *game_engine_get_variant(void) {return &runtime_variant;}
+static boolean playlist_profile_variant_is_locked(const struct game_variant *v) {(void)v;return FALSE;}
+/* PRODUCTION FLAG VALIDATION */
 static void performance_variant_set_flags(struct game_variant *v,unsigned flags) {v->flags=flags;}
 static unsigned performance_variant_get_flags(const struct game_variant *v) {return v->flags;}
 static void game_engine_override_game_variant(struct game_variant *v) {(void)v;override_calls++;}
@@ -107,7 +111,7 @@ static int network_game_server_send_message_to_all_machines(struct network_game_
     (void)s;(void)m;start_sends++;return TRUE;
 }
 static int network_game_client_write(void *connection,void *packet,unsigned size,void *address,int reliable) {
-    (void)connection;assert(!address && reliable==1 && capability_count<10);
+    (void)connection;assert(!address && reliable==1 && capability_count<11);
     assert(network_performance_decode(packet,size,NETWORK_PERFORMANCE_CAPABILITY,&capabilities[capability_count++]));
     return TRUE;
 }
@@ -230,11 +234,11 @@ int main(void) {
      * never advertise audio support to an enabled host. */
     struct network_game_client client={0};
     recordings=0;capability_count=0;assert(announce(&client));
-    assert(capability_count==10 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==59 && capabilities[4]==123 && capabilities[5]==251 && capabilities[6]==507 && capabilities[7]==1019 && capabilities[8]==2043 && capabilities[9]==4091);
+    assert(capability_count==11 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==59 && capabilities[4]==123 && capabilities[5]==251 && capabilities[6]==507 && capabilities[7]==1019 && capabilities[8]==2043 && capabilities[9]==4091 && capabilities[10]==16379);
     recordings=1;capability_count=0;assert(announce(&client));
-    assert(capability_count==10 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31 && capabilities[3]==63 && capabilities[4]==127 && capabilities[5]==255 && capabilities[6]==511 && capabilities[7]==1023 && capabilities[8]==2047 && capabilities[9]==4095);
+    assert(capability_count==11 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31 && capabilities[3]==63 && capabilities[4]==127 && capabilities[5]==255 && capabilities[6]==511 && capabilities[7]==1023 && capabilities[8]==2047 && capabilities[9]==4095 && capabilities[10]==16383);
     capability_count=0;assert(announce_without_queue(&client));
-    assert(capability_count==10 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==27 && capabilities[4]==27 && capabilities[5]==27 && capabilities[6]==27 && capabilities[7]==27 && capabilities[8]==27 && capabilities[9]==27);
+    assert(capability_count==11 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==27 && capabilities[4]==27 && capabilities[5]==27 && capabilities[6]==27 && capabilities[7]==27 && capabilities[8]==27 && capabilities[9]==27 && capabilities[10]==27);
     assert(!network_game_server_performance_peers_support_without_queue(&server,32));
     assert(strstr(shown,"This build does not support"));
     assert(!network_game_server_performance_peers_support_without_queue(&server,128));
@@ -242,6 +246,9 @@ int main(void) {
     assert(!network_game_server_performance_peers_support_without_queue(&server,512));
     assert(!network_game_server_performance_peers_support_without_queue(&server,1024));
     assert(!network_game_server_performance_peers_support_without_queue(&server,2048));
+    assert(!network_game_server_performance_peers_support_without_queue(&server,4096));
+    assert(!network_game_server_performance_peers_support_without_queue(&server,8192));
+    assert(!network_game_server_performance_peers_support_without_queue(&server,12288));
     assert(network_game_server_performance_peers_support_without_queue(&server,0));
     /* Only a reliable acknowledgement from the selected host establishes
      * timing support; old hosts can forward unknown saved extension bytes. */
@@ -303,6 +310,24 @@ int main(void) {
     assert(network_game_client_performance_settings_flags(&client,7)==263);
     client.game.variant.flags=0;
     assert(network_game_client_performance_settings_flags(&client,263)==7);
+    /* Prior hosts preserve saved v3 bytes but decode the entire extension Off.
+     * Just Me requires explicit host support and stays editable in a match. */
+    client.state=_network_game_client_state_pregame;
+    network_game_client_performance_host_capabilities=4095;
+    assert(network_game_client_performance_settings_flags(&client,4096)==0);
+    assert(network_game_client_performance_settings_flags(&client,8192)==0);
+    assert(network_game_client_performance_settings_flags(&client,12295)==0);
+    assert(network_game_client_performance_settings_flags(&client,12549)==0);
+    network_performance_encode(host_capability,NETWORK_PERFORMANCE_CAPABILITY,16383);
+    assert(network_game_client_receive_performance_capability(&client,host_capability,16,TRUE));
+    assert(network_game_client_performance_host_capabilities==16383);
+    assert(network_game_client_performance_settings_flags(&client,12549)==12549);
+    client.state=_network_game_client_state_ingame;client.game.variant.flags=256;
+    assert(network_game_client_performance_settings_flags(&client,4096)==4352);
+    assert(network_game_client_performance_settings_flags(&client,8192)==8448);
+    assert(network_game_client_performance_settings_flags(&client,12288)==12544);
+    assert(network_game_client_performance_settings_flags(&client,24)==280);
+    assert(network_game_client_performance_settings_flags(&client,0)==256);
     active=&server;
     /* Start repeats admission checks; an older peer cannot join a delayed
      * match even if it connected while the delay was disabled. */
@@ -455,6 +480,32 @@ int main(void) {
         chosen.flags=0;
         network_game_server_change_game_variant(&server,&chosen);unchanged(0,++before_calls);
     }
+    /* An older connected peer blocks both saved and live Just Me settings.
+     * Compatible peers can change each sound mode while the match runs. */
+    int sound_calls=apply_calls;
+    server.state=_network_game_server_state_pregame;server.sent_start_game_message=FALSE;
+    server.game.variant.universal_variant.weapon_set=0;
+    network_game_server_performance_capability(&server.client_machines[1],4095);
+    assert(!performance_options_set_host_flags(4096));unchanged(0,sound_calls);
+    assert(strstr(shown,"Just Me audio unavailable"));
+    assert(!performance_options_set_host_flags(8192));unchanged(0,sound_calls);
+    assert(!performance_options_set_host_flags(12288));unchanged(0,sound_calls);
+    chosen.flags=4096;network_game_server_change_game_variant(&server,&chosen);unchanged(0,sound_calls);
+    playlist_variant.flags=8192;playlist_variant.universal_variant.weapon_set=0;
+    assert(!network_game_server_setup_game_from_playlist(&server));unchanged(0,sound_calls);
+    server.game.variant.flags=4096;
+    assert(!network_game_server_start_network_game(&server) && !server.sent_start_game_message);
+    server.game.variant.flags=0;
+    network_game_server_performance_capability(&server.client_machines[1],16383);
+    assert(!performance_options_set_host_flags(4104));unchanged(0,sound_calls);
+    assert(!performance_options_set_host_flags(8208));unchanged(0,sound_calls);
+    assert(performance_options_set_host_flags(12288));unchanged(12288,++sound_calls);
+    server.state=_network_game_server_state_ingame;server.sent_start_game_message=TRUE;
+    assert(performance_options_set_host_flags(4096));unchanged(4096,++sound_calls);
+    assert(performance_options_set_host_flags(8192));unchanged(8192,++sound_calls);
+    assert(performance_options_set_host_flags(24));unchanged(24,++sound_calls);
+    assert(performance_options_set_host_flags(0));unchanged(0,++sound_calls);
+    assert(!network_game_server_performance_peers_support_without_queue(&server,12288));
     puts("performance host authority, assets, saved variants and capabilities: PASS");
     return 0;
 }
@@ -579,6 +630,9 @@ int main(void) {
         start = client.index("word capability[NETWORK_PERFORMANCE_MESSAGE_SIZE / sizeof(word)];")
         end = client.index("csmemset(&join_game_request", start)
         fixture = FIXTURE.replace("/* PRODUCTION */", functions)
+        variant = (ROOT / "source/game/performance_variant.h").read_text()
+        fixture = fixture.replace("/* PRODUCTION FLAG VALIDATION */",
+            block(variant, "static inline boolean performance_variant_flags_valid(unsigned flags)"))
         fixture = fixture.replace("/* WEAPON SET IDS */", block(weapons, "enum\n") + ";")
         no_queue_support = block(server, "static boolean network_game_server_performance_peers_support(\n")
         no_queue_support = no_queue_support.replace("network_game_server_performance_peers_support(",

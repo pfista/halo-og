@@ -147,7 +147,7 @@ def main():
                 if result.returncode:
                     raise RuntimeError(f"{path.name}/{name}: {result.stderr}")
                 outputs = {}
-                for mode in ("normal", "silent", "shared-control", "restored"):
+                for mode in ("normal", "silent", "shared-control", "restored", "just-me", "just-me-other"):
                     raw_path = output / (mode + ".f32")
                     raw = raw_path.read_bytes()
                     samples = array.array("f")
@@ -164,7 +164,9 @@ def main():
                     raw_path.unlink()
                 assert outputs["normal"]["peak"] > 0, (path, name, "source silent")
                 assert outputs["normal"] == outputs["shared-control"] == outputs["restored"], (path, name)
+                assert outputs["normal"] == outputs["just-me"], (path, name, "actor feedback changed")
                 assert outputs["silent"]["peak"] == 0 if role else outputs["silent"] == outputs["normal"], (path, name)
+                assert outputs["just-me-other"]["peak"] == 0 if role else outputs["just-me-other"] == outputs["normal"], (path, name)
                 manifest["cases"].append({"map_kind": kind, "map": str(cache.path), "map_sha256": cache.sha256,
                                           "case": name, "role": role, "scale": scale, **event, **metadata,
                                           "output": str(output.resolve()), "outputs": outputs})
@@ -172,8 +174,10 @@ def main():
     manifest["all_selected_roles_silent"] = True
     manifest["all_shared_control_uses_and_restoration_bit_identical"] = True
     manifest["all_ordinary_control_uses_unchanged"] = True
+    manifest["all_just_me_actor_samples_bit_identical"] = True
+    manifest["all_just_me_other_listener_samples_silent"] = True
     (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    print(f"Verified {manifest['case_count']} actual cache sample cases: selected roles silent, controls and restoration byte-identical.")
+    print(f"Verified {manifest['case_count']} actual cache sample cases: selected roles silent to other listeners, Just Me actor feedback, controls and restoration byte-identical.")
 
 
 if __name__ == "__main__":

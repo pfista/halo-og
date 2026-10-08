@@ -28,18 +28,28 @@ struct performance_sound_statistics
 	unsigned last_voice_role;
 };
 
+struct performance_sound_scope
+{
+	unsigned role;
+	/* Full salted player handle, captured when the action occurs. */
+	long player_index;
+};
+
 /* These scopes run on the game thread, alongside effect/sound creation.
  * Save and restore the returned value, including when scopes are nested. */
-unsigned performance_sound_push(unsigned role);
-void performance_sound_pop(unsigned previous);
+struct performance_sound_scope performance_sound_push(unsigned role, long player_index);
+struct performance_sound_scope performance_sound_push_recorded(unsigned owner, long datum_index);
+void performance_sound_pop(struct performance_sound_scope previous);
 unsigned performance_sound_current(void);
+long performance_sound_current_player(void);
 void performance_sound_reset(unsigned owner);
 void performance_sound_capture(unsigned owner, long datum_index);
 void performance_sound_capture_voice(long sound_index, long definition_index);
-void performance_sound_record(unsigned owner, long datum_index, unsigned role);
+void performance_sound_record(unsigned owner, long datum_index, unsigned role, long player_index);
 void performance_sound_forget(unsigned owner, long datum_index);
 unsigned performance_sound_role(unsigned owner, long datum_index);
-float performance_sound_gain(long sound_index, unsigned silent_roles);
+long performance_sound_player(unsigned owner, long datum_index);
+float performance_sound_gain(long sound_index, unsigned silent_roles, unsigned self_roles, long listener_player_index);
 void performance_sound_get_statistics(struct performance_sound_statistics *statistics);
 
 #endif

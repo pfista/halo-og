@@ -101,7 +101,7 @@ void native_bridge_declarations(void)
     struct performance_sound_statistics statistics;
     struct sha256 hash;
     unsigned char digest[32];
-    unsigned previous = performance_sound_push(_performance_sound_movement);
+    struct performance_sound_scope previous = performance_sound_push(_performance_sound_movement, 5);
     performance_sound_capture(_performance_sound_effect, 1);
     performance_sound_pop(previous);
     performance_sound_get_statistics(&statistics);

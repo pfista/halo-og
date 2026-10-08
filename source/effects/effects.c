@@ -2342,8 +2342,8 @@ static void effect_update(
 			if (!TEST_FLAG(flags, _effect_invisible_bit))
 			{
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-				unsigned previous_sound_role = performance_sound_push(
-					performance_sound_role(_performance_sound_effect, effect_index));
+				struct performance_sound_scope previous_sound_role = performance_sound_push_recorded(
+					_performance_sound_effect, effect_index);
 #endif
 				effect_generate_particles(effect);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
@@ -2437,8 +2437,8 @@ static void effect_update(
 			if (!TEST_FLAG(effect->header.flags, _effect_invisible_bit))
 			{
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-				unsigned previous_sound_role = performance_sound_push(
-					performance_sound_role(_performance_sound_effect, effect_index));
+				struct performance_sound_scope previous_sound_role = performance_sound_push_recorded(
+					_performance_sound_effect, effect_index);
 #endif
 				effect_generate_parts(effect);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS

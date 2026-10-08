@@ -35,8 +35,9 @@ enum { UNICODE_STRING_LIST_TAG='ustr', _ui_widget_type_text_box=1,_ui_widget_typ
 #include "game/performance_variant.h"
 #include "game/weapon_sets.h"
 /* PLAYLIST DECLARATION */
-struct widget_instance { long definition_tag_index; struct widget_instance *child,*next;
-    boolean visible; union { struct { wchar_t *text; } text_box; struct { void *list_items; } list; } parameters;
+/* PROFILE CONSTANTS */
+struct widget_instance { long definition_tag_index; struct widget_instance *child,*next,*focused_child;
+    boolean visible; union { struct { wchar_t *text; } text_box; struct { void *list_items; long number_of_items; } list; } parameters;
     struct { short current_frame_index; } animation; };
 struct ui_widget_definition { short type; long child_count; };
 static struct ui_widget_definition definitions[16];
@@ -59,6 +60,7 @@ static void spinner_list_3wide_determine_displayed_item_indices(struct widget_in
 static void variant_profile_update_cache_for_nwide_list(long *indices,long count) { assert(count==3); for(int i=0;i<3;i++)assert(indices[i]==i); }
 static struct widget_instance *widget_instance_get_nth_child(struct widget_instance *w,long n) { w=w->child; while(n--)w=w->next; return w; }
 static void *ui_widget_realloc(void *p,unsigned long bytes,char const *file,long line) { (void)file;(void)line; return realloc(p,bytes); }
+static void playlist_profile_card_title_layout(struct widget_instance *w,boolean two_lines) { (void)w; (void)two_lines; }
 /* PRODUCTION FUNCTIONS */
 '''
 
@@ -67,7 +69,7 @@ static struct widget_instance list,cards[3],names[3],icons[3],labels[3],locks[3]
 static long profile_indices[]={0,1,2};
 static void setup(void) {
     assert(sizeof(wchar_t)==2 && sizeof(struct game_variant)==104 && sizeof(struct playlist_profile)==104);
-    list.definition_tag_index=0; list.child=cards; list.parameters.list.list_items=profile_indices;
+    list.definition_tag_index=0; list.child=cards; list.parameters.list.list_items=profile_indices; list.parameters.list.number_of_items=3;
     definitions[0]=(struct ui_widget_definition){2,3};
     for(int i=0;i<3;i++) {
         cards[i].definition_tag_index=1+4*i; cards[i].child=&names[i]; cards[i].next=i<2 ? &cards[i+1]:NULL;
@@ -84,6 +86,7 @@ static void check_cards(void) {
     wchar_t expected[256];
     for(int engine=game_engine_ctf;engine<=game_engine_race;engine++) for(int teams=0;teams<2;teams++)
     for(unsigned flags=0;flags<=PERFORMANCE_OPTIONS_MASK;flags++) for(int weapon_set=0;weapon_set<=GAME_WEAPON_SET_ALL;weapon_set++) {
+        if(!performance_variant_flags_valid(flags)) continue;
         for(int i=0;i<3;i++) {
             struct playlist_profile *p=&cached_variant_profile[i].profile;
             p->engine_type=engine; p->teams=teams;
@@ -96,9 +99,9 @@ static void check_cards(void) {
         assert(equal(labels[2].parameters.text_box.text,descriptions[index]));
         ustrncpy(expected,descriptions[index],256);
         if(flags) {
-            const wchar_t *status=flags&256 ? L"\r\nCamo: Hardcore" : flags&128 ? (flags&64 ? L"\r\nFiesta / Hardcore: On":L"\r\nStarting Equipment: Fiesta") : flags&64 ? L"\r\nHardcore: On":L"\r\nPerformance options active";
+            const wchar_t *status=flags==PERFORMANCE_PRO_FLAGS ? L"\r\nPerformance: Pro" : flags&256 ? L"\r\nCamo: Stronger" : flags&128 ? (flags&64 ? L"\r\nFiesta / Precision: On":L"\r\nStarting Equipment: Fiesta") : flags&64 ? L"\r\nPrecision Spread: On":L"\r\nPerformance options active";
             if((flags&128) && !(flags&256) && weapon_set==GAME_WEAPON_SET_ALL)
-                status=flags&64 ? L"\r\nPfiesta/Hardcore: On":L"\r\nEquipment: Pfiesta";
+                status=flags&64 ? L"\r\nPfiesta/Precision: On":L"\r\nEquipment: Pfiesta";
             ustrncpy(expected+ustrlen(expected),status,ustrlen(status)+1);
         }
         assert(equal(labels[1].parameters.text_box.text,expected));
@@ -107,9 +110,9 @@ static void check_cards(void) {
         assert(equal(labels[1].parameters.text_box.text,expected));
     }
     struct playlist_profile *p=&cached_variant_profile[1].profile;
-    p->flags=1; performance_variant_set_flags((struct game_variant *)p,PERFORMANCE_OPTIONS_MASK);
+    p->flags=1; performance_variant_set_flags((struct game_variant *)p,511);
     mutliplayer_settings_select_list_update_displayed_items(&list);
-    ustrncpy(expected,descriptions[10],256); ustrncpy(expected+ustrlen(expected),L"\r\nCamo: Hardcore",17);
+    ustrncpy(expected,descriptions[10],256); ustrncpy(expected+ustrlen(expected),L"\r\nCamo: Stronger",16);
     assert(equal(labels[1].parameters.text_box.text,expected) && locks[1].visible);
     ((struct game_variant *)p)->universal_variant.pad6^=1;
     mutliplayer_settings_select_list_update_displayed_items(&list);
@@ -118,10 +121,16 @@ static void check_cards(void) {
 static void bounds(void) {
     struct { wchar_t text[256]; unsigned sentinel; } buffer;
     struct playlist_profile *p=&cached_variant_profile[0].profile;
-    performance_variant_set_flags((struct game_variant *)p,PERFORMANCE_OPTIONS_MASK);
+    performance_variant_set_flags((struct game_variant *)p,511);
     memset(&buffer,0,sizeof(buffer)); buffer.sentinel=0x12345678;
     playlist_profile_append_performance_status(buffer.text,p);
-    assert(equal(buffer.text,L"Camo: Hardcore"));
+    assert(equal(buffer.text,L"Camo: Stronger"));
+    performance_variant_set_flags((struct game_variant *)p,PERFORMANCE_PRO_FLAGS);
+    buffer.text[0]=0; playlist_profile_append_performance_status(buffer.text,p);
+    assert(equal(buffer.text,L"Performance: Pro"));
+    performance_variant_set_flags((struct game_variant *)p,PERFORMANCE_SELF_SOUND_FLAGS);
+    buffer.text[0]=0; playlist_profile_append_performance_status(buffer.text,p);
+    assert(equal(buffer.text,L"Performance options active"));
     for(int i=0;i<255;i++) buffer.text[i]='x'; buffer.text[255]=0;
     playlist_profile_append_performance_status(buffer.text,p);
     assert(ustrlen(buffer.text)==255 && buffer.sentinel==0x12345678);
@@ -144,11 +153,18 @@ class PerformanceCardTests(unittest.TestCase):
             "struct universal_variant\n", "struct ctf_variant\n", "struct slayer_variant\n",
             "struct king_variant\n", "struct oddball_variant\n", "struct race_variant\n",
             "union game_engine_variant\n", "struct game_variant\n"))
-        functions = "\n".join(c_block(source, signature) for signature in (
+        playlist = (ROOT / "source/saved games/playlist_profile.c").read_text()
+        profile_header = (ROOT / "source/saved games/playlist_profile.h").read_text()
+        event_header = (ROOT / "source/interface/ui_widget_event_handler_functions.h").read_text()
+        functions = c_block(playlist, "wchar_t *playlist_profile_default_description(") + "\n"
+        functions += "\n".join(c_block(source, signature) for signature in (
             "static void playlist_profile_append_performance_status(\n",
             "static void mutliplayer_settings_select_list_update_displayed_items(\n\tstruct widget_instance *list_widget)\n{"))
         fixture = PREFIX.replace("/* VARIANT DECLARATIONS */", declarations)
         fixture = fixture.replace("/* PLAYLIST DECLARATION */", c_block(source, "struct playlist_profile\n") + ";")
+        constants = c_block(profile_header, "enum { PLAYLIST_PROFILE_TEAM_SLAYER_PRO") + ";\n"
+        constants += c_block(event_header, "enum { UI_WIDGET_GAME_TYPE_CREATE") + ";\n"
+        fixture = fixture.replace("/* PROFILE CONSTANTS */", constants)
         fixture = fixture.replace("/* PRODUCTION FUNCTIONS */", functions) + HARNESS
         fixture = re.sub(r"\bunsigned long\b", "uint32_t", fixture)
         fixture = re.sub(r"\blong\b", "int32_t", fixture)

@@ -23,10 +23,13 @@ under **Item Options → Starting Equipment**; cards identify that choice too.
 | --- | --- | --- | --- | --- |
 | Default | Off | Off | Off | Normal / Normal |
 | Practice | On | On | On | Normal / Normal |
-| Pro | On | Off | On | Silent / Silent |
+| Pro | On | Off | On | Just Me / Just Me |
 | Custom | Individually selected | Individually selected | Individually selected | Individually selected |
 
 **Pro** also sets Input Delay Off, Precision Spread On and Camo Stronger.
+Its movement and equip/switch sounds remain audible to the acting player and
+are suppressed for other listeners. Previously saved custom Silent rules stay
+Silent; selecting Pro applies the new Just Me choices.
 Default and Practice keep independently selected input-delay, precision and
 camo rules; all of those rules start at their original defaults. Fiesta remains
 independent of every preset. The preset name is derived from the saved options,
@@ -195,25 +198,43 @@ recordings are installed.
 
 ## Movement and weapon sounds
 
-**Movement Sounds: Normal / Silent** controls footsteps, shuffling, sliding,
-jump and landing sound events. **Weapon Sounds: Normal / Silent** controls
+**Movement Sounds: Normal / Just Me / Silent** controls footsteps, shuffling,
+sliding, jump and landing sound events.
+**Weapon Sounds: Normal / Just Me / Silent** controls
 equip, ready and switch sounds, including put-away when authored by the map.
 Both are saved game-type rules and host-controlled live settings. Normal is
 the default. These rules do not alter weapon draw time, firing, reloads, ammo,
 movement physics or simulation rate.
 
+| Choice | Acting player hears their sound | Other listeners hear it |
+| --- | --- | --- |
+| Normal | Yes, with original mixing | Yes, with original mixing |
+| Just Me | Yes | No |
+| Silent | No | No |
+
+Just Me tracks the full player identifier that created an event, then compares
+it with the audio listener. Ownership follows delayed effects and particles;
+being nearby or on the same team does not grant audibility. Machines sharing
+speakers for local split screen share their physical audio output: an audible
+local player's own cue can still be heard by people in the same room.
+Equipment pickup chimes, including overshield, retain their existing local-only
+feedback in all three modes; these settings cover movement and weapon equip,
+not a blanket mute of every player sound.
+
 The implementation tracks the event that created each sound, including delayed
 effects, particles, first-person animation frames and third-person ready or
 put-away actions. It does not infer a role from a filename or a broad sound
 class. A shared tag used for firing or reloading therefore keeps that occurrence
-audible. Silent changes the final impulse gain while preserving sound creation,
+audible. Just Me and Silent change the final impulse gain while preserving sound creation,
 effect visuals, random-number consumption, weapon state and fire-ready timing.
 Normal restores the original gain, including for a still-playing sound.
 
 The affected stock weapon inventory is assault rifle, pistol, shotgun, plasma
 rifle, plasma pistol, rocket launcher, sniper rifle, needler, flamethrower,
 oddball and flag. Map-authored ready and put-away sounds on custom weapons use
-the same event policy; absent recordings remain absent. Use the event-policy tests and gameplay listening checks to verify both modes.
+the same event policy; absent recordings remain absent. Offline event-policy
+tests cover all three modes, ownership propagation and listener filtering.
+Interactive gameplay and listening validation remain pending.
 
 ## Spawn markers and supported maps
 
@@ -266,15 +287,23 @@ introduced.
 | Field | Enabled extension value |
 | --- | --- |
 | `pad0`, `pad1`, `pad2` | ASCII `P`, `F`, `O` |
-| `pad4` | Format version `1`, or version `2` with Hardcore camo enabled |
+| `pad4` | Format `1`, `2` with stronger camo, or low bits `3` with audience/camo bits below |
 | `pad5` | Low flags: timer `1`, spawn markers `2`, timer sounds `4`, silent movement `8`, silent weapons `16`, input delay `32`, precision Hardcore `64`, Fiesta `128` |
-| `pad6` | Low flags XOR `0xA5` for version 1; low flags XOR `0xA4` for version 2 |
+| `pad6` | Low flags XOR `0xA5` for version 1; XOR `0xA4` for version 2; XOR `0xA5` XOR `pad4` for version 3 |
 
 Version 2 implies Hardcore camo flag `256`; the other flags retain their
 original positions. Normal camo keeps the exact version-1 encoding, so
 existing game types need no conversion. Earlier builds reject version 2
 as all options off; host capability confirmation prevents newer clients
 from applying an unsupported saved camo rule.
+
+Version 3 is used only for Just Me sounds. In `pad4`, bit `4` implies camo flag
+`256`, bit `8` implies Just Me movement flag `4096`, and bit `16` implies Just Me
+weapon flag `8192`; its low two bits are `3`. The low sound flags retain their
+Silent meaning. Selecting both Silent and Just Me for the same category is
+invalid. Existing version-1/2 saves keep their exact bytes and choices. Earlier
+builds reject version 3 as all options off, so Just Me requires acknowledged
+support from the host and every participating machine.
 
 All flags off writes all six bytes as zero. Old padding, an unknown format version,
 unknown flag bits or a damaged check byte decode as all options off. The check
@@ -287,7 +316,8 @@ The client's reliable connection announces supported subsets before its normal
 join request: the original timer/marker mask, the timer-audio generation, the
 sound-rule generation (mask 31), input-delay generation (mask 63), then the
 precision generation (mask 127), Fiesta generation (mask 255), and camo
-generation (mask 511). Earlier hosts retain the newest subset they
+generation (mask 511), followed by expanded weapons, arsenal, download wait,
+and the Just Me sound generation (mask 16383). Earlier hosts retain the newest subset they
 understand. An unextended v11 host ignores those unknown data messages.
 The updated host keeps capabilities per connection slot and clears them when
 the slot is removed or reused.
@@ -338,15 +368,18 @@ Press **F2** for the existing developer console. `pb` shows settings and help;
 live timer/sound aids. All three preserve the fixed Input Delay, Precision
 Spread, Fiesta and Camo rules. Select the complete Pro rules before play. Use
 `pb timer on`, `pb markers off`, or `pb audio toggle` for individual controls.
-Those accept `on`, `off` or `toggle`. Use `pb movement silent` or
-`pb weapons normal` for sound rules; these accept `normal`, `silent` or `toggle`.
+Those accept `on`, `off` or `toggle`. Use `pb movement self` or
+`pb weapons normal` for sound rules; these accept `normal`, `self` (Just Me),
+`silent` or `toggle`. Sound toggles cycle Normal, Just Me, Silent.
 Tab completion is available. Host authority
 and peer capability checks are identical to the pause menu. These are session
 changes; save a game type in Edit Gametypes for future matches.
 
-The diagnostic `performance_options [0..511]` is available, with flags timer `1`,
+The diagnostic `performance_options [flags]` is available, with flags timer `1`,
 markers `2`, audio `4`, silent movement `8`, silent weapons `16` and input delay
-`32`, Hardcore precision `64`, Fiesta `128` and Hardcore camo `256`.
+`32`, precision spread `64`, Fiesta `128`, stronger camo `256`, Just Me movement
+`4096` and Just Me weapons `8192`. Unknown or conflicting sound-mode bits are
+refused; the complete valid-bit mask is `12799`.
 A request to change a match rule during play is refused. Status also
 reports per-map sound provenance, muted dispatch counts, timer cue preferences
 and successful cue dispatch counts; these are diagnostic

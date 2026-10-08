@@ -114,6 +114,18 @@ Source and offline production-function fixtures cover map capability lifetime,
 marker validation and weapon-set remapping. This does not establish gameplay
 or mixed-build network validation.
 
+## Optional sound audience
+
+Movement and weapon equip/switch sounds offer Normal, Just Me and Silent.
+Normal retains the original sound mix and is the default for custom rules;
+Just Me retains the acting player's feedback while suppressing those events
+for other audio listeners. Silent retains the earlier mute for all listeners.
+These are explicit host-selected departures from original audibility rules.
+The optional Pro preset selects Just Me. Sound occurrences keep their authored
+samples, effects, RNG consumption and weapon timing. Pickup chimes retain their
+existing local-only feedback. Offline ownership and listener fixtures do not
+establish gameplay listening results or retail parity.
+
 ## Protocol compatibility
 
 Interoperability with cybersecurity clients and discovery services is a goal,

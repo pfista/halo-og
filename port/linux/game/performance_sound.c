@@ -7,6 +7,7 @@ struct performance_sound_provenance
 {
 	long datum_index;
 	unsigned role;
+	long player_index;
 };
 
 /* Sound manager's fixed pool is 0x200. Effects and particles use the same
@@ -15,7 +16,7 @@ struct performance_sound_provenance
 static struct performance_sound_provenance voices[0x200];
 static struct performance_sound_provenance effects[HALO_PORT_MAXIMUM_EFFECTS];
 static struct performance_sound_provenance particles[HALO_PORT_MAXIMUM_PARTICLES];
-static unsigned current_role;
+static struct performance_sound_scope current = { _performance_sound_normal, -1 };
 static struct performance_sound_statistics statistics;
 
 static struct performance_sound_provenance *provenance_table(unsigned owner, size_t *count)
@@ -37,21 +38,33 @@ static struct performance_sound_provenance *provenance_get(unsigned owner, long 
 	return datum_index != -1 && slot < count ? &table[slot] : NULL;
 }
 
-unsigned performance_sound_push(unsigned role)
+struct performance_sound_scope performance_sound_push(unsigned role, long player_index)
 {
-	unsigned previous = current_role;
-	current_role = role & (_performance_sound_movement | _performance_sound_weapon_ready);
+	struct performance_sound_scope previous = current;
+	current.role = role & (_performance_sound_movement | _performance_sound_weapon_ready);
+	current.player_index = current.role ? player_index : -1;
 	return previous;
 }
 
-void performance_sound_pop(unsigned previous)
+struct performance_sound_scope performance_sound_push_recorded(unsigned owner, long datum_index)
 {
-	current_role = previous & (_performance_sound_movement | _performance_sound_weapon_ready);
+	return performance_sound_push(performance_sound_role(owner, datum_index),
+		performance_sound_player(owner, datum_index));
+}
+
+void performance_sound_pop(struct performance_sound_scope previous)
+{
+	current = previous;
 }
 
 unsigned performance_sound_current(void)
 {
-	return current_role;
+	return current.role;
+}
+
+long performance_sound_current_player(void)
+{
+	return current.player_index;
 }
 
 void performance_sound_reset(unsigned owner)
@@ -64,16 +77,19 @@ void performance_sound_reset(unsigned owner)
 	{
 		memset(&statistics, 0, sizeof(statistics));
 		statistics.last_voice_index = statistics.last_definition_index = -1;
+		current.role = _performance_sound_normal;
+		current.player_index = -1;
 	}
 }
 
-void performance_sound_record(unsigned owner, long datum_index, unsigned role)
+void performance_sound_record(unsigned owner, long datum_index, unsigned role, long player_index)
 {
 	struct performance_sound_provenance *record = provenance_get(owner, datum_index);
 	if (record)
 	{
 		record->datum_index = datum_index;
 		record->role = role & (_performance_sound_movement | _performance_sound_weapon_ready);
+		record->player_index = record->role ? player_index : -1;
 		if (owner == _performance_sound_voice)
 		{
 			if (!record->role) ++statistics.voices_by_role[_performance_sound_normal];
@@ -90,7 +106,7 @@ void performance_sound_record(unsigned owner, long datum_index, unsigned role)
 
 void performance_sound_capture(unsigned owner, long datum_index)
 {
-	performance_sound_record(owner, datum_index, current_role);
+	performance_sound_record(owner, datum_index, current.role, current.player_index);
 }
 
 void performance_sound_capture_voice(long sound_index, long definition_index)
@@ -104,7 +120,10 @@ void performance_sound_forget(unsigned owner, long datum_index)
 {
 	struct performance_sound_provenance *record = provenance_get(owner, datum_index);
 	if (record && record->datum_index == datum_index)
+	{
 		record->role = _performance_sound_normal;
+		record->player_index = -1;
+	}
 }
 
 unsigned performance_sound_role(unsigned owner, long datum_index)
@@ -113,9 +132,21 @@ unsigned performance_sound_role(unsigned owner, long datum_index)
 	return record && record->datum_index == datum_index ? record->role : _performance_sound_normal;
 }
 
-float performance_sound_gain(long sound_index, unsigned silent_roles)
+long performance_sound_player(unsigned owner, long datum_index)
 {
-	unsigned muted = performance_sound_role(_performance_sound_voice, sound_index) & silent_roles;
+	struct performance_sound_provenance *record = provenance_get(owner, datum_index);
+	return record && record->datum_index == datum_index && record->role ? record->player_index : -1;
+}
+
+float performance_sound_gain(long sound_index, unsigned silent_roles, unsigned self_roles, long listener_player_index)
+{
+	unsigned role = performance_sound_role(_performance_sound_voice, sound_index);
+	long player_index = performance_sound_player(_performance_sound_voice, sound_index);
+	unsigned muted = role & silent_roles;
+	/* Unknown ownership must never expose a self-only event to another player.
+	 * Equality uses the full salted handles; spatial proximity is irrelevant. */
+	if (player_index == -1 || listener_player_index != player_index)
+		muted |= role & self_roles;
 	if (muted & _performance_sound_movement) ++statistics.muted_dispatches_by_role[_performance_sound_movement];
 	if (muted & _performance_sound_weapon_ready) ++statistics.muted_dispatches_by_role[_performance_sound_weapon_ready];
 	return muted ? 0.0f : 1.0f;
