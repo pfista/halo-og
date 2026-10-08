@@ -137,6 +137,7 @@ struct Context {
     uint64_t submitted = 0, completed = 0;
     bool poisoned = false;
     bool fxaa_enabled = false;
+    bool compact_vertices_enabled = false;
     HaloMetalWarmupCache warmup;
     NSString *warmup_path = nil;
     bool warmup_dirty = false;
@@ -192,7 +193,8 @@ int reply(uint32_t offset, uint32_t size, int status, uint32_t failed = UINT32_M
           uint32_t version = 0, uint32_t bytes = 0) {
     halo_metal_reply result = {HALO_METAL_ABI_VERSION, status, failed,
         capabilities | (context.layer ? HALO_METAL_CAP_PRESENT_EXACT | HALO_METAL_CAP_PRESENT_SCALED : 0) |
-            (context.fxaa_enabled ? HALO_METAL_CAP_FXAA : 0),
+            (context.fxaa_enabled ? HALO_METAL_CAP_FXAA : 0) |
+            (context.compact_vertices_enabled ? HALO_METAL_CAP_COMPACT_VERTICES : 0),
         context.submitted, context.completed,
         (uint32_t)(context.textures.size() + context.programs.size() + context.queries.size()), version, bytes, 0};
     return size == sizeof(result) && write_guest(offset, &result, sizeof(result)) ? status : HALO_METAL_MEMORY;
@@ -559,8 +561,16 @@ void warmup_initialize() noexcept {
         context.draw_encoder.diagnosticsEnabled = NO;
         const auto started = std::chrono::steady_clock::now();
         std::vector<id<MTLFunction>> functions(context.warmup.functions.size(),nil);
+        std::vector<bool> eligible(functions.size(),false);
+        for (const auto &p : context.warmup.pipelines) {
+            if (p.compact && !context.compact_vertices_enabled) continue;
+            eligible[p.vertex] = eligible[p.fragment] = true;
+        }
         size_t ready = 0, pipelines = 0;
         for (size_t i = 0; i < context.warmup.functions.size(); i++) {
+            // Keep manifest indices stable. Orphan functions have no known
+            // draw mode; optional warming waits for a real eligible draw.
+            if (!eligible[i]) continue;
             const auto &key = context.warmup.functions[i];
             NSString *source = [[NSString alloc] initWithBytes:key.source.data() length:key.source.size() encoding:NSUTF8StringEncoding];
             if (!source) continue;
@@ -574,7 +584,8 @@ void warmup_initialize() noexcept {
         for (const auto &p : context.warmup.pipelines) {
             if (!functions[p.vertex] || !functions[p.fragment]) continue;
             HaloMetalPipelineWarmup descriptor{functions[p.vertex],functions[p.fragment],p.color,p.depth,
-                p.packed,p.mask,p.blend,p.source,p.destination,p.operation};
+                p.packed,p.mask,p.blend,p.source,p.destination,p.operation,p.compact};
+            if (p.compact && !context.compact_vertices_enabled) continue;
             NSError *error = nil;
             if ([context.draw_encoder preparePipeline:descriptor error:&error]) pipelines++;
         }
@@ -605,7 +616,7 @@ void warmup_learn(const Prepared &prepared) noexcept {
             context.warmup.learn(*vertex);
             const uint32_t v = context.warmup.find(*vertex), f = context.warmup.find(*fragment);
             if (v == UINT32_MAX || f == UINT32_MAX) continue;
-            context.warmup.learn({v,f,p.color,p.depth,p.packed,p.mask,p.blend,p.source,p.destination,p.operation});
+            context.warmup.learn({v,f,p.color,p.depth,p.packed,p.mask,p.blend,p.source,p.destination,p.operation,p.compact});
         }
         context.warmup_dirty |= before_revision != context.warmup.revision;
     } catch (...) { /* Learning is optional and cannot fail an accepted packet. */ }
@@ -669,18 +680,21 @@ HaloMetalDraw prepare_draw(const HaloMetalPacketView &packet, size_t position, h
                           id<MTLBuffer> __strong &input_buffer,
                           std::map<uint32_t, Texture> &textures, std::map<uint32_t, Program> &programs,
                           Visibility *query, uint32_t alpha_border_mask = 0, uint32_t volume_border_mask = 0,
-                          uint32_t command_index = UINT32_MAX) {
-    const size_t fixed = c.command.opcode == HALO_METAL_DRAW ? sizeof(c) : sizeof(halo_metal_draw_volume_border);
+                          uint32_t command_index = UINT32_MAX, uint32_t compact_bytes = 0) {
+    const bool compact = c.command.opcode == HALO_METAL_DRAW_COMPACT;
+    const size_t fixed = compact ? sizeof(halo_metal_draw_compact) :
+        c.command.opcode == HALO_METAL_DRAW ? sizeof(c) : sizeof(halo_metal_draw_volume_border);
     check(alpha_border_mask <= 15 && volume_border_mask <= 15 && !(alpha_border_mask & volume_border_mask));
     check(c.command.byte_size >= fixed && !c.reserved[0] && !c.reserved[1] && c.vertex_count && c.index_count && c.primitive <= 4);
-    inline_range(position,c.command.byte_size,fixed,c.vertices_offset,uint64_t(c.vertex_count) * HaloMetalVertexStride,16);
+    inline_range(position,c.command.byte_size,fixed,c.vertices_offset,
+        compact ? compact_bytes : uint64_t(c.vertex_count) * HaloMetalVertexStride,16);
     inline_range(position,c.command.byte_size,fixed,c.indices_offset,uint64_t(c.index_count) * 4,16);
     inline_range(position,c.command.byte_size,fixed,c.vertex_uniforms_offset,HaloMetalVertexUniformSize,16);
     inline_range(position,c.command.byte_size,fixed,c.pixel_uniforms_offset,HaloMetalPixelUniformSize,16);
     check(c.packed_mask <= UINT16_MAX);
     // Packed input registers contain instruction-visible integer bits. Their
     // float interpretation may be NaN and must never be normalized or tested.
-    for (uint32_t vertex = 0; vertex < c.vertex_count; vertex++) for (unsigned reg = 0; reg < 16; reg++) {
+    for (uint32_t vertex = 0; !compact && vertex < c.vertex_count; vertex++) for (unsigned reg = 0; reg < 16; reg++) {
         if (c.packed_mask & (1u << reg)) continue;
         for (unsigned component = 0; component < 4; component++) {
             float value;
@@ -716,6 +730,7 @@ HaloMetalDraw prepare_draw(const HaloMetalPacketView &packet, size_t position, h
     auto &p = program(programs,c.program); HaloMetalDraw draw;
     draw.vertexFunction = p.vertex; draw.fragmentFunction = p.fragment;
     draw.vertexCount = c.vertex_count; draw.indexCount = c.index_count; draw.packedMask = c.packed_mask;
+    draw.compactVertices = compact; draw.vertexBytes = compact_bytes;
     draw.primitive = (MTLPrimitiveType)c.primitive; draw.state = c.state;
     draw.alphaBorderMask = alpha_border_mask;
     draw.volumeBorderMask = volume_border_mask;
@@ -1065,9 +1080,10 @@ void validate(const HaloMetalPacketView &packet, Prepared &prepared) {
                 }
                 case HALO_METAL_DRAW:
                 case HALO_METAL_DRAW_ALPHA_BORDER:
-                case HALO_METAL_DRAW_VOLUME_BORDER: {
+                case HALO_METAL_DRAW_VOLUME_BORDER:
+                case HALO_METAL_DRAW_COMPACT: {
                     auto c = record<halo_metal_draw>(packet,position);
-                    uint32_t mask = 0, volume_mask = 0;
+                    uint32_t mask = 0, volume_mask = 0, compact_bytes = 0;
                     if (command.opcode == HALO_METAL_DRAW_ALPHA_BORDER) {
                         auto extended = record<halo_metal_draw_alpha_border>(packet,position);
                         check(command.byte_size >= sizeof(extended) && !extended.reserved &&
@@ -1081,8 +1097,19 @@ void validate(const HaloMetalPacketView &packet, Prepared &prepared) {
                             !(extended.volume_stage_mask & extended.alpha_stage_mask));
                         volume_mask = extended.volume_stage_mask; mask = extended.alpha_stage_mask;
                     }
+                    if (command.opcode == HALO_METAL_DRAW_COMPACT) {
+                        check(context.compact_vertices_enabled,HALO_METAL_UNSUPPORTED);
+                        auto extended = record<halo_metal_draw_compact>(packet,position);
+                        check(command.byte_size >= sizeof(extended) && !extended.reserved &&
+                            extended.vertex_bytes && extended.volume_stage_mask <= 15 &&
+                            extended.alpha_stage_mask <= 15 &&
+                            !(extended.volume_stage_mask & extended.alpha_stage_mask));
+                        compact_bytes = extended.vertex_bytes;
+                        volume_mask = extended.volume_stage_mask; mask = extended.alpha_stage_mask;
+                    }
                     auto *query = active_query.id ? &visibility(queries,active_query) : nullptr;
-                    prepared.draws.emplace(position,prepare_draw(packet,position,c,prepared.input_buffer,textures,programs,query,mask,volume_mask,i)); break;
+                    prepared.draws.emplace(position,prepare_draw(packet,position,c,prepared.input_buffer,textures,programs,
+                        query,mask,volume_mask,i,compact_bytes)); break;
                 }
                 case HALO_METAL_CREATE_VISIBILITY: {
                     auto c = record<halo_metal_create_visibility>(packet,position);
@@ -1343,7 +1370,7 @@ void execute(const HaloMetalPacketView &packet, const Prepared &prepared) {
         // clears, copies, queries, resource changes and presentation in their
         // exact original order with a completed attachment store boundary.
         if (command.opcode != HALO_METAL_DRAW && command.opcode != HALO_METAL_DRAW_ALPHA_BORDER &&
-            command.opcode != HALO_METAL_DRAW_VOLUME_BORDER)
+            command.opcode != HALO_METAL_DRAW_VOLUME_BORDER && command.opcode != HALO_METAL_DRAW_COMPACT)
             [context.draw_encoder endEncoding];
         switch (command.opcode) {
             case HALO_METAL_CREATE_TEXTURE:
@@ -1431,7 +1458,8 @@ void execute(const HaloMetalPacketView &packet, const Prepared &prepared) {
             }
             case HALO_METAL_DRAW:
             case HALO_METAL_DRAW_ALPHA_BORDER:
-            case HALO_METAL_DRAW_VOLUME_BORDER: {
+            case HALO_METAL_DRAW_VOLUME_BORDER:
+            case HALO_METAL_DRAW_COMPACT: {
                 auto c = record<halo_metal_draw>(packet,position); NSError *error = nil;
                 const auto &draw = prepared.draws.at(position);
                 check([context.draw_encoder encodeDraw:draw commandBuffer:buffer reusePass:YES error:&error],HALO_METAL_GPU_ERROR,i);
@@ -1477,7 +1505,8 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
     @autoreleasepool { std::lock_guard<std::mutex> guard(lock);
         try {
             validate_reply(output,size);
-            check(!context.device && !(flags & ~(HALO_METAL_OFFSCREEN | HALO_METAL_ENABLE_FXAA)) &&
+            check(!context.device && !(flags & ~(HALO_METAL_OFFSCREEN | HALO_METAL_ENABLE_FXAA |
+                HALO_METAL_ENABLE_COMPACT_VERTICES)) &&
                 ((flags & HALO_METAL_OFFSCREEN) ? !window : window != 0));
             auto device = MTLCreateSystemDefaultDevice(); check(device != nil,HALO_METAL_GPU_ERROR);
             CAMetalLayer *layer = nil;
@@ -1505,6 +1534,7 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
             context.device = device; context.queue = queue; context.clear_library = library; context.layer = layer;
             context.draw_encoder = draw_encoder;
             context.fxaa_library = fxaa_library; context.fxaa_enabled = (flags & HALO_METAL_ENABLE_FXAA) != 0;
+            context.compact_vertices_enabled = (flags & HALO_METAL_ENABLE_COMPACT_VERTICES) != 0;
             context.fxaa_pipelines = std::move(fxaa_pipelines);
             // Reuse the existing gpu_stats environment override. Config-only
             // diagnostics can request this same established override in their

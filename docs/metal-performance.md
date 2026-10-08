@@ -26,6 +26,22 @@ that validation without looking them up again. Draw order, state rebinding,
 blended pass boundaries, shader compiler flags and synchronous completion are
 unchanged.
 
+Native Metal decodes compact vertex input on the GPU by default. To compare with
+the CPU input path, set this in the local configuration and restart:
+
+```ini
+[debug]
+metal_gpu_vertex_decode = false
+```
+
+The default is `true`. Eligible draws snapshot their original compact streams
+into owned packet storage, and the vertex shader decodes the input registers.
+The original NV2A instruction translation then runs unchanged. Immediate draws
+and draws whose compact payload would be larger retain CPU expansion. There is
+no environment-variable override, geometry cache or asynchronous submission in
+this path. With `gpu_stats = true`, `Native vertex input` records the
+selected draw counts and compact/uploaded/reference vertex bytes per frame.
+
 The native host reuses a render pass for consecutive draws with blending
 disabled, no visibility query, and the same color and depth/stencil attachments.
 Every original draw state is rebound. Resource operations, clears, copies,
@@ -546,3 +562,92 @@ Evidence: `run-learned-cache-warm-single-copy/`,
 `cache-summary.json` and frozen binary provenance, under
 `build/metal-cutscene-20261008/`. The scoped guest rebuild is recorded in
 `hitch-diagnostics-vertex-output/build.json`.
+
+### GPU vertex decoding
+
+The compact path copies each active stream's required original byte span once,
+including its stride, and carries a 528-byte input description with fixed
+register values. Indices retain the existing primitive conversion and rebasing.
+The host validates the immutable command-local spans before encoding; raw packed
+normal bits remain integers until the original shader unpack operation. Shader
+and pipeline keys distinguish compact and expanded input, and warmup skips
+compact-only entries when the experiment is disabled. Reading older version-1
+warmup files remains supported; new files use version 2.
+
+`tools/test_metal_vertex_decode.py` compares the production GPU decoder against
+CPU fetch for all 20 declaration formats, all 65,536 signed-short values and all
+256 byte values, unaligned streams, zero strides, fixed and missing attributes,
+negative zero, subnormals and NaN-shaped packed normal words. Under the original
+fast vertex compiler contract, 33,880,250 register comparisons match exactly.
+All 67 original vertex programs compile with both zero and full packed masks
+(134 compact shader libraries).
+
+The same fixture packs production guest inputs, converts and rebases original
+indices, and renders with original NV2A program 37 through the production host
+encoder. RGBA8/BGRA8 color and Depth32 outputs match the CPU path byte for byte:
+65,536 identical readback bytes with nonempty, varying coverage. Metal API
+validation is clean. Focused pack, guest transport/ILP32, packet, draw-encoder,
+function-cache and warmup-cache checks pass, including atomic malformed-packet
+rejection and compact-only cache filtering. Scoped production guest and host
+compile/link checks also pass.
+
+These proofs cover the decoder and one original-program render comparison;
+they do not establish complete retail-frame fidelity across maps. GPU input is
+the default; setting `metal_gpu_vertex_decode = false` retains the CPU comparison
+path while that coverage grows. This changes vertex input
+preparation only; original shader instructions, 30 Hz simulation, draw ordering,
+queries and synchronous packet completion retain their existing behavior.
+
+Frozen binaries, build provenance and sequential Silent Cartographer captures
+are under `build/gpu-vertex-20261008/` in the isolated
+`codex/gpu-vertex-decode` worktree. Each accepted game capture includes its
+configuration, foreground checks, clean exit, full launch log and joined frame
+analysis. The initial cold learning run is excluded from performance comparisons.
+
+The accepted captures use an Apple M5 Max on macOS 27.0.1, the same frozen
+candidate host/guest, fullscreen FXAA, interpolation on, audio on, and VSync/frame
+cap off. Runs last 75 seconds with isolated offline settings and diagnostic
+logging. Source hashes matched the compiled candidate when the sweep completed.
+These captures explicitly selected GPU or CPU input before GPU input became
+the default. The
+matched heavy opening window retains original ticks 3--125, at least 800 draws
+per frame, complete packet coverage and warm shader/pipeline caches:
+
+| Mean per heavy frame at 720p | CPU input, two runs | GPU input, two runs |
+| --- | ---: | ---: |
+| Original draws | 1,065--1,086 | 1,071--1,082 |
+| Frame interval | 41.17--42.48 ms | 18.90--29.06 ms |
+| Guest vertex preparation | 10.01--10.51 ms | 1.19--1.94 ms |
+| Guest draw CPU work, excluding host submissions | 18.34--19.26 ms | 4.96--8.07 ms |
+| Uploaded vertex input | 50.44--50.65 MB | 7.17--7.18 MB |
+| Host packet copy plus preparation | 7.85--8.01 ms | 2.44--3.83 ms |
+
+About 75% of draws use compact input in that window; smaller and immediate draws
+retain CPU input. Host/GPU phases can overlap and should not be added together.
+The spread between GPU captures supports reporting a range. Complete gameplay
+workload outside the matched opening also varies between runs.
+
+The requested resolution sweep repeats 1440p and includes the full drawable:
+
+| Vertex path and rendered storage | FPS after tick 150 | Matched heavy opening FPS |
+| --- | ---: | ---: |
+| CPU, 1107x720 (two runs) | 65.99--69.01 | 23.54--24.29 |
+| GPU, 1107x720 (two runs) | 98.10--114.86 | 34.41--52.91 |
+| CPU, 2214x1440 | 59.25 | 23.24 |
+| GPU, 2214x1440 (two runs) | 100.27--109.39 | 51.01--53.04 |
+| GPU, native 3600x2338 | 112.27 | 49.61 |
+
+The 1440p runs render four times the 720p pixels; native renders about 10.6 times
+as many. Native-resolution gameplay has a 16.11 ms 95th-percentile frame interval
+in this sample, but the heavy opening remains around 50 FPS. Whole-run variation
+means the higher native average does not establish that native resolution costs
+less. These are samples of one original map on one Mac, rather than a universal
+FPS guarantee. Observed simulation remains approximately 30 Hz in every run.
+
+`comparison.json` records exact figures and frozen binary provenance. The eight
+accepted runs are `run-cpu-warm-a1/`, `run-gpu-warm-b1/`, `run-cpu-warm-a2/`,
+`run-gpu-warm-b2/`, `run-cpu-1440/`, `run-gpu-1440/`,
+`run-gpu-native/` and `run-gpu-1440-repeat/`. All complete with foreground checks,
+clean guest/host exits and no renderer faults. Runtime cache misses outside the
+matched window are retained in the evidence; the warmed matched-window filter
+does not imply every complete capture has zero misses.

@@ -1,5 +1,5 @@
 /* Shared original-draw encoder for the live guest bridge and ordered replay.
- * Callers own compilation, source-layout expansion, uploads, target history,
+ * Callers own compilation, source-layout preparation, uploads, target history,
  * resource lifetimes, synchronization and presentation. This module only
  * validates and encodes draws against existing attachments using LOAD/STORE.
  */
@@ -30,6 +30,8 @@ struct HaloMetalDraw {
     NSUInteger vertexOffset = 0, indexOffset = 0;
     NSUInteger vertexUniformOffset = 0, pixelUniformOffset = 0;
     NSUInteger vertexCount = 0, indexCount = 0;
+    bool compactVertices = false;
+    NSUInteger vertexBytes = 0;
     /* Active queries only. The caller owns a zeroed, fresh 8-byte result word
      * for each draw/encoder and aggregates words after GPU completion. There
      * is no implicit accumulation or CPU result-availability policy here. */
@@ -46,6 +48,7 @@ struct HaloMetalPipelineWarmup {
     id<MTLFunction> vertex = nil, fragment = nil;
     uint64_t color = 0, depth = 0;
     uint32_t packed = 0, mask = 0, blend = 0, source = 1, destination = 1, operation = 1;
+    uint32_t compact = 0;
 };
 struct HaloMetalPipelineInterval { uint64_t started = 0, ended = 0; bool succeeded = false; };
 typedef NS_ENUM(NSInteger, HaloMetalDrawError) {

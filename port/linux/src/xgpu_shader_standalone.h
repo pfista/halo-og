@@ -47,6 +47,7 @@ static inline BOOL config_boolean(const char *name) { (void)name; return FALSE; 
     XGPU_PIXEL_UNIFORMS_ES
 char *nv2a_vertex_shader_to_glsl(const DWORD *, unsigned long, unsigned long);
 char *nv2a_vertex_shader_to_msl(const DWORD *, unsigned long, unsigned long);
+char *nv2a_vertex_shader_to_msl_compact(const DWORD *, unsigned long, unsigned long);
 char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *);
 char *nv2a_pixel_shader_to_msl(const struct nv2a_pixel_shader_key *);
 #endif

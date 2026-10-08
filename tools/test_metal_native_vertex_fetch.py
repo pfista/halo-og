@@ -44,6 +44,15 @@ class Plan(C.Structure):
     _fields_ = [(name,C.c_uint32) for name in ('source_first','source_count','index_count','wire_primitive')]
 
 
+class CompactElement(C.Structure):
+    _fields_ = [(name,C.c_uint32) for name in ('reg','type','offset','stride')]
+
+
+class CompactInput(C.Structure):
+    _fields_ = [(name,C.c_uint32) for name in ('version','element_count','vertex_count','packed_mask')] + \
+        [('elements',CompactElement*16),('fixed',(C.c_float*4)*16)]
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -93,6 +102,10 @@ class VertexFetchTests(unittest.TestCase):
         cls.lib = C.CDLL(str(cls.library_path))
         cls.lib.metal_vertex_declaration_parse.argtypes = [C.c_void_p,C.c_size_t,C.POINTER(Declaration)]
         cls.lib.metal_vertex_fetch.argtypes = [C.POINTER(Declaration),C.POINTER(Stream),C.c_void_p,
+            C.c_uint32,C.c_uint32,C.c_void_p,C.c_size_t]
+        cls.lib.metal_vertex_compact_size.argtypes = [C.POINTER(Declaration),C.POINTER(Stream),
+            C.c_uint32,C.c_uint32,C.POINTER(C.c_size_t)]
+        cls.lib.metal_vertex_compact_pack.argtypes = [C.POINTER(Declaration),C.POINTER(Stream),C.c_void_p,
             C.c_uint32,C.c_uint32,C.c_void_p,C.c_size_t]
         for name in ('metal_vertex_index_plan','metal_vertex_indices'):
             getattr(cls.lib,name).argtypes = [C.c_uint32,C.c_void_p,C.c_size_t,C.c_uint32,C.c_uint32,C.c_uint32] + \
@@ -155,6 +168,49 @@ class VertexFetchTests(unittest.TestCase):
         else:
             self.assertEqual(bytes(plan),bytes(written))
         return status,plan,out.raw[16:16+size]
+
+    def compact(self,d,stream_values,count=1,first=0,fixed=None,capacity=None):
+        fixed = fixed if fixed is not None else struct.pack('<64f',*[float(i)+.25 for i in range(64)])
+        keep = [C.create_string_buffer(fixed,256)]
+        streams = (Stream*16)()
+        for slot,data,stride in stream_values:
+            memory = C.create_string_buffer(b'x'+data,len(data)+1)
+            keep.append(memory)
+            streams[slot] = Stream(C.addressof(memory)+1,len(data),stride)
+        size = C.c_size_t(0xa7)
+        status = self.lib.metal_vertex_compact_size(C.byref(d),streams,first,count,C.byref(size))
+        if status:
+            self.assertEqual(size.value,0xa7)
+            return status,b''
+        output = C.create_string_buffer(bytes([0xa7])*(size.value+32),size.value+32)
+        status = self.lib.metal_vertex_compact_pack(C.byref(d),streams,keep[0],first,count,
+            C.byref(output,1),size.value if capacity is None else capacity)
+        self.assertEqual(output.raw[:1],b'\xa7')
+        self.assertEqual(output.raw[1+size.value:],b'\xa7'*31)
+        if status:
+            self.assertEqual(output.raw,b'\xa7'*(size.value+32))
+        return status,output.raw[1:1+size.value]
+
+    def fetch_compact_with_cpu_reference(self,payload):
+        # Execute the existing CPU decoder over the compact descriptor ranges.
+        # This checks copied-byte/rebase behavior against the same independently
+        # hand-built records used to establish CPU fetch semantics above.
+        prefix = CompactInput.from_buffer_copy(payload)
+        source = C.create_string_buffer(payload,len(payload))
+        streams = (Stream*16)()
+        elements = []
+        for slot,e in enumerate(prefix.elements[:prefix.element_count]):
+            streams[slot] = Stream(C.addressof(source),len(payload),e.stride)
+            elements.append((e.reg,slot,e.type,e.offset))
+        d = declaration(elements)
+        # Unbound packed registers are omitted from active descriptors, but
+        # their zero fixed records preserve the CPU decoder's disabled result.
+        fixed = C.create_string_buffer(payload[272:528],256)
+        out = C.create_string_buffer(prefix.vertex_count*256)
+        status = self.lib.metal_vertex_fetch(C.byref(d),streams,fixed,0,prefix.vertex_count,
+            out,len(out))
+        self.assertEqual(status,OK)
+        return out.raw
 
     def test_declaration_stream_offsets_skips_constants_and_failures(self):
         tokens = [0x20000002,0x40320000,0x50020000,0x40210008,0x20000001,
@@ -240,6 +296,96 @@ class VertexFetchTests(unittest.TestCase):
         self.assertEqual(out[256:272],struct.pack('<4f',7,8,9,1))
         self.assertEqual(out[9*16:10*16],struct.pack('<4f',-16384/32767,0,0,1))
         self.assertEqual(out[256+9*16:256+10*16],struct.pack('<4f',1,0,0,1))
+
+    def test_compact_multistream_spans_rebase_and_disabled_register_bits(self):
+        # One copy for two attributes in the same stream, plus a second stream
+        # with independently padded records. Missing/NONE attributes stay fixed.
+        positions = b''.join(b'p'+struct.pack('<3f',*v)+bytes([19,85,201,254])
+            for v in ((1,2,3),(4,5,6),(7,8,9)))
+        shorts = b''.join(b'pad'+struct.pack('<h',v)+b'zz' for v in (-32768,-16384,32767))
+        d = declaration([(0,0,0x32,1),(3,0,0x40,13),(9,3,0x11,3),
+            (2,2,0x16,0),(5,1,0x02,0)])
+        bits = [0x7fc12345,0x7fa12345,0x80000000,1,0x7f800000,0xff800000,0xffffffff,0]
+        fixed = struct.pack('<64I',*(bits*8))
+        inputs = [(0,positions,17),(3,shorts,7)]
+        expected = []
+        for xyz,normal in [((4,5,6),-16384/32767),((7,8,9),1)]:
+            record = bytearray(fixed)
+            record[:16] = struct.pack('<4f',*xyz,1)
+            record[2*16:3*16] = bytes(16)
+            record[3*16:4*16] = struct.pack('<4f',201/255,85/255,19/255,254/255)
+            record[9*16:10*16] = struct.pack('<4f',normal,0,0,1)
+            expected.append(bytes(record))
+        golden = b''.join(expected)
+        self.assertEqual(self.fetch(d,inputs,count=2,first=1,fixed=fixed),(OK,golden))
+        status,payload = self.compact(d,inputs,count=2,first=1,fixed=fixed)
+        self.assertEqual(status,OK)
+        self.assertEqual(len(payload),528+33+9)
+        prefix = CompactInput.from_buffer_copy(payload)
+        self.assertEqual((prefix.version,prefix.element_count,prefix.vertex_count,prefix.packed_mask),(1,3,2,4))
+        self.assertEqual([(e.reg,e.type,e.offset,e.stride) for e in prefix.elements[:3]],
+            [(0,0x32,528,17),(3,0x40,540,17),(9,0x11,561,7)])
+        self.assertEqual(payload[16+3*16:272],bytes(13*16))
+        fixed_expected = bytearray(fixed); fixed_expected[2*16:3*16] = bytes(16)
+        self.assertEqual(payload[272:528],bytes(fixed_expected))
+        self.assertEqual(payload[528:],positions[18:51]+shorts[10:19])
+        self.assertEqual(self.fetch_compact_with_cpu_reference(payload),golden)
+
+    def test_compact_zero_stride_float2h_and_packed_nan_payload(self):
+        # FLOAT2H remains the port's three-float xyz input; ALL16B keeps raw x
+        # bits, including a NaN pattern, rather than performing float arithmetic.
+        d = declaration([(6,0,0x72,1),(7,0,0x16,13),(2,2,0x16,0)])
+        source = b'x'+struct.pack('<3fI',1.5,-2.5,3.5,0xffc12345)
+        fixed = struct.pack('<64f',*[float(i)+.25 for i in range(64)])
+        record = bytearray(fixed)
+        record[2*16:3*16] = bytes(16)
+        record[6*16:7*16] = struct.pack('<4f',1.5,-2.5,3.5,1)
+        record[7*16:8*16] = struct.pack('<I3f',0xffc12345,0,0,1)
+        golden = bytes(record)*3
+        inputs = [(0,source,0)]
+        self.assertEqual(self.fetch(d,inputs,count=3,first=700,fixed=fixed),(OK,golden))
+        status,payload = self.compact(d,inputs,count=3,first=700,fixed=fixed)
+        self.assertEqual(status,OK)
+        self.assertEqual(len(payload),544)
+        self.assertEqual(payload[528:],source[1:])
+        self.assertEqual(payload[272+7*16:272+8*16],bytes(16))
+        self.assertEqual(self.fetch_compact_with_cpu_reference(payload),golden)
+
+    def test_compact_preflight_bounds_overflow_and_alias_without_writes(self):
+        d = declaration([(0,0,0x42,1)])
+        for count,first,capacity in [(2,0,None),(1,0,543),(2,0xffffffff,None)]:
+            self.assertEqual(self.compact(d,[(0,b'x'*17,16)],count=count,first=first,
+                capacity=capacity)[0],BOUNDS)
+        d.elements[0].bytes = 12
+        self.assertEqual(self.compact(d,[(0,b'x'*17,16)])[0],INVALID)
+        d.elements[0].bytes = 16
+        memory = C.create_string_buffer(b'\x55'*1024,1024)
+        fixed = C.create_string_buffer(bytes(256),256)
+        s = (Stream*16)(); s[0] = Stream(C.addressof(memory),1024,16)
+        before = memory.raw
+        self.assertEqual(self.lib.metal_vertex_compact_pack(C.byref(d),s,fixed,0,1,
+            C.byref(memory,4),544),INVALID)
+        self.assertEqual(memory.raw,before)
+        size = C.c_size_t(0xa7)
+        self.assertEqual(self.lib.metal_vertex_compact_size(C.byref(d),s,0,1,
+            C.cast(memory,C.POINTER(C.c_size_t))),INVALID)
+        self.assertEqual(memory.raw,before)
+        output = C.create_string_buffer(b'\xa7'*544,544)
+        s[0].byte_count = 16
+        self.assertEqual(self.lib.metal_vertex_compact_pack(C.byref(d),s,fixed,0,1,
+            output,544),BOUNDS)
+        self.assertEqual(output.raw,b'\xa7'*544)
+        # Overflowing numeric pointers are rejected before dereferencing bytes.
+        s[0] = Stream(C.c_void_p(-8),32,0)
+        self.assertEqual(self.lib.metal_vertex_compact_size(C.byref(d),s,0,1,C.byref(size)),BOUNDS)
+        self.assertEqual(size.value,0xa7)
+        # A bounded source span can still exceed the uint32 wire payload limit.
+        s[0] = Stream(1,0xffffffff,16)
+        self.assertEqual(self.lib.metal_vertex_compact_size(C.byref(d),s,0,0x0fffffff,C.byref(size)),BOUNDS)
+        self.assertEqual(size.value,0xa7)
+        s[0] = Stream(C.addressof(memory),1024,16)
+        self.assertEqual(self.lib.metal_vertex_compact_pack(C.byref(d),s,fixed,0,1,
+            C.c_void_p(-8),544),BOUNDS)
 
     def test_fetch_preflight_bounds_alias_and_declaration_integrity(self):
         d = declaration([(0,0,0x32,0),(15,1,0x42,3)])

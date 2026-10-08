@@ -1,5 +1,6 @@
 /* Exercise production packet ownership across synchronous GPU submissions. */
 #include "../host/host_metal.mm"
+#include "../include/halo_metal_vertex_input.h"
 #include <cstdio>
 #include <cstdarg>
 #include <stdexcept>
@@ -48,16 +49,20 @@ struct Packet {
         bytes.resize((bytes.size() + 7u) & ~size_t(7u),0); command.command.byte_size = (uint32_t)(bytes.size() - start);
         memcpy(bytes.data() + start,&command,sizeof(command)); commands++;
     }
-    void draw(uint8_t red,size_t padding = 0,bool invalidSlice = false) {
-        halo_metal_draw command{}; command.command.opcode = HALO_METAL_DRAW;
+    void draw(uint8_t red,size_t padding = 0,bool invalidSlice = false,bool compact = false,bool invalidCompact = false) {
+        halo_metal_draw command{}; command.command.opcode = compact ? HALO_METAL_DRAW_COMPACT : HALO_METAL_DRAW;
         command.program = {1,1}; command.color = {1,1}; command.vertex_count = command.index_count = 3;
         command.primitive = MTLPrimitiveTypeTriangle;
         auto &s = command.state; s.color_write_mask = 15;
         s.blend_source = s.blend_destination = s.blend_operation = 1;
         s.depth_compare = s.stencil_compare = 8; s.stencil_fail = s.stencil_depth_fail = s.stencil_pass = 1;
         s.viewport[2] = s.viewport[3] = 4; s.viewport[5] = 1; s.scissor[2] = s.scissor[3] = 4;
-        size_t start = bytes.size(); bytes.resize(start + sizeof(command),0);
-        command.vertices_offset = payload(nullptr,3 * HaloMetalVertexStride);
+        size_t start = bytes.size(); bytes.resize(start + (compact ? sizeof(halo_metal_draw_compact) : sizeof(command)),0);
+        if (compact) {
+            halo_metal_compact_vertex_input input{};
+            input.version = HALO_METAL_COMPACT_VERTEX_VERSION;input.vertex_count = invalidCompact ? 4 : 3;
+            command.vertices_offset = payload(&input,sizeof(input));
+        } else command.vertices_offset = payload(nullptr,3 * HaloMetalVertexStride);
         const uint32_t indices[] = {0,1,2}; command.indices_offset = payload(indices,sizeof(indices));
         command.vertex_uniforms_offset = payload(nullptr,HaloMetalVertexUniformSize);
         command.pixel_uniforms_offset = payload(nullptr,HaloMetalPixelUniformSize);
@@ -66,7 +71,11 @@ struct Packet {
         bytes.resize((bytes.size() + padding + 7u) & ~size_t(7u),0);
         command.command.byte_size = (uint32_t)(bytes.size() - start);
         if (invalidSlice) command.pixel_uniforms_offset = 32768; // Fits a warm buffer, outside this command.
-        memcpy(bytes.data() + start,&command,sizeof(command)); commands++;
+        if (compact) {
+            halo_metal_draw_compact extended{command,sizeof(halo_metal_compact_vertex_input),0,0,0};
+            memcpy(bytes.data()+start,&extended,sizeof(extended));
+        } else memcpy(bytes.data() + start,&command,sizeof(command));
+        commands++;
     }
     void invalid() {
         const halo_metal_command command{UINT32_MAX,sizeof(halo_metal_command)};
@@ -82,8 +91,11 @@ struct Packet {
         return host_metal_submit(packetAddress,(uint32_t)bytes.size(),base,sizeof(halo_metal_reply));
     }
 };
-static void initialize() {
-    require(host_metal_initialize(0,HALO_METAL_OFFSCREEN,base,sizeof(halo_metal_reply)) == HALO_METAL_OK,"device initialization");
+static void initialize(bool compact = false) {
+    require(host_metal_initialize(0,HALO_METAL_OFFSCREEN | (compact ? HALO_METAL_ENABLE_COMPACT_VERTICES : 0),
+        base,sizeof(halo_metal_reply)) == HALO_METAL_OK,"device initialization");
+    halo_metal_reply reply;memcpy(&reply,guest_pointer(base),sizeof(reply));
+    require(bool(reply.capabilities & HALO_METAL_CAP_COMPACT_VERTICES) == compact,"compact capability requires explicit opt-in");
     context.metrics.enabled = true;
     Packet setup(1); setup.program();
     setup.append(halo_metal_create{{HALO_METAL_CREATE_TEXTURE,0},{1,1},HALO_METAL_RGBA8,4,4,0});
@@ -157,9 +169,19 @@ int main(int argc,char **argv) { @autoreleasepool {
                     "preflight and draw share immutable host-owned packet bytes");
                 execute(captured_view,captured_prepared); readback(155);
             }
-            host_metal_shutdown(); initialize(); valid_draw(2,155);
+            Packet disabledCompact(14);disabledCompact.draw(166,0,false,true);
+            require(disabledCompact.submit() == HALO_METAL_UNSUPPORTED && context.submitted == 13,
+                "compact draw requires explicit opt-in");readback(155);
+            host_metal_shutdown(); initialize(true); valid_draw(2,155);
             require(context.metrics.packet_buffers == 1,"shutdown releases prior storage");
-            printf("{\"complete\":true,\"changing_payload_bytes\":true,\"atomic_rejection\":true,\"bounded_reuse\":true,\"retained_16mib\":true,\"exact_capacity\":true,\"growth_and_oversize\":true,\"command_ranges\":true,\"same_owned_storage\":true,\"guest_mutation_isolated\":true,\"shutdown_reset\":true}\n");
+            const auto passes = context.draw_encoder.renderPassCount;
+            Packet invalidCompact(3);invalidCompact.draw(177);invalidCompact.draw(188,0,false,true,true);
+            require(invalidCompact.submit() == HALO_METAL_INVALID && context.submitted == 2 && context.completed == 2 &&
+                context.draw_encoder.renderPassCount == passes,"malformed late compact draw rejects the whole packet before GPU commands");
+            readback(155);
+            Packet validCompact(3);validCompact.draw(166,0,false,true);
+            require(validCompact.submit() == HALO_METAL_OK,"compact packet dispatch");readback(166);
+            printf("{\"complete\":true,\"changing_payload_bytes\":true,\"atomic_rejection\":true,\"bounded_reuse\":true,\"retained_16mib\":true,\"exact_capacity\":true,\"growth_and_oversize\":true,\"command_ranges\":true,\"same_owned_storage\":true,\"guest_mutation_isolated\":true,\"shutdown_reset\":true,\"compact_opt_in\":true,\"compact_atomic_rejection\":true}\n");
         }
         host_metal_shutdown(); return 0;
     } catch (const std::exception &error) { fprintf(stderr,"%s\n",error.what()); return 1; }

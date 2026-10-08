@@ -1,4 +1,5 @@
 #import "metal_draw_encoder.h"
+#include "metal_compact_vertex.h"
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -59,7 +60,7 @@ bool finite(const float *values, size_t count) {
 struct PipelineKey {
     uintptr_t vertex, fragment;
     uint64_t color, depth;
-    uint32_t packed, mask, blendEnabled, source, destination, operation;
+    uint32_t packed, mask, blendEnabled, source, destination, operation, compact;
 };
 struct DepthKey {
     uint32_t enabled, write, compare, stencilEnabled, stencilCompare, readMask,
@@ -137,10 +138,11 @@ struct BindingRequirement {
             (p.depth != MTLPixelFormatInvalid && p.depth != MTLPixelFormatDepth32Float_Stencil8) ||
             (!p.color && !p.depth) || (!p.color && (p.mask || p.blend)) || p.packed > UINT16_MAX ||
             p.mask > 15 || p.blend > 1 || p.source < 1 || p.source > 15 || p.destination < 1 ||
-            p.destination > 15 || p.operation < 1 || p.operation > 5)
+            p.destination > 15 || p.operation < 1 || p.operation > 5 || p.compact > 1)
             return fail(error,HaloMetalDrawInvalid,@"Invalid original pipeline warmup contract");
         HaloMetalDraw draw;
         draw.vertexFunction = p.vertex; draw.fragmentFunction = p.fragment; draw.packedMask = p.packed;
+        draw.compactVertices = p.compact != 0;
         draw.state.color_write_mask = p.mask; draw.state.blend_enabled = p.blend;
         draw.state.blend_source = p.source; draw.state.blend_destination = p.destination; draw.state.blend_operation = p.operation;
         for (unsigned i = 0; i < 2; i++) {
@@ -221,8 +223,15 @@ struct BindingRequirement {
         (draw.primitive == MTLPrimitiveTypeTriangle && draw.indexCount % 3) ||
         (draw.primitive == MTLPrimitiveTypeLineStrip && draw.indexCount < 2) ||
         (draw.primitive == MTLPrimitiveTypeTriangleStrip && draw.indexCount < 3))
-        return fail(error, HaloMetalDrawInvalid, @"Invalid expanded original geometry/topology");
-    if (!range(draw.vertices, draw.vertexOffset, draw.vertexCount, HaloMetalVertexStride, 16, _device) ||
+        return fail(error, HaloMetalDrawInvalid, @"Invalid original geometry/topology");
+    if ((draw.compactVertices ?
+            (draw.vertexBytes > HALO_METAL_MAX_PACKET ||
+             !range(draw.vertices,draw.vertexOffset,draw.vertexBytes,1,16,_device) ||
+             draw.indices.storageMode == MTLStorageModePrivate ||
+             draw.vertices.storageMode == MTLStorageModePrivate || draw.vertexCount > UINT32_MAX ||
+             !halo_metal_compact_vertices_valid((const uint8_t *)draw.vertices.contents + draw.vertexOffset,
+                 draw.vertexBytes,(uint32_t)draw.vertexCount,draw.packedMask)) :
+            (draw.vertexBytes || !range(draw.vertices,draw.vertexOffset,draw.vertexCount,HaloMetalVertexStride,16,_device))) ||
         !range(draw.indices, draw.indexOffset, draw.indexCount, 4, 4, _device) ||
         !range(draw.vertexUniforms, draw.vertexUniformOffset, 1, HaloMetalVertexUniformSize, 16, _device) ||
         !range(draw.pixelUniforms, draw.pixelUniformOffset, 1, HaloMetalPixelUniformSize, 16, _device))
@@ -232,7 +241,7 @@ struct BindingRequirement {
         for (NSUInteger i = 0; i < draw.indexCount; i++) {
             uint32_t index; memcpy(&index, bytes + i * 4, 4);
             if (index >= draw.vertexCount)
-                return fail(error, HaloMetalDrawInvalid, @"Expanded original index exceeds its vertex range");
+                return fail(error, HaloMetalDrawInvalid, @"Original index exceeds its vertex range");
         }
     }
     return YES;
@@ -245,6 +254,7 @@ struct BindingRequirement {
     key.color = draw.color ? draw.color.pixelFormat : MTLPixelFormatInvalid;
     key.depth = draw.depthStencil ? draw.depthStencil.pixelFormat : MTLPixelFormatInvalid;
     key.packed = draw.packedMask; key.mask = s.color_write_mask; key.blendEnabled = s.blend_enabled;
+    key.compact = draw.compactVertices;
     key.source = s.blend_source; key.destination = s.blend_destination; key.operation = s.blend_operation;
     NSData *bytes = [NSData dataWithBytes:&key length:sizeof(key)];
     HaloMetalPipelineEntry *entry = _pipelines[bytes];
@@ -255,12 +265,14 @@ struct BindingRequirement {
     // NV2A emits point size for triangle programs as well. The draw specifies
     // topology; declaring triangles here would reject that original output.
     description.inputPrimitiveTopology = MTLPrimitiveTopologyClassUnspecified;
-    MTLVertexDescriptor *layout = [MTLVertexDescriptor vertexDescriptor];
-    for (unsigned reg = 0; reg < 16; reg++) {
-        layout.attributes[reg].format = (draw.packedMask & (1u << reg)) ? MTLVertexFormatUInt : MTLVertexFormatFloat4;
-        layout.attributes[reg].offset = reg * 16; layout.attributes[reg].bufferIndex = 1;
+    if (!draw.compactVertices) {
+        MTLVertexDescriptor *layout = [MTLVertexDescriptor vertexDescriptor];
+        for (unsigned reg = 0; reg < 16; reg++) {
+            layout.attributes[reg].format = (draw.packedMask & (1u << reg)) ? MTLVertexFormatUInt : MTLVertexFormatFloat4;
+            layout.attributes[reg].offset = reg * 16; layout.attributes[reg].bufferIndex = 1;
+        }
+        layout.layouts[1].stride = HaloMetalVertexStride; description.vertexDescriptor = layout;
     }
-    layout.layouts[1].stride = HaloMetalVertexStride; description.vertexDescriptor = layout;
     MTLRenderPipelineColorAttachmentDescriptor *color = description.colorAttachments[0];
     color.pixelFormat = (MTLPixelFormat)key.color; color.writeMask = writeMask(s.color_write_mask);
     color.blendingEnabled = s.blend_enabled;
@@ -300,7 +312,8 @@ struct BindingRequirement {
                 if (index > (stage ? 0u : 1u))
                     entry->requirements.push_back({BindingRequirementKind::UnsupportedBuffer});
                 else {
-                    const NSUInteger available = index == 1 ? HaloMetalVertexStride :
+                    const NSUInteger available = index == 1 ?
+                        (draw.compactVertices ? sizeof(halo_metal_compact_vertex_input) : HaloMetalVertexStride) :
                         (stage ? HaloMetalPixelUniformSize : HaloMetalVertexUniformSize);
                     if (((id<MTLBufferBinding>)binding).bufferDataSize > available)
                         entry->requirements.push_back({BindingRequirementKind::OversizedBuffer});
@@ -326,7 +339,7 @@ struct BindingRequirement {
     entry.vertex = draw.vertexFunction; entry.fragment = draw.fragmentFunction; _pipelines[bytes] = entry;
     if (_warmupLearningEnabled && _createdPipelines.size() < 1024) {
         try { _createdPipelines.push_back({draw.vertexFunction,draw.fragmentFunction,key.color,key.depth,key.packed,key.mask,
-                                         key.blendEnabled,key.source,key.destination,key.operation}); }
+                                         key.blendEnabled,key.source,key.destination,key.operation,key.compact}); }
         catch (const std::bad_alloc &) { /* Optional learning never rejects an otherwise valid draw. */ }
     }
     return entry;

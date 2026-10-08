@@ -258,6 +258,26 @@ vertex V xgpu_vertex(uint id [[vertex_id]]) { return {float4(float(id))}; }
         Packet failedLearn(2);failedLearn.program(2,1,source+"// rejected new source\n");failedLearn.draw(2);failedLearn.invalid();
         require(failedLearn.submit()==HALO_METAL_UNSUPPORTED && context.warmup.encode()==learnedBytes &&
             !context.warmup_dirty && context.submitted==1 && !context.programs.count(2),"rejected new variant persisted");
+        // A shared fragment remains eligible through an expanded pipeline;
+        // compact-only vertices and mode-unknown orphans stay lazy when off.
+        const HaloMetalFunctionKey compactOnly{source+"// compact-only startup fixture\n",true,false,true};
+        const HaloMetalFunctionKey orphan{source+"// orphan startup fixture\n",true,false,true};
+        require(context.warmup.learn(compactOnly)==2 && context.warmup.learn(orphan)==3,"mixed warmup function fixture");
+        auto compactPipeline=context.warmup.pipelines[0];compactPipeline.vertex=2;compactPipeline.compact=1;
+        require(context.warmup.learn(compactPipeline),"mixed warmup pipeline fixture");
+        const auto mixedBytes=context.warmup.encode();context.warmup_dirty=true;warmup_save();host_metal_shutdown();
+        require(host_metal_initialize(0,HALO_METAL_OFFSCREEN,replyAddress,sizeof(halo_metal_reply))==0,"disabled mixed warmup context");
+        context.warmup_path=path;warmup_initialize();
+        require(context.compiled_functions.size()==2 && !context.compiled_functions.find(compactOnly) &&
+            !context.compiled_functions.find(orphan) && context.warmup.encode()==mixedBytes,
+            "disabled compact-only or orphan startup source was compiled");
+        host_metal_shutdown();
+        require(host_metal_initialize(0,HALO_METAL_OFFSCREEN|HALO_METAL_ENABLE_COMPACT_VERTICES,
+            replyAddress,sizeof(halo_metal_reply))==0,"enabled mixed warmup context");
+        context.warmup_path=path;warmup_initialize();
+        require(context.compiled_functions.size()==3 && context.compiled_functions.find(compactOnly) &&
+            !context.compiled_functions.find(orphan) && context.warmup.encode()==mixedBytes,
+            "enabled compact startup source or stable manifest identity was lost");
         host_metal_shutdown();require([[@"bad cache" dataUsingEncoding:NSUTF8StringEncoding] writeToFile:path atomically:YES],"corrupt fixture write");
         require(host_metal_initialize(0,HALO_METAL_OFFSCREEN,replyAddress,sizeof(halo_metal_reply))==0,"corrupt cache context");
         context.metrics.enabled=true;context.warmup_path=path;warmup_initialize();

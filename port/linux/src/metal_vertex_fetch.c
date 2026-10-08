@@ -1,6 +1,7 @@
 #include "metal_vertex_fetch.h"
 
 #if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL
+#include "../../macos/include/halo_metal_vertex_input.h"
 #include <string.h>
 
 /* Mirrors d3d8_gl.c:vertex_type_bytes/attribute_format/macOS upload. */
@@ -192,6 +193,138 @@ int metal_vertex_fetch(const struct metal_vertex_declaration *declaration,
                 e->type);
         }
         if (!aligned) memcpy((unsigned char *)expanded + (size_t)vertex * 256, values, 256);
+    }
+    return METAL_VERTEX_OK;
+}
+
+struct compact_vertex_plan {
+    struct halo_metal_compact_vertex_input input;
+    size_t stream_first[16], stream_bytes[16];
+    uint32_t stream_output[16];
+    size_t bytes;
+};
+
+static int compact_vertex_plan(const struct metal_vertex_declaration *declaration,
+    const struct metal_vertex_stream streams[16], uint32_t first, uint32_t count,
+    struct compact_vertex_plan *plan)
+{
+    struct compact_vertex_plan result = {0};
+    size_t minimum[16], maximum[16] = {0};
+    uint32_t i;
+    int status;
+    if (!declaration || !streams) return METAL_VERTEX_INVALID;
+    if (sizeof(*declaration) > UINTPTR_MAX - (uintptr_t)declaration ||
+        16 * sizeof(*streams) > UINTPTR_MAX - (uintptr_t)streams)
+        return METAL_VERTEX_BOUNDS;
+    status = validate_declaration(declaration);
+    if (status) return status;
+    result.input.version = HALO_METAL_COMPACT_VERTEX_VERSION;
+    result.input.vertex_count = count;
+    result.input.packed_mask = declaration->packed_mask;
+    result.bytes = sizeof(result.input);
+    if (!count) { *plan = result; return METAL_VERTEX_OK; }
+    if (first > UINT32_MAX - (count - 1)) return METAL_VERTEX_BOUNDS;
+    for (i = 0; i < 16; i++) minimum[i] = SIZE_MAX;
+    for (i = 0; i < declaration->element_count; i++) {
+        const struct metal_vertex_element *e = &declaration->elements[i];
+        const struct metal_vertex_stream *s = &streams[e->stream];
+        size_t end, remaining;
+        if (!e->bytes || !s->pointer) continue;
+        if (s->byte_count > UINTPTR_MAX - (uintptr_t)s->pointer ||
+            e->offset > s->byte_count || e->bytes > s->byte_count - e->offset)
+            return METAL_VERTEX_BOUNDS;
+        end = (size_t)e->offset + e->bytes;
+        remaining = s->byte_count - end;
+        if (s->stride && first + count - 1 > remaining / s->stride)
+            return METAL_VERTEX_BOUNDS;
+        if (e->offset < minimum[e->stream]) minimum[e->stream] = e->offset;
+        if (end > maximum[e->stream]) maximum[e->stream] = end;
+    }
+    for (i = 0; i < 16; i++) {
+        const struct metal_vertex_stream *s = &streams[i];
+        size_t span, start;
+        if (minimum[i] == SIZE_MAX) continue;
+        /* Attribute bounds above establish both products and additions fit
+           size_t, including zero stride and unaligned input records. */
+        start = (size_t)first * s->stride + minimum[i];
+        span = (size_t)(count - 1) * s->stride + maximum[i] - minimum[i];
+        if (span > UINT32_MAX - result.bytes) return METAL_VERTEX_BOUNDS;
+        result.stream_first[i] = start;
+        result.stream_bytes[i] = span;
+        result.stream_output[i] = (uint32_t)result.bytes;
+        result.bytes += span;
+    }
+    for (i = 0; i < declaration->element_count; i++) {
+        const struct metal_vertex_element *e = &declaration->elements[i];
+        const struct metal_vertex_stream *s = &streams[e->stream];
+        struct halo_metal_compact_vertex_element *out;
+        if (!e->bytes || !s->pointer) continue;
+        out = &result.input.elements[result.input.element_count++];
+        out->reg = e->reg; out->type = e->type; out->stride = s->stride;
+        out->offset = result.stream_output[e->stream] +
+            ((size_t)e->offset - minimum[e->stream]);
+    }
+    *plan = result;
+    return METAL_VERTEX_OK;
+}
+
+static int compact_vertex_output_overlaps(const void *output, size_t bytes,
+    const struct metal_vertex_declaration *declaration,
+    const struct metal_vertex_stream streams[16], const struct compact_vertex_plan *plan)
+{
+    uint32_t i;
+    if (overlaps(output, bytes, declaration, sizeof(*declaration)) ||
+        overlaps(output, bytes, streams, 16 * sizeof(*streams)))
+        return 1;
+    for (i = 0; i < 16; i++) {
+        if (plan->stream_bytes[i] &&
+            overlaps(output, bytes, streams[i].pointer, streams[i].byte_count))
+            return 1;
+    }
+    return 0;
+}
+
+int metal_vertex_compact_size(const struct metal_vertex_declaration *declaration,
+    const struct metal_vertex_stream streams[16], uint32_t first, uint32_t count,
+    size_t *compact_bytes)
+{
+    struct compact_vertex_plan plan;
+    int status;
+    if (!compact_bytes) return METAL_VERTEX_INVALID;
+    if (sizeof(*compact_bytes) > UINTPTR_MAX - (uintptr_t)compact_bytes)
+        return METAL_VERTEX_BOUNDS;
+    status = compact_vertex_plan(declaration, streams, first, count, &plan);
+    if (status) return status;
+    if (compact_vertex_output_overlaps(compact_bytes, sizeof(*compact_bytes),
+        declaration, streams, &plan)) return METAL_VERTEX_INVALID;
+    *compact_bytes = plan.bytes;
+    return METAL_VERTEX_OK;
+}
+
+int metal_vertex_compact_pack(const struct metal_vertex_declaration *declaration,
+    const struct metal_vertex_stream streams[16], const float fixed[16][4],
+    uint32_t first, uint32_t count, void *compact, size_t compact_bytes)
+{
+    struct compact_vertex_plan plan;
+    uint32_t i;
+    int status;
+    if (!fixed) return METAL_VERTEX_INVALID;
+    if (256 > UINTPTR_MAX - (uintptr_t)fixed) return METAL_VERTEX_BOUNDS;
+    status = compact_vertex_plan(declaration, streams, first, count, &plan);
+    if (status) return status;
+    if (!compact || compact_bytes < plan.bytes ||
+        plan.bytes > UINTPTR_MAX - (uintptr_t)compact) return METAL_VERTEX_BOUNDS;
+    if (overlaps(compact, plan.bytes, fixed, 256) ||
+        compact_vertex_output_overlaps(compact, plan.bytes, declaration, streams, &plan))
+        return METAL_VERTEX_INVALID;
+    memcpy(plan.input.fixed, fixed, 256);
+    for (i = 0; i < 16; i++) {
+        if (declaration->packed_mask & (1u << i)) memset(plan.input.fixed[i], 0, 16);
+    }
+    memcpy(compact, &plan.input, sizeof(plan.input));
+    for (i = 0; i < 16; i++) {
+        if (plan.stream_bytes[i]) memcpy((unsigned char *)compact + plan.stream_output[i],
+            (const unsigned char *)streams[i].pointer + plan.stream_first[i], plan.stream_bytes[i]);
     }
     return METAL_VERTEX_OK;
 }

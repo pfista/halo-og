@@ -46,6 +46,7 @@ static long ui_offset;
 static uint32_t render_height;
 static uint32_t native_storage_width, native_storage_height;
 static BOOL render_settings_initialized;
+static BOOL gpu_vertex_decode;
 static uint32_t native_render_height(void) {
     if (!render_settings_initialized) {
         long requested=config_integer("display.render_height");
@@ -163,7 +164,7 @@ struct native_program {
     struct native_program *next;
     struct halo_metal_ref ref;
     struct vertex_shader_object *vertex;
-    uint32_t packed_mask, depth_contract, alpha_border_mask, volume_border_mask;
+    uint32_t packed_mask, depth_contract, alpha_border_mask, volume_border_mask, compact_vertices;
     struct nv2a_pixel_shader_key key;
 };
 struct native_device {
@@ -237,6 +238,7 @@ static uint32_t largest_statistics_batch;
 static BOOL draw_diagnostics;
 struct native_draw_profile {
     uint64_t draws, expansion_ns, textures_ns, state_ns, program_ns, emit_ns, submit_ns;
+    uint64_t compact_draws, compact_bytes, expanded_bytes, vertex_bytes;
 };
 static struct native_draw_profile draw_profile;
 enum native_flush_reason {
@@ -571,10 +573,13 @@ static void native_initialize(void) {
     if (!storage) native_fail("allocate packet",HALO_METAL_MEMORY);
     require_status("setup transport",halo_metal_guest_setup(&transport,storage,HALO_METAL_MAX_PACKET));
     int fxaa=!strcmp(config_string("display.anti_aliasing"),"fxaa");
+    gpu_vertex_decode=config_boolean("debug.metal_gpu_vertex_decode");
     require_status("initialize native window",halo_metal_guest_initialize(&transport,
-        platform_video_native_window(),fxaa ? HALO_METAL_ENABLE_FXAA:0,HALO_METAL_CAP_TARGETS | HALO_METAL_CAP_UPLOAD |
+        platform_video_native_window(),(fxaa ? HALO_METAL_ENABLE_FXAA:0) |
+        (gpu_vertex_decode ? HALO_METAL_ENABLE_COMPACT_VERTICES:0),HALO_METAL_CAP_TARGETS | HALO_METAL_CAP_UPLOAD |
         HALO_METAL_CAP_CLEAR | HALO_METAL_CAP_DRAW | HALO_METAL_CAP_READBACK |
-        HALO_METAL_CAP_VISIBILITY | (fxaa ? HALO_METAL_CAP_FXAA:0)));
+        HALO_METAL_CAP_VISIBILITY | (fxaa ? HALO_METAL_CAP_FXAA:0) |
+        (gpu_vertex_decode ? HALO_METAL_CAP_COMPACT_VERTICES:0)));
     /* platform_video_initialize has already synchronized the Retina window.
        Never resolve native pixels before that point or from display points. */
     native_storage_initialize();
@@ -1647,15 +1652,18 @@ static struct native_resource *texture_get(D3DBaseTexture *texture,D3DPalette *p
     return entry;
 }
 static struct native_program *program_get(struct vertex_shader_object *vertex,uint32_t packed,
-    const struct nv2a_pixel_shader_key *key, uint32_t alpha_border_mask,uint32_t volume_border_mask,uint32_t depth_contract) {
+    const struct nv2a_pixel_shader_key *key, uint32_t alpha_border_mask,uint32_t volume_border_mask,uint32_t depth_contract,
+    BOOL compact_vertices) {
     struct native_program *entry;
     for (entry=programs;entry;entry=entry->next)
         if (entry->vertex==vertex && entry->packed_mask==packed && entry->alpha_border_mask==alpha_border_mask &&
             entry->depth_contract==depth_contract && entry->volume_border_mask==volume_border_mask &&
+            entry->compact_vertices==(uint32_t)compact_vertices &&
             !memcmp(&entry->key,key,sizeof(*key))) return entry;
     const BOOL diagnostics=config_boolean("debug.gpu_stats");
     const uint64_t translation_started=diagnostics ? monotonic_ns():0;
     char *vs=vertex==&fixed_function_vertex ? metal_fixed_function_vertex_to_msl():
+        compact_vertices ? nv2a_vertex_shader_to_msl_compact(vertex->instructions,vertex->instruction_count,packed):
         nv2a_vertex_shader_to_msl(vertex->instructions,vertex->instruction_count,packed);
     struct nv2a_pixel_shader_msl_options options={volume_border_mask ? 3:2,
         depth_contract==METAL_DRAW_DEPTH_RAW_D24 ? XGPU_MSL_DEPTH_RAW_D24:XGPU_MSL_DEPTH_NONE,alpha_border_mask,volume_border_mask};
@@ -1703,6 +1711,7 @@ static struct native_program *program_get(struct vertex_shader_object *vertex,ui
     entry->vertex=vertex;entry->packed_mask=packed;entry->key=*key;entry->alpha_border_mask=alpha_border_mask;
     entry->depth_contract=depth_contract;
     entry->volume_border_mask=volume_border_mask;
+    entry->compact_vertices=compact_vertices;
     entry->ref.id=next_program_id++;entry->ref.generation=1;
     struct halo_metal_program command={0};
     command.command.opcode=HALO_METAL_CREATE_PROGRAM;command.resource=entry->ref;
@@ -1753,30 +1762,50 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
         count,first,indices ? device.base_vertex_index:0,&plan));
     if (plan.source_count>(HALO_METAL_MAX_PACKET-8192)/256 || !plan.index_count)
         native_fail("expanded original stream size",HALO_METAL_MEMORY);
-    size_t vertex_bytes=(size_t)plan.source_count*256,index_bytes=(size_t)plan.index_count*4;
-    /* Reject a command that cannot fit before resource/program preparation
-       can submit any earlier batch. Both draw layouts begin payloads at448. */
-    uint32_t draw_end,draw_payloads[]={vertex_bytes,index_bytes,
-        sizeof(struct metal_draw_vertex_uniforms),sizeof(struct metal_draw_pixel_uniforms)};
-    require_status("complete original draw reservation",halo_metal_packet_room(
-        sizeof(struct halo_metal_packet),transport.capacity,sizeof(struct halo_metal_draw_alpha_border),
-        draw_payloads,4,&draw_end));
-    void *expanded=malloc(vertex_bytes);void *rebased=malloc(index_bytes);
-    if (!expanded || !rebased) native_fail("original stream allocation",HALO_METAL_MEMORY);
-    require_status("original primitive indices",metal_vertex_indices(type,indices,indices ? count*sizeof(WORD):0,
-        count,first,indices ? device.base_vertex_index:0,rebased,index_bytes,&plan));
-    uint32_t packed=immediate ? 0 : device.vertex_shader->declaration.packed_mask;
-    if (immediate) memcpy(expanded,device.immediate_vertices,vertex_bytes);
-    else {
-        struct metal_vertex_stream streams[16]={0};
+    size_t expanded_bytes=(size_t)plan.source_count*256;
+    size_t vertex_bytes=expanded_bytes,index_bytes=(size_t)plan.index_count*4;
+    struct metal_vertex_stream streams[16]={0};
+    BOOL compact_vertices=FALSE;
+    if (!immediate) {
         for (unsigned i=0;i<16;i++) if (device.streams[i].data) {
             physical_span(device.streams[i].data,1);
             streams[i].pointer=PLATFORM_PHYSICAL_TO_VIRTUAL(device.streams[i].data);
             streams[i].byte_count=PLATFORM_CONTIGUOUS_SIZE-device.streams[i].data;
             streams[i].stride=device.streams[i].stride;
         }
+        if (gpu_vertex_decode) {
+            size_t compact_bytes;
+            require_status("plan original compact streams",metal_vertex_compact_size(
+                &device.vertex_shader->declaration,streams,plan.source_first,plan.source_count,&compact_bytes));
+            /* Keep small draws on the comparison path when the metadata/span
+               costs more than its expanded payload. Immediate data is already
+               an owned register snapshot and needs no additional decoding. */
+            if (compact_bytes<expanded_bytes) {
+                vertex_bytes=compact_bytes;compact_vertices=TRUE;
+            }
+        }
+    }
+    /* Reject a command that cannot fit before resource/program preparation
+       can submit any earlier batch. Both draw layouts begin payloads at448. */
+    uint32_t draw_end,draw_payloads[]={vertex_bytes,index_bytes,
+        sizeof(struct metal_draw_vertex_uniforms),sizeof(struct metal_draw_pixel_uniforms)};
+    require_status("complete original draw reservation",halo_metal_packet_room(
+        sizeof(struct halo_metal_packet),transport.capacity,compact_vertices ? sizeof(struct halo_metal_draw_compact):
+        sizeof(struct halo_metal_draw_alpha_border),
+        draw_payloads,4,&draw_end));
+    void *vertices=malloc(vertex_bytes);void *rebased=malloc(index_bytes);
+    if (!vertices || !rebased) native_fail("original stream allocation",HALO_METAL_MEMORY);
+    require_status("original primitive indices",metal_vertex_indices(type,indices,indices ? count*sizeof(WORD):0,
+        count,first,indices ? device.base_vertex_index:0,rebased,index_bytes,&plan));
+    uint32_t packed=immediate ? 0 : device.vertex_shader->declaration.packed_mask;
+    if (immediate) memcpy(vertices,device.immediate_vertices,vertex_bytes);
+    else if (compact_vertices)
+        require_status("snapshot original compact streams",metal_vertex_compact_pack(
+            &device.vertex_shader->declaration,streams,device.attributes,plan.source_first,plan.source_count,
+            vertices,vertex_bytes));
+    else {
         require_status("fetch original registers",metal_vertex_fetch(&device.vertex_shader->declaration,streams,
-            device.attributes,plan.source_first,plan.source_count,expanded,vertex_bytes));
+            device.attributes,plan.source_first,plan.source_count,vertices,vertex_bytes));
     }
     if (draw_diagnostics) native_draw_phase(&profile_started,&profile_submitted,&draw_profile.expansion_ns);
     struct metal_draw_state_input input={0};
@@ -1866,7 +1895,8 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
         }
     }
     if (draw_diagnostics) native_draw_phase(&profile_started,&profile_submitted,&draw_profile.state_ns);
-    struct native_program *program=program_get(vertex,packed,&key,output.native_alpha_border_mask,output.native_volume_border_mask,output.depth_contract);
+    struct native_program *program=program_get(vertex,packed,&key,output.native_alpha_border_mask,output.native_volume_border_mask,
+        output.depth_contract,compact_vertices);
     if (draw_diagnostics) native_draw_phase(&profile_started,&profile_submitted,&draw_profile.program_ns);
     struct halo_metal_draw draw={0};
     draw.command.opcode=HALO_METAL_DRAW;draw.program=program->ref;draw.color=color->ref;
@@ -1876,10 +1906,15 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
     draw.vertex_count=plan.source_count;draw.index_count=plan.index_count;
     draw.packed_mask=packed;draw.primitive=plan.wire_primitive;
     uint32_t payloads[]={vertex_bytes,index_bytes,sizeof(output.vertex),sizeof(output.pixel)};
-    packet_begin(output.native_volume_border_mask ? sizeof(struct halo_metal_draw_volume_border):
+    packet_begin(compact_vertices ? sizeof(struct halo_metal_draw_compact):
+        output.native_volume_border_mask ? sizeof(struct halo_metal_draw_volume_border):
         output.native_alpha_border_mask ? sizeof(struct halo_metal_draw_alpha_border):sizeof(draw),payloads,4);
     uint32_t offset;
-    if (output.native_volume_border_mask) {
+    if (compact_vertices) {
+        struct halo_metal_draw_compact extended={draw,vertex_bytes,output.native_volume_border_mask,output.native_alpha_border_mask,0};
+        extended.draw.command.opcode=HALO_METAL_DRAW_COMPACT;
+        offset=command_append(&extended,sizeof(extended));
+    } else if (output.native_volume_border_mask) {
         struct halo_metal_draw_volume_border extended={draw,output.native_volume_border_mask,output.native_alpha_border_mask};
         extended.draw.command.opcode=HALO_METAL_DRAW_VOLUME_BORDER;
         offset=command_append(&extended,sizeof(extended));
@@ -1888,17 +1923,20 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
         extended.draw.command.opcode=HALO_METAL_DRAW_ALPHA_BORDER;
         offset=command_append(&extended,sizeof(extended));
     } else offset=command_append(&draw,sizeof(draw));
-    payload_append(offset,offsetof(struct halo_metal_draw,vertices_offset),expanded,vertex_bytes);
+    payload_append(offset,offsetof(struct halo_metal_draw,vertices_offset),vertices,vertex_bytes);
     payload_append(offset,offsetof(struct halo_metal_draw,indices_offset),rebased,index_bytes);
     payload_append(offset,offsetof(struct halo_metal_draw,vertex_uniforms_offset),&output.vertex,sizeof(output.vertex));
     payload_append(offset,offsetof(struct halo_metal_draw,pixel_uniforms_offset),&output.pixel,sizeof(output.pixel));
-    packet_finish();free(expanded);free(rebased);
+    packet_finish();free(vertices);free(rebased);
     device.draws++;
     color->last_rendered=rendered_serial_next();
     if (depth) depth->last_rendered=device.resource_serial;
     if (draw_diagnostics) {
         native_draw_phase(&profile_started,&profile_submitted,&draw_profile.emit_ns);
         draw_profile.draws++;
+        draw_profile.expanded_bytes+=expanded_bytes;
+        draw_profile.vertex_bytes+=vertex_bytes;
+        if (compact_vertices) { draw_profile.compact_draws++;draw_profile.compact_bytes+=vertex_bytes; }
     }
 }
 void WINAPI D3DDevice_DrawVertices(D3DPRIMITIVETYPE type,UINT first,UINT count) {
@@ -2108,6 +2146,10 @@ static void native_frame_statistics(void) {
             (unsigned long long)draw_profile.textures_ns,(unsigned long long)draw_profile.state_ns,
             (unsigned long long)draw_profile.program_ns,(unsigned long long)draw_profile.emit_ns,
             (unsigned long long)draw_profile.submit_ns);
+        platform_log("Native vertex input: frame %lu, GPU draws %llu/%llu, compact %llu bytes, uploaded %llu bytes, expanded reference %llu bytes",
+            device.frame,(unsigned long long)draw_profile.compact_draws,(unsigned long long)draw_profile.draws,
+            (unsigned long long)draw_profile.compact_bytes,(unsigned long long)draw_profile.vertex_bytes,
+            (unsigned long long)draw_profile.expanded_bytes);
         memset(&draw_profile,0,sizeof(draw_profile));
     }
     if (previous_ns && ns>previous_ns && ns-previous_ns<UINT64_C(1000000000)) return;

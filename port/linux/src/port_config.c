@@ -349,6 +349,9 @@ static const struct config_setting config_settings[] =
 		"Report OpenGL errors in the log." },
 	{ "debug.gpu_stats", _config_boolean, "false", "HALO_GPU_STATS", _environment_set_is_true, _platform_all,
 		"Log the renderer's draw counts once a second." },
+	{ "debug.metal_gpu_vertex_decode", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Decode native Metal vertex input on the GPU. Restart after\n"
+		"changing; false retains the CPU comparison path." },
 	{ "debug.gpu_trace_frame", _config_integer, "-1", "HALO_GPU_TRACE", _environment_value, _platform_all,
 		"Log every draw of this frame; -1 none." },
 	{ "debug.gpu_trace_constants", _config_boolean, "false", "HALO_GPU_TRACE_CONSTANTS", _environment_set_is_true, _platform_all,

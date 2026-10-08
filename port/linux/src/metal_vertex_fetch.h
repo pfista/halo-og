@@ -46,6 +46,21 @@ int metal_vertex_fetch(const struct metal_vertex_declaration *declaration,
     const struct metal_vertex_stream streams[16], const float fixed[16][4],
     uint32_t first, uint32_t count, void *expanded, size_t expanded_bytes);
 
+/* Compact original input for GPU fetch. The fixed-width 528-byte prefix is
+ * defined in halo_metal_vertex_input.h. Only bound, non-NONE attributes are
+ * active. Each used stream is copied once, from its first active attribute of
+ * vertex first through its last active attribute of vertex first+count-1.
+ * Descriptor offsets are prefix-relative and rebased to vertex first.
+ * Packed fixed registers are sixteen zero bytes; other fixed values retain
+ * their exact bits. No vertex conversion, allocation or GPU calls occur.
+ * Outputs are unchanged on failure, including aliased/overflowing buffers. */
+int metal_vertex_compact_size(const struct metal_vertex_declaration *declaration,
+    const struct metal_vertex_stream streams[16], uint32_t first, uint32_t count,
+    size_t *compact_bytes);
+int metal_vertex_compact_pack(const struct metal_vertex_declaration *declaration,
+    const struct metal_vertex_stream streams[16], const float fixed[16][4],
+    uint32_t first, uint32_t count, void *compact, size_t compact_bytes);
+
 /* Wire topology values: points 0, lines 1, line strip 2, triangles 3,
  * triangle strip 4. Xbox LINELOOP closes a line strip; QUADSTRIP preserves the
  * working port's triangle-strip ordering; POLYGON uses its triangle fan.

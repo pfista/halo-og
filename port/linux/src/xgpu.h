@@ -80,6 +80,8 @@ char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instru
 /* Direct NV2A -> native Metal. NULL means unsupported/invalid instructions. */
 char *nv2a_vertex_shader_to_msl(const DWORD *instructions, unsigned long instruction_count,
 	unsigned long packed_attribute_mask);
+char *nv2a_vertex_shader_to_msl_compact(const DWORD *instructions, unsigned long instruction_count,
+	unsigned long packed_attribute_mask);
 
 /* ---------- pixel shaders */
 

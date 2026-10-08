@@ -1,6 +1,8 @@
 /* Isolated GPU test of the shared encoder's target-history and state contract.
  * This owns clears/readbacks; the production encoder performs neither. */
 #import "../host/metal_draw_encoder.h"
+#include "../include/halo_metal_vertex_input.h"
+#include <limits>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -55,6 +57,13 @@ struct OversizedPS { float4 c[39]; };
 struct Output { float4 position [[position]]; float pointSize [[point_size]]; };
 vertex Output testVertex(Inputs v [[stage_in]], constant VS &u [[buffer(0)]]) {
     return {v.position + u.c[0], 1.0f};
+}
+struct CompactElement { uint reg, type, offset, stride; };
+struct CompactInput { uint version, elementCount, vertexCount, packedMask; CompactElement elements[16]; float4 fixed[16]; };
+vertex Output compactVertex(uint id [[vertex_id]], device const uchar *bytes [[buffer(1)]], constant VS &u [[buffer(0)]]) {
+    device const CompactInput &input = *(device const CompactInput *)bytes;
+    device const float4 &position = *(device const float4 *)(bytes + input.elements[0].offset + id * input.elements[0].stride);
+    return {position + u.c[0], 1.0f};
 }
 fragment float4 testFragment(constant PS &u [[buffer(0)]]) { return u.c[0]; }
 fragment float4 sampledFragment(constant PS &u [[buffer(0)]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]]) {
@@ -446,6 +455,91 @@ fragment float4 unsupportedTextureFragment(texture2d<float> t [[texture(4)]], sa
             @"Cache clear lost sparse texture requirements");
     require(encoder.pipelineCreationCount == creationsBeforeClear + 1 && encoder.pipelineCreationNanoseconds > nanosecondsBeforeClear,
             @"Pipeline recreation after cache clear did not accumulate its timing");
+    // This contract prevents GPU vertex pulling from reading outside the
+    // immutable captured slice, while preserving the expanded draw reference.
+    halo_metal_compact_vertex_input compactInput = {};
+    compactInput.version = HALO_METAL_COMPACT_VERTEX_VERSION;
+    compactInput.vertex_count = 3; compactInput.element_count = 1;
+    compactInput.elements[0] = {0,0x42,sizeof(compactInput),16};
+    std::vector<uint8_t> compactBytes(sizeof(compactInput) + sizeof(positions) + 16);
+    memcpy(compactBytes.data()+16,&compactInput,sizeof(compactInput));
+    memcpy(compactBytes.data()+16+sizeof(compactInput),positions,sizeof(positions));
+    HaloMetalDraw compact = draw;
+    compact.vertexFunction = [library newFunctionWithName:@"compactVertex"];
+    compact.vertices = [device newBufferWithBytes:compactBytes.data() length:compactBytes.size() options:MTLResourceStorageModeShared];
+    compact.compactVertices = true; compact.vertexBytes = compactBytes.size()-16;
+    require([encoder prepareDraw:compact error:&error], error.localizedDescription ?: @"Compact draw preparation failed");
+    auto privateIndices = compact;
+    privateIndices.indices = [device newBufferWithLength:draw.indices.length options:MTLResourceStorageModePrivate];
+    require(privateIndices.indices != nil,@"Private compact index fixture allocation failed");
+    const NSUInteger compactPasses = encoder.renderPassCount;
+    require(!encode(encoder,privateIndices,[queue commandBuffer],reuse,&error) && error.code == HaloMetalDrawInvalid &&
+            encoder.renderPassCount == compactPasses,@"Unchecked private compact indices reached a GPU encoder");
+    auto rejectCompact = [&](const halo_metal_compact_vertex_input &candidate, NSUInteger span, NSString *message) {
+        auto rejected = compact;
+        std::vector<uint8_t> bad = compactBytes;memcpy(bad.data()+16,&candidate,sizeof(candidate));
+        rejected.vertices = [device newBufferWithBytes:bad.data() length:bad.size() options:MTLResourceStorageModeShared];
+        rejected.vertexBytes = span;
+        const NSUInteger passes = encoder.renderPassCount;
+        require(!encode(encoder,rejected,[queue commandBuffer],reuse,&error) && error.code == HaloMetalDrawInvalid &&
+                encoder.renderPassCount == passes,message);
+    };
+    rejectCompact(compactInput,sizeof(compactInput)-1,@"Truncated compact prefix reached a GPU encoder");
+    auto oversized = compact;
+    oversized.vertices = [device newBufferWithLength:NSUInteger(HALO_METAL_MAX_PACKET)+32 options:MTLResourceStorageModeShared];
+    require(oversized.vertices != nil,@"Oversized compact fixture allocation failed");
+    memcpy(oversized.vertices.contents,compactBytes.data(),compactBytes.size());
+    oversized.vertexBytes = oversized.vertices.length - oversized.vertexOffset;
+    require(!encode(encoder,oversized,[queue commandBuffer],reuse,&error) && error.code == HaloMetalDrawInvalid &&
+            encoder.renderPassCount == compactPasses,@"Oversized valid compact buffer reached a GPU encoder");
+    rejectCompact(compactInput,compact.vertexBytes-1,@"Truncated compact source span reached a GPU encoder");
+    auto badCompact = compactInput;badCompact.version++;
+    rejectCompact(badCompact,compact.vertexBytes,@"Unknown compact version accepted");
+    badCompact = compactInput;badCompact.elements[0].offset = 512;
+    rejectCompact(badCompact,compact.vertexBytes,@"Compact descriptor could read prefix bytes");
+    badCompact = compactInput;badCompact.elements[0].stride = UINT32_MAX;
+    rejectCompact(badCompact,compact.vertexBytes,@"Overflowing compact stride accepted");
+    badCompact = compactInput;badCompact.elements[0].type = 0x02;
+    rejectCompact(badCompact,compact.vertexBytes,@"Inactive compact descriptor accepted");
+    badCompact = compactInput;badCompact.elements[0].type = 0xff;
+    rejectCompact(badCompact,compact.vertexBytes,@"Unknown compact descriptor type accepted");
+    badCompact = compactInput;badCompact.element_count = 2;badCompact.elements[1] = badCompact.elements[0];
+    rejectCompact(badCompact,compact.vertexBytes,@"Duplicate compact register accepted");
+    badCompact = compactInput;badCompact.fixed[1][0] = std::numeric_limits<float>::infinity();
+    rejectCompact(badCompact,compact.vertexBytes,@"Nonfinite compact fallback accepted");
+    auto nonfinite = compact;std::vector<uint8_t> nonfiniteBytes = compactBytes;
+    const float infinity = std::numeric_limits<float>::infinity();
+    memcpy(nonfiniteBytes.data()+16+sizeof(compactInput),&infinity,sizeof(infinity));
+    nonfinite.vertices = [device newBufferWithBytes:nonfiniteBytes.data() length:nonfiniteBytes.size() options:MTLResourceStorageModeShared];
+    require(![encoder prepareDraw:nonfinite error:&error],@"Nonfinite effective compact float accepted");
+    auto packedInput = compactInput;packedInput.packed_mask = 2;packedInput.element_count = 2;
+    packedInput.elements[1] = {1,0x16,(uint32_t)compact.vertexBytes,0};
+    auto packedBytes = compactBytes;packedBytes.resize(packedBytes.size()+4);
+    memcpy(packedBytes.data()+16,&packedInput,sizeof(packedInput));
+    const uint32_t packedNaN = UINT32_C(0xffffffff);
+    memcpy(packedBytes.data()+16+compact.vertexBytes,&packedNaN,sizeof(packedNaN));
+    auto packed = compact;packed.packedMask = 2;packed.vertexBytes += 4;
+    packed.vertices = [device newBufferWithBytes:packedBytes.data() length:packedBytes.size() options:MTLResourceStorageModeShared];
+    require([encoder prepareDraw:packed error:&error],@"Instruction-visible compact packed bits were rejected as nonfinite floats");
+    auto pixels = [&](HaloMetalDraw candidate) {
+        [color replaceRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0 withBytes:initial.data() bytesPerRow:64];
+        candidate.depthStencil = nil;candidate.state.depth_enabled = candidate.state.depth_write = candidate.state.stencil_enabled = 0;
+        candidate.state.color_write_mask = 15;
+        auto command = [queue commandBuffer];
+        require(encode(encoder,candidate,command,reuse,&error),error.localizedDescription ?: @"Geometry comparison failed");
+        [encoder endEncoding];complete(command);
+        std::vector<uint8_t> result(16*16*4);
+        [color getBytes:result.data() bytesPerRow:64 fromRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0];
+        return result;
+    };
+    const auto expandedPixels = pixels(draw), compactPixels = pixels(compact);
+    require(compactPixels == expandedPixels,@"Compact vertex pulling changed expanded reference pixels");
+    for (unsigned y = 4; y < 12; y++) for (unsigned x = 4; x < 12; x++) {
+        const size_t pixel = (y*16+x)*4;
+        require(compactPixels[pixel] == 255 && compactPixels[pixel+1] == 0 &&
+                compactPixels[pixel+2] == 0 && compactPixels[pixel+3] == 255,@"Compact test drew no original red geometry");
+    }
+    append(checkpoints,compactPixels);
     if (argc == 3) {
         FILE *file = fopen(argv[2],"wb"); require(file != nullptr, @"Checkpoint output failed");
         require(fwrite(checkpoints.data(),1,checkpoints.size(),file) == checkpoints.size() && fclose(file) == 0,

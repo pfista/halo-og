@@ -27,7 +27,8 @@ enum halo_metal_capability {
     HALO_METAL_CAP_BLACK_BORDER = 1024u, HALO_METAL_CAP_ALPHA_BORDER = 2048u,
     HALO_METAL_CAP_COPY_SUBRESOURCE = 4096u,
     HALO_METAL_CAP_VOLUME = 8192u, HALO_METAL_CAP_VOLUME_BORDER = 16384u,
-    HALO_METAL_CAP_FXAA = 32768u
+    HALO_METAL_CAP_FXAA = 32768u,
+    HALO_METAL_CAP_COMPACT_VERTICES = 65536u
 };
 enum halo_metal_opcode {
     HALO_METAL_CREATE_TEXTURE = 1, HALO_METAL_DELETE_TEXTURE = 2,
@@ -40,7 +41,7 @@ enum halo_metal_opcode {
     HALO_METAL_PRESENT_SCALED = 16, HALO_METAL_CLEAR_CHANNELS = 17,
     HALO_METAL_DISPLAY_SETTINGS = 18, HALO_METAL_DRAW_ALPHA_BORDER = 19,
     HALO_METAL_COPY_SUBRESOURCE = 20, HALO_METAL_DRAW_VOLUME_BORDER = 21,
-    HALO_METAL_FXAA = 22
+    HALO_METAL_FXAA = 22, HALO_METAL_DRAW_COMPACT = 23
 };
 enum halo_metal_format {
     HALO_METAL_RGBA8 = 1, HALO_METAL_BGRA8 = 2, HALO_METAL_DEPTH32_STENCIL8 = 3,
@@ -63,7 +64,8 @@ enum halo_metal_visibility_mode {
 };
 /* Optional capabilities are advertised only to callers that opt in. This
  * keeps the original ABI-v1 guest's strict capability mask compatible. */
-enum { HALO_METAL_OFFSCREEN = 1u, HALO_METAL_ENABLE_FXAA = 2u };
+enum { HALO_METAL_OFFSCREEN = 1u, HALO_METAL_ENABLE_FXAA = 2u,
+    HALO_METAL_ENABLE_COMPACT_VERTICES = 4u };
 
 struct halo_metal_ref { uint32_t id, generation; };
 struct halo_metal_packet {
@@ -246,6 +248,15 @@ struct halo_metal_draw_volume_border {
     struct halo_metal_draw draw;
     uint32_t volume_stage_mask, alpha_stage_mask;
 };
+/* Opt-in original compact stream snapshots, decoded in the vertex shader.
+ * vertices_offset addresses a halo_metal_vertex_input prefix followed by raw
+ * stream bytes, all inside this command's immutable extent. Indices/uniforms
+ * and border contracts retain their existing meanings. Legacy reserved fields
+ * remain zero; old expanded draw opcodes and recorded packets are unchanged. */
+struct halo_metal_draw_compact {
+    struct halo_metal_draw draw;
+    uint32_t vertex_bytes, volume_stage_mask, alpha_stage_mask, reserved;
+};
 struct halo_metal_reply {
     uint32_t abi_version;
     int32_t status;
@@ -283,6 +294,7 @@ HALO_METAL_ASSERT(offsetof(struct halo_metal_program, fragment_compiler_contract
 HALO_METAL_ASSERT(sizeof(struct halo_metal_draw) == 416, "draw ABI");
 HALO_METAL_ASSERT(sizeof(struct halo_metal_draw_alpha_border) == 424, "alpha border draw ABI");
 HALO_METAL_ASSERT(sizeof(struct halo_metal_draw_volume_border) == 424, "volume border draw ABI");
+HALO_METAL_ASSERT(sizeof(struct halo_metal_draw_compact) == 432, "compact vertex draw ABI");
 HALO_METAL_ASSERT(offsetof(struct halo_metal_draw_volume_border, volume_stage_mask) == 416, "volume border mask ABI");
 HALO_METAL_ASSERT(offsetof(struct halo_metal_draw_volume_border, alpha_stage_mask) == 420, "volume alpha border mask ABI");
 

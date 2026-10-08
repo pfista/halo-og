@@ -21,6 +21,13 @@ int main(int argc,char **argv) {
         assert(HaloMetalWarmupCache::decode(original.encode(),decoded));
         assert(decoded.encode()==original.encode() && decoded.sourceBytes==14);
         assert(halo_metal_source_fingerprint("hello")==UINT64_C(0xa430d84680aabd0b));
+        // Version1 files omitted the compact bit; preserve that established
+        // expanded pipeline contract when a prior installation upgrades.
+        auto legacy=original.encode();legacy[4]=1;legacy.erase(legacy.end()-12,legacy.end()-8);resign(legacy);
+        assert(HaloMetalWarmupCache::decode(legacy,decoded) && decoded.pipelines[0].compact==0);
+        auto compact=original.pipelines[0];compact.compact=1;assert(original.learn(compact));
+        assert(HaloMetalWarmupCache::decode(original.encode(),decoded) && decoded.pipelines.size()==2 &&
+               decoded.pipelines[1].compact==1);
     } else if(test=="contracts") {
         HaloMetalWarmupCache cache;
         for(unsigned flags=0;flags<8;flags++)assert(cache.learn(key("identical",flags&1,flags&2,flags&4))==flags);
@@ -53,7 +60,7 @@ int main(int argc,char **argv) {
             assert(!HaloMetalWarmupCache::decode(shortFile,output) && output.encode()==before);
         }
         for(size_t i=0;i<bytes.size();i++) {auto changed=bytes;changed[i]^=128;assert(!HaloMetalWarmupCache::decode(changed,output));}
-        auto version=bytes;version[4]=2;resign(version);assert(!HaloMetalWarmupCache::decode(version,output));
+        auto version=bytes;version[4]=3;resign(version);assert(!HaloMetalWarmupCache::decode(version,output));
         auto count=bytes;count[8]=1;count[9]=1;resign(count);assert(!HaloMetalWarmupCache::decode(count,output));
         auto flags=bytes;flags[20]=8;resign(flags);assert(!HaloMetalWarmupCache::decode(flags,output));
         auto extra=bytes;extra.push_back(0);assert(!HaloMetalWarmupCache::decode(extra,output));
@@ -64,6 +71,7 @@ int main(int argc,char **argv) {
         p=cache.pipelines[0];p.color=999;assert(!cache.learn(p));p=cache.pipelines[0];p.depth=999;assert(!cache.learn(p));
         p=cache.pipelines[0];p.mask=16;assert(!cache.learn(p));p=cache.pipelines[0];p.blend=2;assert(!cache.learn(p));
         p=cache.pipelines[0];p.source=16;assert(!cache.learn(p));p=cache.pipelines[0];p.operation=6;assert(!cache.learn(p));
+        p=cache.pipelines[0];p.compact=2;assert(!cache.learn(p));
         p=cache.pipelines[0];p.color=p.depth=0;assert(!cache.learn(p));p=cache.pipelines[0];p.color=0;assert(!cache.learn(p));
         p.mask=p.blend=0;assert(cache.learn(p));
     } else assert(false);

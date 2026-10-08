@@ -23,6 +23,7 @@ clip-space position again.
 #include "xgpu.h"
 #endif
 #include "xgpu_msl.h"
+#include "xgpu_vertex_decode_msl.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -268,7 +269,7 @@ static int metal_program_valid(const DWORD *instructions, unsigned long instruct
 }
 
 static char *vertex_shader(const DWORD *instructions, unsigned long instruction_count,
-	unsigned long packed_attribute_mask, int metal)
+	unsigned long packed_attribute_mask, int metal, int compact)
 {
 	struct xgpu_text text = { 0 };
 	unsigned long index;
@@ -284,8 +285,9 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 	else
 		xgpu_text_append(&text, "%s", shader_prologue);
 	xgpu_text_append(&text, "%s", shader_helpers);
-	if (metal) xgpu_text_append(&text, "struct XgpuVertexInput {\n");
-	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
+	if (compact) xgpu_text_append(&text, "%s", xgpu_vertex_decode_msl);
+	if (metal && !compact) xgpu_text_append(&text, "struct XgpuVertexInput {\n");
+	for (index = 0; !compact && index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 	{
 		if (metal)
 		{
@@ -301,18 +303,34 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 	}
 
 	if (metal)
+	{
+		if (compact)
+			xgpu_text_append(&text,
+				"vertex XgpuVaryings xgpu_vertex(uint vertex_id [[vertex_id]],\n"
+				"\tdevice const uchar *vertex_bytes [[buffer(1)]],\n");
+		else
+			xgpu_text_append(&text,
+				"};\nvertex XgpuVaryings xgpu_vertex(XgpuVertexInput input [[stage_in]],\n");
 		xgpu_text_append(&text,
-			"};\nvertex XgpuVaryings xgpu_vertex(XgpuVertexInput input [[stage_in]],\n"
 			"\tconstant XgpuVertexUniforms &uniforms [[buffer(0)]])\n{\n"
 			"\tconstant float4 *c = uniforms.c;\n"
 			"\tfloat4 viewport_scale = uniforms.viewport_scale, viewport_offset = uniforms.viewport_offset;\n"
 			"\tfloat point_size = uniforms.point_size, screen_offset = uniforms.screen_offset;\n"
 			"\tXgpuVaryings output;\n");
+		if (compact)
+			xgpu_text_append(&text,
+				"\tfloat4 vertex_values[16]; uint vertex_packed[16];\n"
+				"\txgpu_vertex_fetch(vertex_bytes, vertex_id, vertex_values, vertex_packed);\n");
+	}
 	else
 		xgpu_text_append(&text, "void main()\n{\n");
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 	{
-		if (packed_attribute_mask & (1UL << index))
+		if (compact && (packed_attribute_mask & (1UL << index)))
+			xgpu_text_append(&text, "\tvec4 v%lu = unpack_normpacked3(vertex_packed[%lu]);\n", index, index);
+		else if (compact)
+			xgpu_text_append(&text, "\tvec4 v%lu = vertex_values[%lu];\n", index, index);
+		else if (packed_attribute_mask & (1UL << index))
 			xgpu_text_append(&text, "\tvec4 v%lu = unpack_normpacked3(%sv%lu_packed);\n", index, metal ? "input." : "", index);
 		else
 			xgpu_text_append(&text, "\tvec4 v%lu = %sv%lu_in;\n", index, metal ? "input." : "", index);
@@ -537,7 +555,7 @@ static char *vertex_shader(const DWORD *instructions, unsigned long instruction_
 char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instruction_count,
 	unsigned long packed_attribute_mask)
 {
-	return vertex_shader(instructions, instruction_count, packed_attribute_mask, 0);
+	return vertex_shader(instructions, instruction_count, packed_attribute_mask, 0, 0);
 }
 
 char *nv2a_vertex_shader_to_msl(const DWORD *instructions, unsigned long instruction_count,
@@ -548,5 +566,16 @@ char *nv2a_vertex_shader_to_msl(const DWORD *instructions, unsigned long instruc
 		errno = EINVAL;
 		return NULL;
 	}
-	return vertex_shader(instructions, instruction_count, packed_attribute_mask, 1);
+	return vertex_shader(instructions, instruction_count, packed_attribute_mask, 1, 0);
+}
+
+char *nv2a_vertex_shader_to_msl_compact(const DWORD *instructions, unsigned long instruction_count,
+	unsigned long packed_attribute_mask)
+{
+	if (!metal_program_valid(instructions, instruction_count, packed_attribute_mask))
+	{
+		errno = EINVAL;
+		return NULL;
+	}
+	return vertex_shader(instructions, instruction_count, packed_attribute_mask, 1, 1);
 }
