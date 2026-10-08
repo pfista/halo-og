@@ -30,7 +30,7 @@ so ordinary ammo pickup is not promised. The pack preserves that behavior. Longs
 rounds and retains authored ammo limits, integrated night vision and autoaim
 differences. Multiplayer Needler retains authored projectile/camouflage/melee
 differences. Skull uses ordinary inventory flags and the ball first-person/melee
-assets; it is distinct from the configured Oddball objective. A full installed
+assets; it is distinct from the configured Oddball objective. An earlier installed
 inventory audit checked 37 identities and 47 distinct source definitions across
 54 selectable caches. Ghost/Warthog guns and Gravity Rifle lack first-person
 assets; configured Ball/Flag retain objective flags and are excluded. The one
@@ -137,7 +137,7 @@ Traversal/symlink output escapes are refused. Variant manifests record closures,
 source/generated hashes, provenance, compiler arguments, script snapshots,
 compatibility and reverse proofs, headers, and native-validation status.
 The compiler's `-E` profile exceeds retail Xbox's 47 MiB limit; this native port's
-128 MiB declared cache and 22 MiB tag-arena limits remain mandatory.
+512 MiB declared cache and 22 MiB tag-arena limits remain mandatory.
 This does not certify retail Xbox hardware compatibility.
 
 ## Hidden catalog and validation
@@ -166,7 +166,7 @@ checks. Full-inventory compilation and native checks are separate evidence in
 [Fiesta validation](fiesta.md#local-validation). The earlier 14-import Blood Gulch
 sample does not certify this full global profile.
 
-The completed global library is
+The earlier completed global library is
 `build/global-fiesta-installed-arsenal-20261006-r02/maps/arsenal/v1`, covering all
 13 stock and 41 approved custom multiplayer maps in the frozen normal-resolver
 inventory. Adjacent `catalog.json` records every map's paths, hashes and proofs;
@@ -208,15 +208,19 @@ python3 -m unittest tools.test_texture_cache_budget
 ## Delivering hidden arsenals
 
 The hidden Fiesta profile is separate from the visible community catalog.
-The published generation-one catalog contains 54 entries. Four additional
+The legacy `arsenals-v1.json` catalog remains at 54 entries. Four additional
 companions for `chillout_dig`, `damnation_dig`, `exhibit_dig`, and `prisoner_dig`
-are prepared using the explicitly approved existing 31-weapon All pack and
+are published using the explicitly approved existing 31-weapon All pack and
 nine-weapon Uncut subset. Regular Digsite caches keep their reviewed Battle
 Rifle omissions; their Fiesta companions include the existing pack's Battle
 Rifle. Original-map digests must match, and the runtime validates every installed
 cache/manifest pair before use.
-Its public endpoint is
-`https://dl.oghalo.com/catalogs/testing/arsenals-v1.json`. Root fields are exactly
+The new 58-entry inventory is published at
+`https://dl.oghalo.com/catalogs/testing/arsenals-v2.json`. The endpoint version
+separates delivery inventories for client compatibility; asset generation,
+profile, weapon-list digest, manifest schema and immutable `arsenals/v1/sha256/`
+object keys remain unchanged. Older clients continue using the legacy 54-entry
+endpoint. Root fields are exactly
 `schema_version`, `profile` (`fiesta-arsenal-v1`), `generation` (1),
 `weapon_list_sha256`, and `arsenals`. Each entry contains exactly
 `logical_map`, `physical_map`, `base_sha256`, `cache_sha256`, `cache_file_bytes`,
@@ -272,9 +276,10 @@ For an authorized staging upload, pass `--publish --objects-only` and
 `--expect-catalog-sha256 <live-snapshot-sha256>` alongside the prepared directory
 and credential file. This creates and verifies immutable objects while keeping
 the mutable hidden catalog unchanged. The snapshot digest is checked before any
-object writes. Remove `--objects-only` only when advancing the hidden catalog
-for a compatible release, using a fresh snapshot digest if the live catalog has
-changed.
+object writes. Remove `--objects-only` when advancing the selected hidden
+catalog. For the initial v2 publication, require that the endpoint is absent;
+the publisher's `If-None-Match: *` condition refuses a competing creation.
+Subsequent v2 updates use an exact snapshot digest and captured ETag.
 
 The earlier 54-cache delivery contains 1,994,752,000 cache bytes and 23,986 flat
 manifest bytes. The clean JSON index is 40,011 bytes, making the initial object
@@ -285,9 +290,18 @@ inventory contains 2,179,923,968 cache bytes, 25,794 manifest bytes, and a 43,02
 byte index, totaling 2,179,992,785 bytes. It preserves all 54 previous entries
 and exceeds the previous 2 GiB aggregate catalog limit. Published clients
 with that limit reject the full new hidden catalog, including its older entries.
-Stage the four immutable companion cache/manifest objects first and retain the
-54-entry live hidden catalog until a compatible app release is available. Then
-publish the prepared 58-entry catalog using its exact live snapshot and ETag
-condition. The visible 45-map catalog can advance independently. Preparation,
-immutable-object upload, catalog advancement, and app publication are distinct
+The four new cache objects and four flat manifest objects were verified through
+R2 and public HTTPS before the v2 inventory was published on 2026-10-08. Its
+catalog SHA-256 is
+`7d6354e1159a9f6e29b2802989be3983db25badbb2b0681835203792ec515601`.
+The initial authenticated v2 read returned 404, and creation used
+`If-None-Match: *`; both R2 and public readback matched the prepared catalog.
+The legacy v1 inventory remained byte-for-byte unchanged through R2 and public
+HTTPS, with SHA-256 `f3bb16570d151ca929d0e8211af1c4ddf28b8e80548e8787925ca861deed3b0d`.
+Keep the 54-entry v1 catalog unchanged permanently and publish the 58-entry
+inventory only to v2. New clients use v2 with a 4 GiB aggregate bound; old clients
+keep downloading their existing v1 inventory. The new companions and v2
+inventory are available for the next compatible app release without disrupting
+older downloads. The visible 45-map catalog advances independently.
+Preparation, immutable-object upload, catalog advancement, and app publication are distinct
 results; no tests or gameplay were run for the four-map preparation.

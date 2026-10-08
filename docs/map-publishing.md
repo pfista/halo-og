@@ -52,14 +52,19 @@ Local reconstruction and package-only distribution are set aside. Keep using
 the complete-map publisher; no content-tool download or local map rebuild is
 required by the desktop release.
 
-Four additional Digsite conversions are prepared as `chillout_dig`,
-`damnation_dig`, `exhibit_dig`, and `prisoner_dig`. The prepared 45-map catalog
+Four additional Digsite conversions are published as `chillout_dig`,
+`damnation_dig`, `exhibit_dig`, and `prisoner_dig`. The published 45-map catalog
 preserves all 41 previous entries, including the separate `chillout_digsite`
 revision. These regular caches retain their reviewed Battle Rifle omissions.
 Their hidden Fiesta companions use the separately approved existing 31-weapon
 All pack; see [Fiesta delivery](weapon-pack-maps.md#delivering-hidden-arsenals).
 Map publication and the next app release are separate operations. No gameplay
 testing was performed for this four-map preparation.
+
+The 2026-10-08 catalog SHA-256 is
+`ed38691ad74873e9462207d94ee09804cf04c5709c34deeea56dc6ccfc9c587b`.
+Its four new objects were verified through R2 and public HTTPS before the
+catalog advanced. All 41 earlier catalog entries were preserved unchanged.
 
 On 2026-10-05, `chillout_digsite` replaced the earlier `chillout_dig` POC entry.
 It appears as **Chillout Digsite** in the community map menu and is eligible for

@@ -29,7 +29,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PROFILE = "fiesta-arsenal-v1"
 GENERATION = 1
 WEAPON_LIST_SHA256 = "2856504cbd257e1b18c273caa64237fbfe77dc77d22cce1a7fa0a0abfc53f71f"
-CATALOG_KEY = "catalogs/testing/arsenals-v1.json"
+# Inventory revision is independent of the pinned generation-one weapon pack.
+CATALOG_KEY = "catalogs/testing/arsenals-v2.json"
 MAX_CACHE_BYTES = 512 * 1024 * 1024
 MAX_BATCH_BYTES = 4 * 1024 * 1024 * 1024
 MAX_MANIFEST_BYTES = 4096

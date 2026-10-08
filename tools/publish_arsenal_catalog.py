@@ -55,7 +55,7 @@ def main():
     parser.add_argument("--prepared", type=Path, required=True, help="Directory produced by arsenal_catalog.py")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--credential-file", type=Path, help="Existing 1Password-mounted literal token assignment file")
-    parser.add_argument("--publish", action="store_true", help="Publish verified immutable objects then arsenals-v1.json")
+    parser.add_argument("--publish", action="store_true", help="Publish verified generation-one objects then the arsenals-v2.json inventory")
     parser.add_argument("--objects-only", action="store_true", help="With --publish, stage immutable objects without advancing the hidden catalog")
     parser.add_argument("--expect-catalog-sha256", help="Require the current R2 catalog to match the preparation snapshot before uploading")
     args = parser.parse_args()

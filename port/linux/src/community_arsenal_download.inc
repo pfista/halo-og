@@ -1,7 +1,8 @@
 /* Hidden Fiesta caches share the community downloader's bounded HTTPS,
    real-directory checks and exclusive publication. Unlike visible community
    maps, these are requested individually and are never put in the map list. */
-#define ARSENAL_CATALOG_URL "https://dl.oghalo.com/catalogs/testing/arsenals-v1.json"
+/* The v2 inventory admits larger catalogs; v1 stays available to older apps. */
+#define ARSENAL_CATALOG_URL "https://dl.oghalo.com/catalogs/testing/arsenals-v2.json"
 #define ARSENAL_WEAPON_LIST_SHA256 "2856504cbd257e1b18c273caa64237fbfe77dc77d22cce1a7fa0a0abfc53f71f"
 #define MAX_MANIFEST_BYTES 4096
 /* Admission covers the entire index; caches are downloaded individually. */

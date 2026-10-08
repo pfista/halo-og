@@ -47,7 +47,7 @@ class DesktopArsenalDownloadTests(unittest.TestCase):
             harness = original[:original.index("int main(int count,")] + MAIN
             harness = harness.replace(
                 'int catalog = strstr(url, "/catalogs/testing/current.json") != NULL;',
-                'int catalog = strstr(url, "/catalogs/testing/arsenals-v1.json") != NULL;')
+                'int catalog = strstr(url, "/catalogs/testing/arsenals-v2.json") != NULL;')
             maps.HARNESS = harness
             maps.DesktopMapDownloadTests.setUpClass.__func__(cls)
         finally:

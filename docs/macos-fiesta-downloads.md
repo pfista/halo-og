@@ -19,14 +19,18 @@ move the conflicting pair aside before retrying a replacement.
 
 Downloads use the nonsecret configuration in
 [map-downloads.json](../port/macos/map-downloads.json), with catalog
-`https://dl.oghalo.com/catalogs/testing/arsenals-v1.json` and the existing
+`https://dl.oghalo.com/catalogs/testing/arsenals-v2.json` and the existing
 approved HTTPS object origin. The catalog is pinned to profile
 `fiesta-arsenal-v1`, generation 1 and the compiled weapon-list SHA-256.
+The delivery endpoint version changes the advertised inventory, while asset
+generation, manifest format and immutable object keys stay at v1. Keep the
+legacy 54-entry `arsenals-v1.json` endpoint available for older clients; their
+2 GiB aggregate bound cannot accept the new 58-entry inventory.
 Metadata rejects duplicate or unknown fields, escaped/non-ASCII strings,
 noninteger sizes, unsafe names, mismatched immutable object keys and conflicting
 logical-map/original-SHA identities. Bounds are 1 MiB for the catalog, 115 entries,
-4096 bytes per manifest, 128 MiB per cache transfer/declared size, 22 MiB for cache
-tags and 2 GiB for the advertised collection including metadata.
+4096 bytes per manifest, 512 MiB per cache transfer/declared size, 22 MiB for cache
+tags and 4 GiB for the advertised collection including metadata.
 
 The managed layout is separate from the app bundle and original maps:
 

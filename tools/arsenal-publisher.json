@@ -3,7 +3,7 @@
   "account_id": "39353b0c2249998b78adc016897ef725",
   "bucket": "halo",
   "public_base_url": "https://dl.oghalo.com/",
-  "catalog_key": "catalogs/testing/arsenals-v1.json",
+  "catalog_key": "catalogs/testing/arsenals-v2.json",
   "allowed_logical_maps": [
     "atlas",
     "badcreek",
