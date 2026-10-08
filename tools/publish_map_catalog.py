@@ -353,10 +353,16 @@ def require_exact(response, data, label, *, catalog_pending=True):
         raise PublishError(label + " has different bytes" + state)
 
 
-def publish(prepared, config, r2, http, *, progress=print):
+def publish(prepared, config, r2, http, *, progress=print, objects_only=False,
+            expected_catalog_sha256=None):
     # Capture the current catalog before changing any object, then condition the
     # final write on that ETag. A competing publisher cannot be silently replaced.
     old = r2.request("GET", config["catalog_key"], limit=MAX_CATALOG_BYTES)
+    if expected_catalog_sha256 is not None:
+        if not isinstance(expected_catalog_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_catalog_sha256):
+            raise PublishError("Expected catalog SHA-256 must be a lowercase digest")
+        if old.status != 200 or hashlib.sha256(old.body).hexdigest() != expected_catalog_sha256:
+            raise PublishError("Current catalog differs from the preparation snapshot; no objects were uploaded")
     if old.status == 404:
         condition = {"If-None-Match": "*"}
     elif old.status == 200 and re.fullmatch(r'"[A-Za-z0-9_-]{1,128}"', old.headers.get("etag", "")):
@@ -398,6 +404,9 @@ def publish(prepared, config, r2, http, *, progress=print):
                               headers={"Accept-Encoding": "identity", "Cache-Control": "no-cache"}, limit=len(data))
         require_exact(public, data, "Public map " + entry["id"])
         progress("Verified public map " + entry["id"] + " (" + str(len(data)) + " bytes, SHA-256 " + entry["sha256"] + ")")
+    if objects_only:
+        progress("Staged and verified immutable objects; the current catalog was not advanced")
+        return
     if old.status != 200 or old.body != prepared.catalog:
         result = r2.request("PUT", config["catalog_key"], body=prepared.catalog,
                             headers={**condition, "Content-Type": "application/json", "Cache-Control": "no-cache"})
@@ -422,7 +431,11 @@ def main():
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="Nonsecret publisher configuration")
     parser.add_argument("--credential-file", type=Path, help="Existing mounted file containing a literal CLOUDFLARE_API_TOKEN assignment")
     parser.add_argument("--publish", action="store_true", help="Upload and advance testing/current.json after verification")
+    parser.add_argument("--objects-only", action="store_true", help="With --publish, upload immutable objects while keeping the current catalog")
+    parser.add_argument("--expect-catalog-sha256", help="Require the current R2 catalog to match the preparation snapshot before uploading")
     args = parser.parse_args()
+    if args.objects_only and not args.publish:
+        parser.error("--objects-only requires --publish")
     try:
         config = load_config(args.config)
         prepared = validate_prepared(args.prepared, config)
@@ -434,7 +447,8 @@ def main():
         http = HTTPS()
         access, secret = derive_s3_credentials(token, config, http)
         del token
-        publish(prepared, config, R2(config, access, secret, http), http)
+        publish(prepared, config, R2(config, access, secret, http), http,
+                objects_only=args.objects_only, expected_catalog_sha256=args.expect_catalog_sha256)
     except (PublishError, OSError, ValueError):
         # Only our deliberately safe errors are printed. Raw library exceptions
         # and file parsing errors can include credentials or remote request data.

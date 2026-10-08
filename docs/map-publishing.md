@@ -1,7 +1,7 @@
 # Publishing the testing map catalog
 
 [`map-publisher.json`](../tools/map-publisher.json) pins the nonsecret R2 account,
-`halo` bucket, public origin, testing catalog destination and reviewed 41-map
+`halo` bucket, public origin, testing catalog destination and reviewed 45-map
 allowlist. Expand the allowlist only after reviewing additional maps for public
 distribution. Never upload XISOs, stock/campaign/UI caches, extracted originals,
 helper binaries or private logs as map objects.
@@ -19,7 +19,8 @@ When adding a map, retain every existing entry and immutable object from the liv
 catalog, add the reviewed map, and verify that the old entries are unchanged.
 Guard the publisher's initial authenticated catalog read against the exact live
 snapshot used for preparation. Its ETag condition then protects against changes
-during publication.
+during publication. Supply `--expect-catalog-sha256 <snapshot-sha256>` with an
+authorized publication to enforce that initial read before any object writes.
 
 ```sh
 python3 tools/map_catalog.py \
@@ -46,10 +47,19 @@ Run `python3 tools/publish_map_catalog.py --help` for the current CLI contract.
 
 ## Distribution scope
 
-The live testing catalog contains 41 complete converted community maps.
+The publisher allowlist covers 45 complete converted community maps.
 Local reconstruction and package-only distribution are set aside. Keep using
 the complete-map publisher; no content-tool download or local map rebuild is
 required by the desktop release.
+
+Four additional Digsite conversions are prepared as `chillout_dig`,
+`damnation_dig`, `exhibit_dig`, and `prisoner_dig`. The prepared 45-map catalog
+preserves all 41 previous entries, including the separate `chillout_digsite`
+revision. These regular caches retain their reviewed Battle Rifle omissions.
+Their hidden Fiesta companions use the separately approved existing 31-weapon
+All pack; see [Fiesta delivery](weapon-pack-maps.md#delivering-hidden-arsenals).
+Map publication and the next app release are separate operations. No gameplay
+testing was performed for this four-map preparation.
 
 On 2026-10-05, `chillout_digsite` replaced the earlier `chillout_dig` POC entry.
 It appears as **Chillout Digsite** in the community map menu and is eligible for
@@ -59,8 +69,8 @@ no external resource files. The published Xbox v5 cache SHA-256 is
 and its transfer size is 35,586,048 bytes. The
 [complete map download](https://dl.oghalo.com/maps/sha256/93d966f3e191cb3f0506d8c31b2d0d3641e3530fac063387b6f4d2c435b6631d/chillout_digsite.map)
 is immutable. The testing catalog remains at
-[`current.json`](https://dl.oghalo.com/catalogs/testing/current.json); its
-published SHA-256 is
+[`current.json`](https://dl.oghalo.com/catalogs/testing/current.json).
+On 2026-10-05, the catalog snapshot SHA-256 was
 `bab01df54df64b2b04f1b998f6110dc79dbc0962b108020d3df6f6d9d2b1d9d1`.
 All 41 complete objects were verified through R2 and public HTTPS before the
 catalog update, and the other 40 catalog entries were preserved unchanged.

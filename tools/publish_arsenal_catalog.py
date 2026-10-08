@@ -41,11 +41,13 @@ def load_config(path=DEFAULT_CONFIG):
     return config
 
 
-def publish(prepared, config, r2, http, *, progress=print):
+def publish(prepared, config, r2, http, *, progress=print, objects_only=False,
+            expected_catalog_sha256=None):
     # Exact object keys/hashes and flat-manifest correspondence were checked by
     # this profile's validator. The shared engine rechecks bytes before upload.
     objects = shared.Prepared(prepared.directory, prepared.catalog, prepared.objects)
-    shared.publish(objects, config, r2, http, progress=progress)
+    shared.publish(objects, config, r2, http, progress=progress,
+                   objects_only=objects_only, expected_catalog_sha256=expected_catalog_sha256)
 
 
 def main():
@@ -54,7 +56,11 @@ def main():
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--credential-file", type=Path, help="Existing 1Password-mounted literal token assignment file")
     parser.add_argument("--publish", action="store_true", help="Publish verified immutable objects then arsenals-v1.json")
+    parser.add_argument("--objects-only", action="store_true", help="With --publish, stage immutable objects without advancing the hidden catalog")
+    parser.add_argument("--expect-catalog-sha256", help="Require the current R2 catalog to match the preparation snapshot before uploading")
     args = parser.parse_args()
+    if args.objects_only and not args.publish:
+        parser.error("--objects-only requires --publish")
     try:
         config = load_config(args.config)
         prepared = validate_prepared(args.prepared, config["allowed_logical_maps"])
@@ -66,7 +72,8 @@ def main():
         http = shared.HTTPS()
         access, secret = shared.derive_s3_credentials(token, config, http)
         del token
-        publish(prepared, config, shared.R2(config, access, secret, http), http)
+        publish(prepared, config, shared.R2(config, access, secret, http), http,
+                objects_only=args.objects_only, expected_catalog_sha256=args.expect_catalog_sha256)
     except (shared.PublishError, OSError, ValueError, UnicodeError):
         error = sys.exc_info()[1]
         message = str(error) if isinstance(error, shared.PublishError) else "Local arsenal publication inputs could not be validated"
