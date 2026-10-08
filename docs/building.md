@@ -74,6 +74,31 @@ Keep original presentation/rules as the baseline, preserve the 30 Hz simulation,
 and review upstream changes individually. Matching the original build-2342 Xbox
 executable is distinct from validating a native ARM/x86 port.
 
+Select existing checks for the changed behavior; these are routes, not a checklist
+to run for every edit. From the repository root:
+
+| Change | Example focused check |
+| --- | --- |
+| Input timing or wire protocol | `python3 -m unittest tools.test_input_delay tools.test_network_v11` |
+| Settings persistence or player-data migration | `python3 -m unittest tools.test_game_settings.ConfigBooleanPersistenceTests tools.test_save_migration` |
+| Download integrity or cache identity | `python3 -m unittest tools.test_download_transport_limits tools.test_cache_file_identity` |
+| Release selection, changelog or update notices | `python3 -m unittest tools.test_testing_release tools.test_release_changelog tools.test_release_discovery` |
+| Native directory client | `python3 -m unittest tools.test_game_directory tools.test_game_directory_worker` |
+| Directory server | In `services/game-directory`, run `npm ci`, then `npm test`; the real lease-expiry case takes about 91 seconds. |
+| Metal CPU/transport behavior | `PYTHONPATH=tools python3 -m unittest tools.test_metal_guest_transport` |
+
+Select individual cases when a module covers unrelated behavior. Broader platform
+regression runs in CI; the service workflow runs for directory changes. Release
+preparation and publication require successful build/package and Apple regression
+runs from the same source commit. These checks do not authorize publication.
+
+Historical Metal evidence audits (`tools/audit_metal_*.py`) and preview/toolchain
+checks (`tools/check_metal_*.py`) are selected explicitly for those investigations.
+Keep their source/capture requirements with the [Metal reference guide](metal-reference-comparison.md).
+Metal GPU checks require macOS/Metal and remain relevant to renderer changes.
+Use the [netcode measurement guide](netcode-fidelity-testing.md) for live timing
+comparisons; keep GPU benchmarks and gameplay measurements sequential.
+
 [Community maps](community-maps.md) documents rebuilding source tags into Xbox
 v5 NTSC caches. [Release/data instructions](macos-menu-and-releases.md) cover
 packaging without bundled game data and managed downloads. Cross-platform gameplay,

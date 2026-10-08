@@ -42,6 +42,55 @@ content imports; competitive features are optional and default off.
 - A successful build or smoke test does not prove retail parity. Native ARM/x86
   binaries are not byte-identical Xbox executables.
 
+## Testing and validation
+
+- Do not add tests automatically for every change or pursue coverage targets.
+  Routine refactoring, documentation, presentation changes and experimental
+  implementations do not require new tests.
+- Add or extend tests when requested, or to protect a named regression or critical
+  contract with an independently established expected result. Ground expectations
+  in user requirements, reproduced failures, Xbox evidence or protocol/format
+  contracts. Preserve input/netcode, player-data, download and release protections.
+- Identify the concrete failure a new test prevents. Prefer one focused case in
+  an existing harness; where practical, show that the original bug or a deliberate
+  negative control fails it.
+- Exercise production behavior. Avoid tests that repeat the implementation, freeze
+  source spelling/internal layout or verify only mocked behavior. Preserve
+  intentional ABI, architecture, security and provenance checks.
+- Run the smallest relevant existing checks after a cohesive change, including
+  compilation/platform validation when needed. Use the [validation routes](docs/building.md#validation-and-contribution);
+  do not walk the full suite after every edit. Broader regression belongs in CI.
+- Stop after the selected checks pass. Repeat or broaden only after relevant
+  changes, failures or newly identified risks. Report unrelated failures without
+  expanding the task into repairing the entire suite.
+- Temporary probes do not become permanent tests automatically. Large harnesses,
+  snapshot collections and new frameworks need a clear reason within task scope.
+- Honor source-only/no-testing instructions. Report skipped checks and unavailable
+  platforms; a skip is not a pass. Timing, rendering fidelity and interoperability
+  need suitable runtime/Xbox evidence beyond builds and isolated fixtures.
+- Do not weaken assertions or delete regressions merely to pass a change. Cleanup
+  must identify obsolete behavior, duplication or a stronger retained check.
+  Keep historical evidence audits and preview experiments explicitly selected.
+
+## Documentation
+
+- Update documentation when a change affects how someone builds, uses, operates
+  or safely changes the project. Do not create a document for every task or fix.
+- Prefer a small edit to the existing authoritative guide. Give each instruction
+  or contract one home; link to it instead of repeating it in AGENTS, READMEs and
+  feature guides. Git history is the implementation changelog.
+- Lead with the behavior or decision the reader needs. Include only necessary
+  prerequisites, defaults, commands and material limitations. Use plain language,
+  short paragraphs and a table or list when it makes instructions easier to use.
+- Explain durable constraints and non-obvious reasons. Link code, tests and
+  evidence instead of reproducing their contents, exhaustive option inventories
+  or internal implementation walkthroughs. Prefer CLI help for flag references.
+- Keep investigation history and capture manifests separate from current setup
+  guidance. Preserve provenance and fidelity evidence; label historical results
+  with their source/version and do not present them as current validation.
+- Remove stale or duplicate guidance when updating its canonical home. Keep
+  player instructions focused on what players can do, hear or see.
+
 ## Local Mac installation
 
 After a successful local Mac app build, the default is to install with
@@ -52,7 +101,7 @@ settings; verify the installed signature and `Contents/Resources/BuildInfo.txt`.
 ## Documentation entry points
 
 - [Playtesting](docs/playtesting.md): installation, joining and reporting problems.
-- [Building](docs/building.md): platform toolchains and validation.
+- [Building](docs/building.md): platform toolchains and targeted validation routes.
 - [Fidelity policy](docs/xbox-fidelity.md): baseline, defaults and upstream decisions.
 - [Community maps](docs/community-maps.md): conversion and managed storage.
 - [Community conversion](docs/community-map-conversion.md): authoring tools,
@@ -62,8 +111,9 @@ settings; verify the installed signature and `Contents/Resources/BuildInfo.txt`.
 ## Commits and changelog
 
 - Commit each independently reviewable bug fix or feature separately. Include
-  its supporting tests and documentation; keep unrelated pending work out of
-  the commit. Shared setup may accompany the first feature that needs it.
+  tests justified by the testing policy and relevant documentation; keep unrelated
+  pending work out of the commit. Shared setup may accompany the first feature
+  that needs it.
 - Use Conventional Commit subjects: `fix:` for bug fixes, `feat:` for new
   features, and `docs:`, `test:`, `refactor:`, `build:`, `ci:` or `chore:` for
   those changes. An optional scope is welcome, such as `fix(input): ...`.
@@ -75,35 +125,17 @@ settings; verify the installed signature and `Contents/Resources/BuildInfo.txt`.
 
 ## GitHub releases
 
-Keep the established release structure: a short product description, direct
-download links for every included platform, an **Overview** with a short prose
-paragraph and player-facing highlight bullets, then the complete commit list.
-Link to the playtesting guide for setup; keep platform requirements and signing
-limitations brief. Publish matching platform builds from one source commit and
-include checksums and provenance.
+Follow [the release and community announcement prompts](docs/releases/README.md)
+for release-range review, player-facing overviews and Discord/Whop copy. Retain
+the established description, platform download/setup links, overview, full
+commit list, compare link, checksums and provenance. Publish matching platform
+builds from one source commit. Preparing announcement copy does not authorize posting.
 
-- Follow [the release-notes authoring prompt](docs/releases/README.md) whenever
-  the user asks for a release. Review the entire range since the previous
-  reachable release, including relevant diffs and feature documentation. Choose
-  highlights by player impact, not commit recency or the number of commits.
-- Explain the release's main changes in two to four short sentences, followed
-  by usually three to six concise bullets (fewer for a small release). Cover the
-  significant gameplay rules, modes, maps, controls, bug fixes, rendering/audio
-  and network changes actually included. State optional settings and defaults
-  when they affect how players use a feature. Do not pad the overview with CI,
-  test, documentation or refactoring work unless it has a direct player benefit.
-- Follow the community announcement prompt in the same guide for Discord and
-  Whop copy. Use concise player-facing bullets with bold category or feature
-  labels, usually three to six highlights (fewer for a small release), ordered
-  by player impact. Explain what players can do, hear or see; leave implementation
-  details in GitHub. Ground announcements in the live published release notes
-  and preserve testing-release status. Preparing copy does not authorize posting.
 - Author `docs/releases/<tag>.json` with `summary` and `highlights` before
   committing and building the release source. The generator reads that file
   from the exact build SHA and uses the same overview in the annotated tag and
-  GitHub notes. Do not substitute the latest few commit subjects, copy a stale
-  overview, or describe unfinished work as shipped. Recheck it against the final
-  source and release range before publication.
+  GitHub notes. Recheck it against the final source and full release range before
+  publication; do not describe unfinished work as shipped.
 
 - Commit and push requests do not authorize tags or releases. Require the user's
   explicit instruction for the specified source commit before creating or
