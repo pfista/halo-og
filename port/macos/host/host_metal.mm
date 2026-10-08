@@ -102,6 +102,10 @@ struct Context {
     id<MTLDevice> device;
     HaloMetalFunctionCache<id<MTLFunction>> compiled_functions;
     id<MTLCommandQueue> queue;
+    // Submissions complete under the host mutex before another packet can
+    // overwrite this storage. Bound retention to the guest's 16 MiB soft batch
+    // size; larger valid packets still use a temporary, exact-size buffer.
+    id<MTLBuffer> draw_input_buffer = nil;
     id<MTLLibrary> clear_library;
     id<MTLRenderPipelineState> present_pipeline;
     id<MTLSamplerState> present_sampler;
@@ -433,6 +437,28 @@ id<MTLSamplerState> sampler(halo_metal_sampler c,
     if (context.metrics.enabled) context.metrics.sampler_allocations++;
     sampler_cache_insert(context.samplers,key,result); return result;
 }
+id<MTLBuffer> packet_input_buffer(const std::vector<uint8_t> &packet) {
+    constexpr size_t retained_limit = 16u * 1024u * 1024u;
+    id<MTLBuffer> buffer = context.draw_input_buffer;
+    if (!buffer || buffer.length < packet.size()) {
+        size_t capacity = packet.size();
+        if (capacity <= retained_limit) {
+            capacity = 16384;
+            while (capacity < packet.size()) capacity *= 2;
+        }
+        buffer = [context.device newBufferWithLength:capacity options:MTLResourceStorageModeShared];
+        // Rounding is an allocation optimization, not a new acceptance limit.
+        if (!buffer && capacity != packet.size())
+            buffer = [context.device newBufferWithLength:packet.size() options:MTLResourceStorageModeShared];
+        check(buffer != nil,HALO_METAL_MEMORY);
+        if (context.metrics.enabled) context.metrics.packet_buffers++;
+        if (packet.size() <= retained_limit) context.draw_input_buffer = buffer;
+    }
+    // Copy every current wire byte. Command-local inline_range checks remain
+    // authoritative even when the retained allocation has unused trailing room.
+    memcpy(buffer.contents,packet.data(),packet.size());
+    return buffer;
+}
 HaloMetalDraw prepare_draw(const std::vector<uint8_t> &packet, size_t position, halo_metal_draw c,
                           id<MTLBuffer> __strong &input_buffer,
                           std::map<uint32_t, Texture> &textures, std::map<uint32_t, Program> &programs,
@@ -549,11 +575,7 @@ HaloMetalDraw prepare_draw(const std::vector<uint8_t> &packet, size_t position, 
             check(!c.textures[i].generation && !memcmp(&empty,&c.samplers[i],sizeof(empty)));
         }
     }
-    if (!input_buffer) {
-        input_buffer = [context.device newBufferWithBytes:packet.data() length:packet.size() options:MTLResourceStorageModeShared];
-        check(input_buffer != nil,HALO_METAL_MEMORY);
-        if (context.metrics.enabled) context.metrics.packet_buffers++;
-    }
+    if (!input_buffer) input_buffer = packet_input_buffer(packet);
     draw.vertices = draw.indices = draw.vertexUniforms = draw.pixelUniforms = input_buffer;
     draw.vertexOffset = c.vertices_offset; draw.indexOffset = c.indices_offset;
     draw.vertexUniformOffset = c.vertex_uniforms_offset; draw.pixelUniformOffset = c.pixel_uniforms_offset;

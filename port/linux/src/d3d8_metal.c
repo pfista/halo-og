@@ -229,7 +229,7 @@ static void require_status(const char *operation, int status) {
 /* Synchronous host submissions contain complete original commands in order.
  * The soft limit bounds transient per-frame storage; one larger valid command
  * may use the existing 64MiB hard capacity and is submitted when complete. */
-#define NATIVE_BATCH_SOFT_BYTES (4u * 1024u * 1024u)
+#define NATIVE_BATCH_SOFT_BYTES (16u * 1024u * 1024u)
 static uint32_t packet_expected_end;
 static uint64_t submitted_batches, submitted_commands, submitted_bytes, submit_wall_ns;
 static uint64_t statistics_batches, statistics_commands, statistics_bytes, statistics_wall_ns;
