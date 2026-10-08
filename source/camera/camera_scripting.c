@@ -51,6 +51,13 @@ symbols in this file:
 #include "scenario/scenario_definitions.h"
 #include "tag_files/tag_groups.h"
 
+#if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL
+#include "render/render.h"
+/* Existing native diagnostic preference; camera state and timing are unchanged. */
+int config_boolean(char const *name);
+void platform_log(char const *format, ...);
+#endif
+
 /* ---------- constants */
 
 enum
@@ -211,6 +218,12 @@ void scripted_camera_set_animation(
 					camera_script_globals.field_of_view = 1.22173047f;
 					camera_script_globals.timer =
 						(real)(animation->frame_count / TICKS_PER_SECOND);
+#if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL
+					if (config_boolean("debug.gpu_stats"))
+						platform_log("Native camera: tick %ld, render-frame %ld, kind animation, graph %ld, animation %d, name %.32s, frames %d",
+							game_time_get(), render.frame_index, animation_graph_index,
+							animation_index, animation->name, animation->frame_count);
+#endif
 					break;
 				}
 
@@ -295,6 +308,15 @@ void scripted_camera_set(
 		camera_script_globals.field_of_view = 1.22173047f;
 	camera_script_globals.relative_object_index = relative_object_index;
 	camera_script_globals.timer = (real)camera_time;
+
+#if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL
+	/* This is the original render counter before its next frame increment,
+	   independent of the backend's completed-present counter. */
+	if (config_boolean("debug.gpu_stats"))
+		platform_log("Native camera: tick %ld, render-frame %ld, kind point, point %d, name %.32s, transition %u, relative %ld",
+			game_time_get(), render.frame_index, camera_point_index,
+			camera_point->name, (unsigned)transition_time, relative_object_index);
+#endif
 
 	director_update(0.f);
 	observer_update(0.0001f);

@@ -66,6 +66,7 @@ HARNESS = r'''
 #include <setjmp.h>
 #include "port/macos/include/halo_metal_abi.h"
 #include "port/linux/src/metal_render_scale.h"
+/* FLUSH REASONS */
 #define WINAPI
 #define TRUE 1
 #define FALSE 0
@@ -188,7 +189,9 @@ static void command_append(const void *command,uint32_t size) {
     e->kind=((const struct halo_metal_command *)command)->opcode;e->size=size;memcpy(e->command,command,size);
 }
 static void packet_finish(void) {}
-static void packet_flush(void) {
+static void native_flush_statistics_log(unsigned long first,unsigned long last) { (void)first;(void)last; }
+static void packet_flush(enum native_flush_reason reason) {
+    (void)reason;
     while(applied_event<event_count) {
         struct event *e=&events[applied_event++];
         if(e->kind==HALO_METAL_COPY_SUBRESOURCE) {
@@ -257,6 +260,7 @@ static int halo_metal_guest_readback(void *t,struct halo_metal_ref ref,uint32_t 
 static struct native_resource *rendered_mip_composite(DWORD data,const struct xgpu_texture_description *description) {
     (void)data;(void)description;assert(0);return NULL;
 }
+static struct native_resource *text_texture_get(DWORD data) { (void)data;return NULL; }
 /* PRODUCTION */
 static D3DPRESENT_PARAMETERS presentation(unsigned width) {
     D3DPRESENT_PARAMETERS p={0};p.BackBufferWidth=width;p.BackBufferHeight=480;p.SwapEffect=D3DSWAPEFFECT_DISCARD;return p;
@@ -536,7 +540,9 @@ class BackbufferHistoryTests(unittest.TestCase):
         texture = function(source, "texture_get").split("    for (entry=resources;entry;entry=entry->next)", 1)[0]
         production += "\n\n" + texture + '\n    (void)palette;(void)stage;native_fail("unexpected authored texture path",HALO_METAL_INVALID);\n}\n'
         probe = cls.directory / "history.c"
-        probe.write_text(HARNESS.replace("/* PRODUCTION */", production))
+        flush_reasons = "enum native_flush_reason {" + source.split("enum native_flush_reason {", 1)[1].split("};", 1)[0] + "};"
+        harness = HARNESS.replace("/* FLUSH REASONS */", flush_reasons).replace("packet_flush();", "packet_flush(NATIVE_FLUSH_EXIT);")
+        probe.write_text(harness.replace("/* PRODUCTION */", production))
         cls.executable = cls.directory / "history"
         compiled = subprocess.run(["clang", "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
                                    "-fsanitize=address,undefined", "-fno-omit-frame-pointer",

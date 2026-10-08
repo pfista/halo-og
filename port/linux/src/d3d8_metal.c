@@ -228,9 +228,60 @@ static uint32_t packet_expected_end;
 static uint64_t submitted_batches, submitted_commands, submitted_bytes, submit_wall_ns;
 static uint64_t statistics_batches, statistics_commands, statistics_bytes, statistics_wall_ns;
 static uint32_t largest_statistics_batch;
+static BOOL draw_diagnostics;
+struct native_draw_profile {
+    uint64_t draws, expansion_ns, textures_ns, state_ns, program_ns, emit_ns, submit_ns;
+};
+static struct native_draw_profile draw_profile;
+enum native_flush_reason {
+    NATIVE_FLUSH_SOFT_BATCH_LIMIT,
+    NATIVE_FLUSH_HARD_CAPACITY,
+    NATIVE_FLUSH_COMMAND_LIMIT,
+    NATIVE_FLUSH_VISIBILITY_COLLECT,
+    NATIVE_FLUSH_KICK_PUSH_BUFFER,
+    NATIVE_FLUSH_INSERT_CALLBACK,
+    NATIVE_FLUSH_PRESENT,
+    NATIVE_FLUSH_SETTINGS,
+    NATIVE_FLUSH_RESIZE,
+    NATIVE_FLUSH_READBACK,
+    NATIVE_FLUSH_EXIT,
+    NATIVE_FLUSH_REASON_COUNT
+};
+struct native_flush_statistics {
+    uint64_t packets, commands, bytes, wall_ns;
+};
+static struct native_flush_statistics flush_statistics[NATIVE_FLUSH_REASON_COUNT];
+static const char *native_flush_reason_name(enum native_flush_reason reason) {
+    static const char *const names[NATIVE_FLUSH_REASON_COUNT]={
+        "SoftBatchLimit", "HardCapacity", "CommandLimit", "VisibilityCollect",
+        "KickPushBuffer", "InsertCallback", "Present", "Settings", "Resize",
+        "Readback", "Exit"
+    };
+    return names[reason];
+}
+static void native_flush_statistics_log(unsigned long first,unsigned long last) {
+    for (unsigned i=0;i<NATIVE_FLUSH_REASON_COUNT;i++) {
+        const struct native_flush_statistics *s=&flush_statistics[i];
+        if (s->packets)
+            platform_log("Native flush totals: frames %lu-%lu, reason %s, packets %llu, commands %llu, bytes %llu, submit %llu ns",
+                first,last,native_flush_reason_name((enum native_flush_reason)i),
+                (unsigned long long)s->packets,(unsigned long long)s->commands,
+                (unsigned long long)s->bytes,(unsigned long long)s->wall_ns);
+    }
+    memset(flush_statistics,0,sizeof(flush_statistics));
+}
 static uint64_t monotonic_ns(void) {
     struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);
     return (uint64_t)t.tv_sec*UINT64_C(1000000000)+(uint64_t)t.tv_nsec;
+}
+/* Guest-only draw phases exclude synchronous host submissions nested inside
+   preparation/packet emission. GPU and completion timings remain separate. */
+static void native_draw_phase(uint64_t *started,uint64_t *submitted,uint64_t *total) {
+    uint64_t now=monotonic_ns(),wait=submit_wall_ns-*submitted;
+    uint64_t elapsed=now>=*started ? now-*started:0;
+    *total+=elapsed>wait ? elapsed-wait:0;
+    draw_profile.submit_ns+=wait;
+    *started=now;*submitted=submit_wall_ns;
 }
 /* Preserve rejected inputs only when the existing local diagnostic directory
    is configured. No command is retried or changed after rejection. */
@@ -263,19 +314,31 @@ static void native_failed_packet(void) {
     if (transport.bytes && transport.size<=transport.capacity)
         native_failure_dump("packet",transport.bytes,transport.size);
 }
-static void packet_flush(void) {
+static void packet_flush(enum native_flush_reason reason) {
     if (!transport.recording) return;
     if (!transport.command_count || transport.size != packet_expected_end)
         native_fail("incomplete queued command",HALO_METAL_INVALID);
     uint32_t commands=transport.command_count,bytes=transport.size;
+    uint64_t packet_sequence=transport.sequence;
     uint64_t started=monotonic_ns();
     int status=halo_metal_guest_submit(&transport);
     if (status) native_failed_packet();
     require_status("submit original commands",status);
-    submit_wall_ns+=monotonic_ns()-started;
+    uint64_t ended=monotonic_ns(),duration=ended-started;
+    submit_wall_ns+=duration;
     submitted_batches++;submitted_commands+=commands;submitted_bytes+=bytes;
     if (bytes>largest_statistics_batch) largest_statistics_batch=bytes;
     packet_expected_end=0;
+    if (config_boolean("debug.gpu_stats")) {
+        struct native_flush_statistics *s=&flush_statistics[reason];
+        s->packets++;s->commands+=commands;s->bytes+=bytes;s->wall_ns+=duration;
+        // Zero-based submission frame precedes Present's frame increment.
+        // Native timing records the completed frame after that increment;
+        // sequence joins this reason/timing with the host's packet-stage log.
+        platform_log("Native flush: frame %lu, sequence %llu, reason %s, commands %u, bytes %u, start %llu ns, end %llu ns, submit %llu ns",
+            device.frame,(unsigned long long)packet_sequence,native_flush_reason_name(reason),commands,bytes,
+            (unsigned long long)started,(unsigned long long)ended,(unsigned long long)duration);
+    }
 }
 static void packet_begin(uint32_t fixed,const uint32_t *payloads,uint32_t count) {
     uint32_t empty_end=0,end=0;
@@ -285,7 +348,9 @@ static void packet_begin(uint32_t fixed,const uint32_t *payloads,uint32_t count)
     if (transport.recording) {
         if (transport.size != packet_expected_end) native_fail("unsealed queued command",HALO_METAL_INVALID);
         int room=halo_metal_packet_room(transport.size,transport.capacity,fixed,payloads,count,&end);
-        if (room || end>NATIVE_BATCH_SOFT_BYTES || transport.command_count>=65536u) packet_flush();
+        if (room || end>NATIVE_BATCH_SOFT_BYTES || transport.command_count>=65536u)
+            packet_flush(room ? NATIVE_FLUSH_HARD_CAPACITY:
+                transport.command_count>=65536u ? NATIVE_FLUSH_COMMAND_LIMIT:NATIVE_FLUSH_SOFT_BATCH_LIMIT);
     }
     if (!transport.recording) {
         if (sequence==UINT64_MAX) native_fail("packet sequence overflow",HALO_METAL_MEMORY);
@@ -307,10 +372,11 @@ static void payload_append(uint32_t command,uint32_t field,const void *bytes,uin
 static void packet_finish(void) {
     if (!transport.recording || transport.size!=packet_expected_end)
         native_fail("complete original command reservation",HALO_METAL_INVALID);
-    if (transport.size>=NATIVE_BATCH_SOFT_BYTES || transport.command_count>=65536u) packet_flush();
+    if (transport.size>=NATIVE_BATCH_SOFT_BYTES || transport.command_count>=65536u)
+        packet_flush(transport.command_count>=65536u ? NATIVE_FLUSH_COMMAND_LIMIT:NATIVE_FLUSH_SOFT_BATCH_LIMIT);
 }
 void halo_metal_flush_pending(void) {
-    if (device.ready) packet_flush();
+    if (device.ready) packet_flush(NATIVE_FLUSH_EXIT);
 }
 static void color_to_vec4(D3DCOLOR color, float out[4]) {
     out[0]=((color>>16)&255)/255.0f; out[1]=((color>>8)&255)/255.0f;
@@ -499,6 +565,7 @@ static void native_initialize(void) {
     /* platform_video_initialize has already synchronized the Retina window.
        Never resolve native pixels before that point or from display points. */
     native_storage_initialize();
+    draw_diagnostics=config_boolean("debug.gpu_stats");
     for (unsigned i=0;i<16;i++) device.attributes[i][3]=1.0f;
     memory_watch_initialize();
     device.antialiasing_enabled=fxaa;
@@ -1157,7 +1224,7 @@ static void backbuffer_surfaces_resize(unsigned long width,unsigned long height)
         native_fail("indexed back-buffer resize capability",HALO_METAL_UNSUPPORTED);
     /* Finish old-size writes before changing metadata. Keep header/Data
        identities stable; transfer the exact common pixel rectangle only. */
-    packet_flush();
+    packet_flush(NATIVE_FLUSH_RESIZE);
     struct native_resource *previous=target_get(&device.history_buffer);
     d3d8_surface_resize(&device.back_buffer,D3DFMT_LIN_A8R8G8B8,width,height);
     d3d8_surface_resize(&device.history_buffer,D3DFMT_LIN_A8R8G8B8,width,height);
@@ -1494,6 +1561,8 @@ static struct native_program *program_get(struct vertex_shader_object *vertex,ui
         if (entry->vertex==vertex && entry->packed_mask==packed && entry->alpha_border_mask==alpha_border_mask &&
             entry->depth_contract==depth_contract && entry->volume_border_mask==volume_border_mask &&
             !memcmp(&entry->key,key,sizeof(*key))) return entry;
+    const BOOL diagnostics=config_boolean("debug.gpu_stats");
+    const uint64_t translation_started=diagnostics ? monotonic_ns():0;
     char *vs=vertex==&fixed_function_vertex ? metal_fixed_function_vertex_to_msl():
         nv2a_vertex_shader_to_msl(vertex->instructions,vertex->instruction_count,packed);
     struct nv2a_pixel_shader_msl_options options={volume_border_mask ? 3:2,
@@ -1559,10 +1628,22 @@ static struct native_program *program_get(struct vertex_shader_object *vertex,ui
         platform_log("Native original volume border program %u: texture-modes %08lx volume-mask %u alpha-mask %u same-texture black/white sampler footprints",
             entry->ref.id,key->texture_modes,volume_border_mask,alpha_border_mask);
     command.vertex_source_size=strlen(vs);command.fragment_source_size=strlen(ps);
+    const uint64_t translation_ns=diagnostics ? monotonic_ns()-translation_started:0;
     uint32_t payloads[]={command.vertex_source_size,command.fragment_source_size};
     packet_begin(sizeof(command),payloads,2);uint32_t offset=command_append(&command,sizeof(command));
     payload_append(offset,offsetof(struct halo_metal_program,vertex_source_offset),vs,command.vertex_source_size);
     payload_append(offset,offsetof(struct halo_metal_program,fragment_source_offset),ps,command.fragment_source_size);
+    if (diagnostics)
+        platform_log("Native program: frame %lu, sequence %llu, command-index %u, program %u, vertex-object %lu, vertex-handle %08lx, declaration-object %lu, loaded-slot %lu, instructions %lu, packed %08x, texture-modes %08lx, samplers %u/%u/%u/%u, alpha-border %u, volume-border %u, depth-contract %u, compilers %u/%u, sources %u/%u bytes, translation %llu ns",
+            device.frame,(unsigned long long)transport.sequence,transport.command_count-1,entry->ref.id,vertex->id,
+            vertex==&fixed_function_vertex ? 0:(unsigned long)(uintptr_t)vertex,
+            device.vertex_shader ? device.vertex_shader->id:0,device.program_address,
+            vertex->instruction_count,packed,key->texture_modes,
+            key->sampler_type[0],key->sampler_type[1],key->sampler_type[2],key->sampler_type[3],
+            alpha_border_mask,volume_border_mask,depth_contract,
+            command.vertex_compiler_contract,command.fragment_compiler_contract,
+            command.vertex_source_size,command.fragment_source_size,
+            (unsigned long long)translation_ns);
     packet_finish();free(vs);free(ps);
     entry->next=programs;programs=entry;return entry;
 }
@@ -1574,6 +1655,7 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
     if (!device.fixed_function_selected && (!vertex || !vertex->instructions || !device.vertex_shader)) return;
     if (device.fixed_function_selected && !immediate)
         native_fail("fixed-function stream/FVF draw is unsupported",HALO_METAL_UNSUPPORTED);
+    uint64_t profile_started=draw_diagnostics ? monotonic_ns():0,profile_submitted=submit_wall_ns;
     struct metal_vertex_index_plan plan;
     require_status("original primitive plan",metal_vertex_index_plan(type,indices,indices ? count*sizeof(WORD):0,
         count,first,indices ? device.base_vertex_index:0,&plan));
@@ -1604,6 +1686,7 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
         require_status("fetch original registers",metal_vertex_fetch(&device.vertex_shader->declaration,streams,
             device.attributes,plan.source_first,plan.source_count,expanded,vertex_bytes));
     }
+    if (draw_diagnostics) native_draw_phase(&profile_started,&profile_submitted,&draw_profile.expansion_ns);
     struct metal_draw_state_input input={0};
     struct metal_draw_state_output output;
     struct metal_draw_state_error error={0};
@@ -1643,6 +1726,7 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
     struct native_resource *depth=device.depth_stencil ? target_get(device.depth_stencil):NULL;
     input.target_width=color->description.width;input.target_height=color->description.height;
     input.has_depth=depth!=NULL;
+    if (draw_diagnostics) native_draw_phase(&profile_started,&profile_submitted,&draw_profile.textures_ns);
     int status=metal_draw_state_pack(&input,&key,&output,&error);
     if (status) {
         platform_log("Native original draw state: %s stage %u state %u value %u",error.message,error.stage,error.state,error.value);
@@ -1689,7 +1773,9 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
             native_fail("pack original fixed-function vertex state",fixed_status);
         }
     }
+    if (draw_diagnostics) native_draw_phase(&profile_started,&profile_submitted,&draw_profile.state_ns);
     struct native_program *program=program_get(vertex,packed,&key,output.native_alpha_border_mask,output.native_volume_border_mask,output.depth_contract);
+    if (draw_diagnostics) native_draw_phase(&profile_started,&profile_submitted,&draw_profile.program_ns);
     struct halo_metal_draw draw={0};
     draw.command.opcode=HALO_METAL_DRAW;draw.program=program->ref;draw.color=color->ref;
     if (depth) draw.depth_stencil=depth->ref;
@@ -1718,6 +1804,10 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
     device.draws++;
     color->last_rendered=rendered_serial_next();
     if (depth) depth->last_rendered=device.resource_serial;
+    if (draw_diagnostics) {
+        native_draw_phase(&profile_started,&profile_submitted,&draw_profile.emit_ns);
+        draw_profile.draws++;
+    }
 }
 void WINAPI D3DDevice_DrawVertices(D3DPRIMITIVETYPE type,UINT first,UINT count) {
     draw_original(type,first,count,NULL,FALSE);
@@ -1743,9 +1833,9 @@ void WINAPI D3DDevice_End(void) {
 }
 
 BOOL WINAPI D3DDevice_IsBusy(void) { return FALSE; }
-void WINAPI D3DDevice_KickPushBuffer(void) { if (device.ready) packet_flush(); }
+void WINAPI D3DDevice_KickPushBuffer(void) { if (device.ready) packet_flush(NATIVE_FLUSH_KICK_PUSH_BUFFER); }
 void WINAPI D3DDevice_InsertCallback(D3DCALLBACKTYPE type,D3DCALLBACK callback,DWORD context) {
-    (void)type; if (callback) { if (device.ready) packet_flush();callback(context); }
+    (void)type; if (callback) { if (device.ready) packet_flush(NATIVE_FLUSH_INSERT_CALLBACK);callback(context); }
 }
 static struct halo_metal_ref query_create(void) {
     struct halo_metal_create_visibility command={0};
@@ -1758,7 +1848,7 @@ static struct halo_metal_ref query_create(void) {
 static void query_collect(unsigned index) {
     if (!device.query_pending[index]) return;
     uint64_t result=0;
-    packet_flush();
+    packet_flush(NATIVE_FLUSH_VISIBILITY_COLLECT);
     require_status("read original visibility result",halo_metal_guest_readback(&transport,
         device.query_slots[index],HALO_METAL_VISIBILITY,&result,sizeof(result)));
     device.query_results[index]=result ? VISIBILITY_ALL_SAMPLES:0;
@@ -1833,10 +1923,10 @@ void WINAPI D3DDevice_Clear(DWORD count,const D3DRECT *rectangles,DWORD flags,D3
 }
 int halo_metal_apply_video_settings(void) {
     if (!device.ready || !(transport.reply.capabilities&HALO_METAL_CAP_PRESENT_SCALED)) return 0;
-    packet_flush();
+    packet_flush(NATIVE_FLUSH_SETTINGS);
     struct halo_metal_display_settings command={0};command.command.opcode=HALO_METAL_DISPLAY_SETTINGS;
     command.display_flags=config_boolean("display.vsync") ? HALO_METAL_DISPLAY_VSYNC:0;
-    packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();packet_flush();return 1;
+    packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();packet_flush(NATIVE_FLUSH_SETTINGS);return 1;
 }
 static void ui_point_from_window(float wx,float wy,short *x,short *y) {
     int ww,wh,pw,ph;
@@ -1871,7 +1961,7 @@ static void write_screenshot(struct native_resource *target) {
     uint32_t width=target->storage_width,height=target->storage_height,size=width*height*4;
     unsigned char *pixels=malloc(size),header[54]={'B','M'};
     if (!pixels) native_fail("allocate screenshot",HALO_METAL_MEMORY);
-    packet_flush();
+    packet_flush(NATIVE_FLUSH_READBACK);
     require_status("native game screenshot",halo_metal_guest_readback(&transport,target->ref,HALO_METAL_COLOR,pixels,size));
     for (unsigned i=0;i<size/4;i++) pixels[i*4+3]=255;
     uint32_t file_size=54+size,offset=54,dib=40;int32_t negative_height=-(int32_t)height;uint16_t planes=1,bits=32;
@@ -1903,6 +1993,8 @@ static void native_frame_wait(void) {
 /* Diagnostic reads of the original tick counter never advance simulation. */
 extern unsigned char game_time_initialized(void);
 extern long game_time_get(void);
+extern unsigned char cinematic_in_progress(void);
+extern unsigned char player_input_enabled(void);
 static void native_frame_statistics(void) {
     static uint64_t previous_ns;
     static unsigned long previous_frame;
@@ -1916,6 +2008,16 @@ static void native_frame_statistics(void) {
     long tick=initialized ? game_time_get():0;
     platform_log("Native timing: frame %lu, monotonic %llu ns, tick %ld, initialized %d",
         device.frame,(unsigned long long)ns,tick,initialized);
+    platform_log("Native scene: frame %lu, cinematic %d, player-input %d",
+        device.frame,initialized && cinematic_in_progress()!=0,initialized && player_input_enabled()!=0);
+    if (draw_diagnostics) {
+        platform_log("Native guest work: frame %lu, draws %llu, expansion %llu ns, textures %llu ns, state %llu ns, program %llu ns, emit %llu ns, submit %llu ns",
+            device.frame,(unsigned long long)draw_profile.draws,(unsigned long long)draw_profile.expansion_ns,
+            (unsigned long long)draw_profile.textures_ns,(unsigned long long)draw_profile.state_ns,
+            (unsigned long long)draw_profile.program_ns,(unsigned long long)draw_profile.emit_ns,
+            (unsigned long long)draw_profile.submit_ns);
+        memset(&draw_profile,0,sizeof(draw_profile));
+    }
     if (previous_ns && ns>previous_ns && ns-previous_ns<UINT64_C(1000000000)) return;
     if (previous_ns && ns>previous_ns) {
         struct native_resource *back=target_get(&device.back_buffer);
@@ -1940,7 +2042,7 @@ void WINAPI D3DDevice_Present(const RECT *source,const RECT *destination,void *u
         backbuffer_history_advance(back);
         struct halo_metal_present_scaled command={0};command.command.opcode=HALO_METAL_PRESENT_SCALED;
         command.source=back->ref;command.display_flags=config_boolean("display.vsync") ? HALO_METAL_DISPLAY_VSYNC:0;
-        packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();packet_flush();
+        packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();packet_flush(NATIVE_FLUSH_PRESENT);
     }
     device.frame++;
     if (config_boolean("debug.gpu_stats") && device.frame%60==0) {
@@ -1953,6 +2055,7 @@ void WINAPI D3DDevice_Present(const RECT *source,const RECT *destination,void *u
             (unsigned long long)((submit_wall_ns-statistics_wall_ns)/1000),largest_statistics_batch);
         statistics_batches=submitted_batches;statistics_commands=submitted_commands;
         statistics_bytes=submitted_bytes;statistics_wall_ns=submit_wall_ns;largest_statistics_batch=0;
+        native_flush_statistics_log(device.frame-60,device.frame-1);
     }
     native_frame_wait();
     if (device.ready) native_frame_statistics();
