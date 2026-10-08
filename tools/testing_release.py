@@ -31,6 +31,8 @@ WORKFLOWS = {
     "build.yml": {f"halo-{platform}-release": f"halo-{platform}-release.zip"
                   for platform in ("windows", "linux", "android")},
 }
+# Regression gates have no release artifacts; keep them separate from packaging.
+CHECK_WORKFLOWS = ("apple.yml",)
 MAC_FILES = {DMG, "README.txt", "BuildInfo.txt", "SHA256SUMS"}
 ASSETS = {DMG, "macos-README.txt", "macos-BuildInfo.txt", "SHA256SUMS",
           "provenance.json", *(f"halo-{p}-release.zip" for p in ("windows", "linux", "android"))}
@@ -137,7 +139,7 @@ def validate_run(run, workflow, sha):
             or run.get("path", "").split("@")[0] != ".github/workflows/" + workflow
             or run.get("repository", {}).get("full_name") != REPOSITORY
             or run.get("head_repository", {}).get("full_name") != REPOSITORY):
-        raise RuntimeError("Build run does not belong to successful same-source main CI")
+        raise RuntimeError(f"{workflow} run does not belong to successful same-source main CI")
 
 
 def select_run(api, workflow, sha):
@@ -273,6 +275,8 @@ def prepare(api, repository, sha, tag, directory):
     overview = source_overview(api, sha, tag)
     if directory.exists():
         raise RuntimeError("Candidate directory already exists; choose a fresh path")
+    checks = [{"workflow": workflow, "run_id": select_run(api, workflow, sha)["id"]}
+              for workflow in CHECK_WORKFLOWS]
     selected = []
     for workflow, outputs in WORKFLOWS.items():
         run = select_run(api, workflow, sha)
@@ -283,7 +287,7 @@ def prepare(api, repository, sha, tag, directory):
               "network_protocol": source_protocol(api, sha), "source_date": source_date(api, sha),
               "changelog": generate_changelog(api, repository, sha, tag),
               "overview": overview,
-              "artifacts": [], "files": {}}
+              "checks": checks, "artifacts": [], "files": {}}
     # Check note compatibility before downloading the build assets.
     notes = release_notes(record)
     directory.mkdir(parents=True)
@@ -315,6 +319,14 @@ def verify_candidate(api, repository, sha, tag, directory):
     record = json.loads((directory / "provenance.json").read_text())
     if (record.get("repository"), record.get("sha"), record.get("tag")) != (repository, sha, tag):
         raise RuntimeError("Prepared source or release tag changed")
+    checks = record.get("checks", [])
+    if (not isinstance(checks, list) or len(checks) != len(CHECK_WORKFLOWS)
+            or any(not isinstance(item, dict) or item.get("workflow") not in CHECK_WORKFLOWS
+                   or not isinstance(item.get("run_id"), int) for item in checks)
+            or {item["workflow"] for item in checks} != set(CHECK_WORKFLOWS)):
+        raise RuntimeError("Prepared regression check provenance is incomplete")
+    for item in checks:
+        validate_run(api.get(f"actions/runs/{item['run_id']}"), item["workflow"], sha)
     if record.get("changelog") != generate_changelog(api, repository, sha, tag):
         raise RuntimeError("Prepared changelog or previous release tag changed")
     if record.get("overview") != source_overview(api, sha, tag):

@@ -33,8 +33,8 @@ The fork's **Publish testing prerelease** workflow runs only when explicitly
 dispatched on `main` with a new `vMAJOR.MINOR.PATCH` tag, for example `v0.3.1`.
 The release title is `Halo OG v0.3.1`; tags have no testing or feature suffix.
 Testing releases still use GitHub's prerelease flag. It publishes the latest
-`main` commit using existing,
-successful **Build** and **macOS DMG** workflow outputs from that exact commit.
+`main` commit using successful **Build** and **macOS DMG** outputs and an
+**Apple regression checks** result from that exact commit.
 It does not rebuild, sign with a personal identity, or include game data.
 
 The version after `v` must match `HALO_OG_VERSION` in
@@ -51,18 +51,23 @@ selected, all 40 approved community maps queue in the background. The older
 builds use manual community maps. See [player setup](playtesting.md#community-maps)
 for platform controls and the current download links.
 
-Wait for both build workflows to succeed on the same latest `main` commit. In GitHub Actions, choose **Publish testing prerelease → Run workflow**,
-select `main`, and enter an unused version tag such as `v0.3.1`. This explicit dispatch publishes
+After release authorization, wait for both builds and Apple regression checks
+to succeed on the same latest `main` commit. In GitHub Actions, choose
+**Publish testing prerelease → Run workflow**, select `main`, and enter an unused
+version tag such as `v0.3.1`. This explicit dispatch publishes
 a prerelease; code pushes do not publish. Prepare/collection uses a read-only
 token; the separate publication job alone receives `contents: write`.
 
 The helper rejects another source revision, non-main runs, unsuccessful runs,
 missing/expired artifacts, changed hashes, unexpected Mac contents, and reused
-tags/releases. Before publication it rechecks latest main and build provenance.
+tags/releases. Before publication it rechecks latest main, build provenance and
+the recorded Apple regression run. Older candidates without that check's
+provenance must be prepared again.
 If main advances while publication is queued, dispatch again after the new
 commit's builds finish. Workflow artifacts must still exist: Mac artifacts last
-14 days and other platform artifacts last 3 days. Manually rerun both build
-workflows on latest main if needed.
+14 days and other platform artifacts last 3 days. Manually run the required
+workflows on latest main if checks/artifacts are missing, including after a
+documentation-only or service-only commit that skips native CI.
 
 The prerelease includes:
 

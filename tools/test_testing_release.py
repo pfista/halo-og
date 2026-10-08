@@ -40,7 +40,8 @@ class FixtureAPI:
         self.get_calls, self.downloads = [], []
         self.posts = []
         self.runs, self.artifacts, self.archives = {}, {}, {}
-        for run_id, (workflow, outputs) in enumerate(release.WORKFLOWS.items(), 1):
+        workflows = {**release.WORKFLOWS, **{workflow: {} for workflow in release.CHECK_WORKFLOWS}}
+        for run_id, (workflow, outputs) in enumerate(workflows.items(), 1):
             run = {"id": run_id, "head_sha": SHA, "head_branch": "main", "status": "completed",
                    "conclusion": "success", "event": "push", "path": ".github/workflows/" + workflow,
                    "repository": {"id": 42, "full_name": release.REPOSITORY},
@@ -92,7 +93,8 @@ class FixtureAPI:
                 return {"content": base64.b64encode(f'#define HALO_OG_VERSION "{self.version}"\n'.encode()).decode()}
             return {"content": base64.b64encode(b"#define HALO_PORT_NETWORK_VERSION 11\n").decode()}
         if path.startswith("actions/workflows/"):
-            return {"workflow_runs": [copy.deepcopy(self.runs[path.split("/")[2]])]}
+            run = self.runs.get(path.split("/")[2])
+            return {"workflow_runs": [copy.deepcopy(run)] if run else []}
         if path.startswith("actions/runs/"):
             if "/artifacts?" in path:
                 name = path.split("name=")[1].split("&")[0]
@@ -137,6 +139,7 @@ class TestingReleaseTests(unittest.TestCase):
         self.assertEqual(record["network_protocol"], 11)
         self.assertEqual(record["source_date"], DATE)
         self.assertEqual(len(record["artifacts"]), 4)
+        self.assertEqual(record["checks"], [{"workflow": "apple.yml", "run_id": self.api.runs["apple.yml"]["id"]}])
         self.assertEqual(release.verify_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory), record)
         self.assertEqual({p.name for p in self.directory.iterdir()}, release.ASSETS | {"release-notes.md"})
 
@@ -359,6 +362,48 @@ class TestingReleaseTests(unittest.TestCase):
                 changed = dict(run, **{field: value})
                 with self.assertRaises(RuntimeError):
                     release.validate_run(changed, "build.yml", SHA)
+
+    def test_missing_failed_or_wrong_source_apple_checks_fail_before_downloads(self):
+        original = copy.deepcopy(self.api.runs["apple.yml"])
+        for changes in (None, {"conclusion": "failure"}, {"head_sha": "b" * 40}):
+            with self.subTest(changes=changes):
+                if changes is None:
+                    self.api.runs.pop("apple.yml", None)
+                else:
+                    self.api.runs["apple.yml"] = {**original, **changes}
+                with self.assertRaisesRegex(RuntimeError, "No successful apple.yml run"):
+                    self.prepare()
+                self.assertFalse(self.directory.exists())
+                self.assertEqual(self.api.downloads, [])
+        self.api.runs["apple.yml"] = original
+
+    def test_apple_regression_result_is_rechecked_before_any_publication(self):
+        self.prepare()
+        original = copy.deepcopy(self.api.runs["apple.yml"])
+        for changes in ({"conclusion": "failure"}, {"head_sha": "b" * 40},
+                        {"path": ".github/workflows/build.yml"}):
+            with self.subTest(changes=changes):
+                self.api.runs["apple.yml"] = {**original, **changes}
+                with patch.object(release.subprocess, "run") as publish, \
+                        self.assertRaisesRegex(RuntimeError, "apple.yml run"):
+                    release.publish_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
+                self.assertEqual(self.api.posts, [])
+                publish.assert_not_called()
+
+    def test_prepared_candidate_without_regression_provenance_cannot_publish(self):
+        self.prepare()
+        provenance = self.directory / "provenance.json"
+        record = json.loads(provenance.read_text())
+        record.pop("checks")
+        provenance.write_text(json.dumps(record, indent=2) + "\n")
+        (self.directory / "SHA256SUMS").write_text("".join(
+            f"{release.digest(self.directory / name)}  {name}\n"
+            for name in sorted(release.ASSETS - {"SHA256SUMS"})))
+        with patch.object(release.subprocess, "run") as publish, \
+                self.assertRaisesRegex(RuntimeError, "regression check provenance is incomplete"):
+            release.publish_candidate(self.api, release.REPOSITORY, SHA, TAG, self.directory)
+        self.assertEqual(self.api.posts, [])
+        publish.assert_not_called()
 
     def test_missing_expired_and_wrong_source_artifacts_fail(self):
         del self.api.artifacts["halo-linux-release"]
