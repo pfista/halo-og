@@ -175,9 +175,6 @@ static void check_original(void) {
         _gamepad_binary_button_dpad_up,_gamepad_binary_button_dpad_down};
     int speed,stick,direction,controller;
     for(speed=0;speed<2;speed++) {
-#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-        if(speed) continue;
-#endif
         for(stick=0;stick<2;stick++) {
             reset_events(speed);
             assert(!post_stick(stick,STICK_EVENT_THRESHOLD-1,0,1000));
@@ -404,20 +401,24 @@ static void check_faster_keyboard(void) {
     capture_events(1450+FIRST_REPEAT-1);assert(!posted_count);
     capture_events(1450+FIRST_REPEAT);expect_stick(0,0,SHORT_MAX,0);
 }
-static void check_live_mode_switch(void) {
-    reset_events(1);present[0]=TRUE;set_dpad(0,HALO_MENU_DIRECTION_LEFT);
+static void check_fixed_faster_policy(void) {
+    /* Native menus always use 500/100 ms. Legacy config changes must neither
+     * select the Original path nor reset an active hold. Retail is checked
+     * separately without HALO_PORT_MAXIMUM_NETWORK_PLAYERS. */
+    reset_events(0);present[0]=TRUE;set_dpad(0,HALO_MENU_DIRECTION_LEFT);
     capture_events(1000);expect_button(_gamepad_binary_button_dpad_left,0);
+    fast_repeat=1;
     capture_events(1000+FIRST_REPEAT-1);assert(!posted_count);
-    fast_repeat=0;capture_events(1000+FIRST_REPEAT);assert(posted_count==1 && posted[0].data.button.value==2);
-    fast_repeat=1;capture_events(1001+FIRST_REPEAT);expect_button(_gamepad_binary_button_dpad_left,0);
-    capture_events(1000+2*FIRST_REPEAT);assert(!posted_count);
-    capture_events(1001+2*FIRST_REPEAT);expect_button(_gamepad_binary_button_dpad_left,0);
+    fast_repeat=0;capture_events(1000+FIRST_REPEAT);expect_button(_gamepad_binary_button_dpad_left,0);
+    fast_repeat=1;capture_events(1000+FIRST_REPEAT+REPEAT_INTERVAL-1);assert(!posted_count);
+    fast_repeat=0;capture_events(1000+FIRST_REPEAT+REPEAT_INTERVAL);expect_button(_gamepad_binary_button_dpad_left,0);
     reset_events(0);present[0]=TRUE;
     queue_key(HALO_MENU_DIRECTION_LEFT,0,HALO_MENU_DIRECTION_LEFT);
-    capture_events(1000);assert(!posted_count);
-    fast_repeat=1;capture_events(1001);expect_button(_gamepad_binary_button_dpad_left,0);
-    capture_events(1000+FIRST_REPEAT);assert(!posted_count);
-    capture_events(1001+FIRST_REPEAT);expect_button(_gamepad_binary_button_dpad_left,0);
+    capture_events(1000);expect_button(_gamepad_binary_button_dpad_left,0);
+    fast_repeat=1;capture_events(1001);assert(!posted_count);
+    capture_events(1000+FIRST_REPEAT-1);assert(!posted_count);
+    fast_repeat=0;capture_events(1000+FIRST_REPEAT);expect_button(_gamepad_binary_button_dpad_left,0);
+    assert(config_reads==0);
 }
 #endif
 int main(void) {
@@ -427,11 +428,13 @@ int main(void) {
     assert(config_reads==0);
 #endif
 #elif TEST_CHECK==2
-    check_faster_dpad();check_live_mode_switch();check_gameplay_hold_counts();
+    check_faster_dpad();check_gameplay_hold_counts();
 #elif TEST_CHECK==3
     check_faster_sticks();check_gameplay_hold_counts();
 #elif TEST_CHECK==4
     check_faster_keyboard();check_gameplay_hold_counts();
+#elif TEST_CHECK==5
+    check_fixed_faster_policy();check_gameplay_hold_counts();
 #endif
     puts("menu repeat timing tests passed");return 0;
 }
@@ -510,13 +513,13 @@ class MenuRepeatTests(unittest.TestCase):
             if tested.returncode:
                 self.fail(tested.stderr)
 
-    def test_original_native_keeps_250_ms_timing_and_stick_quirks(self):
-        self.run_timing(1)
+    def test_native_faster_default_ignores_legacy_configuration(self):
+        self.run_timing(5)
 
     def test_retail_navigation_ignores_faster_configuration(self):
         self.run_timing(1, native=False)
 
-    def test_faster_dpad_taps_hold_reset_slots_and_live_setting(self):
+    def test_faster_dpad_taps_hold_reset_and_controller_slots(self):
         self.run_timing(2)
 
     def test_faster_stick_hysteresis_direction_and_exact_neutral(self):
