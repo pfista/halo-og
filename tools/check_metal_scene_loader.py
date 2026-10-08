@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the native preview's exact-mip loader without requiring a GPU."""
+"""Opt-in check of the native preview's exact-mip loader; no GPU required."""
 import hashlib
 import json
 from pathlib import Path

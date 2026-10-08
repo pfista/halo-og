@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the atmospheric helper against Halo's packed fog pass on Metal."""
+"""Opt-in preview check against Halo's packed fog pass on Metal."""
 import json
 import math
 from pathlib import Path

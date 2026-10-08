@@ -3,6 +3,7 @@
 
 Captured comparisons read the already-executed ILP32 wire packet vertex/index
 payloads, rather than regenerating an oracle using today's Python importer.
+The configured ILP32 toolchain check is in check_metal_vertex_fetch_ilp32.py.
 """
 import ctypes as C
 import hashlib
@@ -79,7 +80,6 @@ def reconstruct_tokens(elements):
 
 class VertexFetchTests(unittest.TestCase):
     captured_summary = None
-    ilp32_summary = None
 
     @classmethod
     def setUpClass(cls):
@@ -366,49 +366,12 @@ class VertexFetchTests(unittest.TestCase):
                     'Missing packed-register fallback is independently source-tested; loaded captured packed values are unchanged.',
                     'CPU input/index proof does not establish GPU shader/raster fidelity.'])
 
-    def test_native_guards_real_ilp32_headers_and_no_gl_imports(self):
+    def test_native_compile_guards_and_no_gl_imports(self):
         result = subprocess.check_output(['nm','-u',self.library_path],text=True)
         self.assertNotRegex(result,r'\b_?(gl|host_gl|guest_gl|MTL)[A-Z_]')
         disabled = self.directory/'disabled.o'
         subprocess.run(['clang','-std=c11','-Wall','-Wextra','-Werror','-c',SOURCE,'-o',disabled],check=True,capture_output=True)
         self.assertNotIn('metal_vertex_',subprocess.check_output(['nm','-g',disabled],text=True))
-        llvm = Path('/opt/homebrew/opt/llvm@22/bin')
-        if not (llvm/'clang').exists():
-            self.fail('real ILP32 clang is required for this guest helper')
-        import sys
-        sys.path.insert(0,str(ROOT))
-        from tools.android_build import GUEST_ABI_FLAGS
-        musl = ROOT/'build/android/third_party/musl-1.2.5'
-        resource = Path(subprocess.check_output([llvm/'clang','-print-resource-dir'],text=True).strip())
-        generated = self.directory/'guest-include/bits'; generated.mkdir(parents=True)
-        # Use the repository's actual configured 32-bit guest musl alltypes.
-        candidates = [ROOT/f'build/{name}/guest/libc_include/bits/alltypes.h'
-                      for name in ('macos-metal','macos','android')]
-        candidates = [p for p in candidates if p.exists()]
-        self.assertTrue(candidates,'configured musl alltypes header required')
-        shutil.copy2(candidates[0],generated/'alltypes.h')
-        unit = self.directory/'ilp32.c'
-        unit.write_text('#include "'+str(SOURCE)+'"\n'
-            '_Static_assert(sizeof(void*)==4 && sizeof(size_t)==4,"guest pointer ABI");\n'
-            '_Static_assert(sizeof(float)==4 && sizeof(uint32_t)==4,"register ABI");\n'
-            '_Static_assert(sizeof(struct metal_vertex_stream)==12,"stream ABI");\n'
-            '_Static_assert(sizeof(struct metal_vertex_element)==20,"element ABI");\n'
-            '_Static_assert(sizeof(struct metal_vertex_declaration)==328,"declaration ABI");\n'
-            '_Static_assert(sizeof(struct metal_vertex_index_plan)==16,"plan ABI");\n')
-        flags = [*GUEST_ABI_FLAGS,'-std=c11','-ffreestanding','-fno-builtin','-DHALO_MACOS_NATIVE_METAL=1',
-            '-isystem',resource/'include','-I',self.directory/'guest-include',
-            '-I',ROOT/'port/android/guest/libc/arch/arm64_32','-I',musl/'arch/generic','-I',musl/'include',
-            '-Wall','-Wextra','-Werror']
-        ir = self.directory/'ilp32.ll'
-        subprocess.run([llvm/'clang',*flags,'-emit-llvm','-S',unit,'-o',ir],check=True,capture_output=True)
-        assembly = self.directory/'ilp32.s'
-        subprocess.run([llvm/'llc','-mtriple=arm64_32-apple-watchos',ir,'-o',assembly],check=True,capture_output=True)
-        text = ir.read_text()
-        self.assertIn('p:32:32',text)
-        self.assertNotRegex(text,r'@(gl|host_gl|guest_gl)[A-Z_]')
-        type(self).ilp32_summary = dict(pointer_bits=32,size_t_bits=32,declaration_bytes=328,
-            element_bytes=20,stream_bytes=12,index_plan_bytes=16,ir_sha256=digest(ir.read_bytes()),
-            assembly_sha256=digest(assembly.read_bytes()),alltypes_source=str(candidates[0]))
 
 
 if __name__ == '__main__':

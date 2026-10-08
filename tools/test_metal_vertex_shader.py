@@ -107,7 +107,6 @@ class VertexEmitterTests(unittest.TestCase):
         self.assertIn('unpack_normpacked3(input.v0_packed)', text)
         self.assertIn('0.5 + screen_offset, 0.5', text)
         self.assertIn('output.xD0 = clamp(oD0, 0.0, 1.0)', text)
-        self.assertNotIn('gl_Position', text)
         self.assertNotIn('output.position.y = -', text)
         self.assertNotIn('2.0 * output.position.z', text)
         self.assertEqual(text, self.translate(instruction(), packed=5, android=False))

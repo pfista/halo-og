@@ -1,4 +1,8 @@
-"""Independent preparation/provenance checks for the intended loading fixture."""
+"""Opt-in audit of the retained intended-loading fixture and historical source.
+
+Run this directly only with the original prepared evidence available. Its
+source hashes intentionally bind that investigation, not current development.
+"""
 import hashlib
 import json
 from pathlib import Path

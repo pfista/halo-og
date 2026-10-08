@@ -158,7 +158,7 @@ class PixelEmitterTests(unittest.TestCase):
         self.assertIn("float4 r0 = float4(0.0, 0.0, 0.0, t0.a)", source)
         self.assertIn("clamp((cAB), -1.0, 1.0)", source)
 
-    def test_alpha_test_matches_eight_bit_reference(self):
+    def test_alpha_test_emits_eight_bit_reference_expression(self):
         key = textured_key()
         key.alpha_test_function = 516
         key.alpha_kill[0] = 1

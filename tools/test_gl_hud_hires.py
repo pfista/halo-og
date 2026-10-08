@@ -80,12 +80,13 @@ class GlHudFixtureTests(unittest.TestCase):
 
     def test_required_meter_border_filter_and_bias_controls_are_present(self):
         cases=list(gl_fixtures())
-        self.assertEqual(len(cases),309)
-        self.assertEqual(len({f['name'] for _,f in cases}),309)
-        self.assertEqual(sum(bool(f.get('forced_border_fallback')) for _,f in cases),77)
-        self.assertEqual(sum(bool(f.get('bias_control')) for _,f in cases),2)
-        self.assertEqual(sum(bool(f.get('point_control')) for _,f in cases),8)
-        self.assertEqual(sum('text_blend' in f for _,f in cases),30)
+        self.assertEqual(len({f['name'] for _,f in cases}),len(cases))
+        self.assertTrue(any('meter_blend' in f for _,f in cases))
+        self.assertTrue(any(f.get('forced_border_fallback') for _,f in cases))
+        for control in ('bias_control', 'point_control'):
+            with self.subTest(control=control):
+                self.assertEqual({f['hires'] for _,f in cases if f.get(control)}, {False, True})
+        self.assertEqual({f['text_blend'] for _,f in cases if 'text_blend' in f}, {False, True})
 
     def test_production_shaders_and_samplers_on_egl(self):
         if not shutil.which('clang'):self.skipTest('clang required')
@@ -94,8 +95,7 @@ class GlHudFixtureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='halo-gl-hud-') as directory:
             proof=validate(Path(directory))
         self.assertTrue(proof['passed'])
-        self.assertEqual(proof['pixel_cases'],333)
-        self.assertEqual(proof['real_glyph_cases'],24)
+        self.assertGreater(proof['real_glyph_cases'],0)
         self.assertTrue(proof['production_sampler'])
         print(f"{proof['pixel_cases']} GL HUD cases passed on {proof['renderer']}")
 

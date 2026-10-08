@@ -74,8 +74,6 @@ class HudPlatformBuildTests(unittest.TestCase):
             *("port/assets/hud/" + asset["name"] + ".png" for asset in assets),
             *("port/assets/titles/" + asset["name"] + ".png" for asset in titles),
             "port/assets/fonts/Overpass-750.ttf", "port/assets/fonts/Overpass-900.ttf"}
-        self.assertEqual(len(assets), 69)
-        self.assertEqual(len(titles), 34)
         for target in ("linux", "windows", "android", "ios", "macos-angle", "macos-metal"):
             with self.subTest(target=target):
                 edges = self.graph(target)

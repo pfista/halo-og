@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Authored transparent BSP assets and independent shader/composition checks."""
+"""Opt-in preview checks for transparent BSP assets and shader composition."""
 import copy
 import json
 from pathlib import Path
@@ -12,7 +12,7 @@ import unittest
 
 from metal_poc_export import Cache, decode_bitmap_mipmaps
 from metal_poc_transparent_bsp import append_transparent_bsp, bsp_transparent_material
-from test_metal_teleporters import generic_reference
+from check_metal_teleporters import generic_reference
 
 ROOT = Path(__file__).resolve().parents[1]
 MAP = ROOT.parent/'pfista-halo-macos/assets/maps/bloodgulch.map'

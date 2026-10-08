@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Original teleporter assets and independent generic-combiner/Metal checks."""
+"""Opt-in preview checks for teleporter assets and independent combiners."""
 import json
 import math
 from pathlib import Path

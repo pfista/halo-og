@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify original sky assets, camera transform, combiners and alpha composition."""
+"""Opt-in preview checks for sky assets, camera, combiners and composition."""
 import contextlib
 import io
 import itertools

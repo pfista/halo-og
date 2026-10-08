@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the preview's original environment detail combiners on native Metal."""
+"""Opt-in check of the preview's environment combiners on native Metal."""
 import itertools
 import json
 from pathlib import Path

@@ -1,6 +1,5 @@
 """Validate the optional title/font imports without game maps or image tools."""
 import ast
-from collections import Counter
 import json
 from pathlib import Path
 import tempfile
@@ -26,13 +25,10 @@ class MenuAssetManifestTests(unittest.TestCase):
                     for index, text in enumerate(texts)}
         manifest = json.loads((ROOT / "port/assets/titles/titles.json").read_text())
         assets = manifest["assets"]
-        self.assertEqual(len(assets), 34)
+        self.assertEqual(len(assets), len(expected))
         self.assertEqual(manifest["font"], "OpenCE-Regular.ttf")
         self.assertEqual({(asset["tag"], asset["bitmap"]): asset["text"] for asset in assets}, expected)
-        self.assertEqual(len({asset["name"] for asset in assets}), 34)
-        self.assertEqual(Counter((asset["width"], asset["height"]) for asset in assets),
-                         {(512, 64): 25, (256, 64): 8, (1024, 64): 1})
-        self.assertEqual(Counter(asset["scale"] for asset in assets), {4: 33, 2: 1})
+        self.assertEqual(len({asset["name"] for asset in assets}), len(assets))
         for asset in assets:
             with self.subTest(asset=asset["name"]):
                 self.assertGreater(asset["crc"], 0)

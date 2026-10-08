@@ -6,6 +6,29 @@ preserves the game's Xbox-derived material and draw passes; this static viewer
 extracts BSP geometry and uses a simplified diffuse/lightmap shader. Shader
 arithmetic tests alone cannot establish appearance equivalence between them.
 
+Preview checks are opt-in, outside ordinary `test_*.py` discovery. Select the
+relevant modules below; GPU cases require macOS/Metal, native-loader checks need
+the Mac toolchain, and stock-asset cases require user-owned maps. The separate
+ILP32 check needs LLVM 22 and configured guest musl headers but uses no GPU.
+
+```sh
+PYTHONPATH=tools python3 -m unittest \
+  check_metal_scene_loader check_metal_scene_materials check_metal_sky \
+  check_metal_fog check_metal_teleporters check_metal_transparent_bsp
+python3 tools/check_metal_vertex_fetch_ilp32.py
+```
+
+Historical source-preservation audits require their original retained `build/`
+evidence; the fixed-loading audit also requires NumPy. Their hashes deliberately
+bind old investigations and must not be refreshed to accommodate current source
+changes. Run one explicitly when auditing that evidence:
+
+```sh
+python3 tools/audit_metal_fixed_function_validate.py
+python3 tools/audit_metal_roof_angle_prepare.py
+python3 tools/audit_metal_roof_depth_validate.py
+```
+
 ## Reference and camera
 
 The reference is the user's installed `/Applications/Halo OG.app`, build 16,
