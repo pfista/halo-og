@@ -87,16 +87,21 @@ int main(int argc, char **argv) {
         result = self.library.host_renderer_write(os.fsencode(self.directory), renderer, error, len(error))
         return result, error.value.decode()
 
-    def test_missing_and_empty_use_angle_and_create_renderer_setting(self):
-        self.assertEqual(self.read(), (0, ""))
+    def test_missing_and_unset_use_metal_and_preserve_explicit_angle(self):
+        self.assertEqual(self.read(), (1, ""))
         self.assertEqual(self.write(), (1, ""))
         self.assertEqual(self.config.read_text(), '[display]\nrenderer = "metal"\n')
         self.assertEqual(self.read(), (1, ""))
         self.assertEqual(self.library.host_renderer_active(), 0)  # Selection cannot change this process.
-        self.config.write_bytes(b"")
-        self.assertEqual(self.read(), (0, ""))
+        for source in ('', '[display]\nvsync = true\n', '[network]\naddress = "local"\n'):
+            with self.subTest(source=source):
+                self.config.write_text(source)
+                for library in self.libraries:
+                    self.assertEqual(self.read(library), (1, ""))
+                self.assertEqual(self.config.read_text(), source)
         self.assertEqual(self.write(0), (1, ""))
-        self.assertEqual(self.read(), (0, ""))
+        for library in self.libraries:
+            self.assertEqual(self.read(library), (0, ""))
 
     def test_typed_invalid_and_unknown_choices_fall_back_without_repair(self):
         for source in ('[display]\nrenderer = 1\n', '[display]\nrenderer = true\n',

@@ -301,7 +301,7 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
         f"{APP_NAME} {version} (build {build})\n"
         f"Source: {revision}\nGuest SHA-256: {guest_hash}\n"
         + ("Renderer: native Metal\n" if RENDERER == "metal" else "")
-        + ("Renderers: ANGLE (default), Native Metal (optional)\nNative Metal Guest SHA-256: "
+        + ("Renderers: Native Metal (default), ANGLE (fallback)\nNative Metal Guest SHA-256: "
            + hashlib.sha256((resources / "halo_guest-metal.elf").read_bytes()).hexdigest() + "\n"
            if native_executable else ""))
     licenses = resources / "Licenses"

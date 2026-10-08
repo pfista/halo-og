@@ -94,7 +94,7 @@ int host_renderer_read(const char *support, char *error, size_t capacity) {
     char *text = read_text(path, &size, &missing);
     if (!text) {
         if (!missing) explain(error, capacity, "Could not read config.toml; using ANGLE.");
-        return HOST_RENDERER_ANGLE;
+        return missing ? HOST_RENDERER_METAL : HOST_RENDERER_ANGLE;
     }
     toml_result_t parsed = toml_parse(text, (int)size);
     int renderer = HOST_RENDERER_ANGLE;
@@ -104,7 +104,8 @@ int host_renderer_read(const char *support, char *error, size_t capacity) {
         toml_datum_t value = toml_seek(parsed.toptab, "display.renderer");
         if (table.type != TOML_UNKNOWN && table.type != TOML_TABLE)
             explain(error, capacity, "display must be a TOML table; using ANGLE.");
-        else if (value.type == TOML_STRING && !strcmp(value.u.s, "metal")) renderer = HOST_RENDERER_METAL;
+        else if (value.type == TOML_UNKNOWN ||
+                 (value.type == TOML_STRING && !strcmp(value.u.s, "metal"))) renderer = HOST_RENDERER_METAL;
         else if (value.type != TOML_UNKNOWN && !(value.type == TOML_STRING && !strcmp(value.u.s, "angle")))
             explain(error, capacity, "display.renderer must be \"angle\" or \"metal\"; using ANGLE.");
     }

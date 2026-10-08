@@ -70,7 +70,7 @@ class DualRendererTests(unittest.TestCase):
             info = (app / "Contents/Resources/BuildInfo.txt").read_text()
             for payload in (b"angle guest", b"metal guest"):
                 self.assertIn(hashlib.sha256(payload).hexdigest(), info)
-            self.assertIn("ANGLE (default), Native Metal (optional)", info)
+            self.assertIn("Native Metal (default), ANGLE (fallback)", info)
             with (app / "Contents/Info.plist").open("rb") as stream:
                 self.assertEqual(plistlib.load(stream)["CFBundleExecutable"], "halo")
             signs = [command for command in commands if command[0] == "codesign" and "--sign" in command]

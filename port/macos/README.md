@@ -1,6 +1,7 @@
 # Halo OG on Apple Silicon
 
-The native ARM64 port uses ANGLE's Metal renderer and the Xbox-derived engine.
+The native ARM64 port defaults to direct Metal rendering and the Xbox-derived engine.
+ANGLE remains available as a compatibility renderer.
 Original game data is supplied separately.
 
 ## Download
@@ -176,7 +177,8 @@ copy. Quit an older running copy before launching its replacement.
 `--no-data-path` omits the development data path; first launch then asks for data.
 `--data-root /path/to/game` selects another local data root.
 
-The normal app bundles ANGLE (the default) and optional Native Metal. Choose
+The normal app bundles Native Metal (the default) and ANGLE for compatibility.
+Existing saved ANGLE choices remain in effect. Choose
 the engine in the game's Settings → Game Settings → Video or Halo OG → Settings…
 in the macOS menu bar, then quit and reopen Halo. Native Metal exposes its
 resolution, frame limit and anti-aliasing controls in Video. See

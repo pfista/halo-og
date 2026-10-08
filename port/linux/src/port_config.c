@@ -87,9 +87,9 @@ static const struct config_setting config_settings[] =
 		"Draw a frame for every display refresh, blending between the game's 30\n"
 		"ticks a second; false keeps the original 30 frames a second." },
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-	{ "display.renderer", _config_string, "\"angle\"", NULL, _environment_value, _platform_all,
-		"Mac rendering: angle preserves the original renderer; metal enables\n"
-		"the optional direct Metal renderer. Restart after changing this setting." },
+	{ "display.renderer", _config_string, "\"metal\"", NULL, _environment_value, _platform_all,
+		"Mac rendering: metal uses native Metal by default; angle selects\n"
+		"the alternate ANGLE renderer. Restart after changing this setting." },
 	{ "display.frame_limit", _config_integer, "0", NULL, _environment_value, _platform_all,
 		"Native Metal render cap: 0 is uncapped, or choose 30, 60 or 120.\n"
 		"Higher rates require interpolation; VSync can limit the achieved rate.\n"

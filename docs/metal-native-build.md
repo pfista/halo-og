@@ -2,7 +2,8 @@
 
 The normal Mac app bundles both renderers. `tools/macos_build.py` defaults to
 `--renderer dual`, builds the ANGLE and native Metal host/guest pairs separately,
-and packages them in `build/macos/Halo OG.app`. ANGLE remains the saved default.
+and packages them in `build/macos/Halo OG.app`. Native Metal is the default when
+`display.renderer` is absent. Existing saved ANGLE choices remain in effect.
 Mac users choose **ANGLE** or **Native Metal** in **Settings → Game Settings →
 Video**, or in **Halo OG → Settings…** in the macOS menu bar. Both save
 `display.renderer = "angle"` or `"metal"` in the same `config.toml` beside saves.
@@ -23,6 +24,8 @@ The app's primary `halo` executable starts the paired `halo-metal` process befor
 AppKit/SDL initialization when Metal is selected. `halo_guest.elf` belongs to
 ANGLE; `halo_guest-metal.elf` belongs to native Metal. A missing native pair or a
 failed process launch falls back to ANGLE without changing the saved preference.
+Unreadable or invalid renderer settings also recover through ANGLE and leave the
+configuration file untouched.
 To recover from a native startup failure, launch the installed app once with:
 
 ```sh

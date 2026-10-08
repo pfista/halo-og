@@ -319,6 +319,12 @@ upstream reviewed-through and integrated baseline above remain separate.
 
 ### Native Metal in the normal Mac app
 
+The current Mac default is Native Metal with GPU vertex-input decoding. Explicit
+saved renderer choices remain in effect, and ANGLE remains available for recovery
+and comparison. See [current renderer setup](metal-native-build.md) and
+[GPU input validation and measurements](metal-performance.md#gpu-vertex-decoding).
+The integration notes below describe the earlier ANGLE-default checkpoint.
+
 Integration commit `b4f6ee72b85edaa11afb17647ce40b56398610be` bundles both Mac renderer pairs, with
 ANGLE as the default and Native Metal as an experimental option. The original
 **Settings → Game Settings → Video** menu and macOS **Settings…** share

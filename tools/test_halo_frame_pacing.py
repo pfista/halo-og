@@ -276,7 +276,7 @@ int main(void) {
             gpu_input_found++;continue;
         }
         if (!strcmp(s->name,"display.renderer")) {
-            if(s->type!=_config_string || s->environment || strcmp(s->default_value,"\"angle\"")) return 5;
+            if(s->type!=_config_string || s->environment || strcmp(s->default_value,"\"metal\"")) return 5;
             renderer_found++;continue;
         }
         if (!strcmp(s->name, "display.anti_aliasing")) {
@@ -389,9 +389,9 @@ class NativeConfigTests(unittest.TestCase):
                 self.assertIn("frame_limit = 0", text)
                 self.assertIn("render_height = 480", text)
                 self.assertEqual(self.anti_aliasing, 'off')
-                self.assertEqual(self.renderer, 'angle')
+                self.assertEqual(self.renderer, 'metal')
                 self.assertIn('anti_aliasing = "off"', text)
-                self.assertIn('renderer = "angle"', text)
+                self.assertIn('renderer = "metal"', text)
 
     def test_other_renderers_do_not_register_or_write_native_options(self):
         for target in ("android", "ios"):
