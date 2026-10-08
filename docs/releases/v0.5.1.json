@@ -1,11 +1,11 @@
 {
-  "summary": "Halo OG v0.5.1 adds four Digsite maps with regular and Fiesta versions, alongside Team Slayer Pro, new sound options, and split-screen fixes. Desktop players can change rendering resolution without restarting, while Native Metal prepares learned shaders at startup and reduces rendering overhead.",
+  "summary": "Halo OG v0.5.1 adds four Digsite maps and Team Slayer Pro, with more control over player sounds and fixes for aiming and split-screen. Fresh Mac settings now select Native Metal, which reduces rendering overhead and prepares learned shaders before gameplay. Desktop players can change rendering resolution without restarting.",
   "highlights": [
-    "Digsite maps: Chillout Dig, Damnation Dig, Exhibit Dig and Prisoner Dig have reviewed Xbox V5 conversions and companion caches for Fiesta All's existing 31-weapon pack. The regular versions retain reviewed weapon identities and omit the Battle Rifle; original HUD and menu assets are reused.",
-    "Team Slayer Pro: a locked competitive preset is available, while original gametypes remain accessible through Default Game Types. Precision Spread now centers the pistol reticle.",
-    "Audio: Just Me keeps your movement and weapon-handling sounds audible to you while suppressing them for other players. Item cue names play before the countdown.",
-    "Menus and split-screen: menus block gameplay input, teammate views remain stable through respawns, and menus and scoreboards overlay both panes.",
-    "Resolution: apply Native or 480p-2160p rendering resolutions without restarting on Mac Native Metal and Windows/Linux OpenGL.",
-    "Native Metal: subsequent launches prepare learned shaders and pipelines before gameplay, with less packet-copy and submission overhead. Unseen shaders still compile when first encountered."
+    "Digsite maps: play Chillout Dig, Damnation Dig, Exhibit Dig and Prisoner Dig in regular modes or with Fiesta Uncut and All. Regular versions keep their reviewed weapon sets and omit the Battle Rifle; Fiesta All uses the existing 31-weapon pack.",
+    "Team Slayer Pro: a new locked preset includes timers, Precision Spread, stronger camo and Just Me sounds. Original built-in gametypes are hidden by default; enable Default Game Types in Game Settings to show them.",
+    "Audio: Just Me keeps your movement and weapon-handling sounds audible to you while suppressing them for other players. Upcoming rocket, camo and Overshield names play before the countdown.",
+    "Input and split-screen: menus block gameplay controls, camera shake stays visible, and aiming respects firing limits. Precision Spread centers the pistol reticle. Teammate panes stay stable through respawns, with menus and scoreboards overlaying both panes.",
+    "Resolution: apply Native or 480p-2160p rendering resolutions in Game Settings without restarting on Mac Native Metal and Windows/Linux OpenGL.",
+    "Native Metal: Mac settings without a saved renderer choice now select Native Metal; saved ANGLE choices remain in effect. GPU vertex decoding reduces CPU preparation and uploads, while subsequent launches prepare learned shaders and pipelines before gameplay. Unseen shaders still compile when first encountered."
   ]
 }
