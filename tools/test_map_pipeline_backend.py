@@ -517,6 +517,27 @@ class BackendTests(unittest.TestCase):
         alias = self.root / "workspace/tags/levels/sample/community_sample.scenario"
         self.assertEqual(tags.read_bytes(), alias.read_bytes())
 
+    def test_authored_scenario_punctuation_keeps_source_and_uses_safe_output_alias(self):
+        tags = self.root / "punctuated-tags"
+        authored = "levels/[custom]/bigassv2,104"
+        source = tags / (authored + ".scenario")
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"original authored scenario")
+        original, compiled = backend._scenario(tags, {"name": "bigassv2,104"}, None, "bigassv2_104")
+        self.assertEqual(original, authored)
+        self.assertEqual(compiled, "levels/[custom]/bigassv2_104")
+        self.assertEqual(source.read_bytes(), b"original authored scenario")
+        self.assertEqual((tags / (compiled + ".scenario")).read_bytes(), source.read_bytes())
+
+
+    def test_authored_scenario_punctuation_does_not_allow_unsafe_paths(self):
+        for scenario in ("../map,1", "levels/[custom]/../map,1", "/map,1", "C:/map,1",
+                         "levels/map,1\n", "levels/map,1:stream"):
+            with self.subTest(scenario=scenario):
+                with self.assertRaisesRegex(backend.ConversionError, "unsafe"):
+                    backend._scenario(self.root, {"name": "sample"}, {"scenario": scenario}, "safe_map")
+
+
     def test_exact_cache_hash_selects_recipe_independent_of_name(self):
         spec = {"source_sha256": self.header["sha256"], "source_name": "historic-source-name",
                 "scenario": "levels/sample/sample", "id": "reviewed_sample"}

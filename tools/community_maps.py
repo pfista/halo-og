@@ -21,7 +21,9 @@ NTSC_BUILD = "01.10.12.2276"
 MAX_CACHE_BYTES = 512 * 1024 * 1024
 TAG_ARENA_BYTES = 22 * 1024 * 1024
 NAME = re.compile(r"[A-Za-z0-9_ -]{1,31}\Z")
-SCENARIO = re.compile(r"[A-Za-z0-9_ /-]+\Z")
+# Authored tag paths can contain ordinary filename punctuation. Compiled cache
+# names still use NAME; traversal and absolute paths are rejected separately.
+SCENARIO = re.compile(r"[A-Za-z0-9_,\[\] /-]+\Z")
 
 
 def digest(path):
