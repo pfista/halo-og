@@ -22,7 +22,10 @@ PREFIX = r'''
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <strings.h>
+#define _stricmp strcasecmp
+#endif
 typedef unsigned char byte;
 typedef int boolean;
 #define HALO_PORT_MAXIMUM_NETWORK_PLAYERS 128
@@ -35,7 +38,6 @@ typedef int boolean;
 #define csmemset memset
 #define csmemcmp memcmp
 #define csstrcmp strcmp
-#define _stricmp strcasecmp
 #define string_list_definition_get(index) ((struct string_list *)tag_get(STRING_LIST_TAG,(index)))
 #define _error_silent 0
 #define error(...) ((void)0)
