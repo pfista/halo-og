@@ -197,7 +197,7 @@ def aggregate_host_metrics(rows, timings):
                 "shader_compile_hits", "shader_compile_misses", "shader_compile_us"):
         if key in totals:
             totals[key + "_per_frame"] = totals[key] / totals["frames"]
-    totals["scope"] = "Host 60-frame blocks with a complete preceding 60-frame window beyond original tick 150; CPU/GPU phases may overlap. Shader compile counters include attempted preflight stage requests, and compile time includes new-library failures. Cache entries/source bytes are last/max gauges, not interval totals."
+    totals["scope"] = "Host 60-frame blocks with a complete preceding 60-frame window beyond original tick 150; CPU/GPU phases may overlap. Shader compile counters include attempted preflight stage requests; source-library durations can overlap one another and include new-library failures. Use preparation wall time for stall comparisons. Cache entries/source bytes are last/max gauges, not interval totals."
     return totals
 
 

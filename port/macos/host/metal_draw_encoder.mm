@@ -1,4 +1,5 @@
 #import "metal_draw_encoder.h"
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -94,6 +95,12 @@ struct BindingRequirement {
     id<MTLCommandBuffer> _activeCommandBuffer;
     id<MTLTexture> _activeColor, _activeDepthStencil;
     NSUInteger _renderPassCount;
+    BOOL _diagnosticsEnabled;
+    NSUInteger _pipelineCreationCount;
+    uint64_t _pipelineCreationNanoseconds;
+    HaloMetalPipelineInterval _lastPipelineCreationInterval;
+    BOOL _warmupLearningEnabled;
+    std::vector<HaloMetalPipelineWarmup> _createdPipelines;
 }
 - (instancetype)initWithDevice:(id<MTLDevice>)device {
     if (!device) return nil;
@@ -111,6 +118,43 @@ struct BindingRequirement {
     }
 }
 - (NSUInteger)renderPassCount { @synchronized(self) { return _renderPassCount; } }
+- (BOOL)diagnosticsEnabled { @synchronized(self) { return _diagnosticsEnabled; } }
+- (void)setDiagnosticsEnabled:(BOOL)enabled { @synchronized(self) { _diagnosticsEnabled = enabled; } }
+- (NSUInteger)pipelineCreationCount { @synchronized(self) { return _pipelineCreationCount; } }
+- (uint64_t)pipelineCreationNanoseconds { @synchronized(self) { return _pipelineCreationNanoseconds; } }
+- (HaloMetalPipelineInterval)lastPipelineCreationInterval { @synchronized(self) { return _lastPipelineCreationInterval; } }
+- (BOOL)warmupLearningEnabled { @synchronized(self) { return _warmupLearningEnabled; } }
+- (void)setWarmupLearningEnabled:(BOOL)enabled { @synchronized(self) { _warmupLearningEnabled = enabled; } }
+- (std::vector<HaloMetalPipelineWarmup>)takeCreatedPipelines {
+    @synchronized(self) { auto result = std::move(_createdPipelines); _createdPipelines.clear(); return result; }
+}
+- (BOOL)preparePipeline:(const HaloMetalPipelineWarmup &)p error:(NSError **)error {
+    @synchronized(self) {
+        if (error) *error = nil;
+        if (!p.vertex || !p.fragment || p.vertex.device != _device || p.fragment.device != _device ||
+            p.vertex.functionType != MTLFunctionTypeVertex || p.fragment.functionType != MTLFunctionTypeFragment ||
+            (p.color != MTLPixelFormatInvalid && p.color != MTLPixelFormatRGBA8Unorm && p.color != MTLPixelFormatBGRA8Unorm) ||
+            (p.depth != MTLPixelFormatInvalid && p.depth != MTLPixelFormatDepth32Float_Stencil8) ||
+            (!p.color && !p.depth) || (!p.color && (p.mask || p.blend)) || p.packed > UINT16_MAX ||
+            p.mask > 15 || p.blend > 1 || p.source < 1 || p.source > 15 || p.destination < 1 ||
+            p.destination > 15 || p.operation < 1 || p.operation > 5)
+            return fail(error,HaloMetalDrawInvalid,@"Invalid original pipeline warmup contract");
+        HaloMetalDraw draw;
+        draw.vertexFunction = p.vertex; draw.fragmentFunction = p.fragment; draw.packedMask = p.packed;
+        draw.state.color_write_mask = p.mask; draw.state.blend_enabled = p.blend;
+        draw.state.blend_source = p.source; draw.state.blend_destination = p.destination; draw.state.blend_operation = p.operation;
+        for (unsigned i = 0; i < 2; i++) {
+            uint64_t pixelFormat = i ? p.depth : p.color;
+            if (!pixelFormat) continue;
+            auto descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:(MTLPixelFormat)pixelFormat width:1 height:1 mipmapped:NO];
+            descriptor.storageMode = MTLStorageModePrivate; descriptor.usage = MTLTextureUsageRenderTarget;
+            auto texture = [_device newTextureWithDescriptor:descriptor];
+            if (!texture) return fail(error,HaloMetalDrawPipelineFailure,@"Original pipeline warmup attachment allocation failed");
+            if (i) draw.depthStencil = texture; else draw.color = texture;
+        }
+        return [self pipelineForDraw:draw error:error] != nil;
+    }
+}
 - (void)dealloc { [self endEncoding]; }
 - (void)clearCaches { @synchronized(self) { [self endEncoding]; [_pipelines removeAllObjects]; [_depthStates removeAllObjects]; } }
 - (void)removePipelinesForVertexFunction:(id<MTLFunction>)vertex fragmentFunction:(id<MTLFunction>)fragment {
@@ -225,8 +269,19 @@ struct BindingRequirement {
     color.rgbBlendOperation = color.alphaBlendOperation = blendOperation(s.blend_operation);
     MTLRenderPipelineReflection *reflection = nil;
     NSError *underlying = nil;
+    const BOOL diagnostics = _diagnosticsEnabled;
+    const auto started = diagnostics ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     id<MTLRenderPipelineState> pipeline = [_device newRenderPipelineStateWithDescriptor:description
         options:MTLPipelineOptionBindingInfo reflection:&reflection error:&underlying];
+    if (diagnostics) {
+        const auto ended = std::chrono::steady_clock::now();
+        _lastPipelineCreationInterval = {
+            (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(started.time_since_epoch()).count(),
+            (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(ended.time_since_epoch()).count(),
+            pipeline != nil && reflection != nil};
+        _pipelineCreationNanoseconds += _lastPipelineCreationInterval.ended - _lastPipelineCreationInterval.started;
+        _pipelineCreationCount++;
+    }
     if (!pipeline || !reflection) {
         fail(error, HaloMetalDrawPipelineFailure, underlying.localizedDescription ?: @"Original draw pipeline/reflection creation failed");
         return nil;
@@ -269,6 +324,11 @@ struct BindingRequirement {
         }
     }
     entry.vertex = draw.vertexFunction; entry.fragment = draw.fragmentFunction; _pipelines[bytes] = entry;
+    if (_warmupLearningEnabled && _createdPipelines.size() < 1024) {
+        try { _createdPipelines.push_back({draw.vertexFunction,draw.fragmentFunction,key.color,key.depth,key.packed,key.mask,
+                                         key.blendEnabled,key.source,key.destination,key.operation}); }
+        catch (const std::bad_alloc &) { /* Optional learning never rejects an otherwise valid draw. */ }
+    }
     return entry;
 }
 - (id<MTLDepthStencilState>)depthForDraw:(const HaloMetalDraw &)draw error:(NSError **)error {

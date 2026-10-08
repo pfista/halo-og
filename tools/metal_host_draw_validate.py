@@ -423,7 +423,7 @@ def main():
     llvm=args.llvm_bin.resolve();linker=args.linker.absolute();plugin=args.rebase_plugin.resolve()
     source_files=[ROOT/'port/macos/tests/guest_metal_draw.c',ROOT/'port/macos/host/host_memory.c',
         ROOT/'port/macos/host/host_metal.mm',ROOT/'port/macos/host/metal_draw_encoder.mm',
-        ROOT/'port/macos/host/metal_function_cache.h',ROOT/'port/macos/host/metal_draw_encoder.h',ROOT/'port/macos/tests/host_metal.mm',
+        ROOT/'port/macos/host/metal_function_cache.h',ROOT/'port/macos/host/metal_warmup_cache.h',ROOT/'port/macos/host/metal_draw_encoder.h',ROOT/'port/macos/tests/host_metal.mm',
         ROOT/'port/macos/host/host.h',ROOT/'port/android/include/halo_android_abi.h',
         ROOT/'port/macos/include/halo_metal_abi.h',ROOT/'port/macos/metal_imports.list',
         ROOT/'tools/android_imports.py',ROOT/'tools/android_asm_convert.py',ROOT/'tools/android_build.py',

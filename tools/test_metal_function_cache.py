@@ -54,7 +54,9 @@ class FunctionCacheGpuTests(unittest.TestCase):
             self.assertNotIn("Validation Error",run.stderr)
             proof=json.loads(run.stdout)
             for name in ("exact_function_reuse","compile_contract_separation","failed_compile_retry",
-                         "atomic_packet_rejection","shared_pipeline_retention","device_context_reset","identical_render_bytes"):
+                         "atomic_packet_rejection","shared_pipeline_retention","device_context_reset","identical_render_bytes",
+                         "bounded_async_pair","single_stage_serial","failed_pair_isolation","lexical_validation_before_requests",
+                         "learned_startup_cache","prewarmed_pipeline_hit","warmup_exact_output","rejected_warmup_isolation","corrupt_warmup_fallback"):
                 self.assertTrue(proof[name])
             self.assertEqual(bytes.fromhex(proof["readback_hex"]),bytes((11,22,33,255))*16)
             proof["readback_sha256"]=hashlib.sha256(bytes.fromhex(proof.pop("readback_hex"))).hexdigest()

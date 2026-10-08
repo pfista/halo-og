@@ -11,10 +11,12 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <new>
 #include <vector>
@@ -23,6 +25,7 @@ extern "C" {
 }
 #include "../include/halo_metal_abi.h"
 #include "metal_function_cache.h"
+#include "metal_warmup_cache.h"
 #import "metal_draw_encoder.h"
 
 namespace {
@@ -60,6 +63,8 @@ struct Metrics {
     uint64_t packet_buffers = 0, sampler_hits = 0, sampler_misses = 0, sampler_allocations = 0;
     uint64_t upload_buffers = 0, visibility_buffers = 0;
     uint64_t shader_compile_hits = 0, shader_compile_misses = 0, shader_compile_ns = 0;
+    uint64_t shader_compile_pairs = 0;
+    uint64_t subresource_copies = 0;
 };
 void check_at(const char *file, int line, const char *expression, bool ok,
               int status = HALO_METAL_INVALID, uint32_t index = UINT32_MAX) {
@@ -78,7 +83,11 @@ struct Texture {
     uint32_t depth = 1;
     std::vector<uint32_t> subresources{0};
 };
-struct Program { id<MTLFunction> vertex, fragment; uint32_t generation, contract, fragment_contract; };
+struct Program {
+    id<MTLFunction> vertex, fragment;
+    uint32_t generation, contract, fragment_contract;
+    uint64_t vertex_fingerprint = 0, fragment_fingerprint = 0;
+};
 struct Visibility {
     uint32_t generation, mode, version = 0;
     bool begun = false, ended = false;
@@ -127,6 +136,9 @@ struct Context {
     uint64_t submitted = 0, completed = 0;
     bool poisoned = false;
     bool fxaa_enabled = false;
+    HaloMetalWarmupCache warmup;
+    NSString *warmup_path = nil;
+    bool warmup_dirty = false;
 };
 Context context;
 std::mutex lock;
@@ -366,40 +378,237 @@ void end_visibility(std::map<uint32_t, Visibility> &queries, halo_metal_ref &act
     query.begun = false; query.ended = true; query.end_sequence = sequence; query.version++;
     active = {};
 }
-id<MTLFunction> compile_function(Prepared &prepared, const std::vector<uint8_t> &packet, uint32_t offset,
-                               uint32_t bytes, bool vertex, bool fast, bool invariant) {
+struct FunctionCompileInput {
+    HaloMetalFunctionKey key; NSString *source;
+    uint32_t command_index = UINT32_MAX, program = 0, generation = 0;
+};
+FunctionCompileInput compile_input(const std::vector<uint8_t> &packet,uint32_t offset,uint32_t bytes,
+                                   bool vertex,bool fast,bool invariant) {
     check(!memchr(packet.data() + offset,0,bytes));
     NSString *source = [[NSString alloc] initWithBytes:packet.data() + offset length:bytes encoding:NSUTF8StringEncoding];
     check(source != nil);
-    HaloMetalFunctionKey key{std::string((const char *)packet.data() + offset,bytes),vertex,fast,invariant};
-    const auto *cached = context.compiled_functions.find(key);
-    if (!cached) cached = prepared.compiled_functions.find(key);
+    return {{std::string((const char *)packet.data() + offset,bytes),vertex,fast,invariant},source};
+}
+id<MTLFunction> cached_function(Prepared &prepared,const FunctionCompileInput &input) {
+    const auto *cached = context.compiled_functions.find(input.key);
+    if (!cached) cached = prepared.compiled_functions.find(input.key);
     if (cached) {
         check((*cached).device == context.device && (*cached).functionType ==
-            (vertex ? MTLFunctionTypeVertex : MTLFunctionTypeFragment),HALO_METAL_GPU_ERROR);
+            (input.key.vertex ? MTLFunctionTypeVertex : MTLFunctionTypeFragment),HALO_METAL_GPU_ERROR);
         if (context.metrics.enabled) context.metrics.shader_compile_hits++;
         return *cached;
     }
-    if (context.metrics.enabled) context.metrics.shader_compile_misses++;
-    auto options = [MTLCompileOptions new]; options.preserveInvariance = invariant;
+    return nil;
+}
+MTLCompileOptions *compile_options(const HaloMetalFunctionKey &key) {
+    auto options = [MTLCompileOptions new]; options.preserveInvariance = key.preserveInvariance;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    options.fastMathEnabled = fast;
+    options.fastMathEnabled = key.fastMath;
 #pragma clang diagnostic pop
     if (@available(macOS 15.0, *)) {
-        options.mathMode = fast ? MTLMathModeFast : MTLMathModeSafe;
-        options.mathFloatingPointFunctions = fast ? MTLMathFloatingPointFunctionsFast : MTLMathFloatingPointFunctionsPrecise;
+        options.mathMode = key.fastMath ? MTLMathModeFast : MTLMathModeSafe;
+        options.mathFloatingPointFunctions = key.fastMath ? MTLMathFloatingPointFunctionsFast : MTLMathFloatingPointFunctionsPrecise;
     }
+    return options;
+}
+void record_compilation(const FunctionCompileInput &input,const std::vector<uint8_t> &packet,
+                        id<MTLLibrary> library,uint64_t started,uint64_t elapsed) {
+    context.metrics.shader_compile_ns += elapsed;
+    if (context.metrics.enabled) {
+        const auto header = record<halo_metal_packet>(packet,0);
+        host_logf(HOST_LOG_INFO,"Native Metal compile: sequence %llu, stage %s, source-bytes %u, fast %u, invariant %u, start %llu ns, end %llu ns, duration %llu ns, success %u",
+            (unsigned long long)header.frame_sequence,input.key.vertex ? "vertex" : "fragment",(unsigned)input.key.source.size(),
+            (unsigned)input.key.fastMath,(unsigned)input.key.preserveInvariance,
+            (unsigned long long)started,(unsigned long long)(started+elapsed),(unsigned long long)elapsed,library ? 1u : 0u);
+        if (input.command_index != UINT32_MAX)
+            host_logf(HOST_LOG_INFO,"Native Metal compile identity: sequence %llu, command-index %u, program %u, generation %u, stage %s, source-hash %016llx, start %llu ns",
+                (unsigned long long)header.frame_sequence,input.command_index,input.program,input.generation,
+                input.key.vertex ? "vertex" : "fragment",
+                (unsigned long long)halo_metal_source_fingerprint(input.key.source),(unsigned long long)started);
+    }
+}
+id<MTLFunction> resolve_compilation(Prepared &prepared,FunctionCompileInput &input,id<MTLLibrary> library,NSError *error) {
+    if (!library) host_logf(HOST_LOG_ERROR,"Native original %s compilation: %s",input.key.vertex ? "vertex" : "fragment",error.localizedDescription.UTF8String);
+    check(library != nil,HALO_METAL_GPU_ERROR);
+    auto function = [library newFunctionWithName:input.key.vertex ? @"xgpu_vertex" : @"xgpu_fragment"];
+    check(function && function.functionType == (input.key.vertex ? MTLFunctionTypeVertex : MTLFunctionTypeFragment));
+    prepared.compiled_functions.insert(std::move(input.key),function);
+    return function;
+}
+id<MTLFunction> compile_uncached_function(Prepared &prepared,const std::vector<uint8_t> &packet,FunctionCompileInput &input) {
+    if (context.metrics.enabled) context.metrics.shader_compile_misses++;
+    auto options = compile_options(input.key);
     NSError *error = nil;
     const uint64_t started = metrics_start();
-    auto library = [context.device newLibraryWithSource:source options:options error:&error];
-    context.metrics.shader_compile_ns += metrics_elapsed(started);
-    if (!library) host_logf(HOST_LOG_ERROR,"Native original %s compilation: %s",vertex ? "vertex" : "fragment",error.localizedDescription.UTF8String);
-    check(library != nil,HALO_METAL_GPU_ERROR);
-    auto function = [library newFunctionWithName:vertex ? @"xgpu_vertex" : @"xgpu_fragment"];
-    check(function && function.functionType == (vertex ? MTLFunctionTypeVertex : MTLFunctionTypeFragment));
-    prepared.compiled_functions.insert(std::move(key),function);
-    return function;
+    auto library = [context.device newLibraryWithSource:input.source options:options error:&error];
+    record_compilation(input,packet,library,started,metrics_elapsed(started));
+    return resolve_compilation(prepared,input,library,error);
+}
+[[maybe_unused]] id<MTLFunction> compile_function(Prepared &prepared,const std::vector<uint8_t> &packet,uint32_t offset,
+                                uint32_t bytes,bool vertex,bool fast,bool invariant) {
+    auto input = compile_input(packet,offset,bytes,vertex,fast,invariant);
+    auto cached = cached_function(prepared,input);
+    return cached ?: compile_uncached_function(prepared,packet,input);
+}
+struct LibraryCompileRequest {
+    id<MTLDevice> device;
+    NSString *source;
+    MTLCompileOptions *options;
+    id<MTLLibrary> library = nil;
+    NSError *error = nil;
+    std::mutex mutex;
+    std::condition_variable condition;
+    bool completed = false;
+    uint64_t started = 0, elapsed = 0;
+    void wait() {
+        std::unique_lock<std::mutex> guard(mutex);
+        condition.wait(guard,[this] { return completed; });
+    }
+};
+void start_compilation(std::shared_ptr<LibraryCompileRequest> request) {
+    request->started = metrics_start();
+    [request->device newLibraryWithSource:request->source options:request->options
+        completionHandler:^(id<MTLLibrary> library,NSError *error) {
+            // The submitting thread holds the host mutex. Completion only
+            // touches this retained request, never context, metrics or caches.
+            const uint64_t ended = request->started ? (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count() : 0;
+            {
+                std::lock_guard<std::mutex> guard(request->mutex);
+                request->library = library; request->error = error;
+                request->elapsed = request->started ? ended - request->started : 0;
+                request->completed = true;
+            }
+            request->condition.notify_one();
+        }];
+}
+Program compile_program(Prepared &prepared,const std::vector<uint8_t> &packet,const halo_metal_program &command,
+                        uint32_t command_index = UINT32_MAX) {
+    // Bounds/contracts have already passed CREATE_PROGRAM validation. Both
+    // sources must also pass NUL/UTF8 validation before issuing async requests.
+    auto vertex_input = compile_input(packet,command.vertex_source_offset,command.vertex_source_size,
+        true,command.vertex_compiler_contract == 1,true);
+    auto fragment_input = compile_input(packet,command.fragment_source_offset,command.fragment_source_size,
+        false,command.fragment_compiler_contract == 1,command.fragment_compiler_contract == 0);
+    for (auto *input : {&vertex_input,&fragment_input}) {
+        input->command_index = command_index; input->program = command.resource.id; input->generation = command.resource.generation;
+    }
+    const uint64_t vertex_hash = halo_metal_source_fingerprint(vertex_input.key.source);
+    const uint64_t fragment_hash = halo_metal_source_fingerprint(fragment_input.key.source);
+    auto vertex = cached_function(prepared,vertex_input);
+    auto fragment = cached_function(prepared,fragment_input);
+    if (vertex || fragment) {
+        // A partial cache hit keeps one ordinary serial compiler call; do not
+        // launch speculative work for a stage that already has its function.
+        if (!vertex) vertex = compile_uncached_function(prepared,packet,vertex_input);
+        if (!fragment) fragment = compile_uncached_function(prepared,packet,fragment_input);
+    } else {
+        // Allocate/retain all request inputs before either launch. At most two
+        // requests are outstanding, confined to this program and submission.
+        auto vertex_request = std::make_shared<LibraryCompileRequest>();
+        auto fragment_request = std::make_shared<LibraryCompileRequest>();
+        vertex_request->device = fragment_request->device = context.device;
+        vertex_request->source = vertex_input.source; fragment_request->source = fragment_input.source;
+        vertex_request->options = compile_options(vertex_input.key);
+        fragment_request->options = compile_options(fragment_input.key);
+        if (context.metrics.enabled) {
+            context.metrics.shader_compile_misses += 2; context.metrics.shader_compile_pairs++;
+        }
+        start_compilation(vertex_request); start_compilation(fragment_request);
+        // Drain both before checking either error or publishing any result.
+        // Resolution keeps vertex-before-fragment error/function validation.
+        vertex_request->wait(); fragment_request->wait();
+        record_compilation(vertex_input,packet,vertex_request->library,vertex_request->started,vertex_request->elapsed);
+        record_compilation(fragment_input,packet,fragment_request->library,fragment_request->started,fragment_request->elapsed);
+        vertex = resolve_compilation(prepared,vertex_input,vertex_request->library,vertex_request->error);
+        fragment = resolve_compilation(prepared,fragment_input,fragment_request->library,fragment_request->error);
+    }
+    return {vertex,fragment,command.resource.generation,command.vertex_compiler_contract,command.fragment_compiler_contract,
+            vertex_hash,fragment_hash};
+}
+void warmup_save() noexcept {
+    if (!context.warmup_dirty || !context.warmup_path) return;
+    try {
+        const auto bytes = context.warmup.encode();
+        if (bytes.size() > HaloMetalWarmupCache::MaximumFileBytes) return;
+        NSError *error = nil;
+        [[NSFileManager defaultManager] createDirectoryAtPath:context.warmup_path.stringByDeletingLastPathComponent
+            withIntermediateDirectories:YES attributes:nil error:&error];
+        NSData *data = [NSData dataWithBytes:bytes.data() length:bytes.size()];
+        if ([data writeToFile:context.warmup_path options:NSDataWritingAtomic error:&error]) context.warmup_dirty = false;
+        else if (context.metrics.enabled) host_logf(HOST_LOG_INFO,"Native Metal warmup cache write skipped: %s",error.localizedDescription.UTF8String);
+    } catch (...) { /* Optional cache I/O/allocation never changes transport success. */ }
+}
+void warmup_initialize() noexcept {
+    try {
+        if (!context.warmup_path) return;
+        auto attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:context.warmup_path error:nil];
+        const uint64_t length = [attributes[NSFileSize] unsignedLongLongValue];
+        if (!attributes || ![attributes[NSFileType] isEqualToString:NSFileTypeRegular] ||
+            length > HaloMetalWarmupCache::MaximumFileBytes) return;
+        NSData *data = [NSData dataWithContentsOfFile:context.warmup_path];
+        if (!data || data.length != length) return;
+        std::vector<uint8_t> bytes(data.length);
+        if (data.length) memcpy(bytes.data(),data.bytes,data.length);
+        if (!HaloMetalWarmupCache::decode(bytes,context.warmup)) return;
+        struct DiagnosticsScope {
+            HaloMetalDrawEncoder *encoder; BOOL enabled;
+            ~DiagnosticsScope() { encoder.diagnosticsEnabled = enabled; }
+        } diagnostics{context.draw_encoder,context.draw_encoder.diagnosticsEnabled};
+        context.draw_encoder.diagnosticsEnabled = NO;
+        const auto started = std::chrono::steady_clock::now();
+        std::vector<id<MTLFunction>> functions(context.warmup.functions.size(),nil);
+        size_t ready = 0, pipelines = 0;
+        for (size_t i = 0; i < context.warmup.functions.size(); i++) {
+            const auto &key = context.warmup.functions[i];
+            NSString *source = [[NSString alloc] initWithBytes:key.source.data() length:key.source.size() encoding:NSUTF8StringEncoding];
+            if (!source) continue;
+            NSError *error = nil;
+            auto library = [context.device newLibraryWithSource:source options:compile_options(key) error:&error];
+            auto function = [library newFunctionWithName:key.vertex ? @"xgpu_vertex" : @"xgpu_fragment"];
+            if (!function || function.device != context.device || function.functionType !=
+                (key.vertex ? MTLFunctionTypeVertex : MTLFunctionTypeFragment)) continue;
+            context.compiled_functions.insert(key,function); functions[i] = function; ready++;
+        }
+        for (const auto &p : context.warmup.pipelines) {
+            if (!functions[p.vertex] || !functions[p.fragment]) continue;
+            HaloMetalPipelineWarmup descriptor{functions[p.vertex],functions[p.fragment],p.color,p.depth,
+                p.packed,p.mask,p.blend,p.source,p.destination,p.operation};
+            NSError *error = nil;
+            if ([context.draw_encoder preparePipeline:descriptor error:&error]) pipelines++;
+        }
+        const uint64_t elapsed = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-started).count();
+        host_logf(HOST_LOG_INFO,"Native Metal warmup: functions %zu/%zu, pipelines %zu/%zu, source-bytes %zu, duration %llu ns",
+            ready,functions.size(),pipelines,context.warmup.pipelines.size(),context.warmup.sourceBytes,(unsigned long long)elapsed);
+    } catch (...) { /* Stale, malformed or unavailable warmup is an ordinary miss. */ }
+}
+const HaloMetalFunctionKey *warmup_key(id<MTLFunction> function,const Prepared &prepared) {
+    for (const auto &entry : prepared.compiled_functions.entries()) if (entry.second == function) return &entry.first;
+    for (const auto &entry : context.compiled_functions.entries()) if (entry.second == function) return &entry.first;
+    return nullptr;
+}
+void warmup_learn(const Prepared &prepared) noexcept {
+    try {
+        auto pipelines = [context.draw_encoder takeCreatedPipelines];
+        if (!context.warmup_path) return;
+        const uint64_t before_revision = context.warmup.revision;
+        for (const auto &entry : prepared.compiled_functions.entries()) context.warmup.learn(entry.first);
+        // This list contains misses alone. Warm packets never scan the complete
+        // function/pipeline caches, copy shader sources or touch disk.
+        for (const auto &p : pipelines) {
+            const auto *vertex = warmup_key(p.vertex,prepared), *fragment = warmup_key(p.fragment,prepared);
+            if (!vertex || !fragment) continue;
+            context.warmup.learn(*vertex); context.warmup.learn(*fragment);
+            // A newly learned fragment may have retired an old vertex at the
+            // FIFO boundary. Both stages together fit the source budget.
+            context.warmup.learn(*vertex);
+            const uint32_t v = context.warmup.find(*vertex), f = context.warmup.find(*fragment);
+            if (v == UINT32_MAX || f == UINT32_MAX) continue;
+            context.warmup.learn({v,f,p.color,p.depth,p.packed,p.mask,p.blend,p.source,p.destination,p.operation});
+        }
+        context.warmup_dirty |= before_revision != context.warmup.revision;
+    } catch (...) { /* Learning is optional and cannot fail an accepted packet. */ }
 }
 void remove_unused_program_pipelines(const Program &program, uint32_t deleting_id = 0) {
     // Exact-source reuse can make two live programs share either stage. A
@@ -462,7 +671,8 @@ id<MTLBuffer> packet_input_buffer(const std::vector<uint8_t> &packet) {
 HaloMetalDraw prepare_draw(const std::vector<uint8_t> &packet, size_t position, halo_metal_draw c,
                           id<MTLBuffer> __strong &input_buffer,
                           std::map<uint32_t, Texture> &textures, std::map<uint32_t, Program> &programs,
-                          Visibility *query, uint32_t alpha_border_mask = 0, uint32_t volume_border_mask = 0) {
+                          Visibility *query, uint32_t alpha_border_mask = 0, uint32_t volume_border_mask = 0,
+                          uint32_t command_index = UINT32_MAX) {
     const size_t fixed = c.command.opcode == HALO_METAL_DRAW ? sizeof(c) : sizeof(halo_metal_draw_volume_border);
     check(alpha_border_mask <= 15 && volume_border_mask <= 15 && !(alpha_border_mask & volume_border_mask));
     check(c.command.byte_size >= fixed && !c.reserved[0] && !c.reserved[1] && c.vertex_count && c.index_count && c.primitive <= 4);
@@ -575,7 +785,9 @@ HaloMetalDraw prepare_draw(const std::vector<uint8_t> &packet, size_t position, 
             check(!c.textures[i].generation && !memcmp(&empty,&c.samplers[i],sizeof(empty)));
         }
     }
-    if (!input_buffer) input_buffer = packet_input_buffer(packet);
+    if (!input_buffer) {
+        input_buffer = packet_input_buffer(packet);
+    }
     draw.vertices = draw.indices = draw.vertexUniforms = draw.pixelUniforms = input_buffer;
     draw.vertexOffset = c.vertices_offset; draw.indexOffset = c.indices_offset;
     draw.vertexUniformOffset = c.vertex_uniforms_offset; draw.pixelUniformOffset = c.pixel_uniforms_offset;
@@ -591,7 +803,21 @@ HaloMetalDraw prepare_draw(const std::vector<uint8_t> &packet, size_t position, 
             MTLVisibilityResultModeBoolean : MTLVisibilityResultModeCounting;
     }
     NSError *error = nil; uint32_t used = 0;
-    if (![context.draw_encoder usedTextureMaskForDraw:draw mask:&used error:&error]) {
+    const uint64_t pipelines_before = context.metrics.enabled ? context.draw_encoder.pipelineCreationCount : 0;
+    const BOOL prepared_ok = [context.draw_encoder usedTextureMaskForDraw:draw mask:&used error:&error];
+    if (context.metrics.enabled && context.draw_encoder.pipelineCreationCount != pipelines_before) {
+        const auto interval = context.draw_encoder.lastPipelineCreationInterval;
+        const auto header = record<halo_metal_packet>(packet,0);
+        host_logf(HOST_LOG_INFO,"Native Metal pipeline: sequence %llu, command-index %u, program %u, generation %u, vertex-hash %016llx, fragment-hash %016llx, packed %08x, color-format %llu, depth-format %llu, color-mask %u, blend %u/%u/%u/%u, start %llu ns, end %llu ns, duration %llu ns, success %u",
+            (unsigned long long)header.frame_sequence,command_index,c.program.id,c.program.generation,
+            (unsigned long long)p.vertex_fingerprint,(unsigned long long)p.fragment_fingerprint,c.packed_mask,
+            (unsigned long long)(draw.color ? draw.color.pixelFormat : MTLPixelFormatInvalid),
+            (unsigned long long)(draw.depthStencil ? draw.depthStencil.pixelFormat : MTLPixelFormatInvalid),
+            c.state.color_write_mask,c.state.blend_enabled,c.state.blend_source,c.state.blend_destination,c.state.blend_operation,
+            (unsigned long long)interval.started,(unsigned long long)interval.ended,
+            (unsigned long long)(interval.ended-interval.started),interval.succeeded ? 1u : 0u);
+    }
+    if (!prepared_ok) {
         host_logf(HOST_LOG_ERROR,"Native original draw preparation: %s",error.localizedDescription.UTF8String);
         throw Failure{error.code == HaloMetalDrawUnsupported ? HALO_METAL_UNSUPPORTED :
             error.code == HaloMetalDrawPipelineFailure ? HALO_METAL_GPU_ERROR : HALO_METAL_INVALID,UINT32_MAX};
@@ -833,9 +1059,7 @@ void validate(const std::vector<uint8_t> &packet, Prepared &prepared) {
                     inline_range(position,command.byte_size,sizeof(c),c.vertex_source_offset,c.vertex_source_size,16);
                     inline_range(position,command.byte_size,sizeof(c),c.fragment_source_offset,c.fragment_source_size,16);
                     check(!programs.count(c.resource.id) && c.resource.generation > program_generations[c.resource.id],HALO_METAL_STALE_RESOURCE);
-                    Program p{compile_function(prepared,packet,c.vertex_source_offset,c.vertex_source_size,true,c.vertex_compiler_contract == 1,true),
-                        compile_function(prepared,packet,c.fragment_source_offset,c.fragment_source_size,false,c.fragment_compiler_contract == 1,
-                            c.fragment_compiler_contract == 0),c.resource.generation,c.vertex_compiler_contract,c.fragment_compiler_contract};
+                    Program p = compile_program(prepared,packet,c,i);
                     programs.emplace(c.resource.id,p); prepared.programs.emplace(position,p);
                     program_generations[c.resource.id] = c.resource.generation; break;
                 }
@@ -862,7 +1086,7 @@ void validate(const std::vector<uint8_t> &packet, Prepared &prepared) {
                         volume_mask = extended.volume_stage_mask; mask = extended.alpha_stage_mask;
                     }
                     auto *query = active_query.id ? &visibility(queries,active_query) : nullptr;
-                    prepared.draws.emplace(position,prepare_draw(packet,position,c,prepared.input_buffer,textures,programs,query,mask,volume_mask)); break;
+                    prepared.draws.emplace(position,prepare_draw(packet,position,c,prepared.input_buffer,textures,programs,query,mask,volume_mask,i)); break;
                 }
                 case HALO_METAL_CREATE_VISIBILITY: {
                     auto c = record<halo_metal_create_visibility>(packet,position);
@@ -1176,6 +1400,7 @@ void execute(const std::vector<uint8_t> &packet, const Prepared &prepared) {
                     toTexture:d.object destinationSlice:c.destination_slice destinationLevel:c.destination_mip
                     destinationOrigin:MTLOriginMake(c.destination_x,c.destination_y,0)];
                 [blit endEncoding];
+                if (context.metrics.enabled) context.metrics.subresource_copies++;
                 initialized(d,HALO_METAL_COLOR,
                     full_subresource(d,c.destination_mip,c.destination_x,c.destination_y,c.width,c.height),
                     c.destination_mip,c.destination_slice); break;
@@ -1289,7 +1514,21 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
             // diagnostics can request this same established override in their
             // isolated launch environment; no ABI or application setting is added.
             context.metrics.enabled = getenv("HALO_GPU_STATS") != nullptr;
+            context.draw_encoder.diagnosticsEnabled = context.metrics.enabled;
             if (layer) { layer.device = device; layer.pixelFormat = MTLPixelFormatBGRA8Unorm; layer.framebufferOnly = NO; }
+            // host_main publishes this established, canonical per-app saves
+            // root before guest startup. Headless fixtures skip persistence.
+            const char *saves = getenv("HALO_SAVE_ROOT");
+            if (!(flags & HALO_METAL_OFFSCREEN) && saves && *saves) {
+                NSString *root = [[NSString alloc] initWithUTF8String:saves];
+                if (root.length) context.warmup_path = [root stringByAppendingPathComponent:@"Cache/MetalWarmup-v1.bin"];
+                warmup_initialize();
+                context.draw_encoder.warmupLearningEnabled = context.warmup_path != nil;
+                static bool exit_registered = false;
+                if (!exit_registered && std::atexit([] {
+                    @autoreleasepool { std::lock_guard<std::mutex> guard(lock); warmup_save(); }
+                }) == 0) exit_registered = true;
+            }
             host_logf(HOST_LOG_INFO,"Native Metal guest command interface: %s",device.name.UTF8String);
             return reply(output,size,HALO_METAL_OK);
         } catch (Failure f) { return reply(output,size,f.status,f.index); }
@@ -1304,7 +1543,11 @@ extern "C" int host_metal_submit(uint32_t input,uint32_t bytes,uint32_t output,u
             validate_reply(output,size); check(context.device != nil,HALO_METAL_NOT_INITIALIZED);
             check(!context.poisoned,HALO_METAL_GPU_ERROR);
             check(bytes >= sizeof(halo_metal_packet) && bytes <= HALO_METAL_MAX_PACKET);
-            uint64_t started = metrics_start();
+            const Metrics before = context.metrics;
+            const uint64_t pipelines_before = context.metrics.enabled ? context.draw_encoder.pipelineCreationCount : 0;
+            const uint64_t pipeline_ns_before = context.metrics.enabled ? context.draw_encoder.pipelineCreationNanoseconds : 0;
+            const uint64_t packet_started = metrics_start();
+            uint64_t started = packet_started;
             std::vector<uint8_t> packet(bytes); check(copy_guest(input,packet.data(),bytes),HALO_METAL_MEMORY);
             context.metrics.packet_copy_ns += metrics_elapsed(started);
             started = metrics_start(); validate(packet,prepared);
@@ -1312,14 +1555,44 @@ extern "C" int host_metal_submit(uint32_t input,uint32_t bytes,uint32_t output,u
                 context.compiled_functions.insert(entry.first,entry.second);
             context.metrics.prepare_ns += metrics_elapsed(started);
             executing = true; execute(packet,prepared);
-            if (context.metrics.enabled) { context.metrics.submissions++; context.metrics.bytes += bytes; metrics_report(); }
+            warmup_learn(prepared);
+            if (context.metrics.enabled) {
+                const uint64_t ended = metrics_start();
+                const auto header = record<halo_metal_packet>(packet,0);
+                const auto &after = context.metrics;
+                // GPU execution overlaps completion waiting. Shader and PSO
+                // creation are contained in prepare; these are attribution
+                // counters, not independent terms to add into frame time.
+                // Async vertex/fragment compile durations can overlap and sum
+                // beyond prepare wall time. Callback intervals retain overlap;
+                // prepare/packet wall time measures the actual submission cost.
+                host_logf(HOST_LOG_INFO,"Native Metal packet: sequence %llu, commands %u, bytes %u, start %llu ns, end %llu ns, copy %llu ns, prepare %llu ns, encode %llu ns, drawable %llu ns, commit %llu ns, completion %llu ns, gpu %llu ns, shader-misses %llu, shader-compile %llu ns, pipelines %llu, pipeline-create %llu ns, draws %llu, passes %llu, subresource-copies %u",
+                    (unsigned long long)header.frame_sequence,header.command_count,bytes,
+                    (unsigned long long)packet_started,(unsigned long long)ended,
+                    (unsigned long long)(after.packet_copy_ns-before.packet_copy_ns),
+                    (unsigned long long)(after.prepare_ns-before.prepare_ns),
+                    (unsigned long long)(after.encode_ns-before.encode_ns),
+                    (unsigned long long)(after.drawable_wait_ns-before.drawable_wait_ns),
+                    (unsigned long long)(after.commit_ns-before.commit_ns),
+                    (unsigned long long)(after.completion_wait_ns-before.completion_wait_ns),
+                    (unsigned long long)(after.gpu_ns-before.gpu_ns),
+                    (unsigned long long)(after.shader_compile_misses-before.shader_compile_misses),
+                    (unsigned long long)(after.shader_compile_ns-before.shader_compile_ns),
+                    (unsigned long long)(context.draw_encoder.pipelineCreationCount-pipelines_before),
+                    (unsigned long long)(context.draw_encoder.pipelineCreationNanoseconds-pipeline_ns_before),
+                    (unsigned long long)(after.draws-before.draws),
+                    (unsigned long long)(after.render_passes-before.render_passes),(unsigned)(after.subresource_copies-before.subresource_copies));
+                context.metrics.submissions++; context.metrics.bytes += bytes; metrics_report();
+            }
             return reply(output,size,HALO_METAL_OK);
         } catch (Failure f) {
+            [context.draw_encoder takeCreatedPipelines];
             if (executing) context.poisoned = true;
             else for (const auto &entry : prepared.programs)
                 remove_unused_program_pipelines(entry.second);
             return reply(output,size,f.status,f.index);
         } catch (const std::bad_alloc &) {
+            [context.draw_encoder takeCreatedPipelines];
             if (executing) context.poisoned = true;
             else for (const auto &entry : prepared.programs)
                 remove_unused_program_pipelines(entry.second);
@@ -1370,6 +1643,7 @@ extern "C" int host_metal_readback(uint32_t id,uint32_t generation,uint32_t plan
 }
 extern "C" void host_metal_shutdown(void) {
     @autoreleasepool { std::lock_guard<std::mutex> guard(lock);
+        warmup_save();
         bool owned_view = context.layer != nil; context = Context{};
         if (owned_view) host_sdl_native_metal_release();
     }

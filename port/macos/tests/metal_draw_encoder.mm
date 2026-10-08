@@ -119,7 +119,24 @@ fragment float4 unsupportedTextureFragment(texture2d<float> t [[texture(4)]], sa
     s.viewport[2] = s.viewport[3] = 16; s.viewport[5] = 1;
     s.scissor[0] = s.scissor[1] = 4; s.scissor[2] = s.scissor[3] = 8;
     HaloMetalDrawEncoder *encoder = [[HaloMetalDrawEncoder alloc] initWithDevice:device];
+    require(!encoder.diagnosticsEnabled && encoder.pipelineCreationCount == 0 && encoder.pipelineCreationNanoseconds == 0,
+            @"Pipeline diagnostics did not default to disabled and zero");
     require([encoder prepareDraw:draw error:&error], error.localizedDescription ?: @"First draw preparation failed");
+    require(encoder.pipelineCreationCount == 0 && encoder.pipelineCreationNanoseconds == 0,
+            @"Disabled pipeline diagnostics accumulated creation work");
+    encoder.diagnosticsEnabled = YES;
+    require([encoder prepareDraw:draw error:&error] && encoder.pipelineCreationCount == 0 && encoder.pipelineCreationNanoseconds == 0,
+            @"Warm pipeline performed diagnostic creation work");
+    [encoder clearCaches];
+    require([encoder prepareDraw:draw error:&error] && encoder.pipelineCreationCount == 1 && encoder.pipelineCreationNanoseconds > 0,
+            @"Enabled pipeline miss did not record its synchronous creation");
+    const uint64_t firstPipelineNanoseconds = encoder.pipelineCreationNanoseconds;
+    require([encoder prepareDraw:draw error:&error] && encoder.pipelineCreationCount == 1 &&
+            encoder.pipelineCreationNanoseconds == firstPipelineNanoseconds, @"Pipeline cache hit changed cumulative timing");
+    encoder.diagnosticsEnabled = NO; [encoder clearCaches];
+    require([encoder prepareDraw:draw error:&error] && encoder.pipelineCreationCount == 1 &&
+            encoder.pipelineCreationNanoseconds == firstPipelineNanoseconds, @"Disabling or clearing reset cumulative timing");
+    encoder.diagnosticsEnabled = YES;
     uint32_t usedTextures = UINT32_MAX;
     require([encoder usedTextureMaskForDraw:draw mask:&usedTextures error:&error] && usedTextures == 0,
             @"Untextured draw returned used textures");
@@ -420,9 +437,15 @@ fragment float4 unsupportedTextureFragment(texture2d<float> t [[texture(4)]], sa
     require([encoder prepareDraw:draw error:&error], error.localizedDescription ?: @"Cache eviction lost valid original program");
     require([encoder usedTextureMaskForDraw:edges mask:&usedTextures error:&error] && usedTextures == 9,
             @"Cache eviction lost sparse texture requirements");
+    const NSUInteger creationsBeforeClear = encoder.pipelineCreationCount;
+    const uint64_t nanosecondsBeforeClear = encoder.pipelineCreationNanoseconds;
     [encoder clearCaches];
+    require(encoder.pipelineCreationCount == creationsBeforeClear && encoder.pipelineCreationNanoseconds == nanosecondsBeforeClear,
+            @"Cache clear reset pipeline diagnostic counters");
     require([encoder usedTextureMaskForDraw:edges mask:&usedTextures error:&error] && usedTextures == 9,
             @"Cache clear lost sparse texture requirements");
+    require(encoder.pipelineCreationCount == creationsBeforeClear + 1 && encoder.pipelineCreationNanoseconds > nanosecondsBeforeClear,
+            @"Pipeline recreation after cache clear did not accumulate its timing");
     if (argc == 3) {
         FILE *file = fopen(argv[2],"wb"); require(file != nullptr, @"Checkpoint output failed");
         require(fwrite(checkpoints.data(),1,checkpoints.size(),file) == checkpoints.size() && fclose(file) == 0,

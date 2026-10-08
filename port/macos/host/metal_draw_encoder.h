@@ -8,6 +8,7 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #include "../include/halo_metal_abi.h"
+#include <vector>
 
 #if !defined(__cplusplus)
 #error "The native draw encoder requires Objective-C++."
@@ -41,6 +42,12 @@ struct HaloMetalDraw {
 };
 
 FOUNDATION_EXPORT NSString *const HaloMetalDrawErrorDomain;
+struct HaloMetalPipelineWarmup {
+    id<MTLFunction> vertex = nil, fragment = nil;
+    uint64_t color = 0, depth = 0;
+    uint32_t packed = 0, mask = 0, blend = 0, source = 1, destination = 1, operation = 1;
+};
+struct HaloMetalPipelineInterval { uint64_t started = 0, ended = 0; bool succeeded = false; };
 typedef NS_ENUM(NSInteger, HaloMetalDrawError) {
     HaloMetalDrawInvalid = 1,
     HaloMetalDrawUnsupported = 2,
@@ -67,6 +74,20 @@ typedef NS_ENUM(NSInteger, HaloMetalDrawError) {
 - (void)endEncoding;
 /* Cumulative successfully created draw passes, including isolated queries. */
 @property(nonatomic, readonly) NSUInteger renderPassCount;
+/* Defaults off. Counters cover only synchronous pipeline creation attempts
+ * while enabled, including failed attempts; cache hits do no timing work.
+ * Disabling diagnostics or clearing caches preserves cumulative counters. */
+@property(nonatomic) BOOL diagnosticsEnabled;
+@property(nonatomic, readonly) NSUInteger pipelineCreationCount;
+@property(nonatomic, readonly) uint64_t pipelineCreationNanoseconds;
+@property(nonatomic, readonly) HaloMetalPipelineInterval lastPipelineCreationInterval;
+/* Startup preparation validates the complete immutable PSO contract and uses
+ * compatible 1x1 attachments. It encodes no draw and bypasses no draw checks. */
+- (BOOL)preparePipeline:(const HaloMetalPipelineWarmup &)pipeline error:(NSError **)error;
+/* Off by default. Only new successful PSOs are queued, bounded to 1024 per
+ * packet; the transport learns them only after successful GPU completion. */
+@property(nonatomic) BOOL warmupLearningEnabled;
+- (std::vector<HaloMetalPipelineWarmup>)takeCreatedPipelines;
 - (void)clearCaches;
 /* Retained functions prevent identity reuse in cached pipeline keys. Program
  * deletion can remove its pipelines without resetting other programs. */
