@@ -110,7 +110,7 @@ class VertexFetchTests(unittest.TestCase):
         status = self.lib.metal_vertex_declaration_parse(data,len(tokens),C.byref(result))
         return status,result
 
-    def fetch(self,d,stream_values,count=1,first=0,fixed=None,capacity=None):
+    def fetch(self,d,stream_values,count=1,first=0,fixed=None,capacity=None,output_offset=4):
         fixed = fixed if fixed is not None else struct.pack('<64f',*[float(i)+.25 for i in range(64)])
         keep = [C.create_string_buffer(fixed,256)]
         streams = (Stream*16)()
@@ -121,14 +121,18 @@ class VertexFetchTests(unittest.TestCase):
             keep.append(memory)
             streams[slot] = Stream(C.addressof(memory)+1,len(data),stride)
         size = count*256
-        out = C.create_string_buffer(bytes([0xa7])*(size+32),size+32)
+        # Offset 4 is float-aligned but deliberately not 16-byte aligned.
+        # Offsets 1--3 exercise arbitrary byte-buffer output via the fallback.
+        out = C.create_string_buffer(bytes([0xa7])*(size+64),size+64)
+        offset = 16 + (-C.addressof(out) % 16) + output_offset
         status = self.lib.metal_vertex_fetch(C.byref(d),streams,keep[0],first,count,
-            C.byref(out,16),size if capacity is None else capacity)
-        self.assertEqual(out.raw[:16],bytes([0xa7])*16)
-        self.assertEqual(out.raw[size+16:],bytes([0xa7])*16)
+            C.byref(out,offset),size if capacity is None else capacity)
+        self.assertEqual((C.addressof(out)+offset)%16,output_offset)
+        self.assertEqual(out.raw[:offset],bytes([0xa7])*offset)
+        self.assertEqual(out.raw[size+offset:],bytes([0xa7])*(64-offset))
         if status:
-            self.assertEqual(out.raw,bytes([0xa7])*(size+32))
-        return status,out.raw[16:16+size]
+            self.assertEqual(out.raw,bytes([0xa7])*(size+64))
+        return status,out.raw[offset:offset+size]
 
     def indices(self,primitive,values=None,count=None,first=0,base=0,capacity=None):
         data = struct.pack('<'+'H'*len(values),*values) if values is not None else None
@@ -198,19 +202,33 @@ class VertexFetchTests(unittest.TestCase):
                 expected[:components] = [v/255 for v in values]
                 golden = struct.pack('<4f',*expected)
             with self.subTest(kind=kind):
-                status,out = self.fetch(declaration([(6,0,kind,0)]),[(0,data,0)])
-                self.assertEqual(status,OK)
-                self.assertEqual(out[6*16:7*16],golden)
-                self.assertEqual(out[:6*16],struct.pack('<24f',*[float(i)+.25 for i in range(24)]))
+                reference = None
+                for output_offset in (4,1,2,3):
+                    with self.subTest(output_offset=output_offset):
+                        status,out = self.fetch(declaration([(6,0,kind,0)]),[(0,data,0)],
+                            output_offset=output_offset)
+                        self.assertEqual(status,OK)
+                        self.assertEqual(out[6*16:7*16],golden)
+                        self.assertEqual(out[:6*16],struct.pack('<24f',*[float(i)+.25 for i in range(24)]))
+                        if reference is None:
+                            reference = out
+                        self.assertEqual(out,reference)
 
     def test_fixed_missing_packed_zero_and_zero_stride(self):
         d = declaration([(2,0,0x16,0),(5,1,0x02,0),(6,2,0x22,1)])
-        status,out = self.fetch(d,[(2,b'x'+struct.pack('<2f',1.5,-2.5),0)],count=3,first=700)
-        self.assertEqual(status,OK)
-        self.assertEqual(out[:256],out[256:512])
-        self.assertEqual(out[2*16:3*16],bytes(16))
-        self.assertEqual(out[5*16:6*16],struct.pack('<4f',20.25,21.25,22.25,23.25))
-        self.assertEqual(out[6*16:7*16],struct.pack('<4f',1.5,-2.5,0,1))
+        # Untouched fixed registers must retain payload/signaling NaN, signed
+        # zero, subnormal and infinity bits, without float canonicalization.
+        bits = [0x7fc12345,0x7fa12345,0x80000000,0x00000001,0x7f800000,0xff800000,0xffffffff,0]
+        fixed = struct.pack('<64I',*(bits*8))
+        expected = bytearray(fixed)
+        expected[2*16:3*16] = bytes(16)
+        expected[6*16:7*16] = struct.pack('<4f',1.5,-2.5,0,1)
+        for output_offset in (4,1,2,3):
+            with self.subTest(output_offset=output_offset):
+                status,out = self.fetch(d,[(2,b'x'+struct.pack('<2f',1.5,-2.5),0)],
+                    count=3,first=700,fixed=fixed,output_offset=output_offset)
+                self.assertEqual(status,OK)
+                self.assertEqual(out,bytes(expected)*3)
 
     def test_multistream_nonzero_first_and_padded_unaligned_stride(self):
         positions = b''.join(b'p'+struct.pack('<3f',*v)+b'pad!' for v in ((1,2,3),(4,5,6),(7,8,9)))
@@ -226,19 +244,25 @@ class VertexFetchTests(unittest.TestCase):
     def test_fetch_preflight_bounds_alias_and_declaration_integrity(self):
         d = declaration([(0,0,0x32,0),(15,1,0x42,3)])
         streams = [(0,struct.pack('<9f',*range(9)),12),(1,b'x'*31,16)]
-        for count,first,capacity in [(2,0,None),(1,0,255),(1,0xffffffff,None)]:
-            self.assertEqual(self.fetch(d,streams,count,first,capacity=capacity)[0],BOUNDS)
-        d.elements[1].bytes = 12
-        self.assertEqual(self.fetch(d,streams)[0],INVALID)
-        d.elements[1].bytes = 16; d.packed_mask = 1
-        self.assertEqual(self.fetch(d,streams)[0],INVALID)
+        for output_offset in (4,1,2,3):
+            for count,first,capacity in [(2,0,None),(1,0,255),(1,0xffffffff,None),(2,0xffffffff,None)]:
+                with self.subTest(output_offset=output_offset,count=count,first=first,capacity=capacity):
+                    self.assertEqual(self.fetch(d,streams,count,first,capacity=capacity,
+                        output_offset=output_offset)[0],BOUNDS)
+            d.elements[1].bytes = 12
+            self.assertEqual(self.fetch(d,streams,output_offset=output_offset)[0],INVALID)
+            d.elements[1].bytes = 16; d.packed_mask = 1
+            self.assertEqual(self.fetch(d,streams,output_offset=output_offset)[0],INVALID)
+            d.packed_mask = 0
         d = declaration([(0,0,0x42,0)])
         memory = C.create_string_buffer(bytes([0x55])*512,512)
         fixed = C.create_string_buffer(bytes(256),256)
         s = (Stream*16)(); s[0] = Stream(C.addressof(memory),512,16)
         before = memory.raw
-        self.assertEqual(self.lib.metal_vertex_fetch(C.byref(d),s,fixed,0,1,memory,256),INVALID)
-        self.assertEqual(memory.raw,before)
+        for output_offset in (4,1,2,3):
+            self.assertEqual(self.lib.metal_vertex_fetch(C.byref(d),s,fixed,0,1,
+                C.byref(memory,output_offset),256),INVALID)
+            self.assertEqual(memory.raw,before)
 
     def test_all_original_primitive_order_and_rebase(self):
         values = [15,4,19,6,8,12,7,2]
@@ -280,17 +304,24 @@ class VertexFetchTests(unittest.TestCase):
             '#include "'+str(SOURCE)+'"\n'
             'int main(void) {\n'
             'const unsigned sizes[]={'+sizes+'}, kinds[]={'+kinds+'};\n'
-            'float fixed[16][4]={{0}}; unsigned i;\n'
+            'float fixed[16][4]={{0}}; unsigned i,j; unsigned char reference[512];\n'
+            'const unsigned offsets[]={4,1,2,3};\n'
             'for(i=0;i<sizeof(sizes)/sizeof(sizes[0]);i++){\n'
             'struct metal_vertex_declaration d={0}; struct metal_vertex_stream s[16]={{0}};\n'
-            'unsigned char *input=malloc(sizes[i]*3), *output=malloc(512);\n'
-            'assert(input&&output); memset(input,0xa7,sizes[i]*3);\n'
+            'unsigned char *input=malloc(sizes[i]*3);\n'
+            'assert(input); memset(input,0xa7,sizes[i]*3);\n'
             'd.element_count=1; d.elements[0]=(struct metal_vertex_element){15,0,kinds[i],sizes[i],0};\n'
             'd.packed_mask=kinds[i]==0x16?32768:0; s[0]=(struct metal_vertex_stream){input,sizes[i]*3,sizes[i]};\n'
+            'for(j=0;j<sizeof(offsets)/sizeof(offsets[0]);j++){\n'
+            'unsigned n; unsigned char *storage=malloc(512+offsets[j]), *output;\n'
+            'assert(storage); output=storage+offsets[j]; memset(storage,0xa7,512+offsets[j]);\n'
             'assert(metal_vertex_fetch(&d,s,fixed,1,2,output,512)==0);\n'
-            's[0].byte_count--; memset(output,0x55,512);\n'
+            'for(n=0;n<offsets[j];n++)assert(storage[n]==0xa7);\n'
+            'if(j==0)memcpy(reference,output,512); else assert(memcmp(reference,output,512)==0);\n'
+            's[0].byte_count--; memset(storage,0x55,512+offsets[j]);\n'
             'assert(metal_vertex_fetch(&d,s,fixed,1,2,output,512)==METAL_VERTEX_BOUNDS);\n'
-            'assert(output[0]==0x55&&output[511]==0x55);free(input);free(output); }\n'
+            'for(n=0;n<512+offsets[j];n++)assert(storage[n]==0x55);\n'
+            's[0].byte_count++; free(storage); } free(input); }\n'
             '{struct metal_vertex_index_plan p; unsigned char *input=malloc(1), output[12];\n'
             'assert(metal_vertex_indices(5,(const uint16_t*)input,1,3,0,0,output,12,&p)==METAL_VERTEX_BOUNDS);\n'
             'free(input);}\nreturn 0;}\n')

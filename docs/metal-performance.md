@@ -195,3 +195,51 @@ SHA256 `b1791f4ba8c8e2a42609b9c518e8873f8a26ae6f16bc738c3ba23238b6fb5edb`.
 These have no foreground, FPS, visual-motion or image-parity gate. The earlier
 foreground motion attempt lost focus and remains failed, with its timings
 discarded. The reported Pelican jump still needs a focused visual playtest.
+
+## Aligned vertex output and the A/B/A bracket, October 8
+
+The CPU vertex-fetch helper now expands vertices directly into float-aligned
+caller-owned expanded storage. This avoids one 256-byte stack-to-output copy per
+vertex while retaining the fixed-register initialization and exact attribute conversions.
+Arbitrarily unaligned output retains the stack-copy fallback. Source loads remain
+safe for unaligned streams, and bounds and overlap checks complete before any
+output is written. Simulation timing, camera updates and draw order are unchanged.
+
+Three 60-second warm-cache captures bracket the aligned-output candidate with the
+previous single-copy guest before and after it. Each uses original B30 assets, 720p, FXAA, Smooth Motion, uncapped rendering,
+VSync off, audio and the same diagnostic logging on an Apple M5 Max. Each records zero runtime source
+compilations and PSO creations. The matched heavy-pan window uses original ticks
+3--125 and at least 800 draws per frame:
+
+| Mean per heavy frame | Single copy, A | Aligned output, B | Single copy repeat, A |
+| --- | ---: | ---: | ---: |
+| Frames sampled | 96 | 102 | 99 |
+| Original draws | 1,071 | 1,084 | 1,067 |
+| Frame interval | 43.00 ms | 40.32 ms | 41.68 ms |
+| Guest draw CPU work, excluding host submissions | 20.05 ms | 17.76 ms | 19.01 ms |
+| Host packet copy plus preparation | 7.83 ms | 7.86 ms | 8.00 ms |
+
+The improvement is concentrated in guest vertex work; the combined host copy and
+preparation cost remains similar. Post-tick-150 FPS in these 60-second captures
+is 62.93, 68.76 and 61.64 respectively. Combat draw counts and work vary, so those
+whole-capture figures do not establish a universal 9--12% FPS improvement. The
+bracket supports a narrower reduction in the measured heavy-pan CPU cost on this
+Mac, with diagnostic logging included.
+
+Nine CPU tests pass, covering exact conversions, aligned and unaligned output,
+multi-stream strides, bounds, overlap rejection and sanitizer checks. The existing
+126-draw captured-wire oracle is skipped because its frozen fixtures are missing;
+there is no full-frame 126-draw parity proof for this change. The production helper
+was compiled and linked with the actual ILP32 guest toolchain. These checks do not
+establish complete visual fidelity.
+
+The user confirmed that the white horizon line appears in the original intro and
+is expected. No rendering behavior change was made for it. Screenshot captures
+with readback overhead are excluded from the performance evidence above.
+
+Evidence: `run-learned-cache-warm-single-copy/`,
+`run-learned-cache-vertex-output/` and
+`run-learned-cache-warm-single-copy-repeat/`, including their `analysis.json`,
+`cache-summary.json` and frozen binary provenance, under
+`build/metal-cutscene-20261008/`. The scoped guest rebuild is recorded in
+`hitch-diagnostics-vertex-output/build.json`.

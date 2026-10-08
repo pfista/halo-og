@@ -117,7 +117,11 @@ static int validate_declaration(const struct metal_vertex_declaration *d)
     return packed == d->packed_mask ? METAL_VERTEX_OK : METAL_VERTEX_INVALID;
 }
 
-static void fetch_attribute(float out[4], const unsigned char *in, uint32_t type)
+/* Expanded storage may be a caller-owned byte array, not a float object. Keep
+ * direct aligned stores valid even when this helper uses strict aliasing. */
+typedef float metal_vertex_float __attribute__((__may_alias__));
+
+static void fetch_attribute(metal_vertex_float out[4], const unsigned char *in, uint32_t type)
 {
     uint32_t component, components = type == 0x72 ? 3 : type >> 4;
     out[0] = out[1] = out[2] = 0;
@@ -144,6 +148,7 @@ int metal_vertex_fetch(const struct metal_vertex_declaration *declaration,
 {
     uint32_t i, vertex;
     size_t needed;
+    int aligned;
     int status = validate_declaration(declaration);
     if (status) return status;
     if (!streams || !fixed) return METAL_VERTEX_INVALID;
@@ -170,8 +175,11 @@ int metal_vertex_fetch(const struct metal_vertex_declaration *declaration,
         if (s->stride && last > remaining / s->stride) return METAL_VERTEX_BOUNDS;
         if (overlaps(expanded, needed, s->pointer, s->byte_count)) return METAL_VERTEX_INVALID;
     }
+    aligned = (uintptr_t)expanded % _Alignof(metal_vertex_float) == 0;
     for (vertex = 0; vertex < count; vertex++) {
-        float values[16][4];
+        metal_vertex_float fallback[16][4];
+        metal_vertex_float (*values)[4] = aligned ?
+            (metal_vertex_float (*)[4])((unsigned char *)expanded + (size_t)vertex * 256) : fallback;
         memcpy(values, fixed, 256);
         for (i = 0; i < 16; i++) {
             if (declaration->packed_mask & (1u << i)) memset(values[i], 0, 16);
@@ -183,7 +191,7 @@ int metal_vertex_fetch(const struct metal_vertex_declaration *declaration,
                 (const unsigned char *)s->pointer + e->offset + (size_t)(first + vertex) * s->stride,
                 e->type);
         }
-        memcpy((unsigned char *)expanded + (size_t)vertex * 256, values, 256);
+        if (!aligned) memcpy((unsigned char *)expanded + (size_t)vertex * 256, values, 256);
     }
     return METAL_VERTEX_OK;
 }
