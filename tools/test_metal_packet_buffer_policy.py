@@ -42,8 +42,7 @@ struct Failure { int status; };
 static void check(bool condition,int status) { if(!condition)throw Failure{status}; }
 /* PRODUCTION */
 static std::shared_ptr<Buffer> packet(size_t size,uint8_t value=33) {
-    const std::vector<uint8_t> source(size,value);
-    auto buffer=packet_input_buffer(source);
+    auto buffer=packet_input_buffer(size);
     assert(buffer && buffer->length>=size);
     // The submit path fills owned storage directly; this fixture exercises
     // allocation/retention while retaining independent payload canaries.
@@ -113,9 +112,8 @@ class PacketBufferPolicyTests(unittest.TestCase):
             "id<MTLBuffer>": "std::shared_ptr<Buffer>",
             "nil": "nullptr",
             "buffer.length": "buffer->length",
-            "buffer.contents": "buffer->contents.data()",
-            "[context.device newBufferWithLength:packet.size() options:MTLResourceStorageModeShared]": "allocate(packet.size())",
             "[context.device newBufferWithLength:capacity options:MTLResourceStorageModeShared]": "allocate(capacity)",
+            "[context.device newBufferWithLength:bytes options:MTLResourceStorageModeShared]": "allocate(bytes)",
         }
         for original, replacement in replacements.items():
             if original not in production:

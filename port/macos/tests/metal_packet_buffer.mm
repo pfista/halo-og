@@ -139,9 +139,27 @@ int main(int argc,char **argv) { @autoreleasepool {
             Packet outside(12); outside.draw(133,0,true);
             require(outside.submit() == HALO_METAL_INVALID && context.submitted == 11,"retained slack does not extend command ranges"); readback(122);
             valid_draw(12,144);
+            // The original guest may reuse transient packet bytes after the
+            // host copy. Validation and encoding must retain the one owned
+            // copy, independently of guest mutations and allocation slack.
+            {
+                Packet captured(13); captured.draw(155); captured.copy_to_guest();
+                Prepared captured_prepared;
+                captured_prepared.input_buffer = packet_input_buffer(captured.bytes.size());
+                require(copy_guest(packetAddress,captured_prepared.input_buffer.contents,(uint32_t)captured.bytes.size()),
+                    "copy original packet into owned storage");
+                const HaloMetalPacketView captured_view(captured_prepared.input_buffer.contents,captured.bytes.size());
+                validate(captured_view,captured_prepared);
+                memset(guest_pointer(packetAddress),0,captured.bytes.size());
+                require(captured_view.data() == captured_prepared.input_buffer.contents &&
+                    captured_prepared.draws.begin()->second.vertices == captured_prepared.input_buffer &&
+                    !memcmp(captured_view.data(),captured.bytes.data(),captured.bytes.size()),
+                    "preflight and draw share immutable host-owned packet bytes");
+                execute(captured_view,captured_prepared); readback(155);
+            }
             host_metal_shutdown(); initialize(); valid_draw(2,155);
             require(context.metrics.packet_buffers == 1,"shutdown releases prior storage");
-            printf("{\"complete\":true,\"changing_payload_bytes\":true,\"atomic_rejection\":true,\"bounded_reuse\":true,\"retained_16mib\":true,\"exact_capacity\":true,\"growth_and_oversize\":true,\"command_ranges\":true,\"shutdown_reset\":true}\n");
+            printf("{\"complete\":true,\"changing_payload_bytes\":true,\"atomic_rejection\":true,\"bounded_reuse\":true,\"retained_16mib\":true,\"exact_capacity\":true,\"growth_and_oversize\":true,\"command_ranges\":true,\"same_owned_storage\":true,\"guest_mutation_isolated\":true,\"shutdown_reset\":true}\n");
         }
         host_metal_shutdown(); return 0;
     } catch (const std::exception &error) { fprintf(stderr,"%s\n",error.what()); return 1; }

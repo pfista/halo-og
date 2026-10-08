@@ -26,6 +26,7 @@ extern "C" {
 #include "../include/halo_metal_abi.h"
 #include "metal_function_cache.h"
 #include "metal_warmup_cache.h"
+#include "metal_packet_view.h"
 #import "metal_draw_encoder.h"
 
 namespace {
@@ -100,8 +101,8 @@ struct Prepared {
     std::map<size_t, Program> programs;
     std::map<size_t, HaloMetalDraw> draws;
     std::map<size_t, PreparedFxaa> fxaa;
-    // Every draw points into this immutable host-owned packet copy. Synchronous
-    // completion occurs before Prepared and its strong buffer reference die.
+    // Validation, uploads and draws share this immutable host-owned packet.
+    // Synchronous completion precedes release of its strong buffer reference.
     id<MTLBuffer> input_buffer = nil;
     // New successful functions remain private until every packet command has
     // passed validation. A rejected packet cannot publish compiler entries.
@@ -213,10 +214,9 @@ MTLPixelFormat format(uint32_t value) {
         default: throw Failure{HALO_METAL_UNSUPPORTED, UINT32_MAX};
     }
 }
-template<typename T> T record(const std::vector<uint8_t> &packet, size_t position) {
+template<typename T> T record(const HaloMetalPacketView &packet, size_t position) {
     T result;
-    check(position <= packet.size() && sizeof(T) <= packet.size() - position);
-    memcpy(&result, packet.data() + position, sizeof(T));
+    check(packet.read(position,result));
     return result;
 }
 Texture &resource(std::map<uint32_t, Texture> &textures, halo_metal_ref ref) {
@@ -319,7 +319,7 @@ halo_metal_upload_ex extended_upload(halo_metal_upload c) {
     result.data_offset = c.data_offset; result.data_size = c.data_size;
     result.plane = HALO_METAL_COLOR; result.reserved = c.reserved; return result;
 }
-void validate_upload(const std::vector<uint8_t> &packet, size_t position, size_t fixed,
+void validate_upload(const HaloMetalPacketView &packet, size_t position, size_t fixed,
                      halo_metal_upload_ex c, Texture &texture) {
     check(c.command.byte_size >= fixed && !c.reserved && c.mip < texture.mip_levels && c.slice < slices(texture) &&
         c.depth && c.width && c.height);
@@ -382,7 +382,7 @@ struct FunctionCompileInput {
     HaloMetalFunctionKey key; NSString *source;
     uint32_t command_index = UINT32_MAX, program = 0, generation = 0;
 };
-FunctionCompileInput compile_input(const std::vector<uint8_t> &packet,uint32_t offset,uint32_t bytes,
+FunctionCompileInput compile_input(const HaloMetalPacketView &packet,uint32_t offset,uint32_t bytes,
                                    bool vertex,bool fast,bool invariant) {
     check(!memchr(packet.data() + offset,0,bytes));
     NSString *source = [[NSString alloc] initWithBytes:packet.data() + offset length:bytes encoding:NSUTF8StringEncoding];
@@ -412,7 +412,7 @@ MTLCompileOptions *compile_options(const HaloMetalFunctionKey &key) {
     }
     return options;
 }
-void record_compilation(const FunctionCompileInput &input,const std::vector<uint8_t> &packet,
+void record_compilation(const FunctionCompileInput &input,const HaloMetalPacketView &packet,
                         id<MTLLibrary> library,uint64_t started,uint64_t elapsed) {
     context.metrics.shader_compile_ns += elapsed;
     if (context.metrics.enabled) {
@@ -436,7 +436,7 @@ id<MTLFunction> resolve_compilation(Prepared &prepared,FunctionCompileInput &inp
     prepared.compiled_functions.insert(std::move(input.key),function);
     return function;
 }
-id<MTLFunction> compile_uncached_function(Prepared &prepared,const std::vector<uint8_t> &packet,FunctionCompileInput &input) {
+id<MTLFunction> compile_uncached_function(Prepared &prepared,const HaloMetalPacketView &packet,FunctionCompileInput &input) {
     if (context.metrics.enabled) context.metrics.shader_compile_misses++;
     auto options = compile_options(input.key);
     NSError *error = nil;
@@ -445,7 +445,7 @@ id<MTLFunction> compile_uncached_function(Prepared &prepared,const std::vector<u
     record_compilation(input,packet,library,started,metrics_elapsed(started));
     return resolve_compilation(prepared,input,library,error);
 }
-[[maybe_unused]] id<MTLFunction> compile_function(Prepared &prepared,const std::vector<uint8_t> &packet,uint32_t offset,
+[[maybe_unused]] id<MTLFunction> compile_function(Prepared &prepared,const HaloMetalPacketView &packet,uint32_t offset,
                                 uint32_t bytes,bool vertex,bool fast,bool invariant) {
     auto input = compile_input(packet,offset,bytes,vertex,fast,invariant);
     auto cached = cached_function(prepared,input);
@@ -483,7 +483,7 @@ void start_compilation(std::shared_ptr<LibraryCompileRequest> request) {
             request->condition.notify_one();
         }];
 }
-Program compile_program(Prepared &prepared,const std::vector<uint8_t> &packet,const halo_metal_program &command,
+Program compile_program(Prepared &prepared,const HaloMetalPacketView &packet,const halo_metal_program &command,
                         uint32_t command_index = UINT32_MAX) {
     // Bounds/contracts have already passed CREATE_PROGRAM validation. Both
     // sources must also pass NUL/UTF8 validation before issuing async requests.
@@ -646,29 +646,26 @@ id<MTLSamplerState> sampler(halo_metal_sampler c,
     if (context.metrics.enabled) context.metrics.sampler_allocations++;
     sampler_cache_insert(context.samplers,key,result); return result;
 }
-id<MTLBuffer> packet_input_buffer(const std::vector<uint8_t> &packet) {
+id<MTLBuffer> packet_input_buffer(size_t bytes) {
     constexpr size_t retained_limit = 16u * 1024u * 1024u;
     id<MTLBuffer> buffer = context.draw_input_buffer;
-    if (!buffer || buffer.length < packet.size()) {
-        size_t capacity = packet.size();
+    if (!buffer || buffer.length < bytes) {
+        size_t capacity = bytes;
         if (capacity <= retained_limit) {
             capacity = 16384;
-            while (capacity < packet.size()) capacity *= 2;
+            while (capacity < bytes) capacity *= 2;
         }
         buffer = [context.device newBufferWithLength:capacity options:MTLResourceStorageModeShared];
         // Rounding is an allocation optimization, not a new acceptance limit.
-        if (!buffer && capacity != packet.size())
-            buffer = [context.device newBufferWithLength:packet.size() options:MTLResourceStorageModeShared];
+        if (!buffer && capacity != bytes)
+            buffer = [context.device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
         check(buffer != nil,HALO_METAL_MEMORY);
         if (context.metrics.enabled) context.metrics.packet_buffers++;
-        if (packet.size() <= retained_limit) context.draw_input_buffer = buffer;
+        if (bytes <= retained_limit) context.draw_input_buffer = buffer;
     }
-    // Copy every current wire byte. Command-local inline_range checks remain
-    // authoritative even when the retained allocation has unused trailing room.
-    memcpy(buffer.contents,packet.data(),packet.size());
     return buffer;
 }
-HaloMetalDraw prepare_draw(const std::vector<uint8_t> &packet, size_t position, halo_metal_draw c,
+HaloMetalDraw prepare_draw(const HaloMetalPacketView &packet, size_t position, halo_metal_draw c,
                           id<MTLBuffer> __strong &input_buffer,
                           std::map<uint32_t, Texture> &textures, std::map<uint32_t, Program> &programs,
                           Visibility *query, uint32_t alpha_border_mask = 0, uint32_t volume_border_mask = 0,
@@ -785,9 +782,8 @@ HaloMetalDraw prepare_draw(const std::vector<uint8_t> &packet, size_t position, 
             check(!c.textures[i].generation && !memcmp(&empty,&c.samplers[i],sizeof(empty)));
         }
     }
-    if (!input_buffer) {
-        input_buffer = packet_input_buffer(packet);
-    }
+    check(input_buffer != nil && input_buffer.length >= packet.size() &&
+        input_buffer.contents == packet.data(),HALO_METAL_MEMORY);
     draw.vertices = draw.indices = draw.vertexUniforms = draw.pixelUniforms = input_buffer;
     draw.vertexOffset = c.vertices_offset; draw.indexOffset = c.indices_offset;
     draw.vertexUniformOffset = c.vertex_uniforms_offset; draw.pixelUniformOffset = c.pixel_uniforms_offset;
@@ -908,7 +904,7 @@ PreparedFxaa prepare_fxaa(const Texture &source) {
     // The context itself caches only one shape and the two accepted formats.
     return {scratch,existing->second};
 }
-void validate(const std::vector<uint8_t> &packet, Prepared &prepared) {
+void validate(const HaloMetalPacketView &packet, Prepared &prepared) {
     auto header = record<halo_metal_packet>(packet, 0);
     check(header.magic == HALO_METAL_MAGIC && header.abi_version == HALO_METAL_ABI_VERSION &&
         header.byte_size == packet.size() && header.command_count && header.command_count <= 65536 &&
@@ -1230,7 +1226,7 @@ void complete(id<MTLCommandBuffer> buffer, bool measured = false) {
         context.poisoned = true; throw Failure{HALO_METAL_GPU_ERROR,UINT32_MAX};
     }
 }
-void upload(id<MTLCommandBuffer> buffer, const std::vector<uint8_t> &packet, halo_metal_upload_ex c, Texture &texture) {
+void upload(id<MTLCommandBuffer> buffer, const HaloMetalPacketView &packet, halo_metal_upload_ex c, Texture &texture) {
     NSUInteger tight = c.width * (c.plane == HALO_METAL_STENCIL ? 1u : 4u), rows = c.height;
     if (compressed(texture.format)) { tight = ((c.width + 3) / 4) * block_bytes(texture.format); rows = (c.height + 3) / 4; }
     NSUInteger row = (tight + 255) & ~NSUInteger(255);
@@ -1327,7 +1323,7 @@ void fxaa(id<MTLCommandBuffer> buffer, Texture &source, const halo_metal_fxaa &c
     [encoder endEncoding];
     initialized(source,HALO_METAL_COLOR,false);
 }
-void execute(const std::vector<uint8_t> &packet, const Prepared &prepared) {
+void execute(const HaloMetalPacketView &packet, const Prepared &prepared) {
     // A failed packet must close its retained draw pass before command-buffer
     // ownership is released. Normal execution closes it before every boundary.
     struct DrawPassScope {
@@ -1548,7 +1544,12 @@ extern "C" int host_metal_submit(uint32_t input,uint32_t bytes,uint32_t output,u
             const uint64_t pipeline_ns_before = context.metrics.enabled ? context.draw_encoder.pipelineCreationNanoseconds : 0;
             const uint64_t packet_started = metrics_start();
             uint64_t started = packet_started;
-            std::vector<uint8_t> packet(bytes); check(copy_guest(input,packet.data(),bytes),HALO_METAL_MEMORY);
+            prepared.input_buffer = packet_input_buffer(bytes);
+            check(copy_guest(input,prepared.input_buffer.contents,bytes),HALO_METAL_MEMORY);
+            // Keep the current wire extent distinct from retained capacity.
+            // This is the only guest packet copy; preflight and GPU draws use
+            // the same owned bytes under the existing synchronous host lock.
+            const HaloMetalPacketView packet(prepared.input_buffer.contents,bytes);
             context.metrics.packet_copy_ns += metrics_elapsed(started);
             started = metrics_start(); validate(packet,prepared);
             for (const auto &entry : prepared.compiled_functions.entries())

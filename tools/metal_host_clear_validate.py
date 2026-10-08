@@ -29,7 +29,7 @@ def require(v,message):
 def snapshot(out):
     names=['port/macos/tests/guest_metal_clear_channels.c','port/macos/tests/host_metal.mm',
         'port/macos/host/host_memory.c','port/macos/host/host.h','port/macos/host/host_metal.mm',
-        'port/macos/host/metal_draw_encoder.mm','port/macos/host/metal_function_cache.h','port/macos/host/metal_warmup_cache.h','port/macos/host/metal_draw_encoder.h',
+        'port/macos/host/metal_draw_encoder.mm','port/macos/host/metal_function_cache.h','port/macos/host/metal_warmup_cache.h','port/macos/host/metal_packet_view.h','port/macos/host/metal_draw_encoder.h',
         'port/macos/include/halo_metal_abi.h','port/android/include/halo_android_abi.h',
         'port/macos/metal_imports.list','tools/android_build.py','tools/android_imports.py',
         'tools/android_asm_convert.py','tools/metal_host_draw_validate.py','tools/metal_host_clear_validate.py']
