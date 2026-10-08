@@ -28,12 +28,13 @@ typedef struct { real x,y,z; } real_point3d;
 typedef struct { real i,j,k; } real_vector3d;
 #define MAXIMUM_LOCAL_PLAYERS 4
 #define NONE (-1)
+#define TRUE 1
 enum { _director_perspective_first_person, _director_perspective_third_person };
 /* STRUCTURES */
 struct object_datum { struct { long parent_object_index; } object; };
 static struct object_datum unit;
 static int enabled, config_reads, inhibited, cinematic, perspective;
-static int facing_reads, blend_reads;
+static int facing_reads, blend_reads, bounds_reads;
 static long unit_index;
 static real_vector3d facing;
 static int config_boolean(char const *key) {
@@ -52,6 +53,12 @@ static long player_control_get_unit_index(short index) {
 static struct object_datum *object_get(long index) { assert(index==123); return &unit; }
 static void player_control_get_facing_direction(short index,real_vector3d *out) {
     assert(index>=0 && index<MAXIMUM_LOCAL_PLAYERS); facing_reads++; *out=facing;
+}
+static void unit_clip_to_aiming_bounds(long index,real_vector3d *direction,int aiming) {
+    assert(index==123 && aiming==TRUE);
+    /* The fixture's facing vectors are already inside the unit's bounds. */
+    assert(fabsf(direction->i*direction->i+direction->j*direction->j+direction->k*direction->k-1)<0.00001f);
+    bounds_reads++;
 }
 static real normalize3d(real_vector3d *v) {
     real length=sqrtf(v->i*v->i+v->j*v->j+v->k*v->k);
@@ -77,9 +84,9 @@ static void same_vector(real_vector3d const *a,real_vector3d const *b) {
     assert(fabsf(a->i-b->i)<0.00001f && fabsf(a->j-b->j)<0.00001f && fabsf(a->k-b->k)<0.00001f);
 }
 static void unchanged(struct observer_result const *camera) {
-    int reads=facing_reads;
+    int reads=facing_reads, clips=bounds_reads;
     assert(render_interpolation_camera(0,camera)==camera);
-    assert(facing_reads==reads);
+    assert(facing_reads==reads && bounds_reads==clips);
 }
 int main(int argc,char **argv) {
     assert(argc==3); enabled=atoi(argv[1]); int desktop=atoi(argv[2]);
@@ -100,9 +107,9 @@ int main(int argc,char **argv) {
         facing=(real_vector3d){0,1,0}; out=render_interpolation_camera(0,&camera);
         same_vector(&out->forward,&facing);
         expected_up=(real_vector3d){0,0,1}; same_vector(&out->up,&expected_up);
-        assert(facing_reads==2);
+        assert(facing_reads==2 && bounds_reads==2);
     } else {
-        assert(out==&camera && facing_reads==0);
+        assert(out==&camera && facing_reads==0 && bounds_reads==0);
     }
     assert(!memcmp(&camera,&original,sizeof(camera)));
     reset_view(); unit.object.parent_object_index=456; unchanged(&camera); /* vehicle */
