@@ -253,6 +253,9 @@ int main(void) {
     assert(local_lookups==0);
 #else
     assert(world[1]==0 && labels[1]==0 && nonplayer[1]==1);
+    /* Retail keeps its ordinary nonplayer route and per-pane menus. */
+    assert(blank_panes[1]==0 && ordinary_nonplayer[1]==1);
+    assert(fullscreen_scores==0 && fullscreen_menus==0);
 #endif
     /* NONE windows outside the optional teammate view retain the original
        first-person callback (which itself handles NONE as a no-op). */
