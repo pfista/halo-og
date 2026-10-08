@@ -230,6 +230,7 @@ int main(void) {
             reset(experimental,power,reused);struct distributed_object_change c=change(rest);
             if(reused) { SET_FLAG(object->object.flags,_object_at_rest_bit,!rest);object->object.position.z=0;contacts(); }
             distributed_client_create(&c);
+            assert(!objects_client_creating && !objects_client_deleting && objects_client_creating_index==NONE);
             assert(new_calls==!reused && objects_client_has[1]==OBJECT_INDEX);
             assert(object->object.position.z==10 && moves==reused && interpolation_calls==reused);
             assert(TEST_FLAG(object->object.flags,_object_at_rest_bit)==(experimental?rest:(reused?!rest:0)));
