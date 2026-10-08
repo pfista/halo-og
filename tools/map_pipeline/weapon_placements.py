@@ -1,6 +1,7 @@
 """Audit authored gun placements and opt in to a narrow native capability.
 
-The original registry and item placements are never rewritten. A verified str#
+The audit preserves placements except separately approved, verified omissions.
+A verified str#
 tag resident through Xbox's implicit Soul root enables the runtime's reviewed
 default-mode exception; restricted weapon sets keep their original remaps.
 """
@@ -181,6 +182,7 @@ def audit_weapon_placements(tool, source_root, source_scenario, roots, scenario,
     roots = [Path(root) for root in roots]
     workspace, source_root = Path(workspace), Path(source_root)
     folder, overlay = workspace / "weapon-placements", workspace / "weapon-placements/tags"
+    verified_omission = None
     if folder.exists() or folder.is_symlink():
         _fail("Weapon placement audit output must be fresh", "invalid_output")
     inventories = {root: _tree(root) for root in dict.fromkeys([source_root, *roots])}
@@ -194,6 +196,8 @@ def audit_weapon_placements(tool, source_root, source_scenario, roots, scenario,
     def unchanged():
         if any(_tree(root) != inventory for root, inventory in inventories.items()):
             _fail("Weapon placement audit changed an input tree", "input_changed")
+        if verified_omission is not None and legacy.digest(verified_omission[0]) != verified_omission[1]:
+            _fail("Approved weapon omission receipt changed during placement audit", "input_changed")
 
     tool.stage = "weapon_placements"
     source_scenario_root, _ = _winner([source_root], source_scenario)
@@ -212,8 +216,45 @@ def audit_weapon_placements(tool, source_root, source_scenario, roots, scenario,
         return None, {"capability": None, "skip_compiled": True, "reason": "Child scenarios are merged by the compiler"}
     source_graph = _placements(tool, [source_root, *([Path(source_fallback)] if source_fallback else [])], source_scenario)
     final_graph = _placements(tool, roots, scenario)
-    if source_graph != final_graph:
+    expected_graph, omission_receipt = source_graph, None
+    omission_steps = [step for step in steps if step.get("operation") == "weapon_omissions"]
+    if len(omission_steps) > 1:
+        _fail("Weapon placement audit requires one unambiguous omission receipt", "invalid_output")
+    if omission_steps:
+        omission = omission_steps[0]
+        checksum = omission.get("manifest_sha256")
+        if (not isinstance(omission.get("manifest"), str) or not omission["manifest"]
+                or not isinstance(checksum, str) or len(checksum) != 64
+                or any(c not in "0123456789abcdef" for c in checksum)):
+            _fail("Approved weapon omission receipt is missing or malformed", "invalid_output")
+        manifest = Path(omission["manifest"])
+        if (not manifest.is_file() or manifest.is_symlink() or manifest.stat().st_nlink != 1
+                or manifest.stat().st_size > 32 * 1024 * 1024 or not isinstance(checksum, str)
+                or protected.get(manifest) != checksum or legacy.digest(manifest) != checksum):
+            _fail("Approved weapon omission receipt is missing, unprotected or changed", "input_changed")
+        with manifest.open("r", encoding="utf-8") as stream:
+            content = stream.read(32 * 1024 * 1024 + 1)
+        if len(content.encode("utf-8")) > 32 * 1024 * 1024 or legacy.digest(manifest) != checksum:
+            _fail("Approved weapon omission receipt changed during placement audit", "input_changed")
+        try:
+            receipt = json.loads(content)
+        except (ValueError, TypeError) as error:
+            _fail("Approved weapon omission receipt is malformed", "invalid_output", reason=str(error))
+        if (not isinstance(receipt, dict) or type(receipt.get("schema_version")) is not int
+                or receipt["schema_version"] != 1 or receipt.get("operation") != "weapon_omissions"
+                or receipt.get("scenario") != scenario or receipt.get("source_unchanged") is not True
+                or not isinstance(receipt.get("source_placement_graph"), dict)
+                or not isinstance(receipt.get("omitted_placement_graph"), dict)):
+            _fail("Approved weapon omission receipt lacks its verified placement graphs", "invalid_output")
+        if receipt["source_placement_graph"] != source_graph:
+            _fail("Pre-omission placements differ from immutable authored source", "invalid_output", tag=scenario)
+        expected_graph = receipt["omitted_placement_graph"]
+        verified_omission = manifest, checksum
+        omission_receipt = {"manifest": str(manifest), "sha256": checksum,
+                            "omitted_reference_count": omission.get("omitted_reference_count")}
+    if expected_graph != final_graph:
         _fail("Conversion changed an authored placement, collection permutation or spawn timing", "invalid_output", tag=scenario)
+    source_placements_preserved = source_graph == final_graph
     registry = _registry(tool, roots)
     if policy not in {"engine-native", "authored-default"}:
         _fail("Unknown weapon placement policy")
@@ -294,9 +335,11 @@ def audit_weapon_placements(tool, source_root, source_scenario, roots, scenario,
     record = {"schema_version": 1, "operation": "weapon_placement_audit", "policy": policy,
               "scenario": scenario,
               "placements": final_graph, "source_placements": source_graph, "registry": registry,
+              "authorized_expected_placements": expected_graph, "approved_omission_receipt": omission_receipt,
               "checks": checks, "conflicts": conflicts, "diagnostics": diagnostics,
               "capability": MARKER if output else None, "soul_references": soul_references,
-              "source_unchanged": True, "placements_preserved": True, "registry_preserved": True,
+              "source_unchanged": True, "placements_preserved": source_placements_preserved,
+              "authorized_placements_preserved": True, "registry_preserved": True,
               "gameplay_validation": "pending"}
     manifest = folder / "conversion.json"
     manifest.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
@@ -305,7 +348,9 @@ def audit_weapon_placements(tool, source_root, source_scenario, roots, scenario,
         protected.update({output / name: value for name, value in _tree(output).items()})
     steps.append({"operation": "weapon_placement_audit", "policy": policy, "placed_gun_candidates": len(checks),
                   "native_default_conflicts": len(conflicts), "capability": record["capability"],
-                  "diagnostics": diagnostics, "placements_preserved": True, "registry_preserved": True,
+                  "diagnostics": diagnostics, "placements_preserved": source_placements_preserved,
+                  "authorized_placements_preserved": True, "approved_omission_receipt": omission_receipt,
+                  "registry_preserved": True,
                   "manifest": str(manifest), "manifest_sha256": legacy.digest(manifest), "gameplay_validation": "pending"})
     return output, record
 

@@ -225,7 +225,7 @@ class BackendTests(unittest.TestCase):
             order.append("shell")
             return write_overlay(workspace, "shell", ["ui/ui_tags_loaded_multiplayer_scenario_type.tag_collection"])
 
-        def weapons(tool, stock, roots, required, scenario, workspace, steps, repairs, protected):
+        def weapons(tool, stock, roots, required, scenario, workspace, steps, repairs, protected, **kwargs):
             order.append("weapons")
             overlay = write_overlay(workspace, "weapons", [weapon_hud, weapon_counter, "globals/globals.globals"])
             (overlay / "globals/globals.globals").write_bytes(b"canonical registry retained")
@@ -277,9 +277,186 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(anchors.call_args.kwargs["native_tags"], {weapon_hud, weapon_counter, digits_hud})
         self.assertIn(digits_hud, result["provenance"]["reachable_tags"])
 
+    def test_implicit_soul_residency_reaches_assets_and_provenance_without_mcc_or_marker(self):
+        stock_maps = self.root / "stock-maps"
+        stock_maps.mkdir()
+        for name in ("bloodgulch", "a10", "ui"):
+            cache(stock_maps / (name + ".map"), name=name)
+        manifest = self.root / "asset-tools.json"
+        manifest.write_text("{}")
+        binary = self.root / "convert-bitmaps"
+        binary.write_bytes(b"controlled bitmap helper")
+        self.profile.update(weapon_policy="bungie-originals", asset_manifest=str(manifest),
+                            asset_policy={"audio": "preserve", "bitmaps": "bc7-to-dxt5"})
+        soul = "ui/shell/multiplayer.ui_widget_collection"
+        resident = "__native_policy/admitted_weapon_assets_v1.tag_collection"
+        weapon = "weapons/reviewed_extra.weapon"
+        bitmap = "weapons/reviewed_extra.bitmap"
+        bitmap_source = b"authored unsupported pixels, resident only through Soul"
+        stages = []
+
+        def stock_extract(tool, inputs, output, **kwargs):
+            output.mkdir()
+            path = output / "globals/globals.globals"
+            path.parent.mkdir()
+            path.write_bytes(b"canonical registry provider")
+            return {"inputs": {}, "compatibility_patches": []}
+
+        class ResidentInvader(FakeInvader):
+            def run(self, tool, *args):
+                result = super().run(tool, *args)
+                if tool == "extract":
+                    tags = Path(args[args.index("-t") + 1])
+                    for name, data in ((weapon, b"admitted authored weapon"), (bitmap, bitmap_source)):
+                        path = tags / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(data)
+                if tool == "dependency" and args[-1] == soul:
+                    return "\n".join([resident, weapon, bitmap])
+                return result
+
+        class NativeAssets:
+            def __init__(self, path, logs, commands):
+                self.manifest, self.manifest_hash = path, backend.legacy.digest(path)
+
+            def provenance(self):
+                return {"binaries": {"bitmaps": {"sha256": backend.legacy.digest(binary)}}}
+
+            def binary(self, kind):
+                return binary
+
+        def weapons(tool, stock, roots, required, scenario, workspace, steps, repairs, protected, **kwargs):
+            self.assertNotIn(soul, required)
+            overlay = workspace / "weapons/tags"
+            for name in (soul, resident):
+                path = overlay / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"checked residency references")
+            steps.append({"operation": "canonical_weapons", "native_hud_tags": []})
+            stages.append("weapons")
+            return overlay
+
+        def assets(tool, kind, roots, required, workspace, steps, repairs, **kwargs):
+            self.assertEqual(kind, "bitmaps")
+            self.assertTrue({soul, resident, weapon, bitmap}.issubset(required))
+            overlay = workspace / "native-bitmaps/tags"
+            path = overlay / bitmap
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"converted native pixels")
+            stages.append("assets")
+            return overlay
+
+        with patch.object(backend, "ApprovedInvader", ResidentInvader), \
+                patch.object(backend, "_extract_stock", side_effect=stock_extract), \
+                patch("tools.map_pipeline.stock_weapons.canonical_weapon_overlay", side_effect=weapons), \
+                patch("tools.map_pipeline.assets.AssetTools", NativeAssets), \
+                patch("tools.map_pipeline.assets.convert_assets", side_effect=assets), \
+                patch("tools.map_pipeline.presentation.canonical_shell_overlay") as shell, \
+                patch("tools.map_pipeline.hud.normalize_mcc_hud") as mcc:
+            for version in (5, 6, 7, 609, 13):
+                with self.subTest(version=version):
+                    self.header["version"] = version
+                    stages.clear()
+                    result = self.convert(stock_maps=stock_maps)
+                    self.assertEqual(stages, ["weapons", "assets"])
+                    required = next(step for step in result["steps"] if step["operation"] == "asset_dependencies")
+                    self.assertEqual(required["roots"].count(soul), 1)
+                    reachable = result["provenance"]["reachable_tags"]
+                    self.assertTrue({soul, resident, weapon, bitmap}.issubset(reachable))
+                    self.assertEqual(reachable[bitmap]["sha256"], hashlib.sha256(b"converted native pixels").hexdigest())
+                    self.assertNotIn(weapon, result["provenance"]["unused_extracted_tags"])
+                    self.assertNotIn(bitmap, result["provenance"]["unused_extracted_tags"])
+                    self.assertEqual((self.root / "workspace/source-tags" / bitmap).read_bytes(), bitmap_source)
+                    self.assertFalse(next(step for step in result["steps"]
+                                          if step["operation"] == "weapon_placement_audit")["capability"])
+                    import shutil
+                    shutil.rmtree(self.root / "workspace")
+        shell.assert_not_called()
+        mcc.assert_not_called()
+
     def convert(self, **kwargs):
         return backend.convert_cache(self.source, self.header, self.root / "workspace", self.profile,
                                      self.root / "bin", self.manifest, kwargs.pop("stock_maps", None), **kwargs)
+
+    def lineage_profile(self):
+        path = self.root / "lineage.json"
+        path.write_text(json.dumps({"schema_version": 1, "id": "reviewed-test", "version": "1.0.0", "entries": []}))
+        self.profile.update(weapon_policy="bungie-originals", weapon_lineage_catalog={
+            "file": "catalogs/reviewed-test.json", "sha256": backend.legacy.digest(path)},
+            weapon_lineage_catalog_path=str(path))
+        maps = self.root / "stock-maps"
+        maps.mkdir()
+        for name in ("bloodgulch", "a10", "ui"):
+            cache(maps / (name + ".map"), name=name)
+        return path, maps
+
+    def test_lineage_catalog_is_bound_to_immutable_raw_source_and_reported(self):
+        from tools.map_pipeline.weapon_lineage import catalog_metadata
+        path, maps = self.lineage_profile()
+        with patch("tools.map_pipeline.stock_weapons.canonical_weapon_overlay", return_value=None) as weapons:
+            result = self.convert(stock_maps=maps)
+        supplied = weapons.call_args.kwargs
+        self.assertEqual(supplied["lineage_source"], (self.root / "workspace/source-tags").resolve())
+        self.assertEqual(supplied["lineage_catalog"]["sha256"], backend.legacy.digest(path))
+        expected = backend._tree(self.root / "workspace/tags")
+        self.assertEqual(supplied["lineage_derived"], expected)
+        self.assertEqual(result["provenance"]["weapon_lineage"], catalog_metadata(supplied["lineage_catalog"]))
+        record = next(step for step in result["steps"] if step["operation"] == "weapon_lineage_catalog")
+        self.assertEqual(record["catalog"], result["provenance"]["weapon_lineage"])
+
+    def test_lineage_derived_baseline_excludes_later_profile_overlay_payload(self):
+        path, maps = self.lineage_profile()
+        overlay = self.root / "overlay/tags"
+        overlay.mkdir(parents=True)
+        (overlay / "reachable.bitmap").write_bytes(b"unreviewed later pixel change")
+        (overlay.parent / "conversion.json").write_text(json.dumps({"operation": "controlled-test-overlay"}))
+        self.profile["overlays"] = [str(overlay.parent)]
+        with patch.object(backend, "_checked_overlays", return_value=[overlay]), \
+                patch("tools.map_pipeline.stock_weapons.canonical_weapon_overlay", return_value=None) as weapons:
+            result = self.convert(stock_maps=maps)
+        baseline = weapons.call_args.kwargs["lineage_derived"]
+        self.assertEqual(baseline["reachable.bitmap"], hashlib.sha256(b"authored art").hexdigest())
+        self.assertNotEqual(baseline["reachable.bitmap"], backend.legacy.digest(overlay / "reachable.bitmap"))
+        record = next(step for step in result["steps"] if step["operation"] == "weapon_lineage_derived")
+        self.assertEqual(result["provenance"]["weapon_lineage_derived"],
+                         {"tag_count": record["tag_count"], "sha256": record["sha256"]})
+
+    def test_lineage_hash_mismatch_and_invalid_policy_fail_before_tools(self):
+        path, maps = self.lineage_profile()
+        path.write_text(path.read_text() + "\n")
+        with self.assertRaises(backend.ConversionError) as caught:
+            self.convert(stock_maps=maps)
+        self.assertEqual(caught.exception.stage, "weapon_lineage")
+        self.assertIn("SHA-256", caught.exception.message)
+        self.assertEqual(FakeInvader.calls, [])
+        self.profile["weapon_lineage_catalog"]["sha256"] = backend.legacy.digest(path)
+        self.profile["weapon_policy"] = "preserve"
+        with self.assertRaises(backend.ConversionError) as caught:
+            self.convert(stock_maps=maps)
+        self.assertEqual(caught.exception.stage, "weapon_lineage")
+        self.assertEqual(FakeInvader.calls, [])
+
+    def test_lineage_catalog_mutation_during_overlay_fails_closed(self):
+        path, maps = self.lineage_profile()
+        def changed(*args, **kwargs):
+            path.write_text(path.read_text() + "\n")
+            return None
+        with patch("tools.map_pipeline.stock_weapons.canonical_weapon_overlay", side_effect=changed):
+            with self.assertRaises(backend.ConversionError) as caught:
+                self.convert(stock_maps=maps)
+        self.assertEqual(caught.exception.code, "input_changed")
+        self.assertIn(str(path.resolve()), caught.exception.details["paths"])
+
+    def test_unselected_profile_passes_no_catalog_or_source(self):
+        path, maps = self.lineage_profile()
+        self.profile.pop("weapon_lineage_catalog")
+        self.profile.pop("weapon_lineage_catalog_path")
+        with patch("tools.map_pipeline.stock_weapons.canonical_weapon_overlay", return_value=None) as weapons:
+            result = self.convert(stock_maps=maps)
+        self.assertIsNone(weapons.call_args.kwargs["lineage_catalog"])
+        self.assertIsNone(weapons.call_args.kwargs["lineage_source"])
+        self.assertIsNone(weapons.call_args.kwargs["lineage_derived"])
+        self.assertNotIn("weapon_lineage", result["provenance"])
 
     def omission_profile(self):
         source = b"embedded recovered MCC HSC; unchanged authored scenario"
@@ -529,14 +706,12 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(source.read_bytes(), b"original authored scenario")
         self.assertEqual((tags / (compiled + ".scenario")).read_bytes(), source.read_bytes())
 
-
     def test_authored_scenario_punctuation_does_not_allow_unsafe_paths(self):
         for scenario in ("../map,1", "levels/[custom]/../map,1", "/map,1", "C:/map,1",
                          "levels/map,1\n", "levels/map,1:stream"):
             with self.subTest(scenario=scenario):
                 with self.assertRaisesRegex(backend.ConversionError, "unsafe"):
                     backend._scenario(self.root, {"name": "sample"}, {"scenario": scenario}, "safe_map")
-
 
     def test_exact_cache_hash_selects_recipe_independent_of_name(self):
         spec = {"source_sha256": self.header["sha256"], "source_name": "historic-source-name",
@@ -710,6 +885,51 @@ class ApprovedToolTests(unittest.TestCase):
 
 
 class StockLibraryTests(unittest.TestCase):
+    def test_additional_known_donors_use_weapon_closures_and_preserve_primary_priority(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            maps = root / "maps"
+            maps.mkdir()
+            for name in ("bloodgulch", "a10", "ui", "c40", "a30", "wizard", "unreviewed"):
+                cache(maps / (name + ".map"), name=name)
+            tool = Mock()
+            record = backend._extract_stock(tool, maps, root / "stock", include_campaign_weapons=True)
+            self.assertEqual(record["donor_priority"], ["bloodgulch", "a10", "ui", "c40", "a30", "wizard"])
+            self.assertEqual(len(tool.run.call_args_list), 6)
+            for call in tool.run.call_args_list[:4]:
+                self.assertEqual(call.args[1], "-t")
+            for call in tool.run.call_args_list[4:]:
+                self.assertEqual(call.args[1:4], ("-r", "-s", "*.weapon"))
+            self.assertEqual(record["inputs"]["a30"]["selection"], "weapon-closure")
+            self.assertNotIn("unreviewed", record["inputs"])
+            # Existing preserve profiles keep their original three donor inputs.
+            record = backend._extract_stock(Mock(), maps, root / "legacy", include_campaign_weapons=False)
+            self.assertEqual(record["donor_priority"], ["bloodgulch", "a10", "ui"])
+
+    def test_later_donor_overwrite_and_source_mutation_are_rejected(self):
+        for mutate in ("earlier-tag", "source-cache"):
+            with self.subTest(mutate=mutate), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                maps = root / "maps"
+                maps.mkdir()
+                for name in ("bloodgulch", "a10", "ui", "a30"):
+                    cache(maps / (name + ".map"), name=name)
+                def extract(_, *args):
+                    destination = Path(args[args.index("-t") + 1])
+                    original = destination / "shared.weapon"
+                    if not original.exists():
+                        original.write_bytes(b"first winning stock tag")
+                    if Path(args[-1]).stem == "a30":
+                        if mutate == "earlier-tag":
+                            original.write_bytes(b"wrong replacement")
+                        else:
+                            Path(args[-1]).write_bytes(b"changed donor")
+                tool = Mock()
+                tool.run.side_effect = extract
+                with self.assertRaises(backend.ConversionError) as caught:
+                    backend._extract_stock(tool, maps, root / "stock", include_campaign_weapons=True)
+                self.assertEqual((caught.exception.code, caught.exception.stage), ("input_changed", "stock"))
+
     def test_campaign_library_is_optional_and_rejects_non_original_cache(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

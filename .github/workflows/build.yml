@@ -106,6 +106,7 @@ jobs:
           tools.test_map_pipeline_formats tools.test_map_pipeline_hud tools.test_map_pipeline_hud_anchors
           tools.test_map_pipeline_hud_digits tools.test_map_pipeline_metadata tools.test_map_pipeline_presentation
           tools.test_map_pipeline_stock_hud tools.test_map_pipeline_stock_weapons tools.test_map_pipeline_weapon_placements
+          tools.test_map_pipeline_weapon_lineage tools.test_map_pipeline_weapon_omissions tools.test_map_pipeline_weapon_residency
 
       - name: Expanded Fiesta cache lifecycle and authoring
         run: >-

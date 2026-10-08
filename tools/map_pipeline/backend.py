@@ -24,6 +24,10 @@ TOOL_TIMEOUT_SECONDS = 300
 OUTPUT_EXCERPT_CHARS = 16000
 STARTING_PROFILE_PATCH_SHA256 = "f63f474725424241aa6c647d0062ef9b89f48c31536b5ebecbb45f90fae47d36"
 AUTHORING_TOOLS = ("extract", "dependency", "convert", "refactor", "edit", "bludgeon", "build")
+STOCK_DONOR_MAPS = ("a10", "a30", "a50", "b30", "b40", "beavercreek", "bloodgulch",
+                    "boardingaction", "c10", "c20", "c40", "carousel", "chillout", "d20", "d40",
+                    "damnation", "hangemhigh", "longest", "prisoner", "putput", "ratrace",
+                    "sidewinder", "ui", "wizard")
 
 
 class ConversionError(RuntimeError):
@@ -101,6 +105,18 @@ def _tree(path: Path) -> dict:
         if item.is_symlink() or (item.is_file() and item.stat().st_nlink != 1):
             raise ValueError(f"Linked tag inputs are not supported: {item}")
     return conversion.tree(path)
+
+
+def _dependency_roots(roots, scenario, native_presentation=False):
+    """Include Xbox's implicit multiplayer inputs for every source format."""
+    origins = [scenario]
+    if any((root / "globals/globals.globals").is_file() for root in roots):
+        origins.append("globals/globals.globals")
+    if native_presentation:
+        origins.append("ui/ui_tags_loaded_multiplayer_scenario_type.tag_collection")
+    if any((root / "ui/shell/multiplayer.ui_widget_collection").is_file() for root in roots):
+        origins.append("ui/shell/multiplayer.ui_widget_collection")
+    return list(dict.fromkeys(origins))
 
 
 def _scenario_spec(profile: dict, header: dict) -> dict | None:
@@ -187,24 +203,42 @@ def _reviewed_pb3_spec(spec: dict) -> None:
         raise ConversionError("needs_profile", "profile", "Script removal must match the checked-in PB3 recipe exactly")
 
 
-def _extract_stock(tool: ApprovedInvader, stock_maps: Path, destination: Path, include_campaign_weapons=False) -> dict:
-    destination.mkdir()
-    sources = {}
+def _stock_donors(stock_maps: Path, include_campaign_weapons=False) -> list[str]:
     names = ["bloodgulch", "a10", "ui"]
     if include_campaign_weapons and (stock_maps / "c40.map").exists():
         # Two Betrayals supplies the original Sword/Fuel Rod/Hunter/Sentinel
         # definitions. Existing multiplayer tags retain extraction priority.
         names.append("c40")
+    if include_campaign_weapons:
+        names.extend(name for name in STOCK_DONOR_MAPS if name not in names and (stock_maps / f"{name}.map").exists())
+    return names
+
+
+def _extract_stock(tool: ApprovedInvader, stock_maps: Path, destination: Path, include_campaign_weapons=False) -> dict:
+    destination.mkdir()
+    sources = {}
+    names = _stock_donors(stock_maps, include_campaign_weapons)
     for name in names:
         source = stock_maps / f"{name}.map"
         h = legacy.cache_header(source)
         if h["version"] != 5 or h["build"] != legacy.NTSC_BUILD:
             raise ConversionError("needs_profile", "stock", "Stock fallback requires Xbox NTSC 2276", h)
-        tool.run("extract", "-t", destination, source)
+        before = _tree(destination)
+        # The initial donors retain their established full UI/gameplay library.
+        # Further known originals supply weapon dependency closures only; the
+        # extractor's default first-wins behavior keeps earlier native tags.
+        weapon_only = name not in {"bloodgulch", "a10", "ui", "c40"}
+        selection = ["-r", "-s", "*.weapon"] if weapon_only else []
+        tool.run("extract", *selection, "-t", destination, source)
+        after = _tree(destination)
+        changed = sorted(tag for tag, digest in before.items() if after.get(tag) != digest)
+        if changed:
+            raise ConversionError("input_changed", "stock", "A later stock donor changed an earlier winning tag",
+                                  {"donor": name, "changed_tags": changed})
         if legacy.digest(source) != h["sha256"]:
             raise ConversionError("input_changed", "stock", "Stock input changed during extraction")
-        sources[name] = {"path": str(source), **h}
-    return {"inputs": sources, "compatibility_patches": []}
+        sources[name] = {"path": str(source), "selection": "weapon-closure" if weapon_only else "full-library", **h}
+    return {"inputs": sources, "donor_priority": names, "compatibility_patches": []}
 
 
 def _checked_overlays(paths: list, known_roots: list[Path]) -> list[Path]:
@@ -315,6 +349,8 @@ def convert_cache(source: Path, header: dict, workspace: Path, profile: dict,
     protected: dict[Path, str] = {source: legacy.digest(source)}
     original_tree = None
     asset_toolchain = None
+    lineage_catalog = None
+    lineage_derived = None
     originals = workspace / "source-tags"
     steps: list[dict] = []
     repairs: list[dict] = []
@@ -342,6 +378,22 @@ def convert_cache(source: Path, header: dict, workspace: Path, profile: dict,
         if weapon_policy not in {"preserve", "bungie-originals"}:
             raise ConversionError("needs_profile", "profile", "Unknown weapon policy")
         canonical_weapons = weapon_policy == "bungie-originals"
+        from .profiles import PROFILE_ROOT, validate_catalog_selection
+        from .weapon_lineage import load_catalog, catalog_metadata
+        stage = "weapon_lineage"
+        selection = validate_catalog_selection(profile.get("weapon_lineage_catalog"))
+        if selection is not None:
+            if not canonical_weapons or policy != "authored-first":
+                raise ConversionError("needs_profile", stage, "Weapon lineage requires original Bungie weapons and authored-first dependencies")
+            selected_path = Path(profile.get("weapon_lineage_catalog_path", PROFILE_ROOT / selection["file"]))
+            lineage_catalog = load_catalog(selected_path, selection["sha256"])
+            metadata = catalog_metadata(lineage_catalog)
+            if "weapon_lineage" in profile and profile["weapon_lineage"] != metadata:
+                raise ConversionError("needs_profile", stage, "Loaded weapon lineage metadata differs from the selected profile")
+            protected[Path(lineage_catalog["path"])] = lineage_catalog["sha256"]
+            steps.append({"operation": "weapon_lineage_catalog", "catalog": metadata,
+                          "source_binding": "immutable extracted source identity and complete dependency hashes"})
+        stage = "profile"
         placement_policy = profile.get("weapon_placement_policy", "engine-native")
         if placement_policy not in {"engine-native", "authored-default"} or (placement_policy == "authored-default"
                 and (not canonical_weapons or not native_digits or policy != "authored-first")):
@@ -407,9 +459,7 @@ def convert_cache(source: Path, header: dict, workspace: Path, profile: dict,
         stock_record = {"inputs": {}, "compatibility_patches": []}
         if stock_maps:
             tool.stage = stage = "stock"
-            stock_names = ["bloodgulch", "a10", "ui"]
-            if canonical_weapons and (stock_maps / "c40.map").exists():
-                stock_names.append("c40")
+            stock_names = _stock_donors(stock_maps, include_campaign_weapons=canonical_weapons)
             for name in stock_names:
                 p = stock_maps / f"{name}.map"
                 protected[p] = legacy.digest(p)
@@ -468,6 +518,10 @@ def convert_cache(source: Path, header: dict, workspace: Path, profile: dict,
             shaders = legacy.convert_extended_shaders(tool, tags)
             steps.append({"operation": "extended_shaders", "conversions": shaders})
             repairs.extend({"kind": "extended_shader_layout", **item} for item in shaders)
+            if lineage_catalog is not None:
+                # Only these trusted format stages establish derived lineage
+                # bytes. A user overlay cannot redefine this receipt.
+                lineage_derived = _tree(tags)
             stage = "overlays"
             overlays = _checked_overlays(profile.get("overlays", []), [originals, tags, stock])
             if scripts == "omit" and any((root / (name + ".scenario")).is_file()
@@ -488,6 +542,22 @@ def convert_cache(source: Path, header: dict, workspace: Path, profile: dict,
                 tool.stage = stage = "presentation_shell"
                 shell = canonical_shell_overlay(tool, stock, roots, workspace, steps, repairs, protected)
                 roots.insert(0, shell)
+                if lineage_derived is not None:
+                    lineage_derived.update(_tree(shell))
+            if lineage_derived is not None:
+                from .profiles import fingerprint
+                steps.append({"operation": "weapon_lineage_derived", "tag_count": len(lineage_derived),
+                              "sha256": fingerprint(lineage_derived),
+                              "allowed_stages": ["model_layout", "extended_shader_layout", "canonical_native_shell"]})
+            if lineage_catalog is not None:
+                from .weapon_omissions import omit_reviewed_weapons
+                tool.stage = stage = "weapon_omissions"
+                excluded = omit_reviewed_weapons(tool, lineage_catalog, originals, roots,
+                                                compiled + ".scenario", workspace, steps,
+                                                omissions, protected,
+                                                lineage_derived=lineage_derived)
+                if excluded is not None:
+                    roots.insert(0, excluded)
             scenario_root = next(root for root in roots if (root / (compiled + ".scenario")).is_file())
             if scenario_root != tags:
                 tool.stage = stage = "scripts"
@@ -516,14 +586,11 @@ def convert_cache(source: Path, header: dict, workspace: Path, profile: dict,
                 if native_presentation:
                     protected[asset_tools.binary("hud")] = asset_toolchain["binaries"]["hud"]["sha256"]
                     protected[asset_tools.binary("mips")] = asset_toolchain["binaries"]["mips"]["sha256"]
-                dependency_roots = [compiled + ".scenario"]
-                # Invader compiles globals implicitly even when the scenario
-                # has no explicit reference to the engine's common assets.
-                if any((root / "globals/globals.globals").is_file() for root in roots):
-                    dependency_roots.append("globals/globals.globals")
-                if native_presentation:
-                    dependency_roots.append("ui/ui_tags_loaded_multiplayer_scenario_type.tag_collection")
+                dependency_roots = []
                 def current_dependencies():
+                    # Canonical weapon residency can introduce Soul after the
+                    # initial closure. Re-evaluate implicit roots each time.
+                    dependency_roots[:] = _dependency_roots(roots, compiled + ".scenario", native_presentation)
                     result = set(dependency_roots)
                     root_args = sum((["-t", root] for root in roots), [])
                     for origin in dependency_roots:
@@ -536,7 +603,10 @@ def convert_cache(source: Path, header: dict, workspace: Path, profile: dict,
                     from .hud import HUD_TYPES
                     tool.stage = stage = "canonical_weapons"
                     overlay = canonical_weapon_overlay(tool, stock, roots, required, compiled + ".scenario",
-                                                        workspace, steps, repairs, protected)
+                                                        workspace, steps, repairs, protected,
+                                                        lineage_catalog=lineage_catalog,
+                                                        lineage_source=originals if lineage_catalog is not None else None,
+                                                        lineage_derived=lineage_derived)
                     if overlay:
                         roots.insert(0, overlay)
                         overlay_tags = _tree(overlay)
@@ -565,7 +635,7 @@ def convert_cache(source: Path, header: dict, workspace: Path, profile: dict,
                             raise ConversionError("invalid_output", stage, "Canonical digits marker does not identify an output HUDNumber tag", {"tag": name})
                         native_hud_tags.add(name)
                     required = current_dependencies()
-                steps.append({"operation": "asset_dependencies", "roots": dependency_roots,
+                steps.append({"operation": "asset_dependencies", "roots": list(dependency_roots),
                               "required_tags": len(required)})
                 for kind in ("extensions", "audio", "bitmaps", "mips", "packing"):
                     if decisions[kind] != "preserve":
@@ -604,7 +674,7 @@ def convert_cache(source: Path, header: dict, workspace: Path, profile: dict,
                                                 workspace, steps, repairs, protected, native_tags=native_hud_tags)
                     if overlay:
                         roots.insert(0, overlay)
-            from .weapon_placements import audit_weapon_placements, verify_compiled_placements, SOUL
+            from .weapon_placements import audit_weapon_placements, verify_compiled_placements
             tool.stage = stage = "weapon_placements"
             placement_overlay, placement_audit = audit_weapon_placements(
                 tool, originals, scenario + ".scenario", roots, compiled + ".scenario",
@@ -648,13 +718,7 @@ def convert_cache(source: Path, header: dict, workspace: Path, profile: dict,
                     raise ConversionError("input_changed", stage, "Compiler or overlay changed an input tag tree", {"tree": root})
             tool.stage = stage = "dependencies"
             dependencies = []
-            origins = [compiled + ".scenario"]
-            if any((root / "globals/globals.globals").is_file() for root in roots):
-                origins.append("globals/globals.globals")
-            if native_presentation:
-                origins.append("ui/ui_tags_loaded_multiplayer_scenario_type.tag_collection")
-            if placement_audit["capability"]:
-                origins.append(SOUL)
+            origins = _dependency_roots(roots, compiled + ".scenario", native_presentation)
             for origin in origins:
                 dependencies.extend([origin, *tool.run("dependency", "-r", *sum((["-t", root] for root in roots), []), origin).splitlines()])
             resolved = {}
@@ -673,6 +737,10 @@ def convert_cache(source: Path, header: dict, workspace: Path, profile: dict,
             provenance = {"source_tags": original_tree, "stock": stock_record, "dependency_policy": policy,
                           "priority": [str(root) for root in roots], "reachable_tags": resolved,
                           "unused_extracted_tags": sorted(set(original_tree) - set(resolved))}
+            if lineage_catalog is not None:
+                provenance["weapon_lineage"] = catalog_metadata(lineage_catalog)
+                provenance["weapon_lineage_derived"] = {"tag_count": len(lineage_derived),
+                                                       "sha256": fingerprint(lineage_derived)}
             if provenance["unused_extracted_tags"]:
                 omissions.append({"kind": "unreachable_extracted_tags", "tags": provenance["unused_extracted_tags"],
                                   "reason": "Not reachable from the compiled scenario; required dependencies are retained"})

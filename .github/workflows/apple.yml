@@ -86,6 +86,7 @@ jobs:
           tools.test_map_pipeline_formats tools.test_map_pipeline_hud tools.test_map_pipeline_hud_anchors
           tools.test_map_pipeline_hud_digits tools.test_map_pipeline_metadata tools.test_map_pipeline_presentation
           tools.test_map_pipeline_stock_hud tools.test_map_pipeline_stock_weapons tools.test_map_pipeline_weapon_placements
+          tools.test_map_pipeline_weapon_lineage tools.test_map_pipeline_weapon_omissions tools.test_map_pipeline_weapon_residency
 
       - name: Input timing and fidelity comparison fixtures
         run: python3 -m unittest tools.test_input_delay tools.test_performance_network tools.test_performance_variants tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_authored_weapon_placements tools.test_halo_fidelity tools.test_meeting_gameplay tools.test_refined_tag_effects

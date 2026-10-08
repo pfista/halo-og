@@ -4,7 +4,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -12,6 +12,23 @@ PROFILE_ROOT = ROOT / "tools" / "map_conversion" / "profiles"
 FORMATS = {5, 6, 7, 609, 13}
 TARGET_BUILD = "01.10.12.2276"
 ID = re.compile(r"[a-z0-9][a-z0-9_-]{0,30}\Z")
+
+
+def validate_catalog_selection(value):
+    if value is None:
+        return None
+    if (not isinstance(value, dict) or set(value) != {"file", "sha256"}
+            or not isinstance(value["file"], str) or not isinstance(value["sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", value["sha256"])):
+        raise ValueError("Weapon lineage catalog requires a relative JSON file and exact SHA-256")
+    name = value["file"]
+    path = PurePosixPath(name)
+    if (not name or len(name) > 1024 or path.is_absolute() or path.as_posix() != name
+            or any(part in {"", ".", ".."} for part in name.split("/"))
+            or any(ord(c) < 32 or ord(c) == 127 for c in name) or "\\" in name or ":" in name
+            or path.suffix != ".json" or path.name == ".json"):
+        raise ValueError("Weapon lineage catalog file must stay inside the profile directory")
+    return copy.deepcopy(value)
 
 
 def fingerprint(value: object) -> str:
@@ -24,7 +41,7 @@ def validate_profile(value: object) -> dict:
         raise ValueError("Conversion profile must be an object")
     profile = copy.deepcopy(value)
     allowed = {"schema_version", "id", "version", "description", "supported_formats", "target",
-               "dependency_policy", "script_policy", "script_omission_reason", "asset_policy", "presentation_policy", "stock_weapon_hud_policy", "weapon_policy", "weapon_placement_policy", "maps", "overlays", "metadata"}
+               "dependency_policy", "script_policy", "script_omission_reason", "asset_policy", "presentation_policy", "stock_weapon_hud_policy", "weapon_policy", "weapon_placement_policy", "weapon_lineage_catalog", "maps", "overlays", "metadata"}
     if set(profile) - allowed:
         raise ValueError("Unknown profile fields: " + ", ".join(sorted(set(profile) - allowed)))
     if (type(profile.get("schema_version")) is not int or profile["schema_version"] != 1 or not isinstance(profile.get("id"), str)
@@ -65,6 +82,10 @@ def validate_profile(value: object) -> dict:
     profile.setdefault("weapon_policy", "preserve")
     if not isinstance(profile["weapon_policy"], str) or profile["weapon_policy"] not in {"preserve", "bungie-originals"}:
         raise ValueError("Weapon policy must select preserve or bungie-originals")
+    profile["weapon_lineage_catalog"] = validate_catalog_selection(profile.get("weapon_lineage_catalog"))
+    if (profile["weapon_lineage_catalog"] is not None
+            and (profile["weapon_policy"] != "bungie-originals" or profile["dependency_policy"] != "authored-first")):
+        raise ValueError("Weapon lineage catalog requires original Bungie weapons and authored-first dependencies")
     profile.setdefault("weapon_placement_policy", "engine-native")
     if (not isinstance(profile["weapon_placement_policy"], str)
             or profile["weapon_placement_policy"] not in {"engine-native", "authored-default"}):
@@ -137,6 +158,17 @@ def load_profile(selection: str | Path = "authored-xbox-v5") -> dict:
         raise ValueError("Profile exceeds 1 MiB")
     value = json.loads(path.read_text(encoding="utf-8"))
     profile = validate_profile(value)
+    if profile["weapon_lineage_catalog"] is not None:
+        from .weapon_lineage import load_catalog, catalog_metadata
+        selected = profile["weapon_lineage_catalog"]
+        base = path.parent.resolve(strict=True)
+        catalog_path = base / selected["file"]
+        if any(candidate.is_symlink() for candidate in [catalog_path, *catalog_path.parents]
+               if candidate != base and base in candidate.parents):
+            raise ValueError("Weapon lineage catalog must not leave the profile directory through symlinks")
+        catalog = load_catalog(catalog_path, selected["sha256"])
+        profile["weapon_lineage_catalog_path"] = catalog["path"]
+        profile["weapon_lineage"] = catalog_metadata(catalog)
     # Operational paths are resolved from the profile file, outside its portable fingerprint.
     profile["overlays"] = [str((path.parent / p).resolve(strict=True)) for p in profile["overlays"]]
     return profile

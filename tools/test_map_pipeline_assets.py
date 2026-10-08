@@ -609,7 +609,7 @@ class DimensionProfileTests(unittest.TestCase):
         for name in ("authored-xbox-v5", "og-multiplayer-v5"):
             with self.subTest(profile=name):
                 self.assertEqual(profiles.load_profile(name)["target"]["max_cache_bytes"], 512 * 1024 * 1024)
-        self.assertEqual(profiles.load_profile("og-multiplayer-v5")["version"], "1.10.0")
+        self.assertEqual(profiles.load_profile("og-multiplayer-v5")["version"], "1.12.0")
         self.assertEqual(profiles.load_profile("jukkis-pb3")["target"]["max_cache_bytes"], 128 * 1024 * 1024)
 
     def test_default_and_legacy_profiles_preserve_dimensions_without_mutating_input(self):

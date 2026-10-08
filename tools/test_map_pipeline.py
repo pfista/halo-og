@@ -215,6 +215,43 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(warning["value"]["remaining_missing_fields"], ["hud_interface"])
         self.assertEqual(record["gameplay_validation"], "pending")
 
+    def test_community_exception_report_is_distinct_from_original_completion(self):
+        self.source(version=13)
+        approval = {"kind": "user-decision", "date": "2026-10-08",
+                    "reference": "thread://01a116b1-1414-7ea2-ad25-7cdf34ebce54",
+                    "statement": "Retain this reviewed community revolver as an explicit exception"}
+        community = "weapons/magnum/magnum.weapon"
+        original = "weapons/gravity rifle/gravity rifle.weapon"
+        def compiler(*args):
+            result = self.compiler(*args)
+            result["steps"].append({"operation": "canonical_weapons",
+                "authored_original_completions": {original: {
+                    "stock_weapon": original, "remaining_missing_fields": [],
+                    "diagnostic": "Original completion retained; behavior validation is pending"}},
+                "authored_community_exceptions": {community: {
+                    "classification": "approved_community_weapon",
+                    "reviewed_lineage": {"outcome": "approved-community", "ancestor": None,
+                                         "approval": approval}}}})
+            return result
+        result = self.convert(invader_bin=self.root, invader_manifest=self.root / "manifest", backend=compiler)
+        record = result["maps"][0]
+        self.assertEqual(record["status"], "converted")
+        retained = next(item for item in record["diagnostics"] if item["code"] == "approved_community_weapon_retained")
+        self.assertEqual((retained["tag"], retained["tag_type"], retained["severity"]), (community, "weapon", "info"))
+        self.assertEqual(retained["value"], {"outcome": "approved-community", "approval": approval,
+                                            "gameplay_validation": "pending"})
+        self.assertIn("no original Halo 1 ancestry is claimed", retained["message"])
+        originals = [item for item in record["diagnostics"] if item["code"] == "original_completion_retained"]
+        self.assertEqual([item["tag"] for item in originals], [original])
+        report = json.loads((self.output / record["report_files"]["json"]).read_text())
+        published = next(item for item in report["diagnostics"] if item["code"] == retained["code"])
+        self.assertEqual(published["value"]["approval"], approval)
+        rendered = (self.output / record["report_files"]["markdown"]).read_text()
+        self.assertIn("approved_community_weapon_retained", rendered)
+        self.assertIn("no original Halo 1 ancestry is claimed", rendered)
+        metadata = json.loads((self.output / record["outputs"]["metadata"]["file"]).read_text())
+        self.assertEqual(metadata["gameplay_validation"], "pending")
+
     def test_source_hash_recipe_is_passed_to_adapter_independent_of_scenario_name(self):
         source = self.source("cache_header_name", 13)
         value = profiles.load_profile()
@@ -462,7 +499,7 @@ class ProfileTests(unittest.TestCase):
         self.assertNotEqual(normalized["sha256"], profiles.validate_profile(native)["sha256"])
         og = profiles.load_profile("og-multiplayer-v5")
         self.assertEqual(og["weapon_placement_policy"], "authored-default")
-        self.assertEqual(og["version"], "1.10.0")
+        self.assertEqual(og["version"], "1.12.0")
         for changes in ({"weapon_policy": "preserve"}, {"presentation_policy": "preserve"},
                         {"dependency_policy": "stock-first"}):
             with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, "Authored weapon placements"):

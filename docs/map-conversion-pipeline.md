@@ -193,8 +193,10 @@ before using the existing Up-res artwork; logical HUD sizes stay unchanged.
 Custom or modified pixels retain their authored artwork. The original Xbox
 weapon registry replaces only the authored
 Globals weapon-list field; other Globals fields keep their source decisions.
-Verified original campaign/NPC registry entries can follow the unchanged native
-registry prefix, preserving its weapon enum indices. Unidentified unused registry
+Verified original campaign/NPC and approved community assets remain resident
+through a private collection linked from the Xbox implicit multiplayer root.
+The native weapon registry retains its exact original entries and enum indices.
+Unidentified unused registry
 entries are omitted with their identity diagnostics.
 This also removes unused MCC-only weapon registry dependencies.
 
@@ -205,21 +207,98 @@ filename alone does not prove a Bungie asset. A cut weapon absent from those
 references needs reviewed original-asset provenance before it can be enabled.
 The default `authored-xbox-v5` profile retains `weapon_policy: preserve`.
 
-The canonical library uses original `bloodgulch`, `a10` and `ui` caches, plus
-`c40` when available for campaign weapons. Each input must be Xbox NTSC v5,
-build `01.10.12.2276`, and its checksum is recorded. Multiplayer assets retain
-extraction priority. In the original cache inventory, Flamethrower and Gravity
+The canonical library starts with original `bloodgulch`, `a10`, `ui` and `c40`
+caches, then inventories weapon dependency trees from every available original
+multiplayer and campaign cache in the 24-map retail set. Each input must be Xbox
+NTSC v5, build `01.10.12.2276`, and its checksum is recorded. Earlier donors retain
+extraction priority; later donors cannot overwrite their tags. In the original
+cache inventory, Flamethrower and Gravity
 Rifle are the two cut weapon entries. Energy Sword, Fuel Rod, Hunter Fuel Rod
 and Sentinel weapon definitions shipped as NPC weapons. Gravity Rifle lacks
 first-person assets and a HUD. Completed implementations of original NPC or
 unfinished weapons may be retained when their original identity is verified;
 the report distinguishes these authored completions from canonical original
-asset copies and records their dependencies. At least one originally missing
-first-person model, animation or HUD reference must be supplied to classify an
-authored implementation as a completion. Partial completions retain those assets
-and report the remaining fields for the map builder. Every reachable weapon in
-their dependency closure must have an original ancestor. Their MCC HUDs still
-pass through the normal format conversion. Unknown weapon identities remain blockers.
+asset copies and records their dependencies. Without a reviewed lineage entry,
+at least one originally missing first-person model, animation or HUD reference
+must be supplied to classify an authored implementation as a completion. Partial
+completions retain those assets and report the remaining fields for the map
+builder. Every reachable weapon in their dependency closure must have an original
+ancestor or an explicit reviewed community exception. Their MCC HUDs still pass
+through the normal format conversion.
+
+Version 1.11.0 selects the versioned
+[`halo1-weapon-lineage` catalog](../tools/map_conversion/profiles/catalogs/halo1-weapon-lineage.json)
+by a profile-relative filename and exact SHA-256. It admits reviewed restorations
+whose prerelease Halo 1 ancestor is absent from retail caches, and reviewed
+completions of original NPC assets. An admission requires cited ancestry evidence,
+the exact source weapon identity, and hashes for its complete dependency tree.
+The rule applies to matching assets in any map; map filenames do not grant an
+exception. Recognizable complete original guns still use canonical Xbox assets.
+The native weapon registry remains unchanged. Version 1.12.0 links additional
+admitted assets through a private resident tag collection rather than exhausting
+the native Globals weapon-list limit of 20. Xbox multiplayer already preserves
+weapon definitions absent from that list; authored collections continue to
+reference them directly. Registry-only admitted assets remain loaded through the
+resident collection. Existing multiplayer UI references retain their order.
+
+The converter matches the immutable extracted originals first. It also checks
+the winning weapon and every dependency against the snapshot produced by the
+approved model/shader format conversions and native shell stage, before authored
+overlays. A changed projectile, damage effect, model, or other dependency requires
+a fresh review. Reports record the catalog version and checksum, reviewed and
+applied outcomes, source and converted hashes, and evidence. `unverified` and
+`unsupported` entries remain blockers; mismatched variants report missing, extra,
+and changed tags with expected and actual hashes. See the
+[Digsite ancestry review](digsite-weapon-lineage.md) for the current decisions and
+unresolved assets.
+
+Version 1.12.0 also supports explicit user decisions in the catalog. A
+`user-decision` approval records its date, originating chat reference and exact
+statement. It can confirm a specific original completion, or admit a separately
+classified `approved-community` asset with no claimed Halo 1 ancestor. This is
+used for the approved Magnum/Revolver exception. Its source and dependencies
+remain hash-bound, its authored HUD receives normal format conversion, and
+reports keep community exceptions separate from original restorations. Complete
+recognizable original guns still use OG assets even if a catalog entry requests
+a community exception.
+
+An explicit `omit` decision requires its own user approval and the same exact
+source variant binding. The converter removes approved excluded-weapon
+references only from private converted copies, before weapon canonicalization,
+and records every affected tag and field. It never grants a blanket filename
+rule or substitutes another gun. Unreviewed variants and unsupported reference
+shapes still produce actionable failures. The Battle Rifle uses this explicit
+omission decision; it is not classified as an allowed weapon.
+
+### Review another weapon variant
+
+Use the immutable `source-tags` directory retained by a conversion attempt.
+Create a new draft outside that directory:
+
+```sh
+python3 tools/review_weapon_lineage.py /path/to/retained/source-tags \
+  --invader-bin build/map-tools/authoring-new/build \
+  --invader-manifest build/map-tools/authoring-new/source-manifest.json \
+  --weapon 'weapons/example/example.weapon' \
+  --output build/weapon-review/example-draft.json
+```
+
+Omit `--weapon` to inventory every extracted weapon, or repeat it to select a
+group. The helper verifies the approved toolchain, inventories complete source
+dependency trees, preserves the originals and existing output files, and records
+its commands and errors beside the draft. Every draft entry starts `unverified`;
+hashes establish content identity, not historical authorship. Missing dependencies
+produce explicit errors rather than an admission.
+
+Review primary source or artist evidence for each ancestor, then assign a cited
+`canonical-stock` or `original-completion` decision, or retain an `unverified` or
+`unsupported` decision with a reason. An explicit user decision can instead
+approve an `approved-community` exception or an `omit` operation with a dated
+approval record; neither outcome claims original Halo 1 ancestry. Add the
+reviewed variant to a versioned
+catalog and update the selecting profile's version and catalog checksum. Rerun
+the converter to apply the decision; never substitute a different weapon merely
+to make compilation pass.
 
 Version 1.10.0 also selects `weapon_placement_policy: authored-default`. This is
 an explicit community-map exception to the original Xbox rule that replaces an
@@ -231,6 +310,12 @@ scenario weapon placements,
 then checks their final identities against the native Globals registry. Source
 and compiled-cache audits record the placement, original identity and effective
 native replacement. Source caches and extracted originals remain unchanged.
+When an explicit weapon omission applies, the placement audit verifies the
+protected omission receipt, checks its prior placement graph against the original
+source, and compares the final graph to the recorded post-omission graph. Every
+other position, spawn setting, collection weight and placement remains subject
+to the same equality checks. Compiled-cache readback still verifies the final
+graph independently.
 
 Only an audited Flamethrower replacement conflict enables the capability. The
 converter creates `__native_policy/authored_weapon_placements_v1.string_list`
@@ -358,7 +443,9 @@ an explicit ID/version, supported cache formats, dependency/script, weapon,
 weapon-placement and presentation policies,
 target capacities, optional exact source/scenario selections and ordered overlay
 directories. Its canonical JSON fingerprint is recorded independently of local
-operating paths. Overlay paths resolve relative to the profile file; expected
+operating paths. A weapon lineage catalog uses a profile-relative filename and
+an exact content checksum, both included in that fingerprint. Overlay paths
+resolve relative to the profile file; expected
 input hashes and conversion manifests must match. Selecting `reviewed` scripts
 or `stock-first` dependencies does not create a new removal recipe automatically.
 

@@ -109,6 +109,85 @@ class PlacementTests(unittest.TestCase):
         return placement.audit_weapon_placements(tool or FakeInvader(), self.source, self.original_scenario,
                 roots or [self.working], self.scenario, workspace or self.workspace, self.steps, self.repairs, self.protected, policy)
 
+    def omission_receipt(self, before=None, after=None):
+        tool = FakeInvader()
+        raw = placement._placements(tool, [self.source], self.original_scenario)
+        # A verified omission removes one collection permutation, while the
+        # unrelated direct weapon's location/ammo/timing remain unchanged.
+        self.tag(self.working, self.collection, {**self.collection_body, "permutations": []})
+        post = placement._placements(tool, [self.working], self.scenario)
+        value = {"schema_version": 1, "operation": "weapon_omissions", "scenario": self.scenario,
+                 "source_unchanged": True, "source_placement_graph": before if before is not None else raw,
+                 "omitted_placement_graph": after if after is not None else post}
+        manifest = self.workspace / "omissions.json"
+        manifest.write_text(json.dumps(value, sort_keys=True))
+        checksum = legacy.digest(manifest)
+        self.protected[manifest] = checksum
+        self.steps.append({"operation": "weapon_omissions", "manifest": str(manifest),
+                           "manifest_sha256": checksum, "omitted_reference_count": 1})
+        return manifest, raw, post
+
+    def test_verified_omission_preserves_authorized_graph_and_compiled_readback(self):
+        manifest, raw, post = self.omission_receipt()
+        overlay, record = self.audit()
+        self.assertEqual(record["source_placements"], raw)
+        self.assertEqual(record["placements"], post)
+        self.assertEqual(record["authorized_expected_placements"], post)
+        self.assertFalse(record["placements_preserved"])
+        self.assertTrue(record["authorized_placements_preserved"])
+        self.assertEqual(record["approved_omission_receipt"]["sha256"], legacy.digest(manifest))
+        self.assertEqual(len(record["checks"]), 1)
+        self.assertEqual(record["checks"][0]["kind"], "weapons")
+        with patch.object(placement, "compiled_marker_index", return_value=17):
+            placement.verify_compiled_placements(FakeInvader(compiled_roots=[overlay, self.working]),
+                self.base / "result.map", self.workspace, record, self.steps)
+        self.assertTrue(self.steps[-1]["compiled_placements_preserved"])
+
+    def test_omission_receipt_cannot_approve_preexisting_overlay_placement_changes(self):
+        raw = placement._placements(FakeInvader(), [self.source], self.original_scenario)
+        raw["placements"][0]["fields"]["spawn_time"] = "45"
+        self.omission_receipt(before=raw)
+        with self.assertRaisesRegex(ConversionError, "Pre-omission placements differ"):
+            self.audit()
+
+    def test_post_omission_position_timing_and_weights_still_require_exact_match(self):
+        for field in ("position", "spawn_time", "permutation"):
+            with self.subTest(field=field):
+                self.omission_receipt()
+                body = copy.deepcopy(self.scenario_body)
+                if field == "permutation":
+                    self.tag(self.working, self.collection, self.collection_body)
+                else:
+                    body["netgame_equipment"][0][field] = "changed after approved omission"
+                    self.tag(self.working, self.scenario, body)
+                with self.assertRaisesRegex(ConversionError, "changed an authored placement"):
+                    self.audit()
+                self.protected.clear()
+                self.steps[:] = self.steps[:1]
+                self.tag(self.working, self.scenario, self.scenario_body)
+
+    def test_missing_unprotected_changed_and_incomplete_omission_receipts_fail_closed(self):
+        for fault in ("missing", "unprotected", "changed", "graphs", "duplicate", "malformed"):
+            with self.subTest(fault=fault):
+                manifest, _, _ = self.omission_receipt()
+                if fault == "missing":
+                    manifest.unlink()
+                elif fault == "unprotected":
+                    self.protected.pop(manifest)
+                elif fault == "changed":
+                    manifest.write_text(manifest.read_text() + "\n")
+                elif fault == "graphs":
+                    manifest.write_text(json.dumps({"schema_version": 1, "operation": "weapon_omissions"}))
+                    self.protected[manifest] = self.steps[-1]["manifest_sha256"] = legacy.digest(manifest)
+                elif fault == "duplicate":
+                    self.steps.append(copy.deepcopy(self.steps[-1]))
+                else:
+                    self.steps[-1]["manifest"] = None
+                with self.assertRaises(ConversionError):
+                    self.audit()
+                self.protected.clear()
+                self.steps[:] = self.steps[:1]
+
     def test_explicit_capability_preserves_netgame_and_direct_placements_registry_and_og_assets(self):
         before = {root: _tree(root) for root in (self.source, self.working)}
         overlay, record = self.audit()

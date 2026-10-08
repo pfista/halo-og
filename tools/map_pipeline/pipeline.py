@@ -274,6 +274,15 @@ def convert_directory(input_dir: Path, output: Path, *, profile_selection="autho
                                         severity="warning" if remaining else "info",
                                         suggested_fix="Supply the remaining first-person/HUD references when completing this original weapon."
                                         if remaining else "Review the recorded completion provenance; gameplay validation remains pending."))
+                                for name, exception in step.get("authored_community_exceptions", {}).items():
+                                    lineage = exception["reviewed_lineage"]
+                                    record["diagnostics"].append(diagnostic(
+                                        "approved_community_weapon_retained", "canonical_weapons",
+                                        "Approved community weapon retained by explicit user decision; no original Halo 1 ancestry is claimed.",
+                                        tag=name, tag_type="weapon", severity="info",
+                                        value={"outcome": lineage["outcome"], "approval": lineage["approval"],
+                                               "gameplay_validation": "pending"},
+                                        suggested_fix="Review the recorded approval and authored asset provenance; gameplay validation remains pending."))
                             record["outputs"] = {"map": {"file": relative, "sha256": converted["sha256"]},
                                                  "metadata": {"file": meta_relative, "sha256": sha256(staged / meta_relative)},
                                                  "preview": preview}

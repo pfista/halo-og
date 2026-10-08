@@ -28,6 +28,7 @@ class HudTests(unittest.TestCase):
         original.pop("presentation_policy")
         original.pop("stock_weapon_hud_policy", None)
         original.pop("weapon_policy")
+        original.pop("weapon_lineage_catalog", None)
         original.pop("weapon_placement_policy")
         self.assertEqual(profiles.validate_profile(original)["presentation_policy"], "preserve")
         for invalid in ("quarter-all", True, {}, None):
