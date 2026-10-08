@@ -178,8 +178,9 @@ the setting for one start of the game. It has priority over the file.
 
 | Setting | Default | Environment variable | Function |
 | --- | --- | --- | --- |
-| `display.fullscreen` | `true` | `HALO_FULLSCREEN` | `true`: fullscreen at the resolution of the display. The picture has 480 lines of the game and the width of the display. `false`: a window with the 640x480 picture of the Xbox. F11 changes between the two. |
+| `display.fullscreen` | `true` | `HALO_FULLSCREEN` | `true`: fullscreen with the display's shape; `false`: a window with the Xbox's 4:3 shape. Auto resolution draws at native pixels fullscreen and 640x480 in a window. F11 changes between the two. |
 | `display.window_scale` | `2` | `HALO_WINDOW_SCALE` | The size of the window, as a multiple of 640x480. You can change the size of the window. |
+| `display.render_height` | `-1` | — | Render resolution in fullscreen or a window: `-1` Auto preserves native fullscreen/480p windowed; `0` Native fits current drawable pixels; `480`, `720`, `1080`, `1440` or `2160` select a fixed height. Game coordinates remain 480 lines. Game Settings → Video → Resolution applies between frames. |
 | `display.vsync` | `true` | `HALO_NO_VSYNC=1` sets `false` | `true`: each frame waits for the display. |
 | `display.interpolation` | `false` | `HALO_INTERPOLATION` | `true`: one frame for each refresh of the display. `false`: 30 frames each second, as on the Xbox. Refer to "Frame rate". |
 | `display.direct_camera` | `false` | `HALO_DIRECT_CAMERA` | `true`: in first person, on foot, the view points where the player aims in each frame, not where the last tick left it. Refer to "Frame rate". |

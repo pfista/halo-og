@@ -149,7 +149,10 @@ bitmap artwork fall back to the maps' own assets. See
 [optional Upres assets](high-resolution-hud.md) for provenance and coverage.
 
 Video contains **Fullscreen**, **VSync**, **Smooth Motion**, **Timer Position**
-and **Timer Size**. Smooth Motion enables render interpolation while simulation remains
+and **Timer Size**. Desktop Video also provides **Resolution**: Native, 480p,
+720p, 1080p, 1440p or 2160p. Lower presets reduce rendered pixels while
+keeping the game's 480-line coordinates, assets and 30 Hz simulation.
+Smooth Motion enables render interpolation while simulation remains
 30 Hz. Switching interpolation resets its old snapshots before rendering with
 the new setting.
 
@@ -162,8 +165,44 @@ stock HUD font, colors and shadow. They only appear when the host enables Match 
 Fullscreen shares the existing native Mac preference in `macos-settings.json`;
 Linux and Windows save it as `display.fullscreen` in `config.toml`.
 VSync and Smooth Motion use `display.vsync` and `display.interpolation` in
-`config.toml`. Settings apply on Accept without restarting. Rendering resolution,
-aspect selection and Direct Camera behavior are unchanged.
+`config.toml`. These presentation settings apply on Accept without restarting.
+
+| Renderer/platform | Resolution behavior | Default |
+| --- | --- | --- |
+| Mac Native Metal | Resolution applies between frames after Accept, in fullscreen or a window. Native fits the current Retina drawable; the game's logical aspect stays fixed at startup. | 480p |
+| Windows/Linux OpenGL | Resolution applies between frames after Accept, in fullscreen or a window. Native fits the current drawable while retaining the game's logical aspect. | Auto: native pixels fullscreen, Xbox 640x480 in a window |
+| Mac ANGLE | Uses the existing display scaling; Resolution controls apply only to Native Metal. | Existing display scaling |
+
+Windows and Linux also provide **Auto**, which preserves the existing fullscreen
+and windowed behavior. The setting is `display.render_height`: -1 is Auto on
+Windows/Linux, 0 is Native, and the preset values are their heights in pixels.
+Window size remains independent: drag the window edge or change
+`display.window_scale` for its initial size. Native follows drawable size changes;
+fixed presets keep a stable render size while the window scales the picture.
+Unsupported values fall back to each platform's default. The OpenGL renderer
+limits physical target sizes to the GPU's supported texture dimensions and
+releases obsolete screen targets and framebuffers when resolution changes.
+
+On Mac Native Metal, changing Resolution preserves the game's logical width,
+480-line coordinates and startup aspect. Renderer, Asset Quality and
+Anti-Aliasing still require relaunching Halo. Aspect selection and Direct Camera
+behavior are unchanged.
+
+Metal commits the accepted backing size after the current Present completes.
+It recreates all screen-size color/depth aliases, initializes depth and stencil,
+and retains the completed previous-frame image until the first resized Present
+replaces it. Fixed-size water targets, authored textures and shader caches stay
+allocated. Native defers a change while the drawable is minimized or invalid.
+
+The CPU live-resolution fixture covers Accept/frame ordering, stable logical
+headers and query state, history pixels, primary-copy aliases, Native resizing,
+and bounded target counts under 20 changes. An isolated 40-second B30 session
+also accepted eight changes through the production settings API in one process:
+720, 1080, 480, Native, 1440, 2160, 720 and 480. Readbacks matched every new
+physical size; the logical canvas remained 738x480 and the guest exited cleanly.
+That diagnostic driver is separate from the production menu; actual menu event
+fixtures cover Accept, Cancel, save failure and ANGLE visibility. Windows/Linux
+live GL rendering still needs platform playtesting.
 
 ## Mac input and window behavior
 
@@ -201,7 +240,7 @@ Windows, fullscreen joins the same config transaction as other preferences.
 If storage or the display backend also refuses restoration after an error,
 the menu reloads current values and reports that restoration was incomplete.
 
-The current renderer retains the startup aspect when resizing; dynamic aspect
+The Mac Native Metal renderer retains the startup aspect when resizing; dynamic aspect
 changes are a separate improvement. Physical-controller split-screen, subjective
 audio and cross-platform gameplay need separate runtime checks. See
 [building and validation](building.md#validation-and-contribution) for test entry points.

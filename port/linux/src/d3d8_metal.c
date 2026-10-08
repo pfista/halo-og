@@ -41,7 +41,8 @@ render target the size of the screen has per unit of it */
 static long screen_width;
 static float screen_scale[2] = { 1.0f, 1.0f };
 static long ui_offset;
-/* Chosen once: storage scale never changes underneath live attachments. */
+/* Accepted choices are committed only after a completed Present. Storage
+ * scale stays fixed for every command in a frame. */
 static uint32_t render_height;
 static uint32_t native_storage_width, native_storage_height;
 static BOOL render_settings_initialized;
@@ -198,6 +199,9 @@ static struct halo_metal_guest_transport transport;
 static uint64_t sequence;
 static uint32_t next_resource_id = 1, next_program_id = 1, next_query_id = 1;
 static struct native_resource *resources;
+/* Keep the last completed indexed frame sampled at its original resolution
+ * during the first resized frame. Its replacement is copied at Present. */
+static struct native_resource *history_sample_override;
 static struct native_resource *text_atlas_resource;
 static struct native_program *programs;
 /* Original rasterizer.h verifies floating_point_zbuffer at byte0x3c in the
@@ -524,16 +528,15 @@ static void surface_dimensions(const D3DSurface *surface, unsigned long *width, 
 		format == D3DFMT_LIN_D24S8 || format == D3DFMT_LIN_F24S8 || format == D3DFMT_LIN_D16 || format == D3DFMT_LIN_F16;
 }
 
-static void native_storage_initialize(void) {
-    if (native_render_height() || (native_storage_width && native_storage_height)) return;
+static int native_storage_dimensions(uint32_t logical_width,
+    struct halo_metal_render_dimensions *dimensions) {
     int pixel_width=0,pixel_height=0;
     platform_video_drawable_size(&pixel_width,&pixel_height);
     if (pixel_width<=0 || pixel_height<=0 ||
         pixel_width>(int)HALO_METAL_RENDER_MAX_DIMENSION ||
         pixel_height>(int)HALO_METAL_RENDER_MAX_DIMENSION)
-        native_fail("native drawable dimensions",HALO_METAL_INVALID);
+        return HALO_METAL_INVALID;
     uint32_t width=(uint32_t)pixel_width,height=(uint32_t)pixel_height;
-    uint32_t logical_width=(uint32_t)halo_screen_width();
     uint64_t drawable_logical_width=((uint64_t)SCREEN_HEIGHT*width/height)&~UINT64_C(1);
     /* Explicit4:3/aspect requests and displays beyond the supported logical
        canvas keep their shape. Auto aspect on the startup display instead
@@ -542,18 +545,26 @@ static void native_storage_initialize(void) {
         struct halo_metal_render_dimensions logical={logical_width,SCREEN_HEIGHT,
             logical_width,SCREEN_HEIGHT,HALO_METAL_RENDER_SCALE_UNIFORM};
         struct halo_metal_render_rectangle box;
-        require_status("fit native drawable aspect",halo_metal_render_presentation_box(&logical,width,height,&box));
+        int status=halo_metal_render_presentation_box(&logical,width,height,&box);
+        if (status) return status;
         width=box.width;height=box.height;
     }
+    return halo_metal_render_native_target_dimensions(
+        logical_width,SCREEN_HEIGHT,logical_width,width,height,dimensions);
+}
+static void native_storage_initialize(void) {
+    if (native_render_height() || (native_storage_width && native_storage_height)) return;
+    uint32_t logical_width=(uint32_t)halo_screen_width();
     struct halo_metal_render_dimensions dimensions;
-    require_status("validate native drawable backing",halo_metal_render_native_target_dimensions(
-        logical_width,SCREEN_HEIGHT,logical_width,width,height,&dimensions));
+    require_status("native drawable dimensions",native_storage_dimensions(logical_width,&dimensions));
     native_storage_width=dimensions.storage_width;native_storage_height=dimensions.storage_height;
     screen_scale[0]=(float)native_storage_width/logical_width;
     screen_scale[1]=(float)native_storage_height/SCREEN_HEIGHT;
+    int pixel_width=0,pixel_height=0;
+    platform_video_drawable_size(&pixel_width,&pixel_height);
     platform_log("Native resolution: %ux%u storage, %ux%d logical, %dx%d drawable, startup aspect %s",
         native_storage_width,native_storage_height,logical_width,SCREEN_HEIGHT,pixel_width,pixel_height,
-        width==(uint32_t)pixel_width && height==(uint32_t)pixel_height ? "native":"fitted");
+        native_storage_width==(uint32_t)pixel_width && native_storage_height==(uint32_t)pixel_height ? "native":"fitted");
 }
 static void native_initialize(void) {
     void *storage = aligned_alloc(16, HALO_METAL_MAX_PACKET);
@@ -1103,6 +1114,20 @@ static void resource_create(struct native_resource *entry) {
     command.usage=entry->usage;
     packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();
 }
+static void resource_delete(struct native_resource *entry) {
+    struct halo_metal_delete command={0};
+    command.command.opcode=HALO_METAL_DELETE_TEXTURE;command.resource=entry->ref;
+    packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();
+}
+static void target_storage_initialize(struct native_resource *entry) {
+    /* Establish every plane before a subsequent partial write or load. */
+    struct halo_metal_clear clear={0};
+    clear.command.opcode=HALO_METAL_CLEAR;clear.width=entry->storage_width;clear.height=entry->storage_height;
+    if (entry->format==HALO_METAL_DEPTH32_STENCIL8) {
+        clear.depth_stencil=entry->ref;clear.planes=HALO_METAL_DEPTH|HALO_METAL_STENCIL;
+    } else { clear.color=entry->ref;clear.planes=HALO_METAL_COLOR; }
+    packet_begin(sizeof(clear),NULL,0);command_append(&clear,sizeof(clear));packet_finish();
+}
 static struct native_resource *target_get(const D3DSurface *surface) {
     struct native_resource *entry;
     unsigned long width,height; BOOL depth;
@@ -1138,11 +1163,7 @@ static struct native_resource *target_get(const D3DSurface *surface) {
     /* Fresh D3D attachment storage is undefined. Establish a deterministic
        zero allocation so untouched planes can safely be loaded by Metal.
        This uses no reference framebuffer or captured after-draw pixels. */
-    struct halo_metal_clear clear={0};
-    clear.command.opcode=HALO_METAL_CLEAR;clear.width=entry->storage_width;clear.height=entry->storage_height;
-    if (depth) { clear.depth_stencil=entry->ref;clear.planes=HALO_METAL_DEPTH|HALO_METAL_STENCIL; }
-    else { clear.color=entry->ref;clear.planes=HALO_METAL_COLOR; }
-    packet_begin(sizeof(clear),NULL,0);command_append(&clear,sizeof(clear));packet_finish();
+    target_storage_initialize(entry);
     entry->next=resources;resources=entry;
     return entry;
 }
@@ -1214,6 +1235,56 @@ static void backbuffer_history_advance(struct native_resource *back) {
        therefore advance at every Present, including before its first use.
        No physical Xbox buffer rotation or display callback is inferred. */
     backbuffer_color_copy(back,history,back->storage_width,back->storage_height);
+}
+static void native_history_sample_retire(void) {
+    if (!history_sample_override) return;
+    struct native_resource **link=&resources;
+    while (*link && *link!=history_sample_override) link=&(*link)->next;
+    if (!*link) native_fail("previous resolution history ownership",HALO_METAL_INVALID);
+    struct native_resource *previous=*link;
+    resource_delete(previous);
+    packet_flush(NATIVE_FLUSH_RESIZE);
+    *link=previous->next;history_sample_override=NULL;
+    free(previous->mip_copy_cache);free(previous);
+}
+static void native_resolution_commit(void) {
+    if (!device.ready || device.immediate_active || device.visibility_test_active || history_sample_override) return;
+    long requested=config_integer("display.render_height");
+    uint32_t height=(requested==0 || requested==720 || requested==1080 ||
+        requested==1440 || requested==2160) ? (uint32_t)requested:480;
+    uint32_t logical_width=(uint32_t)halo_screen_width();
+    struct halo_metal_render_dimensions dimensions;
+    int status=height ? halo_metal_render_target_dimensions(logical_width,SCREEN_HEIGHT,
+        logical_width,height,&dimensions):native_storage_dimensions(logical_width,&dimensions);
+    /* A minimized drawable cannot provide Native backing yet. Keep rendering
+       with the accepted previous storage until valid dimensions are available. */
+    if (status) return;
+    struct native_resource *back=target_get(&device.back_buffer);
+    BOOL replace=back->storage_width!=dimensions.storage_width ||
+        back->storage_height!=dimensions.storage_height || back->scale_mode!=dimensions.scale_mode;
+    if (!replace && height==native_render_height()) return;
+    if (replace) {
+        packet_flush(NATIVE_FLUSH_RESIZE);
+        history_sample_override=target_get(&device.history_buffer);
+        for (struct native_resource *entry=resources;entry;entry=entry->next) {
+            if (!(entry->usage&HALO_METAL_RENDER_TARGET) || entry==history_sample_override ||
+                entry->description.width!=logical_width || entry->description.height!=SCREEN_HEIGHT) continue;
+            /* Retain every original alias signature, including color views of
+               the depth-buffer address. Textures resolve before attachments. */
+            resource_delete(entry);
+            entry->storage_width=dimensions.storage_width;entry->storage_height=dimensions.storage_height;
+            entry->scale_mode=dimensions.scale_mode;entry->last_rendered=0;
+            resource_create(entry);target_storage_initialize(entry);
+        }
+        packet_flush(NATIVE_FLUSH_RESIZE);
+    }
+    render_height=height;render_settings_initialized=TRUE;
+    native_storage_width=height ? 0:dimensions.storage_width;
+    native_storage_height=height ? 0:dimensions.storage_height;
+    screen_scale[0]=(float)dimensions.storage_width/logical_width;
+    screen_scale[1]=(float)dimensions.storage_height/SCREEN_HEIGHT;
+    platform_log("Native resolution applied: %ux%u storage, %ux%d logical, height %u, frame %lu",
+        dimensions.storage_width,dimensions.storage_height,logical_width,SCREEN_HEIGHT,height,device.frame);
 }
 #ifndef HALO_ANDROID
 static void backbuffer_surfaces_resize(unsigned long width,unsigned long height) {
@@ -1445,7 +1516,7 @@ static struct native_resource *texture_get(D3DBaseTexture *texture,D3DPalette *p
        Present. Resolve/initialize it without uploading undefined CPU bytes
        or taking a new snapshot of the current drawing surface. */
     if (texture->Data==device.history_buffer.Data)
-        entry=target_get(&device.history_buffer);
+        entry=history_sample_override ? history_sample_override:target_get(&device.history_buffer);
     struct xgpu_texture_description original;
     xgpu_texture_describe(texture->Format,texture->Size,&original);
     if (entry) {
@@ -2064,6 +2135,7 @@ void WINAPI D3DDevice_Present(const RECT *source,const RECT *destination,void *u
         struct halo_metal_present_scaled command={0};command.command.opcode=HALO_METAL_PRESENT_SCALED;
         command.source=back->ref;command.display_flags=config_boolean("display.vsync") ? HALO_METAL_DISPLAY_VSYNC:0;
         packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();packet_flush(NATIVE_FLUSH_PRESENT);
+        native_history_sample_retire();
     }
     device.frame++;
     if (config_boolean("debug.gpu_stats") && device.frame%60==0) {
@@ -2088,6 +2160,7 @@ void WINAPI D3DDevice_Present(const RECT *source,const RECT *destination,void *u
         pending_flips++;
     }
     pthread_mutex_unlock(&vertical_blank_lock);
+    native_resolution_commit();
 }
 HRESULT WINAPI D3DDevice_PersistDisplay(void) { return S_OK; }
 long halo_screen_commit(void)

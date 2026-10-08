@@ -1513,7 +1513,7 @@ static void mac_settings_video(void) {
     for(unsigned i=0;i<8;i++) assert(device_settings.column_children[_ds_main][_ds_video][i].vertical_offset+28<321);
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_renderer],L"experimental"));
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_renderer],L"next launch"));
-    assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_render_height],L"Relaunch"));
+    assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_render_height],L"Accept applies"));
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_anti_aliasing],L"Relaunch"));
     settings_values[_device_setting_renderer]=0;
     settings_values[_device_setting_render_height]=720;
@@ -1541,17 +1541,18 @@ static void mac_settings_video(void) {
     assert(mac_visible_rows(column)==8 && !writes && settings_values[_device_setting_renderer]==0);
     assert(device_settings_drafts[0].values[_device_setting_render_height]==720);
     assert(!wcscmp(device_settings.text[resolution->parameters.list.selected_index],L"720p"));
-    assert(game_settings_event(resolution,_device_settings_next));
+    const short heights[]={1080,1440,2160,0,480,720};
+    for(unsigned i=0;i<sizeof(heights)/sizeof(heights[0]);i++) {
+        assert(game_settings_event(resolution,_device_settings_next));
+        assert(device_settings_drafts[0].values[_device_setting_render_height]==heights[i]);
+    }
+    assert(game_settings_event(resolution,_device_settings_previous));
+    assert(device_settings_drafts[0].values[_device_setting_render_height]==480);
+    assert(game_settings_event(resolution,_device_settings_previous));
     assert(device_settings_drafts[0].values[_device_setting_render_height]==0);
     assert(!wcscmp(device_settings.text[resolution->parameters.list.selected_index],L"Native"));
-    assert(game_settings_event(resolution,_device_settings_next));
-    assert(device_settings_drafts[0].values[_device_setting_render_height]==2160);
-    assert(game_settings_event(resolution,_device_settings_next));
-    assert(device_settings_drafts[0].values[_device_setting_render_height]==1440);
     assert(game_settings_event(resolution,_device_settings_previous));
     assert(device_settings_drafts[0].values[_device_setting_render_height]==2160);
-    assert(game_settings_event(resolution,_device_settings_previous));
-    assert(device_settings_drafts[0].values[_device_setting_render_height]==0);
     assert(game_settings_event(resolution,_device_settings_previous));
     assert(device_settings_drafts[0].values[_device_setting_render_height]==1440);
     assert(game_settings_event(limit,_device_settings_next));

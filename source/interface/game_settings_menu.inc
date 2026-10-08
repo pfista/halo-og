@@ -29,6 +29,9 @@ static char const *const device_settings_deadzone_labels[] = {"0%", "10%", "20%"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 8
 static short const device_settings_page_counts[_ds_page_count] = {4, 6, 8, 7, 3, 4};
+#elif HALO_DEVICE_HAS_RENDER_RESOLUTION
+#define DEVICE_SETTINGS_MAX_PAGE_ROWS 7
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 5, 3, 4};
 #else
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 6
 static short const device_settings_page_counts[_ds_page_count] = {4, 6, 6, 5, 3, 4};
@@ -45,7 +48,11 @@ static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX
      _device_setting_timer_position, _device_setting_timer_scale},
 #else
     {_device_setting_fullscreen, _device_setting_vsync, _device_setting_interpolation,
-     _device_setting_asset_quality, _device_setting_timer_position, _device_setting_timer_scale},
+     _device_setting_asset_quality,
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
+     _device_setting_render_height,
+#endif
+     _device_setting_timer_position, _device_setting_timer_scale},
     {_device_setting_timer_volume, _device_setting_timer_countdown, _device_setting_timer_beeps,
      _device_setting_timer_minutes, _device_setting_timer_items},
 #endif
@@ -584,7 +591,7 @@ static boolean device_settings_build(void)
         "SETTINGS", "PROFILE SETTINGS", "GAME SETTINGS", "ABOUT", "AUDIO", "VIDEO", "ACCEPT",
         "A: Select    B: Back", "Effects includes announcer.\r\nLeft/Right: Adjust    B: Cancel",
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        "Accept saves. B: Cancel\r\nRenderer, resolution, assets and AA:\r\nRelaunch Halo to apply.",
+        "Accept saves. B: Cancel\r\nRenderer, assets and AA:\r\nRelaunch Halo to apply.",
 #else
         "Left/Right: Adjust\r\nAccept saves. B: Cancel\r\nRelaunch Halo for asset changes.",
 #endif
@@ -601,7 +608,13 @@ static boolean device_settings_build(void)
         "COUNTDOWN:", "BEEPS:", "MINUTE ANNOUNCEMENTS:", "ITEM CUES:", "TIMER POSITION:", "TIMER SIZE:",
         "OG MAPS:", "COMMUNITY MAPS:", "JOIN IN PROGRESS:", "LEFT STICK DEADZONE:", "RIGHT STICK DEADZONE:", "LOOK ACCELERATION:", "", "ASSET QUALITY:"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        , "RENDERER:", "RESOLUTION:", "FPS LIMIT:", "ANTI-ALIASING:"
+        , "RENDERER:"
+#endif
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
+        , "RESOLUTION:"
+#endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+        , "FPS LIMIT:", "ANTI-ALIASING:"
 #endif
         , "DEFAULT GAME TYPES:"
         };
@@ -630,8 +643,18 @@ static boolean device_settings_build(void)
         "",
         "Choose original assets or upres\r\nHUD, fonts and menu artwork.\r\nRelaunch Halo to apply."
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        , "Choose ANGLE or Native Metal.\r\nNative Metal is experimental.\r\nAccept saves for the next launch.",
-        "Choose Native Metal render resolution.\r\nOriginal game assets stay the same.\r\nRelaunch Halo to apply.",
+        , "Choose ANGLE or Native Metal.\r\nNative Metal is experimental.\r\nAccept saves for the next launch."
+#endif
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
+        ,
+#if defined(HALO_MACOS)
+        "Choose Native Metal render resolution.\r\nOriginal game assets stay the same.\r\nAccept applies the render height."
+#else
+        "Set fullscreen or window resolution.\r\nAuto: native fullscreen, 480p window.\r\nAccept applies the render height."
+#endif
+#endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+        ,
         "Limit Native Metal render frames.\r\nSmooth Motion must be on.\r\nGame updates remain at 30 Hz.",
         "Smooth world edges with FXAA.\r\nOriginal HUD stays unchanged.\r\nRelaunch Halo to apply."
 #endif
@@ -811,15 +834,17 @@ static boolean device_settings_build(void)
             short rows = count + (page != _ds_game);
             short pitch = main_menu ? 24 : 27;
             short width = main_menu ? 284 : 202;
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
             /* Keep authored button rectangles/UVs while fitting all settings
              * and Accept inside the smallest split-screen root. */
             if (!main_menu && page == _ds_video) pitch = 20;
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
             else if (!main_menu && page == _ds_timer) pitch = 22;
+#endif
 #endif
             /* Five-row Controller pages use the existing six-row frame. */
             short height = main_menu ? 28 + rows * pitch + 40 : rows <= 4 ? 159 : rows <= 6 ? 213 : 240;
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
             if (!main_menu && pitch < 27) height = 240;
 #endif
             short x = (bases[layout]->bounds.x1 - bases[layout]->bounds.x0 - width) / 2;
@@ -840,8 +865,10 @@ static boolean device_settings_build(void)
             column->controller_index = _widget_controller_any;
             column->bounds = (rectangle2d){0, 0, (short)(rows * pitch), width};
             column->flags = FLAG(_widget_pass_unhandled_events_to_children_bit) | FLAG(_widget_dpad_updown_tabs_thru_list_items_bit);
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
             if (!main_menu && pitch < 27) column->bounds.y1 += 27 - pitch;
+#endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
             if (page == _ds_video) device_settings_video_navigation(column);
 #endif
             if (!main_menu && page != _ds_game)
@@ -1065,6 +1092,9 @@ static boolean device_settings_video_tab(struct widget_instance *column, short f
     return TRUE;
 }
 
+#endif
+
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
 static double device_settings_cycle_choice(double value, short function, short const *choices, short count)
 {
     short index;
@@ -1087,7 +1117,13 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
         "Countdown", "Beeps", "Minutes", "Item Cues", "Position", "Timer Size",
         "OG Maps", "Community Maps", "Join In Progress", "Left Deadzone", "Right Deadzone", "Look Acceleration", "Menu Repeat", "Asset Quality"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        , "Renderer", "Resolution", "FPS Limit", "AA"
+        , "Renderer"
+#endif
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
+        , "Resolution"
+#endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+        , "FPS Limit", "AA"
 #endif
         , "Default Game Types"
         };
@@ -1120,15 +1156,18 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Native Metal" : "ANGLE");
         else if (row == _device_setting_anti_aliasing)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "FXAA" : "OFF");
-        else if (row == _device_setting_render_height)
-        {
-            if (draft->values[row] == 0.0) snprintf(value, sizeof(value), "Native");
-            else snprintf(value, sizeof(value), "%.0fp", draft->values[row]);
-        }
         else if (row == _device_setting_frame_limit)
         {
             if (draft->values[row] == 0.0) snprintf(value, sizeof(value), "Uncapped");
             else snprintf(value, sizeof(value), "%.0f FPS", draft->values[row]);
+        }
+#endif
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
+        else if (row == _device_setting_render_height)
+        {
+            if (draft->values[row] == -1.0) snprintf(value, sizeof(value), "Auto");
+            else if (draft->values[row] == 0.0) snprintf(value, sizeof(value), "Native");
+            else snprintf(value, sizeof(value), "%.0fp", draft->values[row]);
         }
 #endif
         else if (device_settings_is_stick_deadzone(row))
@@ -1300,13 +1339,23 @@ static boolean game_settings_event(struct widget_instance *widget, short functio
             (device_settings.native_pages && widget->definition_tag_index == device_settings_native.spinner_tags[row])) break;
     if (row == NUMBER_OF_DEVICE_SETTINGS) return FALSE;
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-    if (row >= _device_setting_render_height && draft->values[_device_setting_renderer] == 0.0) return FALSE;
+    if ((row == _device_setting_render_height || row == _device_setting_frame_limit || row == _device_setting_anti_aliasing) &&
+        draft->values[_device_setting_renderer] == 0.0) return FALSE;
+#endif
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
     if (row == _device_setting_render_height)
     {
-        static short const choices[] = {0, 2160, 1440};
+        static short const choices[] = {
+#if !defined(HALO_MACOS)
+            -1,
+#endif
+            0, 480, 720, 1080, 1440, 2160};
         draft->values[row] = device_settings_cycle_choice(draft->values[row], function, choices, NUMBEROF(choices));
     }
-    else if (row == _device_setting_frame_limit)
+    else
+#endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+    if (row == _device_setting_frame_limit)
     {
         static short const choices[] = {0, 30, 60, 120};
         draft->values[row] = device_settings_cycle_choice(draft->values[row], function, choices, NUMBEROF(choices));

@@ -116,6 +116,7 @@ static struct { D3DPRESENT_PARAMETERS presentation;
     unsigned long next_vertex_shader_id,frame,draws; uint64_t resource_serial; } device;
 static struct { struct halo_metal_reply reply; } transport;
 static struct native_resource *resources;
+static struct native_resource *history_sample_override;
 static DWORD D3D__RenderState[D3DRS_MAX],D3D__TextureState[D3DTSS_MAXSTAGES][D3DTSS_MAX];
 static uint32_t next_resource_id=1,next_program_id=1;
 static uint64_t submitted_batches,submitted_commands,submitted_bytes,submit_wall_ns;
@@ -151,6 +152,10 @@ static long config_integer(const char *key) { return !strcmp(key,"debug.screensh
 static const char *config_string(const char *key) { assert(!strcmp(key,"debug.screenshot_directory")); return screenshot_directory; }
 static void native_frame_wait(void) { frame_waits++;wait_phase=++phase; }
 static void native_frame_statistics(void) { frame_statistics++; }
+/* Live resolution transitions have their own fixture; keep history cases
+   exercising the ordinary completed-Present path. */
+static void native_history_sample_retire(void) {}
+static void native_resolution_commit(void) {}
 static void platform_pump_events(void) { event_pumps++;pump_phase=++phase;assert(wait_phase && wait_phase<pump_phase); }
 static void vertical_blank_start(void) {}
 static int halo_interpolation_enabled(void) { return 1; }

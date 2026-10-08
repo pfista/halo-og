@@ -25,6 +25,9 @@ Conventions carried over from the Xbox:
 #include "sdl_platform.h"
 #include "halo_ui_pointer.h"
 #include "port_config.h"
+#ifndef HALO_ANDROID
+#include "desktop_render_scale.h"
+#endif
 #ifdef HALO_MACOS
 #include "../../macos/renderer_config.h"
 #endif
@@ -88,7 +91,10 @@ game's camera derives its horizontal field of view from the viewport, so the
 640 columns; while they draw (halo_screen_ui_offset), everything shifts right
 to center them.
 
-Fullscreen on the desktop also draws at the display's resolution: render
+Desktop Auto draws fullscreen at the display's resolution and windows at
+480p. display.render_height can select a fixed height or Native drawable
+pixels in either mode. The game keeps its logical aspect/480-line coordinates;
+render
 targets the size of the screen get that many pixels (screen_scale), and
 viewports, clears and visibility counts are scaled to match, so the game
 still works in its 480 lines. The width and the scale change only between
@@ -101,6 +107,9 @@ frames, after one is presented (halo_screen_commit). */
 render target the size of the screen has per unit of it */
 static long screen_width;
 static float screen_scale[2] = { 1.0f, 1.0f };
+#ifndef HALO_ANDROID
+static long screen_render_maximum = 4096;
+#endif
 static long ui_offset;
 #define UI_OFFSET ((GLint)ui_offset)
 
@@ -136,6 +145,21 @@ static void screen_mode_choose(long *width, float scale[2])
 		keeps its shape and the display blit letterboxes it */
 		if (*width != wanted && *width != (wanted & ~1L))
 			scale[0] = scale[1] = scale[0] < scale[1] ? scale[0] : scale[1];
+	}
+	{
+		int drawable_width = 0, drawable_height = 0;
+		long requested = config_integer("display.render_height");
+		if (requested == 0)
+		{
+			platform_video_drawable_size(&drawable_width, &drawable_height);
+			if ((drawable_width <= 0 || drawable_height <= 0) && *width == screen_width)
+			{
+				scale[0] = screen_scale[0];
+				scale[1] = screen_scale[1];
+			}
+		}
+		halo_desktop_render_scale(requested, *width, drawable_width, drawable_height,
+			screen_render_maximum, scale);
 	}
 #endif
 }
@@ -831,6 +855,42 @@ static struct render_target_entry *render_target_get(const D3DSurface *surface)
 	return entry;
 }
 
+#ifndef HALO_ANDROID
+/* Only retire screen-sized targets between frames. Without this, every
+ * Native window resize retains another color/depth texture and its FBOs. */
+static void screen_render_targets_retire(long old_width)
+{
+    struct render_target_entry **link = &render_targets;
+    while (*link)
+    {
+        struct render_target_entry *entry = *link;
+        if (entry->target.width == (unsigned long)old_width && entry->target.height == SCREEN_HEIGHT)
+        {
+            struct framebuffer_entry **framebuffer = &framebuffers;
+            struct render_target_entry **bucket = render_target_bucket(entry->target.data);
+            while (*framebuffer)
+            {
+                struct framebuffer_entry *old = *framebuffer;
+                if (old->color == entry->target.texture || old->depth == entry->target.texture)
+                {
+                    *framebuffer = old->next;
+                    glDeleteFramebuffers(1, &old->framebuffer);
+                    free(old);
+                }
+                else framebuffer = &old->next;
+            }
+            while (*bucket && *bucket != entry) bucket = &(*bucket)->next_in_bucket;
+            if (*bucket) *bucket = entry->next_in_bucket;
+            *link = entry->next;
+            glDeleteTextures(1, &entry->target.texture);
+            free(entry);
+        }
+        else link = &entry->next;
+    }
+    xgpu_gl_state_invalidate();
+}
+#endif
+
 struct xgpu_render_target *xgpu_render_target_find(unsigned long data)
 {
 	struct render_target_entry *entry, *best = NULL;
@@ -910,6 +970,13 @@ static void gl_initialize(void)
 
 	glGetIntegerv(GL_MAJOR_VERSION, &major);
 	glGetIntegerv(GL_MINOR_VERSION, &minor);
+#ifndef HALO_ANDROID
+	{
+		GLint maximum = 0;
+		glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum);
+		if (maximum > 0) screen_render_maximum = maximum;
+	}
+#endif
 #ifdef HALO_ANDROID
 	{
 		BOOL es32 = major > 3 || (major == 3 && minor >= 2);
@@ -1007,6 +1074,10 @@ static void gl_initialize(void)
 	debug_settings.statistics = config_boolean("debug.gpu_stats");
 	xgpu_gl_state_invalidate();
 	device.gl_ready = TRUE;
+#ifndef HALO_ANDROID
+	/* Native window pixels are available now; startup selection preceded SDL. */
+	halo_screen_commit();
+#endif
 }
 
 Direct3D *WINAPI Direct3DCreate8(UINT sdk_version)
@@ -1235,6 +1306,9 @@ long halo_screen_commit(void)
 	{
 		platform_log("screen: %ldx%d drawn at %.0fx%.0f", width, SCREEN_HEIGHT,
 			width * scale[0], SCREEN_HEIGHT * scale[1]);
+#ifndef HALO_ANDROID
+		if (device.gl_ready) screen_render_targets_retire(screen_width);
+#endif
 		screen_width = width;
 		screen_scale[0] = scale[0];
 		screen_scale[1] = scale[1];
@@ -1474,8 +1548,17 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 static GLuint visibility_unscaled(GLuint samples, DWORD index)
 {
 	float area = device.query_area[index];
+	double logical_samples;
+	const GLuint maximum = (GLuint)-1;
 
-	return area > 1.0f ? (GLuint)(samples / area + 0.5f) : samples;
+	/* Native can render below 480p in a small window. Restore the logical
+	 * sample count for both downscaling and upscaling; malformed scales retain
+	 * the raw result, and tiny positive areas cannot overflow the result. */
+	if (!(area > 0.0f) || !isfinite(area) || area == 1.0f) return samples;
+	/* Preserve the existing float rounding for upscaled presentation. */
+	logical_samples = area > 1.0f ? (double)(samples / area + 0.5f) :
+		(double)samples / (double)area + 0.5;
+	return logical_samples >= (double)maximum ? maximum : (GLuint)logical_samples;
 }
 
 #endif
@@ -4285,6 +4368,12 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		memset(&stats, 0, sizeof(stats));
 	}
 	platform_pump_events();
+
+#ifndef HALO_ANDROID
+	/* Accept and window changes take effect after this frame is presented,
+	   so its targets and logical layout agree for the whole frame. */
+	if (device.gl_ready) halo_screen_commit();
+#endif
 
 	pthread_mutex_lock(&vertical_blank_lock);
 	/* the Xbox keeps at most two frames queued behind its 60 Hz display;

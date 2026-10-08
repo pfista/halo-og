@@ -60,6 +60,13 @@ The game finds the game data as on Linux. Refer to "Start the game" in
 | Saved games | `%APPDATA%\Halo OG`, or `paths.saves` in `config.toml` |
 | Log | `debug.txt` in the data root (the folder that contains `maps\`) |
 
+Game Settings → Video → **Resolution** supports Native, 480p, 720p, 1080p,
+1440p and 2160p in fullscreen and resizable windows. **Auto** preserves the
+existing native fullscreen/640x480 windowed rendering. Accept applies the
+render height between frames; window size is independent. The config key is
+`display.render_height` (-1 Auto, 0 Native, or the preset pixel height). See
+[native settings](../../docs/native-settings.md#video) for defaults and behavior.
+
 The first launch copies regular files and folders from `%APPDATA%\halo` into
 `%APPDATA%\Halo OG`, preserving the original files and any files already in
 the new folder. A failed copy or reparse point is reported in the log and keeps

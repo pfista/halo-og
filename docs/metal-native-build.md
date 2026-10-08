@@ -13,8 +13,9 @@ Native Metal reveals resolution, frame limit and anti-aliasing controls in Video
 Both renderers also offer **HUD: Original / High Resolution**, default Original.
 The HUD texture choice applies after relaunch; see
 [high-resolution HUD](high-resolution-hud.md) for redraw provenance and coverage.
-Resolution and anti-aliasing changes also take effect on the next launch. VSync
-and Smooth Motion remain available for both engines. Mac timer position and size
+Resolution applies after Accept without restarting; anti-aliasing changes take
+effect on the next launch. VSync and Smooth Motion remain available for both
+engines. Mac timer position and size
 are on the Timer page. Other platforms retain their existing menus. Gameplay
 continues at 30 Hz; Original HUD remains the default.
 
@@ -75,8 +76,9 @@ The focused fullscreen playtests use `render_height=0`, `screen_width=0` and
 synchronizes the Retina window, using its actual drawable pixels. Independent
 X/Y scale ratios cover the complete drawable despite rounding the logical
 screen width. Display aspect uses the existing wider-screen game path; authored
-textures, shader constants and gameplay remain logical. Restart after changing
-resolution or moving to another display. The backing remains fixed until restart.
+textures, shader constants and gameplay remain logical. Accept applies a new
+render height between frames, including Native based on the current drawable.
+Native follows drawable changes; the logical width and startup aspect stay fixed.
 
 On this Mac the measured fullscreen drawable is **3600x2338**, with the original
 logical vertical canvas of 480 lines and a logical width of 738. That is about

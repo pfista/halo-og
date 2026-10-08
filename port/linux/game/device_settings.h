@@ -2,6 +2,13 @@
 #ifndef HALO_DEVICE_SETTINGS_H
 #define HALO_DEVICE_SETTINGS_H
 
+/* Desktop GL and Mac Native Metal can choose physical render resolution. */
+#if (!defined(HALO_ANDROID) && !defined(HALO_IOS)) || (defined(HALO_MACOS) && !defined(HALO_IOS))
+#define HALO_DEVICE_HAS_RENDER_RESOLUTION 1
+#else
+#define HALO_DEVICE_HAS_RENDER_RESOLUTION 0
+#endif
+
 enum
 {
     _device_setting_master_volume,
@@ -29,7 +36,11 @@ enum
     _device_setting_asset_quality,
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
     _device_setting_renderer,
+#endif
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
     _device_setting_render_height,
+#endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
     _device_setting_frame_limit,
     _device_setting_anti_aliasing,
 #endif
@@ -40,7 +51,9 @@ enum
 /* Volumes are 0..1; switches are 0/1. Timer position is 0..2 and scale .5..1.
  * Stick deadzones are raw integer ranges 0..16000; Xbox is exactly 9000.
  * Mac renderer/AA choices are 0/1; height/cap are their config pixel/FPS values.
- * Asset quality, renderer, render height and AA describe saved choices for the next launch. */
+ * Desktop GL height -1 keeps its existing fullscreen/windowed selection; 0 is Native.
+ * Asset quality, Mac renderer and AA apply on the next launch.
+ * Desktop GL and Mac Native Metal render height apply between frames after Accept. */
 double device_settings_get(short setting);
 /* Save only changed rows, then apply to the current session. Returns 1 on
  * success, 0 on failure with prior settings restored, or -1 when a backend

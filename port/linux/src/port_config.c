@@ -72,8 +72,9 @@ struct config_setting
 static const struct config_setting config_settings[] =
 {
 	{ "display.fullscreen", _config_boolean, "true", "HALO_FULLSCREEN", _environment_value, _platform_desktop,
-		"Start fullscreen, drawing at the display's resolution and shape; false\n"
-		"starts in a window, which draws the Xbox's 640x480. F11 switches." },
+		"Start fullscreen with the display's shape; false starts in an Xbox 4:3\n"
+		"window. Auto resolution uses native fullscreen pixels or 640x480 in a\n"
+		"window. F11 switches; render_height can override the render resolution." },
 	{ "display.window_scale", _config_integer, "2", "HALO_WINDOW_SCALE", _environment_value, _platform_desktop,
 		"The window's size as a multiple of 640x480 (it can be resized)." },
 	{ "display.screen_width", _config_integer, "0", "HALO_SCREEN_WIDTH", _environment_value, _platform_android,
@@ -93,14 +94,22 @@ static const struct config_setting config_settings[] =
 		"Native Metal render cap: 0 is uncapped, or choose 30, 60 or 120.\n"
 		"Higher rates require interpolation; VSync can limit the achieved rate.\n"
 		"Simulation remains 30 ticks a second." },
-	{ "display.render_height", _config_integer, "480", NULL, _environment_value, _platform_all,
-		"Native Metal render height: 0 for the native drawable, or 480, 720,\n"
-		"1080, 1440 or 2160 pixels. Native mode uses actual Retina pixels.\n"
-		"Width follows the startup aspect. Restart after changing this setting." },
 	{ "display.anti_aliasing", _config_string, "\"off\"", NULL, _environment_value, _platform_all,
 		"Native Metal world smoothing: off preserves the original picture; fxaa\n"
 		"smooths world edges before drawing the original HUD. Original assets\n"
 		"and the game's 30 ticks a second stay unchanged. Restart to apply." },
+#endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	{ "display.render_height", _config_integer, "480", NULL, _environment_value, _platform_all,
+		"Native Metal render height: 0 for the native drawable, or 480, 720,\n"
+		"1080, 1440 or 2160 pixels. Native mode uses actual Retina pixels.\n"
+		"Width follows the startup aspect. Accept applies between frames." },
+#elif !defined(HALO_ANDROID) && !defined(HALO_IOS)
+	{ "display.render_height", _config_integer, "-1", NULL, _environment_value, _platform_desktop,
+		"Render height in fullscreen or a window: -1 keeps automatic selection\n"
+		"(native fullscreen, Xbox 480p window); 0 fits the native drawable;\n"
+		"480, 720, 1080, 1440 or 2160 select a fixed height. Applies between\n"
+		"frames; game coordinates and the 30 Hz simulation stay unchanged." },
 #endif
 	{ "display.timer_position", _config_integer, "0", NULL, _environment_value, _platform_all,
 		"PB timer position: 0 is top center, 1 bottom center, 2 bottom right." },

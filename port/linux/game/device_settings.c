@@ -30,7 +30,13 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
      * Asset Quality retains the legacy key so enabled HUD choices become Upres. */
     NULL, "display.high_res_hud"
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-    , "display.renderer", "display.render_height", "display.frame_limit", "display.anti_aliasing"
+    , "display.renderer"
+#endif
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
+    , "display.render_height"
+#endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+    , "display.frame_limit", "display.anti_aliasing"
 #endif
     , "game.show_default_game_types"
 };
@@ -54,15 +60,23 @@ double device_settings_get(short setting)
         return !strcmp(config_string(setting_names[setting]), "metal");
     }
     if (setting == _device_setting_anti_aliasing) return !strcmp(config_string(setting_names[setting]), "fxaa");
-    if (setting == _device_setting_render_height)
-    {
-        long height = config_integer(setting_names[setting]);
-        return height == 0 || height == 480 || height == 720 || height == 1080 || height == 1440 || height == 2160 ? height : 480;
-    }
     if (setting == _device_setting_frame_limit)
     {
         long cap = config_integer(setting_names[setting]);
         return cap == 0 || cap == 30 || cap == 60 || cap == 120 ? cap : 0;
+    }
+#endif
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
+    if (setting == _device_setting_render_height)
+    {
+        long height = config_integer(setting_names[setting]);
+#if defined(HALO_MACOS)
+        const long fallback = 480;
+#else
+        const long fallback = -1;
+        if (height == -1) return -1;
+#endif
+        return height == 0 || height == 480 || height == 720 || height == 1080 || height == 1440 || height == 2160 ? height : fallback;
     }
 #endif
     if (setting == _device_setting_fullscreen) return halo_video_fullscreen_get() != 0;
@@ -113,13 +127,19 @@ int device_settings_apply(unsigned long changed_mask,
         /* No draft or old saved preference can disable the fixed cadence. */
         if (setting == _device_setting_fast_menu_repeat) continue;
         if (!device_setting_is_finite(values[setting])) return 0;
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
         if (setting == _device_setting_render_height)
         {
             double height = values[setting];
+#if !defined(HALO_MACOS)
+            if (height != -1.0)
+#endif
             if (height != 0.0 && height != 480.0 && height != 720.0 && height != 1080.0 && height != 1440.0 && height != 2160.0) return 0;
         }
-        else if (setting == _device_setting_frame_limit)
+        else
+#endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+        if (setting == _device_setting_frame_limit)
         {
             double cap = values[setting];
             if (cap != 0.0 && cap != 30.0 && cap != 60.0 && cap != 120.0) return 0;
@@ -165,7 +185,11 @@ int device_settings_apply(unsigned long changed_mask,
             updates[count].string = setting == _device_setting_renderer ?
                 (values[setting] != 0.0 ? "metal" : "angle") : (values[setting] != 0.0 ? "fxaa" : "off");
         }
-        else if (setting == _device_setting_render_height || setting == _device_setting_frame_limit)
+        else if (setting == _device_setting_frame_limit)
+            previous[count].number = config_integer(setting_names[setting]);
+#endif
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
+        if (setting == _device_setting_render_height)
             previous[count].number = config_integer(setting_names[setting]);
 #endif
         count++;
