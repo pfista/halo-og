@@ -3458,7 +3458,7 @@ static void playlist_profile_append_performance_status(
 	wchar_t const *suffix;
 	unsigned long suffix_length;
 
-	if (!description)
+	if (!description || !profile)
 		return;
 	/* This card already names Pro above its compact two-line description. */
 	if (TEST_FLAG(profile->flags, 0) && (profile->flags >> 8) == PLAYLIST_PROFILE_TEAM_SLAYER_PRO)
