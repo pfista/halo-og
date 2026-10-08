@@ -99,6 +99,9 @@ symbols in this file:
 #endif
 #include "interface/hud_definitions.h"
 #include "interface/hud_draw.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "interface/community_weapon_hud.h"
+#endif
 #include "interface/interface.h"
 #include "interface/unit_hud_interface_definition.h"
 #include "items/weapon_definitions.h"
@@ -1330,6 +1333,10 @@ void hud_zoomed_layout_end(
 	render.camera.window_bounds = *saved_window_bounds;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "interface/rifle_grenade_hud_row.inc"
+#endif
+
 void hud_draw_static_element(
 	short local_player_index,
 	struct hud_absolute_placement_definition const *absolute_placement,
@@ -1372,6 +1379,12 @@ void hud_draw_static_element(
 		is_interface_bitmap =
 			bitmap_group->type == _bitmap_group_type_interface_bitmaps;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (!hud_draw_rifle_grenade_row(static_element->interface_bitmap.index,
+			static_element->sequence_index, NULL, bitmap, absolute_placement,
+			&static_element->placement, clip, color,
+			TEST_FLAG(draw_flags, _hud_draw_in_multiplayer_bit), is_interface_bitmap))
+#endif
 		hud_draw_bitmap_with_meter(
 			NULL,
 			bitmap,
@@ -1839,6 +1852,12 @@ void hud_draw_meter(
 		meter_parameters.flash_color_is_negative = FALSE;
 		meter_parameters.tint_mode_2 = TRUE;
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (!hud_draw_rifle_grenade_row(meter->meter_bitmap.index,
+			meter->sequence_index, &meter_parameters, bitmap, absolute_placement,
+			&meter->placement, clip, 0xFFFFFFFF,
+			TEST_FLAG(draw_flags, _hud_draw_in_multiplayer_bit), is_interface_bitmap))
+#endif
 		hud_draw_bitmap_with_meter(
 			&meter_parameters,
 			bitmap,
@@ -1856,6 +1875,88 @@ void hud_draw_meter(
 	match_assert_stack_frame("c:\\halo\\SOURCE\\interface\\hud_draw.c", 428);
 
 	return;
+}
+
+/* Community layout helper: work on a caller-owned copy, using the actual
+ * panel quad and digit atlas. Native left-anchored numbers draw right to left;
+ * their origin is the last digit, not the left edge of the complete number. */
+boolean hud_center_number_on_panel(
+	short local_player_index,
+	struct hud_absolute_placement_definition const *absolute_placement,
+	struct static_hud_element_definition const *panel,
+	boolean in_multiplayer,
+	struct number_hud_element_definition *numbers)
+{
+	long digits_index = interface_get_tag_index(_interface_hud_digits);
+	struct hud_number_definition const *digits;
+	struct bitmap_data const *panel_bitmap = NULL, *digit_bitmap = NULL;
+	real_rectangle2d const *panel_clip = NULL, *digit_clip = NULL;
+	real_rectangle2d visible_panel_clip;
+	struct bitmap_group const *panel_group, *digit_group;
+	point2d panel_point, number_point;
+	real panel_width, panel_height, panel_left = 0.0f, panel_top = 0.0f;
+	real digit_width, digit_height, scale;
+	real delta_x, delta_y;
+
+	if (digits_index == NONE || absolute_placement->corner != _hud_anchor_top_left ||
+		numbers->digits != 2 || numbers->fractional_digits ||
+		numbers->number_flags != FLAG(_hud_number_show_all_leading_zeros_bit))
+		return FALSE;
+	digits = hud_number_definition_get(digits_index);
+	hud_retrieve_bitmap_and_bounding_rect(panel->interface_bitmap.index,
+		panel->sequence_index, 0, &panel_bitmap, &panel_clip);
+	hud_retrieve_bitmap_and_bounding_rect(digits->number_bitmap.index,
+		0, 0, &digit_bitmap, &digit_clip);
+	if (!panel_bitmap || !digit_bitmap || !digit_clip)
+		return FALSE;
+	panel_group = bitmap_group_get(panel->interface_bitmap.index);
+	digit_group = bitmap_group_get(digits->number_bitmap.index);
+	if (!panel_clip)
+	{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* These reviewed backgrounds have no sprite clips. Their 512x128
+		 * canvases contain transparent padding; use the measured visible
+		 * panel ink instead of centering over that entire canvas. */
+		if (panel_bitmap->width != 512 || panel_bitmap->height != 128 ||
+			panel_group->type == _bitmap_group_type_interface_bitmaps ||
+			panel->placement.scale.i != 0.25f || panel->placement.scale.j != 0.25f ||
+			(panel->sequence_index != 0 && panel->sequence_index != 1) ||
+			!community_weapon_hud_path_matches(tag_get_name(panel->interface_bitmap.index),
+				"ui\\hud\\bitmaps\\combined\\hud_weapon_backgrounds"))
+			return FALSE;
+		visible_panel_clip.x0 = (panel->sequence_index == 0 ? 0.0f : 1.0f)/512.0f;
+		visible_panel_clip.x1 = (panel->sequence_index == 0 ? 149.0f : 292.0f)/512.0f;
+		visible_panel_clip.y0 = 0.0f;
+		visible_panel_clip.y1 = 64.0f/128.0f;
+		panel_clip = &visible_panel_clip;
+		panel_left = panel_clip->x0 * panel_bitmap->width * panel->placement.scale.i;
+		panel_top = panel_clip->y0 * panel_bitmap->height * panel->placement.scale.j;
+#else
+		return FALSE;
+#endif
+	}
+	panel_width = (panel_clip->x1-panel_clip->x0) * panel->placement.scale.i *
+		(panel_group->type == _bitmap_group_type_interface_bitmaps ? 1 : panel_bitmap->width);
+	panel_height = (panel_clip->y1-panel_clip->y0) * panel->placement.scale.j *
+		(panel_group->type == _bitmap_group_type_interface_bitmaps ? 1 : panel_bitmap->height);
+	scale = hud_globals_get_scale(in_multiplayer);
+	digit_width = (digit_clip->x1-digit_clip->x0) * scale *
+		(digit_group->type == _bitmap_group_type_interface_bitmaps ? 1 : digit_bitmap->width);
+	digit_height = (digit_clip->y1-digit_clip->y0) * scale *
+		(digit_group->type == _bitmap_group_type_interface_bitmaps ? 1 : digit_bitmap->height);
+	if (!(panel_width > 0.0f && panel_height > 0.0f && scale > 0.0f &&
+		digit_width > 0.0f && digit_height > 0.0f))
+		return FALSE;
+	hud_calculate_point(local_player_index, absolute_placement, &panel->placement,
+		NULL, in_multiplayer, 0.0f, &panel_point);
+	hud_calculate_point(local_player_index, absolute_placement, &numbers->placement,
+		NULL, in_multiplayer, 0.0f, &number_point);
+	delta_x = panel_point.x + panel_left + panel_width*0.5f - number_point.x +
+		(digits->screen_width*scale - digit_width)*0.5f;
+	delta_y = panel_point.y + panel_top + (panel_height-digit_height)*0.5f - number_point.y;
+	numbers->placement.offset.x += (short)floor(delta_x/scale + 0.5f);
+	numbers->placement.offset.y += (short)floor(delta_y/scale + 0.5f);
+	return TRUE;
 }
 
 void hud_draw_numbers(

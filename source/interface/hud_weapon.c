@@ -66,6 +66,9 @@ symbols in this file:
 #define teammate_view_hud_player_count local_player_count
 #endif
 #include "interface/hud_draw.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "interface/community_weapon_hud.h"
+#endif
 #include "interface/hud.h"
 #include "interface/hud_definitions.h"
 #include "interface/hud_weapon.h"
@@ -1358,6 +1361,75 @@ static void crosshairs_draw(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static void community_grenade_launcher_panel(
+	long hud_index,
+	struct static_hud_element_definition *panel)
+{
+	boolean background, outline;
+	if (panel->interface_bitmap.index == NONE ||
+		!community_weapon_hud_path_matches(tag_get_name(hud_index),
+			"weapons\\grenade launcher\\assault rifle") ||
+		panel->placement.scale.i != 0.25f || panel->placement.scale.j != 0.25f ||
+		panel->placement.multiplayer_scaling_flags != 0)
+		return;
+	background = community_weapon_hud_path_matches(tag_get_name(panel->interface_bitmap.index),
+		"ui\\hud\\bitmaps\\combined\\hud_weapon_backgrounds");
+	outline = community_weapon_hud_path_matches(tag_get_name(panel->interface_bitmap.index),
+		"ui\\hud\\bitmaps\\combined\\hud_ammo_outlines");
+	/* The reviewed MCC normalization halved these custom anchors even
+	 * though X=164 separates the launcher from the unit grenade panel.
+	 * Restore only that known layout; already-corrected caches are unchanged. */
+	if (((background && panel->sequence_index == 0) || (outline && panel->sequence_index == 3)) &&
+		panel->placement.offset.x == 82 && panel->placement.offset.y == 1)
+		panel->placement.offset.x = 164;
+	else if (((background && panel->sequence_index == 1) || (outline && panel->sequence_index == 2)) &&
+		panel->placement.offset.x == 81 && panel->placement.offset.y == 1)
+	{
+		panel->placement.offset.x = 161;
+		panel->placement.offset.y = 2;
+	}
+}
+
+static void community_grenade_launcher_number(
+	long hud_index,
+	short local_player_index,
+	struct weapon_hud_interface_definition const *definition,
+	struct weapon_hud_number_element const *element,
+	short map_type_flags,
+	short draw_flags,
+	struct number_hud_element_definition *number)
+{
+	long index;
+	/* State 5 is the launcher's loaded ammo. Its reserve count and the
+	 * primary rifle count keep their authored placements. */
+	if (element->header.state_type != 5 ||
+		!community_weapon_hud_path_matches(tag_get_name(hud_index),
+			"weapons\\grenade launcher\\assault rifle"))
+		return;
+	for (index = 0; index < definition->statics.count; index++)
+	{
+		struct weapon_hud_static_element const *panel = TAG_BLOCK_GET_ELEMENT(
+			&definition->statics, index, struct weapon_hud_static_element);
+		if (panel->header.state_type == element->header.state_type &&
+			panel->header.use_on_map_type == element->header.use_on_map_type &&
+			TEST_FLAG(map_type_flags, panel->header.use_on_map_type) &&
+			!TEST_FLAG(panel->header.runtime_flags, _hud_element_runtime_invalid_bit) &&
+			panel->static_element.interface_bitmap.index != NONE &&
+			(panel->static_element.sequence_index == 0 || panel->static_element.sequence_index == 1) &&
+			community_weapon_hud_path_matches(tag_get_name(panel->static_element.interface_bitmap.index),
+				"ui\\hud\\bitmaps\\combined\\hud_weapon_backgrounds"))
+		{
+			struct static_hud_element_definition panel_layout = panel->static_element;
+			community_grenade_launcher_panel(hud_index, &panel_layout);
+			hud_center_number_on_panel(local_player_index, &definition->absolute_placement,
+				&panel_layout, TEST_FLAG(draw_flags, _hud_draw_in_multiplayer_bit), number);
+			return;
+		}
+	}
+}
+#endif
+
 static void render_weapon_hud(
 	long hud_index,
 	short local_player_index,
@@ -1728,14 +1800,19 @@ static void render_weapon_hud(
 			/* (the zoomed view's, at the middle: hud_zoomed_layout_begin) */
 			rectangle2d window_bounds;
 			boolean zoomed_layout = hud_multitexture_overlays_follow_zoom(&element->static_element.multitexture_overlays);
+			struct static_hud_element_definition static_element = element->static_element;
 
 			if (zoomed_layout)
 				hud_zoomed_layout_begin(&window_bounds);
 			state_index = element->header.state_type;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			if (state_index == 5)
+				community_grenade_launcher_panel(hud_index, &static_element);
+#endif
 			hud_draw_static_element(
 				local_player_index,
 				&definition->absolute_placement,
-				&element->static_element,
+				&static_element,
 				state_flags[state_index],
 				hud_state->last_weapon_flash_time[state_index]);
 			if (zoomed_layout)
@@ -1793,6 +1870,7 @@ static void render_weapon_hud(
 			short magazine_size = 1;
 			short value;
 			short decimal_value;
+			struct number_hud_element_definition number = element->number_element;
 			rectangle2d window_bounds;
 			boolean zoomed_layout = hud_number_shows_only_when_zoomed(&element->number_element);
 
@@ -1837,10 +1915,14 @@ static void render_weapon_hud(
 
 			if (zoomed_layout)
 				hud_zoomed_layout_begin(&window_bounds);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			community_grenade_launcher_number(hud_index, local_player_index, definition,
+				element, map_type_flags, state_flags[state_index], &number);
+#endif
 			hud_draw_numbers(
 				local_player_index,
 				&definition->absolute_placement,
-				&element->number_element,
+				&number,
 				value,
 				decimal_value,
 				state_flags[state_index],

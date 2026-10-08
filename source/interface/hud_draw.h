@@ -144,6 +144,12 @@ void hud_draw_numbers(
 	short draw_flags,
 	long flash_reference_time,
 	real override_scale);
+boolean hud_center_number_on_panel(
+	short local_player_index,
+	struct hud_absolute_placement_definition const *absolute_placement,
+	struct static_hud_element_definition const *panel,
+	boolean in_multiplayer,
+	struct number_hud_element_definition *numbers);
 
 /* ---------- public code */
 

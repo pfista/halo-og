@@ -515,6 +515,13 @@ per-element decisions. Custom H3 reticles also have different visible ink
 within their full quads; a large atlas or quad alone does not establish a
 reticle sizing error or justify resizing the entire atlas.
 
+The native renderer recognizes the reviewed AR grenade-launcher HUD and its
+Fiesta copies. It centers the loaded-grenade count within the existing panel
+and draws the six authored ammo icons in one horizontal row, preserving their
+texture coordinates, ammo thresholds and colors. It also restores the known
+half-offset MCC conversion of this panel to its separate secondary-ammo
+position. These are draw-time copies; the source caches remain unchanged.
+
 Chillout's radar is one measured exception: its full-screen background and
 foreground offsets `20,20` become `0,0`, while the independent sweeper/blip
 center `104,103` becomes `41,41`. The split-screen center `63,61` becomes
