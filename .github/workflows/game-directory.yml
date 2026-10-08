@@ -1,0 +1,40 @@
+name: Game directory service checks
+
+# Exercises the actual Worker in Miniflare, including its real lease expiry.
+# No deployment credentials, remote service writes, or game builds are needed.
+on:
+  push:
+    paths:
+      - 'services/game-directory/**'
+      - '.github/workflows/game-directory.yml'
+  pull_request:
+    paths:
+      - 'services/game-directory/**'
+      - '.github/workflows/game-directory.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: game-directory-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  service:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/game-directory
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: services/game-directory/package-lock.json
+      - name: Install pinned runtime without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Directory HTTP, authorization, quotas and lease expiry
+        run: npm test

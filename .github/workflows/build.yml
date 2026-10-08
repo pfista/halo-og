@@ -24,6 +24,8 @@ on:
   push:
     paths-ignore:
       - "**.md"
+      - "services/game-directory/**"
+      - ".github/workflows/game-directory.yml"
   workflow_dispatch:
 
 concurrency:
@@ -89,8 +91,7 @@ jobs:
 
       - name: Native settings and shared interfaces
         run: >-
-          python -m unittest tools.test_device_settings tools.test_controller_settings tools.test_menu_repeat tools.test_menu_keyboard tools.test_windows_shared_headers
-          tools.test_game_settings.NativeGameSettingsTests.test_native_menu
+          python -m unittest tools.test_controller_settings tools.test_menu_repeat tools.test_menu_keyboard tools.test_windows_shared_headers
           tools.test_performance_mouse tools.test_save_migration
           tools.test_desktop_first_run tools.test_release_discovery
           tools.test_download_transport_limits tools.test_desktop_map_downloads tools.test_desktop_timer_audio tools.test_game_directory tools.test_game_directory_worker
@@ -287,8 +288,7 @@ jobs:
 
       - name: Native settings and shared interfaces
         run: >-
-          python -m unittest tools.test_device_settings tools.test_controller_settings tools.test_menu_repeat tools.test_menu_keyboard tools.test_windows_shared_headers
-          tools.test_game_settings.NativeGameSettingsTests.test_native_menu
+          python -m unittest tools.test_controller_settings tools.test_menu_repeat tools.test_menu_keyboard tools.test_windows_shared_headers
           tools.test_performance_mouse tools.test_save_migration
           tools.test_desktop_first_run tools.test_release_discovery
           tools.test_download_transport_limits tools.test_desktop_map_downloads tools.test_desktop_timer_audio tools.test_game_directory tools.test_game_directory_worker

@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths-ignore:
       - '**.md'
+      - 'services/game-directory/**'
+      - '.github/workflows/game-directory.yml'
   workflow_dispatch:
 
 permissions:
