@@ -218,6 +218,11 @@ static const struct config_setting config_settings[] =
 	{ "network.join_in_progress", _config_boolean, "true", NULL, _environment_value, _platform_all,
 		"Allow new players to join a hosted match after it starts. False closes\n"
 		"only running matches; players may still join the pregame lobby." },
+	{ "network.experimental_powerup_sync", _config_boolean, "false", NULL, _environment_value, _platform_all,
+		"Experimental camo/overshield replication repair. Enable on the host\n"
+		"and test clients, then restart. False retains the previous receive\n"
+		"behavior and resting-object refresh order; see\n"
+		"docs/experimental-powerup-sync.md for testing and rollback." },
 	{ "network.join_from_clipboard", _config_boolean, "true", "HALO_NET_JOIN_FROM_CLIPBOARD", _environment_value,
 		_platform_all,
 		"Join the game of an invite link found on the clipboard when the game\n"

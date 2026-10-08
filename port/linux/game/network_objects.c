@@ -63,6 +63,7 @@ same datum index (identifier and all), so that any message can name one:
 #include "items/weapon_definitions.h"
 #include "items/equipment_definitions.h"
 #include "network_distributed.h"
+#include "port_config.h"
 
 #include <math.h>
 
@@ -1059,6 +1060,7 @@ static void distributed_host_send_states(
 	long absolute_index;
 	long step;
 	short machine_number;
+	boolean experimental_powerup_sync = config_boolean("network.experimental_powerup_sync") != 0;
 
 	/* the moving ones, and those at rest now that were not */
 	for (absolute_index = 0; absolute_index < told_count; absolute_index++)
@@ -1082,12 +1084,21 @@ static void distributed_host_send_states(
 	{
 		long object_index;
 
-		absolute_index = (objects_host_resting_cursor + step) % told_count;
+		if (experimental_powerup_sync)
+		{
+			/* EXPERIMENTAL_POWERUP_SYNC: advance once per inspected slot. The
+			legacy cursor-plus-step walk can permanently skip resting objects. */
+			absolute_index = objects_host_resting_cursor;
+			objects_host_resting_cursor = (absolute_index + 1) % told_count;
+		}
+		else
+			absolute_index = (objects_host_resting_cursor + step) % told_count;
 		object_index = distributed_host_placed_object(absolute_index);
 		if (object_index == NONE || !TEST_FLAG(object_get(object_index)->object.flags, _object_at_rest_bit))
 			continue;
 		resting++;
-		objects_host_resting_cursor = (absolute_index + 1) % told_count;
+		if (!experimental_powerup_sync)
+			objects_host_resting_cursor = (absolute_index + 1) % told_count;
 		distributed_state_from_object(object_index, &states[state_count]);
 		kinds[state_count++] = _host_state_to_all;
 	}
@@ -1855,6 +1866,84 @@ static boolean distributed_client_change_valid(
 		&change->translational_velocity, &change->angular_velocity, forward, up);
 }
 
+/* EXPERIMENTAL_POWERUP_SYNC: optional receiver repair for host-authored
+ * camo/overshield equipment.
+ * Other objects, carried items and locally predicted units keep their existing
+ * paths; the host's original spawn, physics and pickup decisions are unchanged. */
+static boolean distributed_client_powerup_sync_target(
+	long object_index)
+{
+	struct object_datum *object;
+	struct equipment_definition *definition;
+
+	if (!config_boolean("network.experimental_powerup_sync"))
+		return FALSE;
+	object = object_try_and_get(object_index);
+	if (!object || object->object.type != _object_type_equipment ||
+		object->object.parent_object_index != NONE ||
+		!TEST_FLAG(object->object.flags, _object_connected_to_map_bit) ||
+		TEST_FLAG(item_get(object_index)->item.flags, _item_attached_to_unit_bit))
+	{
+		return FALSE;
+	}
+	definition = equipment_definition_get(object->definition_index);
+	return definition->equipment.powerup_type == _equipment_powerup_active_camouflage ||
+		definition->equipment.powerup_type == _equipment_powerup_overshield;
+}
+
+static void distributed_client_powerup_sync_rest(
+	long object_index,
+	boolean at_rest,
+	real_vector3d const *velocity,
+	real_vector3d const *angular_velocity)
+{
+	struct object_datum *object;
+
+	if (!distributed_client_powerup_sync_target(object_index) ||
+		!distributed_vector_valid(velocity) || !distributed_vector_valid(angular_velocity))
+	{
+		return;
+	}
+	object = object_get(object_index);
+	if (at_rest || TEST_FLAG(object->object.flags, _object_at_rest_bit) != at_rest)
+	{
+		/* A wake must retain the host's impulse; a freeze must discard any
+		gravity accumulated while the client copy incorrectly fell, even if
+		that copy has since independently come to rest. Keep the host's finite
+		vectors rather than assuming all resting equipment has zero velocity. */
+		object->object.translational_velocity = *velocity;
+		object->object.angular_velocity = *angular_velocity;
+	}
+	SET_FLAG(object->object.flags, _object_at_rest_bit, at_rest);
+}
+
+static void distributed_client_powerup_sync_correct_support(
+	long object_index,
+	real_point3d const *previous_position)
+{
+	struct item_datum *item;
+	real dx, dy, dz;
+
+	if (!distributed_client_powerup_sync_target(object_index))
+		return;
+	item = item_get(object_index);
+	dx = item->object.position.x - previous_position->x;
+	dy = item->object.position.y - previous_position->y;
+	dz = item->object.position.z - previous_position->z;
+	if (!(dx * dx + dy * dy + dz * dz <= REMOTE_OBJECT_TOLERANCE * REMOTE_OBJECT_TOLERANCE))
+	{
+		/* A relocated powerup no longer rests on its old client surface or
+		object. In particular, item_update would otherwise pull a corrected
+		floating powerup back onto a cached moving support object. Keep valid
+		contacts when only the rest state, rotation or a tiny pose error changes. */
+		item->item.flags &= ~(FLAG(_item_on_structure_bit) | FLAG(_item_on_object_bit));
+		item->item.rested_surface_index = NONE;
+		item->item.bsp_index = NONE;
+		item->item.item_on_rest_object_index = NONE;
+		csmemset(&item->item.item_rest_object_offset, 0, sizeof(item->item.item_rest_object_offset));
+	}
+}
+
 /* the host's word on an object made or found here: how it looks, whether
 carried, whether dead */
 static void distributed_client_apply_change(
@@ -1900,6 +1989,12 @@ as it is) */
 		/* (at once: a body where no player is may not be updated for long) */
 		object_damage_update(object_index);
 	}
+	if (!TEST_FLAG(change->flags, _distributed_object_carried_bit))
+	{
+		distributed_client_powerup_sync_rest(object_index,
+			TEST_FLAG(change->flags, _distributed_object_at_rest_bit),
+			&change->translational_velocity, &change->angular_velocity);
+	}
 }
 
 static void distributed_client_create(
@@ -1937,8 +2032,11 @@ static void distributed_client_create(
 				TEST_FLAG(existing->object.flags, _object_connected_to_map_bit) &&
 				!distributed_client_own_object(existing_index))
 			{
+				real_point3d previous_position = existing->object.position;
+
 				distributed_object_move(existing_index, &change->position, &forward, &up,
 					&change->translational_velocity, &change->angular_velocity);
+				distributed_client_powerup_sync_correct_support(existing_index, &previous_position);
 			}
 			distributed_client_apply_change(existing_index, change);
 			return;
@@ -2138,6 +2236,8 @@ void network_objects_handle_states(
 		real blend_distance = REMOTE_BLEND_DISTANCE;
 		real_vector3d forward, up, velocity, angular_velocity;
 		real dx, dy, dz;
+		real_point3d previous_position;
+		boolean experimental_powerup_sync;
 
 		if (!distributed_object_index_valid(state->object_index) || !network_objects_client_has(state->object_index))
 			continue;
@@ -2166,6 +2266,13 @@ void network_objects_handle_states(
 		distributed_object_state_unpack(state, &forward, &up, &velocity, &angular_velocity);
 		if (!distributed_transform_valid(&state->position, &forward, &up, NULL, NULL, &forward, &up))
 			continue;
+		experimental_powerup_sync = !TEST_FLAG(state->flags, _distributed_object_carried_bit) &&
+			distributed_client_powerup_sync_target(state->object_index);
+		if (experimental_powerup_sync &&
+			(!distributed_vector_valid(&velocity) || !distributed_vector_valid(&angular_velocity)))
+		{
+			continue;
+		}
 		/* (come to rest: all of the way, drawn gliding, not half of it and
 		left there) */
 		if (TEST_FLAG(state->flags, _distributed_object_at_rest_bit))
@@ -2200,14 +2307,27 @@ void network_objects_handle_states(
 				forward.k * object->object.forward.k >= angle_tolerance &&
 			up.i * object->object.up.i + up.j * object->object.up.j + up.k * object->object.up.k >= angle_tolerance)
 		{
+			if (experimental_powerup_sync)
+			{
+				distributed_client_powerup_sync_rest(state->object_index,
+					TEST_FLAG(state->flags, _distributed_object_at_rest_bit), &velocity, &angular_velocity);
+			}
 			continue;
 		}
+		previous_position = object->object.position;
 		if (network_objects_reconcile(state->object_index, &state->position, &forward, &up, &velocity,
 			&angular_velocity, blend_distance))
 		{
 			distributed_count_correction();
 		}
-		SET_FLAG(object->object.flags, _object_at_rest_bit, TEST_FLAG(state->flags, _distributed_object_at_rest_bit));
+		if (experimental_powerup_sync)
+		{
+			distributed_client_powerup_sync_correct_support(state->object_index, &previous_position);
+			distributed_client_powerup_sync_rest(state->object_index,
+				TEST_FLAG(state->flags, _distributed_object_at_rest_bit), &velocity, &angular_velocity);
+		}
+		else
+			SET_FLAG(object->object.flags, _object_at_rest_bit, TEST_FLAG(state->flags, _distributed_object_at_rest_bit));
 	}
 }
 

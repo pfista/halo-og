@@ -92,6 +92,15 @@ requirements. Split cosmetic or gameplay changes from useful fixes; defer
 uncertain effects. The glyph-padding correction preserves original font pixels
 and is a renderer fix, not authorization to replace fonts.
 
+## Experimental powerup replication
+
+`network.experimental_powerup_sync` is an opt-in local experiment, default
+false, for off-host camo/overshield rest-state reception and the host's periodic
+resting-object refresh traversal. The previous behavior remains selectable.
+It retains host gameplay authority and existing packet fields; multiplayer
+validation and original Xbox comparison remain pending. See
+[scope, testing and rollback](experimental-powerup-sync.md).
+
 ## Authored original weapons in converted community maps
 
 The reviewed `og-multiplayer-v5` conversion profile can explicitly select
