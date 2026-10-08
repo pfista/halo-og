@@ -145,7 +145,8 @@ static void all_arrow_rows_and_staging(void) {
         arrow(root,row,FALSE); assert(edited.flags==0 && mutation_calls==0);
     }
     arrow(root,4,TRUE); arrow(root,5,TRUE);
-    assert(pb_editor.last_flags==24 && !edited.flags && !mutation_calls);
+    /* The first sound choice after Normal is Just Me for each role. */
+    assert(pb_editor.last_flags==(4096 | 8192) && !edited.flags && !mutation_calls);
     input=(struct halo_ui_pointer){.right_clicks=1};
     unsigned before=posted_count; ui_widgets_process_mouse();
     assert(posted_count==before+1 && posted_button==_widget_event_b_button);
@@ -158,7 +159,7 @@ static void all_arrow_rows_and_staging(void) {
     assert(click_at(root,530,426)==_gamepad_analog_button_a);
     assert(pb_editor.menu_events[1].event_type==posted_button);
     assert(performance_editor_event(menu,pb_editor.menu_events[1].function));
-    assert(edited.flags==24 && mutation_calls==1);
+    assert(edited.flags==(4096 | 8192) && mutation_calls==1);
     close_pb(root);
     root=open_pb(); menu=widget_instance_find_by_tag_index_recursive(root,pb_editor.menu_tag);
     assert(pb_editor_spinner(menu,4)->parameters.list.selected_index==1 && pb_editor_spinner(menu,5)->parameters.list.selected_index==1);
