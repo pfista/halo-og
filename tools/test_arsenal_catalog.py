@@ -114,7 +114,7 @@ class ArsenalDeliveryTests(unittest.TestCase):
                 catalog.validate_catalog(encoded(value))
         entry = good["arsenals"][0]
         with patch.object(catalog, "MAX_BATCH_BYTES", len(encoded(good)) + entry["cache_file_bytes"]):
-            with self.assertRaisesRegex(shared.PublishError, "2 GiB"):
+            with self.assertRaisesRegex(shared.PublishError, "4 GiB"):
                 catalog.validate_catalog(encoded(good))
         with self.assertRaises(shared.PublishError):
             catalog.validate_catalog(b'{"schema_version":1,"schema_version":1}')
@@ -133,15 +133,15 @@ class ArsenalDeliveryTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(shared.PublishError):
                 catalog.validate_manifest(encoded({**boundary, field: 512 * 1024 * 1024 + 1}))
         self.assertEqual(catalog.MAX_MANIFEST_BYTES, 4096)
-        self.assertEqual(catalog.MAX_BATCH_BYTES, 2 * 1024 * 1024 * 1024)
+        self.assertEqual(catalog.MAX_BATCH_BYTES, 4 * 1024 * 1024 * 1024)
         # Numbers in small JSON exercise transfer admission, without allocating maps.
         entries = []
-        for index in range(5):
+        for index in range(9):
             logical = "synthetic" + str(index)
             value = {**boundary, "logical_map": logical, "physical_map": catalog.physical_name(logical),
                      "base_sha256": format(index, "064x")}
             entries.append(catalog.entry_from_manifest(encoded(value)))
-        with self.assertRaisesRegex(shared.PublishError, "2 GiB"):
+        with self.assertRaisesRegex(shared.PublishError, "4 GiB"):
             catalog.catalog_bytes(entries)
 
     def test_flat_manifest_must_match_catalog_exactly(self):

@@ -4,6 +4,8 @@
 #define ARSENAL_CATALOG_URL "https://dl.oghalo.com/catalogs/testing/arsenals-v1.json"
 #define ARSENAL_WEAPON_LIST_SHA256 "2856504cbd257e1b18c273caa64237fbfe77dc77d22cce1a7fa0a0abfc53f71f"
 #define MAX_MANIFEST_BYTES 4096
+/* Admission covers the entire index; caches are downloaded individually. */
+#define ARSENAL_MAX_BATCH_BYTES (4ULL * 1024 * 1024 * 1024)
 
 struct arsenal_entry {
     char logical[32], physical[32], base_sha256[65], cache_sha256[65], manifest_sha256[65];
@@ -110,7 +112,7 @@ static int parse_arsenal_catalog(const unsigned char *data, size_t size, struct 
                 for (unsigned i = 0; i < catalog->count; i++)
                     if (!strcmp(catalog->entries[i].logical, entry->logical) && !strcmp(catalog->entries[i].base_sha256, entry->base_sha256)) return 0;
                 total += entry->cache_bytes + entry->manifest_bytes;
-                if (total > MAX_BATCH_BYTES) return 0;
+                if (total > ARSENAL_MAX_BATCH_BYTES) return 0;
                 catalog->count++;
                 if (token(&j, ']')) break;
                 if (!token(&j, ',')) return 0;

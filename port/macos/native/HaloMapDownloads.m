@@ -8,6 +8,8 @@
 #include <errno.h>
 #include <limits.h>
 
+/* Hidden caches are requested individually; this bounds their complete index. */
+static const uint64_t arsenalMaxBatchBytes = 4ULL * 1024 * 1024 * 1024;
 static HaloMapDownloads *hostDownloads;
 static NSError *downloadError(NSString *message) {
     return [NSError errorWithDomain:@"HaloMapDownloads" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];
@@ -279,7 +281,7 @@ NSDictionary *HaloValidateArsenalCatalog(NSData *data, NSDictionary *config, NSE
             ![entry[@"manifest_object_key"] isEqual:[NSString stringWithFormat:@"arsenals/v1/sha256/%@/%@.json", entry[@"manifest_sha256"], entry[@"physical_map"]]]) { valid = NO; break; }
         NSString *key = arsenalCatalogKey(entry[@"logical_map"], entry[@"base_sha256"]);
         total += [entry[@"cache_file_bytes"] unsignedLongLongValue] + [entry[@"manifest_bytes"] unsignedLongLongValue];
-        if (entries[key] || total > 2147483648ULL) { valid = NO; break; }
+        if (entries[key] || total > arsenalMaxBatchBytes) { valid = NO; break; }
         entries[key] = entry;
     }
     if (!valid && error) *error = downloadError(@"The Fiesta arsenal catalog is unsafe or incompatible with this build.");

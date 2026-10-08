@@ -31,7 +31,7 @@ GENERATION = 1
 WEAPON_LIST_SHA256 = "2856504cbd257e1b18c273caa64237fbfe77dc77d22cce1a7fa0a0abfc53f71f"
 CATALOG_KEY = "catalogs/testing/arsenals-v1.json"
 MAX_CACHE_BYTES = 512 * 1024 * 1024
-MAX_BATCH_BYTES = 2 * 1024 * 1024 * 1024
+MAX_BATCH_BYTES = 4 * 1024 * 1024 * 1024
 MAX_MANIFEST_BYTES = 4096
 LOGICAL_NAME = re.compile(r"[a-z0-9][a-z0-9_ -]{0,30}\Z")
 RESERVED_NAMES = set("ui a10 a30 a50 b30 b40 c10 c20 c40 d20 d40 con prn aux nul".split())
@@ -146,7 +146,7 @@ def validate_catalog(data, allowed_logical_maps=None):
         identities.add(identity)
         total += entry["cache_file_bytes"] + entry["manifest_bytes"]
         if total > MAX_BATCH_BYTES:
-            raise PublishError("Arsenal catalog transfer exceeds the 2 GiB batch bound")
+            raise PublishError("Arsenal catalog transfer exceeds the 4 GiB batch bound")
     return catalog
 
 

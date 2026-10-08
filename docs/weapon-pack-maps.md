@@ -207,12 +207,14 @@ python3 -m unittest tools.test_texture_cache_budget
 
 ## Delivering hidden arsenals
 
-The hidden Fiesta profile is separate from the visible 41-map community catalog.
-The generation-one catalog and objects are prepared and offline verified, but
-their R2 upload is pending. Automatic expanded-Fiesta downloads are currently
-unavailable; until publication, install the matching prepared cache/manifest
-pairs manually with `tools/install_fiesta_arsenal.py`. Original-map digests still
-must match, and the runtime validates every installed pair before use.
+The hidden Fiesta profile is separate from the visible community catalog.
+The published generation-one catalog contains 54 entries. Four additional
+companions for `chillout_dig`, `damnation_dig`, `exhibit_dig`, and `prisoner_dig`
+are prepared using the explicitly approved existing 31-weapon All pack and
+nine-weapon Uncut subset. Regular Digsite caches keep their reviewed Battle
+Rifle omissions; their Fiesta companions include the existing pack's Battle
+Rifle. Original-map digests must match, and the runtime validates every installed
+cache/manifest pair before use.
 Its public endpoint is
 `https://dl.oghalo.com/catalogs/testing/arsenals-v1.json`. Root fields are exactly
 `schema_version`, `profile` (`fiesta-arsenal-v1`), `generation` (1),
@@ -229,10 +231,9 @@ authoring paths, extracted tags, helper binaries or native logs. These derivativ
 caches contain their normal embedded Halo dependencies; players still supply
 the exact original map, which is checked against `base_sha256`. Original stock,
 campaign and UI maps are not uploaded as base-map objects or included in the app.
-The visible community catalog and its publisher allowlist remain unchanged.
+The hidden catalog never exposes companion caches as additional map-list entries.
 
-After committing and pushing the requested source changes, prepare and validate
-a fresh delivery tree from the verified outputs:
+Prepare a fresh delivery tree from the reviewed authoring outputs:
 
 ```sh
 python3 tools/arsenal_catalog.py \
@@ -242,23 +243,23 @@ python3 tools/arsenal_catalog.py \
 
 python3 tools/publish_arsenal_catalog.py \
   --prepared build/fiesta-arsenal-delivery-v1
-
-python3 -m unittest tools.test_arsenal_catalog tools.test_publish_map_catalog
 ```
 
 `--map prisoner` optionally prepares a diagnostic subset. Public preparation
 checks the full 31/9 weapon list, recorded player preservation proof, exact cache
 header/hash/size, and flat-manifest correspondence before copying only delivery
 objects. The clean index permits at most 115 entries and 1 MiB; each cache is
-bounded to 128 MiB, each flat manifest to 4096 bytes, and the complete transfer
-batch to 2 GiB. Files and directory names cannot escape the new ignored output.
+bounded to 512 MiB, each flat manifest to 4096 bytes, and the full catalog's
+aggregate object bytes plus index to 4 GiB. This bound covers the catalog's
+entire inventory; clients request hidden caches individually. Files and
+directory names cannot escape the new ignored output.
 Public logical names start with a lowercase ASCII letter or digit, use only
 lowercase letters, digits, spaces, underscores and hyphens, and cannot end in a
 space or exceed 31 characters. UI, campaign and Windows device basenames are
 excluded. Physical names follow the same generation-one rule as the runtime.
 
 [`arsenal-publisher.json`](../tools/arsenal-publisher.json) explicitly allows the
-54 reviewed logical maps. The publisher defaults to offline validation, reads no
+58 reviewed logical maps. The publisher defaults to offline validation, reads no
 credentials and makes no network calls until `--publish` is supplied. For the
 authorized upload, use an existing 1Password-mounted credential file with
 `--credential-file`; never copy its values into source, logs or a new env file.
@@ -267,10 +268,26 @@ verify each through authenticated R2 and public HTTPS, then advance only the
 hidden catalog using the captured ETag. Publication failures do not imply a
 rollback; unchanged verified objects can be reused safely on retry.
 
-The current 54-cache delivery contains 1,994,752,000 cache bytes and 23,986 flat
+For an authorized staging upload, pass `--publish --objects-only` and
+`--expect-catalog-sha256 <live-snapshot-sha256>` alongside the prepared directory
+and credential file. This creates and verifies immutable objects while keeping
+the mutable hidden catalog unchanged. The snapshot digest is checked before any
+object writes. Remove `--objects-only` only when advancing the hidden catalog
+for a compatible release, using a fresh snapshot digest if the live catalog has
+changed.
+
+The earlier 54-cache delivery contains 1,994,752,000 cache bytes and 23,986 flat
 manifest bytes. The clean JSON index is 40,011 bytes, making the initial object
 plus catalog upload **1,994,815,997 bytes**. The catalog SHA-256 is
 `f3bb16570d151ca929d0e8211af1c4ddf28b8e80548e8787925ca861deed3b0d`.
-These figures describe the frozen generation-one outputs, not an upload receipt.
-Build the exact committed app, publish/verify the matching assets, and exercise
-a clean client downloading and joining Prisoner before publishing its app update.
+These figures describe the earlier generation-one outputs. The new 58-entry
+inventory contains 2,179,923,968 cache bytes, 25,794 manifest bytes, and a 43,023
+byte index, totaling 2,179,992,785 bytes. It preserves all 54 previous entries
+and exceeds the previous 2 GiB aggregate catalog limit. Published clients
+with that limit reject the full new hidden catalog, including its older entries.
+Stage the four immutable companion cache/manifest objects first and retain the
+54-entry live hidden catalog until a compatible app release is available. Then
+publish the prepared 58-entry catalog using its exact live snapshot and ETag
+condition. The visible 45-map catalog can advance independently. Preparation,
+immutable-object upload, catalog advancement, and app publication are distinct
+results; no tests or gameplay were run for the four-map preparation.

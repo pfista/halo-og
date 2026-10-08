@@ -101,7 +101,8 @@ for every supported source version (5, 6, 7, 609 and 13). The offline conversion
 did not build or launch the app. At the user's subsequent request, the dual-renderer
 app and all four exact converted caches were installed locally; the installed
 signature and cache checksums were verified. Gameplay was not launched. Preview
-images and editorial metadata still need review before distribution.
+images and editorial metadata remain follow-up work; the current download catalog
+distributes complete caches without those optional fields.
 
 ## What map preparers can provide
 
