@@ -55,7 +55,6 @@ static struct cache_file_tag_instance *global_tag_instances;
 static struct string_list list;
 static struct string_list_entry strings[2];
 static char marker_payload[] = "halo-og:authored-weapon-placements:v1";
-static unsigned iterator_reads;
 static long definition(short slot) {return 1000 + 17 * slot;}
 struct game_globals {struct tag_block weapon_list;};
 static struct tag_reference registry[16];
@@ -77,7 +76,6 @@ static void *tag_get(long group, long index) {
     long absolute = index & 0xffff;
     assert(absolute >= 0 && absolute < tag_header.tag_count);
     assert(global_tag_instances[absolute].group_tag == group);
-    iterator_reads++;
     return global_tag_instances[absolute].base_address;
 }
 struct game_variant {struct {unsigned long flags; long weapon_set;} universal_variant;};
@@ -111,6 +109,7 @@ static struct equipment_definition *equipment_definition_get(long index) {
 }
 /* PRODUCTION FUNCTIONS */
 static boolean initialize_callback(void) {
+    assert(timeout_for_endgame_sound==0 && !game_engine_network_state_read);
     initialize_callbacks++;
     assert(game_engine_remap_weapon(definition(1)) == expected_callback_weapon);
     return TRUE;
@@ -136,7 +135,6 @@ static void populate(long count) {
     list.strings.count=1; list.strings.address=strings;
     strings[0].string.size=sizeof(marker_payload);
     strings[0].string.address=marker_payload;
-    iterator_reads=0;
 }
 static void marker(long absolute) {
     assert(absolute>=0 && absolute<tag_header.tag_count);
@@ -155,6 +153,7 @@ static void reset(void) {
     engine.dispose_from_old_map=dispose_callback;
     game_engine=&engine;
     initialize_callbacks=predictions=dispose_callbacks=0;
+    timeout_for_endgame_sound=7; game_engine_network_state_read=TRUE;
     native_authored_weapon_placements=FALSE;
     expected_callback_weapon=definition(7);
 }
