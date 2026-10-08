@@ -1,0 +1,11 @@
+{
+  "summary": "Halo OG v0.5.1 adds four Digsite maps with regular and Fiesta versions, alongside Team Slayer Pro, new sound options, and split-screen fixes. Desktop players can change rendering resolution without restarting, while Native Metal prepares learned shaders at startup and reduces rendering overhead.",
+  "highlights": [
+    "Digsite maps: Chillout Dig, Damnation Dig, Exhibit Dig and Prisoner Dig have reviewed Xbox V5 conversions and companion caches for Fiesta All's existing 31-weapon pack. The regular versions retain reviewed weapon identities and omit the Battle Rifle; original HUD and menu assets are reused.",
+    "Team Slayer Pro: a locked competitive preset is available, while original gametypes remain accessible through Default Game Types. Precision Spread now centers the pistol reticle.",
+    "Audio: Just Me keeps your movement and weapon-handling sounds audible to you while suppressing them for other players. Item cue names play before the countdown.",
+    "Menus and split-screen: menus block gameplay input, teammate views remain stable through respawns, and menus and scoreboards overlay both panes.",
+    "Resolution: apply Native or 480p-2160p rendering resolutions without restarting on Mac Native Metal and Windows/Linux OpenGL.",
+    "Native Metal: subsequent launches prepare learned shaders and pipelines before gameplay, with less packet-copy and submission overhead. Unseen shaders still compile when first encountered."
+  ]
+}
