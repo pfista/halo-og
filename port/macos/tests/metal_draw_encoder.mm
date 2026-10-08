@@ -51,6 +51,7 @@ using namespace metal;
 struct Inputs { float4 position [[attribute(0)]]; };
 struct VS { float4 c[195]; };
 struct PS { float4 c[38]; };
+struct OversizedPS { float4 c[39]; };
 struct Output { float4 position [[position]]; float pointSize [[point_size]]; };
 vertex Output testVertex(Inputs v [[stage_in]], constant VS &u [[buffer(0)]]) {
     return {v.position + u.c[0], 1.0f};
@@ -58,6 +59,15 @@ vertex Output testVertex(Inputs v [[stage_in]], constant VS &u [[buffer(0)]]) {
 fragment float4 testFragment(constant PS &u [[buffer(0)]]) { return u.c[0]; }
 fragment float4 sampledFragment(constant PS &u [[buffer(0)]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]]) {
     return t.sample(s, float2(0.5f)) * u.c[0];
+}
+fragment float4 sampledEdgesFragment(texture2d<float> first [[texture(0)]], sampler firstSampler [[sampler(0)]],
+        texture2d<float> last [[texture(3)]], sampler lastSampler [[sampler(3)]]) {
+    return first.sample(firstSampler, float2(0.5f)) + last.sample(lastSampler, float2(0.5f));
+}
+fragment float4 unsupportedBufferFragment(constant PS &u [[buffer(1)]]) { return u.c[0]; }
+fragment float4 oversizedBufferFragment(constant OversizedPS &u [[buffer(0)]]) { return u.c[38]; }
+fragment float4 unsupportedTextureFragment(texture2d<float> t [[texture(4)]], sampler s [[sampler(0)]]) {
+    return t.sample(s, float2(0.5f));
 }
 )MSL";
     NSError *error = nil; MTLCompileOptions *options = [MTLCompileOptions new];
@@ -110,6 +120,9 @@ fragment float4 sampledFragment(constant PS &u [[buffer(0)]], texture2d<float> t
     s.scissor[0] = s.scissor[1] = 4; s.scissor[2] = s.scissor[3] = 8;
     HaloMetalDrawEncoder *encoder = [[HaloMetalDrawEncoder alloc] initWithDevice:device];
     require([encoder prepareDraw:draw error:&error], error.localizedDescription ?: @"First draw preparation failed");
+    uint32_t usedTextures = UINT32_MAX;
+    require([encoder usedTextureMaskForDraw:draw mask:&usedTextures error:&error] && usedTextures == 0,
+            @"Untextured draw returned used textures");
     HaloMetalDraw farther = draw;
     const float fartherZ[4] = {0, 0, .75f, 0}, green[4] = {0, 1, 0, 1};
     farther.vertexUniforms = uniforms(device, HaloMetalVertexUniformSize, fartherZ);
@@ -371,10 +384,45 @@ fragment float4 sampledFragment(constant PS &u [[buffer(0)]], texture2d<float> t
     description = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:2 height:2 mipmapped:NO];
     description.usage = MTLTextureUsageShaderRead; invalid.textures[0] = [device newTextureWithDescriptor:description];
     require([encoder prepareDraw:invalid error:&error], error.localizedDescription ?: @"Valid reflected sampler/texture rejected");
+    require([encoder usedTextureMaskForDraw:invalid mask:&usedTextures error:&error] && usedTextures == 1,
+            @"Used texture mask differs from sampled shader bindings");
+    HaloMetalDraw edges = invalid; edges.fragmentFunction = [library newFunctionWithName:@"sampledEdgesFragment"];
+    edges.textures[3] = edges.textures[0]; edges.samplers[3] = edges.samplers[0];
+    require([encoder usedTextureMaskForDraw:edges mask:&usedTextures error:&error] && usedTextures == 9,
+            @"Sparse used texture mask lost the last stage");
+    // Each public entry must recheck mutable draw resources after a pipeline's
+    // immutable requirements have been cached. Failed mask queries leave the
+    // caller's output untouched, just as a failed original reflection walk did.
+    auto rejectedByEveryEntry = [&](const HaloMetalDraw &candidate, HaloMetalDrawError code, NSString *message) {
+        require(![encoder prepareDraw:candidate error:&error] && error.code == code &&
+                [error.localizedDescription isEqualToString:message], @"Cached prepare validation changed its error");
+        usedTextures = UINT32_MAX;
+        require(![encoder usedTextureMaskForDraw:candidate mask:&usedTextures error:&error] &&
+                usedTextures == UINT32_MAX && error.code == code && [error.localizedDescription isEqualToString:message],
+                @"Cached texture mask validation changed its error or output");
+        require(!encode(encoder,candidate,[queue commandBuffer],reuse,&error) && error.code == code &&
+                [error.localizedDescription isEqualToString:message], @"Cached encode validation changed its error");
+    };
+    HaloMetalDraw changed = edges; changed.textures[3] = nil;
+    rejectedByEveryEntry(changed,HaloMetalDrawInvalid,@"Used original texture is absent, mismatched or aliases a draw attachment");
+    changed = edges; changed.samplers[3] = nil;
+    rejectedByEveryEntry(changed,HaloMetalDrawInvalid,@"Used original sampler is absent or mismatched");
+    changed = edges; changed.textures[3] = color;
+    rejectedByEveryEntry(changed,HaloMetalDrawInvalid,@"Used original texture is absent, mismatched or aliases a draw attachment");
+    changed = draw; changed.fragmentFunction = [library newFunctionWithName:@"unsupportedBufferFragment"];
+    rejectedByEveryEntry(changed,HaloMetalDrawUnsupported,@"Shader requires an unsupported original buffer binding");
+    changed.fragmentFunction = [library newFunctionWithName:@"oversizedBufferFragment"];
+    rejectedByEveryEntry(changed,HaloMetalDrawInvalid,@"Shader uniform/input structure exceeds the captured original buffer");
+    changed.fragmentFunction = [library newFunctionWithName:@"unsupportedTextureFragment"];
+    rejectedByEveryEntry(changed,HaloMetalDrawUnsupported,@"Shader requires an unsupported original texture binding");
     require(!encode(encoder,draw,command,reuse,&error), @"Submitted command buffer accepted");
     [encoder removePipelinesForVertexFunction:draw.vertexFunction fragmentFunction:nil];
     require([encoder prepareDraw:draw error:&error], error.localizedDescription ?: @"Cache eviction lost valid original program");
+    require([encoder usedTextureMaskForDraw:edges mask:&usedTextures error:&error] && usedTextures == 9,
+            @"Cache eviction lost sparse texture requirements");
     [encoder clearCaches];
+    require([encoder usedTextureMaskForDraw:edges mask:&usedTextures error:&error] && usedTextures == 9,
+            @"Cache clear lost sparse texture requirements");
     if (argc == 3) {
         FILE *file = fopen(argv[2],"wb"); require(file != nullptr, @"Checkpoint output failed");
         require(fwrite(checkpoints.data(),1,checkpoints.size(),file) == checkpoints.size() && fclose(file) == 0,

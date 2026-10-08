@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 NSString *const HaloMetalDrawErrorDomain = @"HaloMetalDraw";
 
@@ -63,11 +64,23 @@ struct DepthKey {
     uint32_t enabled, write, compare, stencilEnabled, stencilCompare, readMask,
         writeMask, fail, depthFail, pass;
 };
+enum class BindingRequirementKind {
+    Texture, Sampler, UnsupportedBuffer, OversizedBuffer, UnsupportedTexture,
+    InvalidSampler, UnsupportedResource
+};
+struct BindingRequirement {
+    BindingRequirementKind kind;
+    NSUInteger index = 0;
+    MTLTextureType textureType = MTLTextureType2D;
+};
 }
 
-@interface HaloMetalPipelineEntry : NSObject
+@interface HaloMetalPipelineEntry : NSObject {
+@public
+    std::vector<BindingRequirement> requirements;
+    uint32_t usedTextureMask, usedAuxiliarySamplerMask;
+}
 @property(nonatomic, strong) id<MTLRenderPipelineState> pipeline;
-@property(nonatomic, strong) MTLRenderPipelineReflection *reflection;
 @property(nonatomic, strong) id<MTLFunction> vertex, fragment;
 @end
 @implementation HaloMetalPipelineEntry
@@ -218,7 +231,43 @@ struct DepthKey {
         fail(error, HaloMetalDrawPipelineFailure, underlying.localizedDescription ?: @"Original draw pipeline/reflection creation failed");
         return nil;
     }
-    entry = [HaloMetalPipelineEntry new]; entry.pipeline = pipeline; entry.reflection = reflection;
+    entry = [HaloMetalPipelineEntry new]; entry.pipeline = pipeline;
+    // Reflection is immutable for this pipeline. Preserve its validation order
+    // as compact requirements instead of messaging every MTLBinding per draw.
+    // Static errors remain requirements so draw-specific border/resource errors
+    // retain the same precedence as the original reflection walk.
+    for (unsigned stage = 0; stage < 2; stage++) {
+        NSArray<id<MTLBinding>> *bindings = stage ? reflection.fragmentBindings : reflection.vertexBindings;
+        for (id<MTLBinding> binding in bindings) {
+            if (!binding.used) continue;
+            const NSUInteger index = binding.index;
+            if (binding.type == MTLBindingTypeBuffer) {
+                if (index > (stage ? 0u : 1u))
+                    entry->requirements.push_back({BindingRequirementKind::UnsupportedBuffer});
+                else {
+                    const NSUInteger available = index == 1 ? HaloMetalVertexStride :
+                        (stage ? HaloMetalPixelUniformSize : HaloMetalVertexUniformSize);
+                    if (((id<MTLBufferBinding>)binding).bufferDataSize > available)
+                        entry->requirements.push_back({BindingRequirementKind::OversizedBuffer});
+                }
+            } else if (binding.type == MTLBindingTypeTexture) {
+                if (!stage || index >= 4)
+                    entry->requirements.push_back({BindingRequirementKind::UnsupportedTexture});
+                else {
+                    entry->requirements.push_back({BindingRequirementKind::Texture, index,
+                        ((id<MTLTextureBinding>)binding).textureType});
+                    entry->usedTextureMask |= 1u << index;
+                }
+            } else if (binding.type == MTLBindingTypeSampler) {
+                if (!stage || index >= 8)
+                    entry->requirements.push_back({BindingRequirementKind::InvalidSampler});
+                else {
+                    entry->requirements.push_back({BindingRequirementKind::Sampler, index});
+                    if (index >= 4) entry->usedAuxiliarySamplerMask |= 1u << (index - 4);
+                }
+            } else entry->requirements.push_back({BindingRequirementKind::UnsupportedResource});
+        }
+    }
     entry.vertex = draw.vertexFunction; entry.fragment = draw.fragmentFunction; _pipelines[bytes] = entry;
     return entry;
 }
@@ -244,8 +293,7 @@ struct DepthKey {
     else _depthStates[bytes] = result;
     return result;
 }
-- (BOOL)validateBindings:(MTLRenderPipelineReflection *)reflection draw:(const HaloMetalDraw &)draw error:(NSError **)error {
-    uint32_t usedAuxiliarySamplers = 0;
+- (BOOL)validateBindings:(HaloMetalPipelineEntry *)entry draw:(const HaloMetalDraw &)draw error:(NSError **)error {
     if (draw.alphaBorderMask > 15 || draw.volumeBorderMask > 15 ||
         (draw.alphaBorderMask & draw.volumeBorderMask))
         return fail(error, HaloMetalDrawInvalid, @"Unknown or conflicting border stage masks");
@@ -259,53 +307,58 @@ struct DepthKey {
                 return fail(error, HaloMetalDrawInvalid, @"Border companion texture does not match typed stage contract");
         }
     }
-    for (unsigned stage = 0; stage < 2; stage++) {
-        NSArray<id<MTLBinding>> *bindings = stage ? reflection.fragmentBindings : reflection.vertexBindings;
-        for (id<MTLBinding> binding in bindings) {
-            if (!binding.used) continue;
-            if (binding.type == MTLBindingTypeBuffer) {
-                if (binding.index > (stage ? 0u : 1u))
-                    return fail(error, HaloMetalDrawUnsupported, @"Shader requires an unsupported original buffer binding");
-                NSUInteger available = binding.index == 1 ? HaloMetalVertexStride :
-                    (stage ? HaloMetalPixelUniformSize : HaloMetalVertexUniformSize);
-                if (((id<MTLBufferBinding>)binding).bufferDataSize > available)
-                    return fail(error, HaloMetalDrawInvalid, @"Shader uniform/input structure exceeds the captured original buffer");
-            } else if (binding.type == MTLBindingTypeTexture) {
-                if (!stage || binding.index >= 4)
-                    return fail(error, HaloMetalDrawUnsupported, @"Shader requires an unsupported original texture binding");
-                id<MTLTexture> texture = draw.textures[binding.index];
-                MTLTextureType type = ((id<MTLTextureBinding>)binding).textureType;
+    for (const BindingRequirement &requirement : entry->requirements) {
+        switch (requirement.kind) {
+            case BindingRequirementKind::UnsupportedBuffer:
+                return fail(error, HaloMetalDrawUnsupported, @"Shader requires an unsupported original buffer binding");
+            case BindingRequirementKind::OversizedBuffer:
+                return fail(error, HaloMetalDrawInvalid, @"Shader uniform/input structure exceeds the captured original buffer");
+            case BindingRequirementKind::UnsupportedTexture:
+                return fail(error, HaloMetalDrawUnsupported, @"Shader requires an unsupported original texture binding");
+            case BindingRequirementKind::InvalidSampler:
+                return fail(error, HaloMetalDrawInvalid, @"Used original sampler is absent or mismatched");
+            case BindingRequirementKind::UnsupportedResource:
+                return fail(error, HaloMetalDrawUnsupported, @"Shader requires an unsupported original resource binding");
+            case BindingRequirementKind::Texture: {
+                id<MTLTexture> texture = draw.textures[requirement.index];
+                MTLTextureType type = requirement.textureType;
                 if (!texture || texture.device != _device || texture.textureType != type ||
                     (type != MTLTextureType2D && type != MTLTextureTypeCube && type != MTLTextureType3D) ||
                     texture.sampleCount != 1 || !(texture.usage & MTLTextureUsageShaderRead) ||
                     texture == draw.color || texture == draw.depthStencil)
                     return fail(error, HaloMetalDrawInvalid, @"Used original texture is absent, mismatched or aliases a draw attachment");
-            } else if (binding.type == MTLBindingTypeSampler) {
-                if (!stage || binding.index >= 8 || !draw.samplers[binding.index] ||
-                    draw.samplers[binding.index].device != _device)
+                break;
+            }
+            case BindingRequirementKind::Sampler:
+                if (!draw.samplers[requirement.index] || draw.samplers[requirement.index].device != _device)
                     return fail(error, HaloMetalDrawInvalid, @"Used original sampler is absent or mismatched");
-                if (binding.index >= 4) usedAuxiliarySamplers |= 1u << (binding.index - 4);
-            } else return fail(error, HaloMetalDrawUnsupported, @"Shader requires an unsupported original resource binding");
+                break;
         }
     }
-    if (usedAuxiliarySamplers != auxiliaryMask)
+    if (entry->usedAuxiliarySamplerMask != auxiliaryMask)
         return fail(error, HaloMetalDrawInvalid, @"Shader border companions do not match draw contract");
     return YES;
 }
+- (HaloMetalPipelineEntry *)prepareDraw:(const HaloMetalDraw &)draw
+                             depthState:(id<MTLDepthStencilState> __strong *)depthState error:(NSError **)error {
+    if (error) *error = nil;
+    if (![self validateDraw:draw error:error]) return nil;
+    HaloMetalPipelineEntry *entry = [self pipelineForDraw:draw error:error];
+    if (!entry || ![self validateBindings:entry draw:draw error:error]) return nil;
+    id<MTLDepthStencilState> depth = [self depthForDraw:draw error:error];
+    if (!depth) return nil;
+    if (depthState) *depthState = depth;
+    return entry;
+}
 - (BOOL)prepareDraw:(const HaloMetalDraw &)draw error:(NSError **)error {
-    @synchronized(self) {
-        if (error) *error = nil;
-        if (![self validateDraw:draw error:error]) return NO;
-        HaloMetalPipelineEntry *entry = [self pipelineForDraw:draw error:error];
-        return entry && [self validateBindings:entry.reflection draw:draw error:error] && [self depthForDraw:draw error:error];
-    }
+    @synchronized(self) { return [self prepareDraw:draw depthState:nullptr error:error] != nil; }
 }
 - (BOOL)usedTextureMaskForDraw:(const HaloMetalDraw &)draw mask:(uint32_t *)mask error:(NSError **)error {
     @synchronized(self) {
-        if (!mask || ![self prepareDraw:draw error:error]) return NO;
-        *mask = 0;
-        for (id<MTLBinding> binding in [self pipelineForDraw:draw error:error].reflection.fragmentBindings)
-            if (binding.used && binding.type == MTLBindingTypeTexture) *mask |= 1u << binding.index;
+        if (!mask) return NO;
+        HaloMetalPipelineEntry *entry = [self prepareDraw:draw depthState:nullptr error:error];
+        if (!entry) return NO;
+        *mask = entry->usedTextureMask;
         return YES;
     }
 }
@@ -319,9 +372,9 @@ struct DepthKey {
             [self endEncoding];
             return fail(error, HaloMetalDrawInvalid, @"Draw requires an unsubmitted command buffer on the encoder device");
         }
-        if (![self prepareDraw:draw error:error]) { [self endEncoding]; return NO; }
-        HaloMetalPipelineEntry *entry = [self pipelineForDraw:draw error:error];
-        id<MTLDepthStencilState> depth = [self depthForDraw:draw error:error];
+        id<MTLDepthStencilState> depth = nil;
+        HaloMetalPipelineEntry *entry = [self prepareDraw:draw depthState:&depth error:error];
+        if (!entry) { [self endEncoding]; return NO; }
         // Query passes keep their fresh result buffer and Reset semantics.
         // Blended draws keep the original per-draw store boundary: coalescing
         // them changed captured BGRA8 results despite matching depth/stencil.
