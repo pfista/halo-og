@@ -153,6 +153,8 @@ struct native_resource {
     unsigned long generation, palette_hash, hud_generation;
     long hud_asset;
     uint64_t last_rendered, text_revision;
+    /* Only rendered-mip destinations allocate this bounded, per-level cache. */
+    struct halo_metal_mip_composite_copy *mip_copy_cache;
     uint32_t format, usage, storage_width, storage_height, scale_mode;
     BOOL mip_composite, volume, hud_checked, text_atlas;
 };
@@ -1249,6 +1251,17 @@ static void backbuffer_surfaces_resize(unsigned long width,unsigned long height)
     backbuffer_color_copy(previous,history,rectangle.width,rectangle.height);
 }
 #endif
+static BOOL rendered_mip_copy_matches(const struct halo_metal_mip_composite_copy *cached,
+    const struct halo_metal_mip_composite_copy *copy) {
+    /* Compare fields, not padding. A resource/address reuse or one-level
+       rewrite must copy again even when every other level is unchanged. */
+    return cached->source.id==copy->source.id && cached->source.generation==copy->source.generation &&
+        cached->source_content_version==copy->source_content_version &&
+        cached->source_physical_data==copy->source_physical_data &&
+        cached->source_mip==copy->source_mip && cached->source_slice==copy->source_slice &&
+        cached->destination_mip==copy->destination_mip && cached->destination_slice==copy->destination_slice &&
+        cached->width==copy->width && cached->height==copy->height;
+}
 static struct native_resource *rendered_mip_composite(DWORD data,
     const struct xgpu_texture_description *original) {
     struct halo_metal_mip_composite_request request={0};
@@ -1287,17 +1300,21 @@ static struct native_resource *rendered_mip_composite(DWORD data,
     if (!composite) {
         composite=calloc(1,sizeof(*composite));
         if (!composite) native_fail("allocate rendered mip composite",HALO_METAL_MEMORY);
+        composite->mip_copy_cache=calloc(plan.copy_count,sizeof(*composite->mip_copy_cache));
+        if (!composite->mip_copy_cache) native_fail("allocate rendered mip copy cache",HALO_METAL_MEMORY);
         composite->data=data;composite->description=*original;
         composite->format=plan.storage_format;composite->usage=HALO_METAL_SHADER_READ;composite->mip_composite=TRUE;
         resource_create(composite);composite->next=resources;resources=composite;
         platform_log("Native rendered mip composite: Data %08lx %lux%lu levels %lu, independent original targets",
             data,original->width,original->height,original->levels);
     }
-    /* Copy every requested authored GPU level before the current draw's
-       attachment binding, preserving the original GL composition ordering.
+    /* The complete planner above still validates every original level, even
+       on a cache hit. Copy changed authored levels in their original order
+       before attachment binding; unchanged destination texels remain exact.
        A full-chain mip generator would overwrite independently rendered data. */
     for (uint32_t mip=0;mip<plan.copy_count;mip++) {
         const struct halo_metal_mip_composite_copy *copy=&plan.copies[mip];
+        if (rendered_mip_copy_matches(&composite->mip_copy_cache[mip],copy)) continue;
         struct halo_metal_copy_subresource command={0};
         command.command.opcode=HALO_METAL_COPY_SUBRESOURCE;
         command.source=copy->source;command.destination=composite->ref;
@@ -1306,6 +1323,10 @@ static struct native_resource *rendered_mip_composite(DWORD data,
         command.width=copy->width;command.height=copy->height;command.planes=HALO_METAL_COLOR;
         packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();
     }
+    /* Publish freshness only after the ordered copy commands have all been
+       appended. Synchronous packet failures terminate rendering; subsequent
+       draws/clears change source versions before another binding is resolved. */
+    memcpy(composite->mip_copy_cache,plan.copies,plan.copy_count*sizeof(*composite->mip_copy_cache));
     return composite;
 }
 static unsigned long palette_hash(const D3DCOLOR *palette) {
