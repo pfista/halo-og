@@ -183,11 +183,13 @@ static void testArsenals(NSURL *root, NSURL *game, NSDictionary *config) {
         assert(!HaloValidateArsenalCatalog([bad dataUsingEncoding:NSASCIIStringEncoding], config, &error));
     }
     NSMutableArray *overBudget = [NSMutableArray array];
-    // Every entry fits the per-file bound; seventeen 128 MiB files still
-    // exceed the independent 2 GiB batch budget after the capacity increase.
-    for (unsigned i = 0; i < 17; i++) {
+    // Every entry fits the per-file bound. Thirty-one 128 MiB files fit the
+    // 4 GiB batch budget; thirty-three exceed it without allocating maps.
+    for (unsigned i = 0; i < 33; i++) {
         NSMutableDictionary *large = [approved mutableCopy]; large[@"base_sha256"] = hash([@(i).stringValue dataUsingEncoding:NSASCIIStringEncoding]);
         large[@"cache_file_bytes"] = @134217728; [overBudget addObject:large];
+        if (overBudget.count == 31)
+            assert(HaloValidateArsenalCatalog(arsenalCatalog(overBudget), config, &error).count == 31);
     }
     assert(!HaloValidateArsenalCatalog(arsenalCatalog(overBudget), config, &error));
     @synchronized(FixtureHTTPS.class) {
