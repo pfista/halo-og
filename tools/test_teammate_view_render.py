@@ -45,7 +45,7 @@ struct rasterizer_window_begin_parameters {
     struct render_camera camera;
     struct render_frustum frustum;
     short rasterizer_target,window_index;
-    boolean has_mirror;
+    boolean has_mirror,suppress_clear;
     struct render_fog fog;
     struct render_screen_flash screen_flash;
 };
@@ -72,6 +72,8 @@ enum { _render_planar_fog_mode_fully_fogged=2 };
 static long target_player=202,target_first_person_unit=600;
 static int target_window=1,perspective=_director_perspective_first_person;
 static int world[5],callbacks[5],labels[5],nonplayer[5],fp_draws[5],debug[5],aa[5];
+static int blank_panes[5],ordinary_nonplayer[5],fullscreen_scores,fullscreen_menus;
+static boolean split_screen_active=TRUE;
 static int fog_reads[5],planar_reads[5],local_lookups;
 static boolean debug_objects=TRUE;
 static int object_debug[5];
@@ -82,13 +84,17 @@ static long teammate_view_get_player_index(short window) {
 static long teammate_view_get_first_person_unit_index(short window) {
     return teammate_view_get_player_index(window)!=NONE ? target_first_person_unit:NONE;
 }
+static boolean teammate_view_split_screen_active(void) { return split_screen_active; }
 static void teammate_view_draw_label(short window) {
-    assert(window==target_window && render.local_player_index==NONE); labels[window]++;
+    assert(window==target_window || (window==1 && split_screen_active));
+    if(teammate_view_get_player_index(window)!=NONE) assert(render.local_player_index==NONE);
+    labels[window]++;
 }
 static long local_player_get_player_index(short index) {
     local_lookups++; assert(index==NONE || index==0); return index==NONE ? NONE:101;
 }
 static struct player_datum *player_get(long index) { assert(index==101); return &local_player; }
+static short local_player_get_next(short index) { assert(index==NONE); return 0; }
 static int director_get_perspective(short index) { assert(index==0); return perspective; }
 static boolean scripted_camera_object_is_first_person_camera(long index) { return index==999; }
 static void local_callback(void) {
@@ -98,9 +104,29 @@ static void player_effect_get_screen_flash(short index,struct render_screen_flas
     assert(index==0); flash->type=7; local_callback();
 }
 static void rasterizer_window_begin(const struct rasterizer_window_begin_parameters *parameters) {
+    if(parameters->window_index==NONE) {
+        nonplayer[render.window_index]++;
+        assert(parameters->screen_flash.type==0);
+        assert(parameters->suppress_clear==(render.window_index==2));
+        return;
+    }
     assert(parameters->window_index==render.window_index);
     if(render.local_player_index==NONE) assert(parameters->screen_flash.type==0);
 }
+static void draw_quad(const rectangle2d *bounds,unsigned color) {
+    assert(render.window_index==1 && split_screen_active);
+    assert(teammate_view_get_player_index(render.window_index)==NONE);
+    assert(bounds->x0==0 && bounds->x1==640 && bounds->y0==0 && bounds->y1==240);
+    assert(color==0xFF000000u); blank_panes[render.window_index]++;
+}
+static void interface_draw_fullscreen_overlays(void) { assert(render.window_index==2); }
+static void game_engine_post_rasterize_fullscreen_score(void) {
+    assert(render.window_index==2 && render.local_player_index==0); fullscreen_scores++;
+}
+static void render_ui_widgets_fullscreen(const rectangle2d *bounds) {
+    assert(render.window_index==2 && render.local_player_index==0); fullscreen_menus++;
+}
+static void game_engine_nonplayer_post_rasterize(void) { ordinary_nonplayer[render.window_index]++; }
 static void render_sky(void) { world[render.window_index]++; }
 static void render_debug(void) { assert(render.local_player_index==0); debug[render.window_index]++; }
 static void halo_metal_antialias_before_hud(long x0,long y0,long x1,long y1) {
@@ -128,7 +154,6 @@ static boolean structure_visibility_find_mirror(const struct render_camera *came
 static void render_camera_mirror(const struct render_camera *camera,const struct render_mirror *mirror,
     struct render_camera *out) { *out=*camera; }
 static void error(int level,const char *message) { assert(!"unexpected fog error"); }
-static void render_nonplayer_frame(const struct render_window *window,long type) { nonplayer[render.window_index]++; }
 static real render_interpolation_game_time_sec(int tick) { return (real)tick/30; }
 static int game_time_get(void) { return 1; }
 static boolean bink_playback_in_progress(void) { return FALSE; }
@@ -164,11 +189,13 @@ HARNESS = r'''
 static void reset(void) {
     memset(world,0,sizeof(world)); memset(callbacks,0,sizeof(callbacks));
     memset(labels,0,sizeof(labels)); memset(nonplayer,0,sizeof(nonplayer));
+    memset(blank_panes,0,sizeof(blank_panes)); memset(ordinary_nonplayer,0,sizeof(ordinary_nonplayer));
     memset(fp_draws,0,sizeof(fp_draws)); memset(debug,0,sizeof(debug));
     memset(fog_reads,0,sizeof(fog_reads)); memset(planar_reads,0,sizeof(planar_reads));
     memset(aa,0,sizeof(aa)); memset(&render,0,sizeof(render));
     memset(object_debug,0,sizeof(object_debug));
     local_lookups=0;
+    fullscreen_scores=fullscreen_menus=0; split_screen_active=TRUE;
     target_player=202; target_first_person_unit=600; target_window=1;
 }
 static struct render_window window(short local,boolean console) {
@@ -180,11 +207,18 @@ static struct render_window window(short local,boolean console) {
 }
 int main(void) {
     struct render_window windows[3]={window(0,FALSE),window(NONE,FALSE),window(NONE,TRUE)};
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+    /* The menu callback now composes once over the complete canvas. */
+    const int local_callback_count=6;
+#else
+    const int local_callback_count=7;
+#endif
     reset(); render_frame(windows,3,NULL,NULL,NULL,.01f);
-    assert(world[0]==1 && callbacks[0]==7 && fp_draws[0]==1 && debug[0]==1);
+    assert(world[0]==1 && callbacks[0]==local_callback_count && fp_draws[0]==1 && debug[0]==1);
     assert(fog_reads[0]==1 && planar_reads[0]==1 && nonplayer[2]==1);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
     assert(world[1]==1 && labels[1]==1 && nonplayer[1]==0 && planar_reads[1]==1);
+    assert(fullscreen_scores==1 && fullscreen_menus==1);
     assert(callbacks[1]==0 && fp_draws[1]==0 && debug[1]==0 && fog_reads[1]==0);
     assert(render.fog.atmospheric_color.r==0 && render.fog.planar_color.g==.25f);
 #if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL
@@ -192,15 +226,23 @@ int main(void) {
 #else
     assert(aa[0]==0 && aa[1]==0);
 #endif
-    /* A stale/dead/left/team-changed target cannot render a remote world. */
+    /* A stale/dead/left/team-changed target keeps a black, labeled pane without
+       running world, local HUD, first-person, fog or ordinary nonplayer work. */
     reset(); target_player=NONE; render_frame(windows,3,NULL,NULL,NULL,.01f);
-    assert(world[1]==0 && labels[1]==0 && nonplayer[1]==1);
+    assert(world[1]==0 && labels[1]==1 && nonplayer[1]==1 && blank_panes[1]==1);
+    assert(callbacks[1]==0 && fp_draws[1]==0 && debug[1]==0 && fog_reads[1]==0);
+    assert(planar_reads[1]==0 && ordinary_nonplayer[1]==0);
+    assert(world[0]==1 && callbacks[0]==local_callback_count && fullscreen_scores==1 && fullscreen_menus==1);
+    /* Disabling the prototype restores the ordinary nonplayer route. */
+    reset(); target_player=NONE; split_screen_active=FALSE;
+    render_frame(windows,3,NULL,NULL,NULL,.01f);
+    assert(world[1]==0 && labels[1]==0 && blank_panes[1]==0 && ordinary_nonplayer[1]==1);
     /* Console dispatch takes precedence even if a sidecar slot is stale. */
     reset(); target_window=2; render_frame(windows,3,NULL,NULL,NULL,.01f);
     assert(world[2]==0 && labels[2]==0 && nonplayer[2]==1);
     /* A real local slot retains its normal rendering despite a stale sidecar. */
     reset(); target_window=0; render_frame(windows,3,NULL,NULL,NULL,.01f);
-    assert(world[0]==1 && callbacks[0]==7 && labels[0]==0 && fog_reads[0]==1);
+    assert(world[0]==1 && callbacks[0]==local_callback_count && labels[0]==0 && fog_reads[0]==1);
     reset(); render.window_index=1; render.local_player_index=NONE;
     fixture_object_debug(700); assert(object_debug[1]==0);
     assert(object_is_first_person_camera(600));
@@ -252,6 +294,7 @@ class TeammateViewRenderTests(unittest.TestCase):
             definition(objects, "void render_objects(\n"),
             definition(renderer, "static void render_window(\n"),
             definition(renderer, "static void render_player_frame(\n"),
+            definition(renderer, "static void render_nonplayer_frame(\n"),
             definition(renderer, "void render_frame(\n"),
         ))
         # This callback is nested in a large model-drawing function. Compile its

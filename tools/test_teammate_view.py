@@ -112,6 +112,15 @@ static void reset(void) {
         units[i]=(struct unit_datum){{0,NONE}};
     }
 }
+static void unavailable_pane(void) {
+    teammate_view_player_index=teammate_view_find_player();
+    assert(teammate_view_player_index==NONE);
+    assert(teammate_view_split_screen_active());
+    assert(main_get_window_count()==2 && teammate_view_hud_player_count()==2);
+    assert(teammate_view_get_player_index(1)==NONE);
+    assert(teammate_view_get_first_person_unit_index(1)==NONE);
+    assert(local_player_count()==1 && local_player_get_player_index(0)==self_index);
+}
 int main(void) {
     variant_cases();reset();
     struct player_datum original_players[4];struct unit_datum original_units[4];
@@ -129,13 +138,18 @@ int main(void) {
     assert(!memcmp(original_players,players,sizeof(players)));
     assert(!memcmp(original_units,units,sizeof(units)));
     players[1].team_index=1;assert(teammate_view_get_player_index(1)==NONE);
-    assert(teammate_view_find_player()==NONE && main_get_window_count()==1);
-    reset();players[1].quit_out_of_game=TRUE;assert(teammate_view_find_player()==NONE);
-    reset();players[1].unit_index=NONE;assert(teammate_view_find_player()==NONE);
-    reset();units[1].object.damage_flags=1u<<_object_dead_bit;assert(teammate_view_find_player()==NONE);
-    reset();units[1].object.parent_object_index=99;assert(teammate_view_find_player()==NONE);
-    reset();present[1]=FALSE;assert(teammate_view_find_player()==NONE);
-    reset();players[1].local_player_index=1;assert(teammate_view_find_player()==NONE);
+    unavailable_pane();
+    reset();players[1].quit_out_of_game=TRUE;unavailable_pane();
+    reset();players[1].unit_index=NONE;unavailable_pane();
+    reset();units[1].object.damage_flags=1u<<_object_dead_bit;unavailable_pane();
+    /* Respawn restores the target without changing local viewport/HUD count. */
+    units[1].object.damage_flags=0;
+    teammate_view_player_index=teammate_view_find_player();
+    assert(teammate_view_get_player_index(1)==1);
+    assert(main_get_window_count()==2 && teammate_view_hud_player_count()==2);
+    reset();units[1].object.parent_object_index=99;unavailable_pane();
+    reset();present[1]=FALSE;unavailable_pane();
+    reset();players[1].local_player_index=1;unavailable_pane();
     reset();players[0].team_index=1;assert(teammate_view_find_player()==2);
     reset();players[0].team_index=NONE;assert(teammate_view_find_player()==NONE);
     reset();players[0].quit_out_of_game=TRUE;assert(teammate_view_find_player()==NONE);
@@ -168,7 +182,8 @@ class TeammateViewTests(unittest.TestCase):
         self.assertIsNotNone(compiler, "A C compiler (clang or cc) is required")
         helper = (ROOT / "source/main/teammate_view.inc").read_text()
         functions = "\n".join(block(helper, signature) for signature in (
-            "static boolean teammate_view_available(", "static boolean teammate_view_valid_player(",
+            "static boolean teammate_view_available(", "boolean teammate_view_split_screen_active(",
+            "static boolean teammate_view_valid_player(",
             "static long teammate_view_find_player(", "long teammate_view_get_player_index(",
             "long teammate_view_get_first_person_unit_index(", "short teammate_view_hud_player_count("))
         window_count = block((ROOT / "source/main/main.c").read_text(), "short main_get_window_count(")
