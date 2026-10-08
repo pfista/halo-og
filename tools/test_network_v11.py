@@ -64,11 +64,15 @@ enum { _performance_option_input_delay=32, _performance_option_hardcore=64, _per
 struct network_player { byte wire[32]; };
 /* RECORD */
 struct network_game_client { struct network_game game; int state; void *connection; };
-struct network_game_server_client_machine { unsigned supported; boolean joined,loading_late,closed,acknowledged,local,offered,loaded; word flags; };
+struct network_game_server_client_machine { unsigned supported; boolean joined,loading_late,closed,acknowledged,local,offered,loaded; word flags; int machine_index; };
 struct network_game_server { struct network_game game; struct network_game_server_client_machine machines[MAXIMUM_NETWORK_MACHINE_COUNT]; int state; };
 static struct network_game_client client;
 static struct network_game_server *active_server;
 static unsigned network_game_client_performance_host_capabilities;
+/* This suite exercises previous-generation variants; its host session is Off.
+ * The v7 control and readiness paths are covered in test_powerup_host_setting. */
+static boolean network_game_server_powerup_sync_acknowledged[MAXIMUM_NETWORK_MACHINE_COUNT];
+static int network_powerup_sync_host_enabled(void) { return FALSE; }
 static struct network_game network_game_client_settings_staging;
 static int32_t network_game_client_settings_staging_size;
 static unsigned precaches, dialogs, applied, applied_flags, errors;
@@ -963,7 +967,9 @@ class NetworkV11Tests(unittest.TestCase):
         functions += "\n" + block(handler, "static boolean network_game_client_receive_game_settings_piece(\n")
         server_handler = (ROOT / "source/networking/network_server_message_handler.c").read_text()
         functions += "\n" + block(server_handler, "static boolean network_game_server_send_performance_capability(\n")
+        functions += "\n" + block(server_handler, "static boolean network_game_server_send_powerup_sync_settings(\n")
         server_manager = (ROOT / "source/networking/network_server_manager.c").read_text()
+        functions += "\n" + block(server_manager, "boolean network_game_server_powerup_sync_ready(\n")
         functions += "\n" + block(server_manager, "boolean network_game_server_client_machine_cache_ready(")
         functions += "\n" + block(server_manager, "boolean network_game_server_client_machine_cache_pending(")
         functions += "\n" + block(server_manager, "boolean network_game_server_client_machine_has_cache_identity(")

@@ -219,9 +219,10 @@ static const struct config_setting config_settings[] =
 		"Allow new players to join a hosted match after it starts. False closes\n"
 		"only running matches; players may still join the pregame lobby." },
 	{ "network.experimental_powerup_sync", _config_boolean, "false", NULL, _environment_value, _platform_all,
-		"Experimental camo/overshield replication repair. Enable on the host\n"
-		"and test clients, then restart. False retains the previous receive\n"
-		"behavior and resting-object refresh order; see\n"
+		"Host preference for experimental camo/overshield replication repair.\n"
+		"Game Settings > Multiplayer edits this choice for the next hosted\n"
+		"session; joining clients follow the host automatically. False keeps\n"
+		"the previous receive behavior and resting-object refresh order; see\n"
 		"docs/experimental-powerup-sync.md for testing and rollback." },
 	{ "network.join_from_clipboard", _config_boolean, "true", "HALO_NET_JOIN_FROM_CLIPBOARD", _environment_value,
 		_platform_all,

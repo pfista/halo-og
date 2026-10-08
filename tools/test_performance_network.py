@@ -67,10 +67,12 @@ struct message_server_begin_game {int unused;};
 static struct network_game_server server,*active=&server;
 static struct game_variant runtime_variant,playlist_variant;
 static word network_game_server_performance_capabilities[MAXIMUM_NETWORK_MACHINE_COUNT];
+static boolean network_game_server_powerup_sync_acknowledged[MAXIMUM_NETWORK_MACHINE_COUNT];
+static int network_powerup_sync_host_enabled(void) {return FALSE;}
 static int network_game_server_start_players[16];
 static boolean network_game_server_started_with_five_players;
 static int recordings=1,apply_calls,override_calls,pregame_sends,setting_sends,start_sends,opened;
-static unsigned runtime_flags,capabilities[11],capability_count;
+static unsigned runtime_flags,capabilities[12],capability_count;
 static unsigned network_game_client_performance_host_capabilities;
 static char shown[512];
 int halo_performance_audio_available(void) {return recordings;}
@@ -111,7 +113,7 @@ static int network_game_server_send_message_to_all_machines(struct network_game_
     (void)s;(void)m;start_sends++;return TRUE;
 }
 static int network_game_client_write(void *connection,void *packet,unsigned size,void *address,int reliable) {
-    (void)connection;assert(!address && reliable==1 && capability_count<11);
+    (void)connection;assert(!address && reliable==1 && capability_count<12);
     assert(network_performance_decode(packet,size,NETWORK_PERFORMANCE_CAPABILITY,&capabilities[capability_count++]));
     return TRUE;
 }
@@ -234,11 +236,11 @@ int main(void) {
      * never advertise audio support to an enabled host. */
     struct network_game_client client={0};
     recordings=0;capability_count=0;assert(announce(&client));
-    assert(capability_count==11 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==59 && capabilities[4]==123 && capabilities[5]==251 && capabilities[6]==507 && capabilities[7]==1019 && capabilities[8]==2043 && capabilities[9]==4091 && capabilities[10]==16379);
+    assert(capability_count==12 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==59 && capabilities[4]==123 && capabilities[5]==251 && capabilities[6]==507 && capabilities[7]==1019 && capabilities[8]==2043 && capabilities[9]==4091 && capabilities[10]==16379 && capabilities[11]==32763);
     recordings=1;capability_count=0;assert(announce(&client));
-    assert(capability_count==11 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31 && capabilities[3]==63 && capabilities[4]==127 && capabilities[5]==255 && capabilities[6]==511 && capabilities[7]==1023 && capabilities[8]==2047 && capabilities[9]==4095 && capabilities[10]==16383);
+    assert(capability_count==12 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31 && capabilities[3]==63 && capabilities[4]==127 && capabilities[5]==255 && capabilities[6]==511 && capabilities[7]==1023 && capabilities[8]==2047 && capabilities[9]==4095 && capabilities[10]==16383 && capabilities[11]==32767);
     capability_count=0;assert(announce_without_queue(&client));
-    assert(capability_count==11 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==27 && capabilities[4]==27 && capabilities[5]==27 && capabilities[6]==27 && capabilities[7]==27 && capabilities[8]==27 && capabilities[9]==27 && capabilities[10]==27);
+    assert(capability_count==12 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==27 && capabilities[4]==27 && capabilities[5]==27 && capabilities[6]==27 && capabilities[7]==27 && capabilities[8]==27 && capabilities[9]==27 && capabilities[10]==27 && capabilities[11]==27);
     assert(!network_game_server_performance_peers_support_without_queue(&server,32));
     assert(strstr(shown,"This build does not support"));
     assert(!network_game_server_performance_peers_support_without_queue(&server,128));
@@ -621,7 +623,8 @@ int main(void) {
         weapons = (ROOT / "source/game/weapon_sets.h").read_text()
         required = (ROOT / "source/networking/network_variant_capabilities.h").read_text()
         functions = block(weapons, "static inline int game_variant_uses_expanded_weapon_set(\n") + "\n" + \
-            block(required, "static inline unsigned network_game_variant_required_capabilities(\n") + "\n" + functions
+            block(required, "static inline unsigned network_game_variant_required_capabilities(\n") + "\n" + \
+            block(required, "static inline unsigned network_game_host_required_capabilities(\n") + "\n" + functions
         private = server[server.index("/* ---------- private code */"):]
         functions += "\n" + block(private, "static boolean network_game_server_setup_game_from_playlist(\n")
         client = (ROOT / "source/networking/network_client_manager.c").read_text()

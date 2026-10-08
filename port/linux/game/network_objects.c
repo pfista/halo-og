@@ -63,7 +63,7 @@ same datum index (identifier and all), so that any message can name one:
 #include "items/weapon_definitions.h"
 #include "items/equipment_definitions.h"
 #include "network_distributed.h"
-#include "port_config.h"
+#include "networking/network_powerup_sync.h"
 
 #include <math.h>
 
@@ -1060,7 +1060,7 @@ static void distributed_host_send_states(
 	long absolute_index;
 	long step;
 	short machine_number;
-	boolean experimental_powerup_sync = config_boolean("network.experimental_powerup_sync") != 0;
+	boolean experimental_powerup_sync = network_powerup_sync_effective() != 0;
 
 	/* the moving ones, and those at rest now that were not */
 	for (absolute_index = 0; absolute_index < told_count; absolute_index++)
@@ -1876,7 +1876,7 @@ static boolean distributed_client_powerup_sync_target(
 	struct object_datum *object;
 	struct equipment_definition *definition;
 
-	if (!config_boolean("network.experimental_powerup_sync"))
+	if (!network_powerup_sync_effective())
 		return FALSE;
 	object = object_try_and_get(object_index);
 	if (!object || object->object.type != _object_type_equipment ||

@@ -111,7 +111,7 @@ static boolean decode_network_game_message(void *record, word *message, short *s
     return TRUE;
 }
 static unsigned performance_variant_get_flags(struct game_variant const *v) { (void)v; return 0; }
-static unsigned network_game_variant_required_capabilities(struct game_variant const *v) { (void)v; return 0; }
+static unsigned network_game_host_required_capabilities(struct game_variant const *v) { (void)v; return 0; }
 static boolean network_game_server_performance_peers_support(struct network_game_server *s,unsigned flags) {
     (void)s; assert(!flags); return TRUE;
 }

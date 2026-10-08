@@ -55,25 +55,25 @@ int main(void)
 
     assert(network_performance_runtime_supported_flags(0,0)==27);
     assert(network_performance_runtime_supported_flags(0,1)==31);
-    assert(network_performance_runtime_supported_flags(1,0)==16379);
-    assert(network_performance_runtime_supported_flags(1,1)==16383);
-    assert(network_performance_capability_for_peer(1023,0,0,0,0,0,0,0)==63);
-    assert(network_performance_capability_for_peer(1023,1,0,0,0,0,0,0)==127);
-    assert(network_performance_capability_for_peer(1023,1,1,0,0,0,0,0)==255);
-    assert(network_performance_capability_for_peer(1019,1,1,0,0,0,0,0)==251);
-    assert(network_performance_capability_for_peer(1023,1,1,1,0,0,0,0)==511);
-    assert(network_performance_capability_for_peer(1019,1,1,1,0,0,0,0)==507);
-    assert(network_performance_capability_for_peer(1023,1,1,1,1,0,0,0)==1023);
-    assert(network_performance_capability_for_peer(1019,1,1,1,1,0,0,0)==1019);
-    assert(network_performance_capability_for_peer(2047,1,1,1,1,1,0,0)==2047);
-    assert(network_performance_capability_for_peer(2043,1,1,1,1,1,0,0)==2043);
-    assert(network_performance_capability_for_peer(2047,1,1,1,1,0,0,0)==1023);
-    assert(network_performance_capability_for_peer(4095,1,1,1,1,1,0,0)==2047);
-    assert(network_performance_capability_for_peer(4095,1,1,1,1,1,1,0)==4095);
-    assert(network_performance_capability_for_peer(4091,1,1,1,1,1,1,0)==4091);
-    assert(network_performance_capability_for_peer(16383,1,1,1,1,1,1,0)==4095);
-    assert(network_performance_capability_for_peer(16383,1,1,1,1,1,1,1)==16383);
-    assert(network_performance_capability_for_peer(16379,1,1,1,1,1,1,1)==16379);
+    assert(network_performance_runtime_supported_flags(1,0)==32763);
+    assert(network_performance_runtime_supported_flags(1,1)==32767);
+    assert(network_performance_capability_for_peer(1023,0,0,0,0,0,0,0,0)==63);
+    assert(network_performance_capability_for_peer(1023,1,0,0,0,0,0,0,0)==127);
+    assert(network_performance_capability_for_peer(1023,1,1,0,0,0,0,0,0)==255);
+    assert(network_performance_capability_for_peer(1019,1,1,0,0,0,0,0,0)==251);
+    assert(network_performance_capability_for_peer(1023,1,1,1,0,0,0,0,0)==511);
+    assert(network_performance_capability_for_peer(1019,1,1,1,0,0,0,0,0)==507);
+    assert(network_performance_capability_for_peer(1023,1,1,1,1,0,0,0,0)==1023);
+    assert(network_performance_capability_for_peer(1019,1,1,1,1,0,0,0,0)==1019);
+    assert(network_performance_capability_for_peer(2047,1,1,1,1,1,0,0,0)==2047);
+    assert(network_performance_capability_for_peer(2043,1,1,1,1,1,0,0,0)==2043);
+    assert(network_performance_capability_for_peer(2047,1,1,1,1,0,0,0,0)==1023);
+    assert(network_performance_capability_for_peer(4095,1,1,1,1,1,0,0,0)==2047);
+    assert(network_performance_capability_for_peer(4095,1,1,1,1,1,1,0,0)==4095);
+    assert(network_performance_capability_for_peer(4091,1,1,1,1,1,1,0,0)==4091);
+    assert(network_performance_capability_for_peer(16383,1,1,1,1,1,1,0,0)==4095);
+    assert(network_performance_capability_for_peer(16383,1,1,1,1,1,1,1,0)==16383);
+    assert(network_performance_capability_for_peer(16379,1,1,1,1,1,1,1,0)==16379);
     for (flags=0;flags<=511;flags++) {
         assert(network_performance_host_settings_flags(flags,0)==((flags & 480) ? 0 : flags));
         assert(network_performance_host_settings_flags(flags,31)==((flags & 480) ? 0 : flags));
@@ -82,8 +82,8 @@ int main(void)
         assert(network_performance_host_settings_flags(flags,255)==((flags & 256) ? 0 : flags));
         assert(network_performance_host_settings_flags(flags,511)==flags);
     }
-    for (flags=4096; flags<=NETWORK_PERFORMANCE_SUPPORTED_FLAGS; flags++) {
-        if (flags & ~NETWORK_PERFORMANCE_SUPPORTED_FLAGS) continue;
+    for (flags=4096; flags<=12799; flags++) {
+        if (flags & ~12799u) continue;
         assert(network_performance_host_settings_flags(flags,4095)==0);
         assert(network_performance_host_settings_flags(flags,16383)==flags);
     }
@@ -118,7 +118,9 @@ int main(void)
     assert(network_performance_can_join(8192, 16383));
     assert(!network_performance_can_join(12288, 8191));
     assert(network_performance_can_join(12288, 16383));
-    assert(!network_performance_can_join(16384, 32767));
+    assert(network_performance_can_join(16384, 32767));
+    assert(!network_performance_can_join(16384, 16383));
+    assert(!network_performance_can_join(32768, 65535));
     /* The prior timer/marker client can still join those modes, but cannot
      * join or remain in a session where the host enables timer audio. */
     assert(network_performance_can_join(3, 3));
@@ -143,7 +145,7 @@ int main(void)
      * subset before current capabilities. The earlier v1 decoder has the
      * same packet format but rejects any payload flag outside mask 3. */
     {
-        const unsigned capabilities[] = {3, 7, 31, 63, 127, 255, 511, 1023, 2047, 4095, NETWORK_PERFORMANCE_SUPPORTED_CAPABILITIES};
+        const unsigned capabilities[] = {3, 7, 31, 63, 127, 255, 511, 1023, 2047, 4095, 16383, NETWORK_PERFORMANCE_SUPPORTED_CAPABILITIES};
         unsigned prior_host_support = 0, audio_host_support = 0, sound_host_support = 0;
         unsigned delay_host_support = 0, hardcore_host_support = 0, fiesta_host_support = 0, camo_host_support = 0, expanded_host_support = 0, global_host_support = 0, wait_host_support = 0, current_host_support = 0;
         for (index = 0; index < sizeof(capabilities) / sizeof(capabilities[0]); ++index) {
@@ -165,7 +167,7 @@ int main(void)
             sound_host_support == 31 && delay_host_support == 63 &&
             hardcore_host_support == 127 && fiesta_host_support == 255 &&
             camo_host_support == 511 && expanded_host_support == 1023 && global_host_support == 2047 &&
-            wait_host_support == 4095 && current_host_support == 16383);
+            wait_host_support == 4095 && current_host_support == 32767);
     }
 
     for (kind = NETWORK_PERFORMANCE_CAPABILITY; kind <= NETWORK_PERFORMANCE_SETTINGS; ++kind) {
@@ -216,7 +218,8 @@ int main(void)
                 assert(!camo_decode(message, &decoded));
                 assert(!legacy_decode(message,255,&decoded));
             } else {
-                assert(message[12] == 6 && message[15] >= 16 && message[15] <= 63);
+                assert(message[12] == (flags<=16383 ? 6:7));
+                assert(message[15] >= 16 && message[15] <= 127);
                 assert(!download_wait_decode(message, &decoded));
                 assert(!global_decode(message, &decoded));
                 assert(!expanded_decode(message, &decoded));

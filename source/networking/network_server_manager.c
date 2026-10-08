@@ -837,6 +837,8 @@ static unsigned long network_game_server_client_machine_join_times[MAXIMUM_NETWO
 
 /* A capability is attached to a connection slot, never a player or address. */
 static word network_game_server_performance_capabilities[MAXIMUM_NETWORK_MACHINE_COUNT];
+/* EXPERIMENTAL_POWERUP_SYNC: one immutable policy acknowledgement per connection. */
+static boolean network_game_server_powerup_sync_acknowledged[MAXIMUM_NETWORK_MACHINE_COUNT];
 void platform_show_message(char const *title, char const *message);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 static struct native_map_cache_selection network_game_server_cache_selection;
@@ -911,8 +913,11 @@ void network_game_server_performance_capability(
 	unsigned flags)
 {
 	if (machine && VALID_INDEX(machine->machine_index, MAXIMUM_NETWORK_MACHINE_COUNT))
+	{
 		network_game_server_performance_capabilities[machine->machine_index] =
 			(word)(flags & NETWORK_PERFORMANCE_SUPPORTED_CAPABILITIES);
+		network_game_server_powerup_sync_acknowledged[machine->machine_index] = FALSE;
+	}
 }
 
 boolean network_game_server_performance_supported(
@@ -922,6 +927,33 @@ boolean network_game_server_performance_supported(
 	unsigned supported = machine && VALID_INDEX(machine->machine_index, MAXIMUM_NETWORK_MACHINE_COUNT)
 		? network_game_server_performance_capabilities[machine->machine_index] : 0;
 	return network_performance_can_join(flags, supported);
+}
+
+boolean network_game_server_powerup_sync_acknowledge(
+	struct network_game_server_client_machine *machine, int enabled)
+{
+	if (!machine || !VALID_INDEX(machine->machine_index, MAXIMUM_NETWORK_MACHINE_COUNT) ||
+		!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_POWERUP_SYNC_FLAG) ||
+		(enabled != 0) != (network_powerup_sync_host_enabled() != 0))
+		return FALSE;
+	network_game_server_powerup_sync_acknowledged[machine->machine_index] = TRUE;
+	return TRUE;
+}
+
+boolean network_game_server_powerup_sync_ready(
+	struct network_game_server *server, struct network_game_server_client_machine *machine)
+{
+	if (!server || !machine || !VALID_INDEX(machine->machine_index, MAXIMUM_NETWORK_MACHINE_COUNT)) return FALSE;
+	if (network_game_server_client_machine_is_local(server, machine)) return TRUE;
+#ifndef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* This fallback cannot advertise the capability in its reply, so an Off
+	 * session cannot expect the peer to acknowledge a v7 policy. */
+	return !network_powerup_sync_host_enabled();
+#else
+	if (!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_POWERUP_SYNC_FLAG))
+		return !network_powerup_sync_host_enabled();
+	return network_game_server_powerup_sync_acknowledged[machine->machine_index];
+#endif
 }
 
 static boolean network_game_server_original_grenade_peers_support(
@@ -970,10 +1002,11 @@ static boolean network_game_server_performance_peers_support(
 
 #ifndef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	if (flags & (PERFORMANCE_MATCH_RULE_FLAGS | NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY |
-		NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY | NETWORK_PERFORMANCE_SELF_AUDIO_FLAGS))
+		NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY | NETWORK_PERFORMANCE_SELF_AUDIO_FLAGS |
+		NETWORK_PERFORMANCE_POWERUP_SYNC_FLAG))
 	{
 		platform_show_message("Halo: match rules unavailable",
-			"This build does not support Input Delay, Hardcore, Fiesta, Hardcore Camo, expanded weapon sets, or Just Me audio. Turn these options off, or use a compatible build.");
+			"This build does not support Input Delay, Hardcore, Fiesta, Hardcore Camo, expanded weapon sets, Just Me audio, or experimental Powerup Sync. Turn these options off, or use a compatible build.");
 		return FALSE;
 	}
 #endif
@@ -1003,6 +1036,14 @@ static boolean network_game_server_performance_peers_support(
 			!network_game_server_client_machine_is_local(server, machine) &&
 			!network_game_server_performance_supported(machine, flags))
 		{
+			if ((flags & NETWORK_PERFORMANCE_POWERUP_SYNC_FLAG) &&
+				!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_POWERUP_SYNC_FLAG))
+			{
+				platform_show_message("Halo: Powerup Sync unavailable",
+					"A connected player needs an updated build for experimental Powerup Sync. "
+					"Update that player, or turn Powerup Sync off and rehost the session.");
+				return FALSE;
+			}
 			if ((flags & NETWORK_PERFORMANCE_SELF_AUDIO_FLAGS) &&
 				!network_game_server_performance_supported(machine, flags & NETWORK_PERFORMANCE_SELF_AUDIO_FLAGS))
 			{
@@ -1119,7 +1160,7 @@ boolean performance_options_set_host_flags(
 	proposed = server->game.variant;
 	performance_variant_set_flags(&proposed, (unsigned)flags);
 	if (!network_game_server_input_delay_change_allowed(server, (unsigned)flags) ||
-		!network_game_server_performance_peers_support(server, network_game_variant_required_capabilities(&proposed)) ||
+		!network_game_server_performance_peers_support(server, network_game_host_required_capabilities(&proposed)) ||
 		!network_game_server_prepare_cache(server, server->game.map.name, &proposed, &selection))
 		return FALSE;
 	network_game_server_select_cache(server, &selection,
@@ -1432,6 +1473,8 @@ struct network_game_server *network_game_server_create(
 	network_game_server_memory_do_not_use_directly_in_use = TRUE;
 
 	csmemset(server, 0, sizeof(*server));
+	network_powerup_sync_host_begin();
+	csmemset(network_game_server_powerup_sync_acknowledged, 0, sizeof(network_game_server_powerup_sync_acknowledged));
 
 	if (server != NULL)
 	{
@@ -1588,6 +1631,7 @@ void network_game_server_dispose(
 		0x171,
 		network_game_server_memory_do_not_use_directly_in_use);
 	network_game_server_memory_do_not_use_directly_in_use = FALSE;
+	network_powerup_sync_host_end();
 
 	p2p_set_game_player_counts(0, 0);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
@@ -1671,7 +1715,7 @@ boolean network_game_server_idle(
 		name[index] = 0;
 		game_directory_publish(name, server->game.map.name, server->game.variant.game_engine_index,
 			server->game.player_count, server->game.maximum_players,
-			network_performance_advertised_version(network_game_variant_required_capabilities(&server->game.variant), HALO_PORT_NETWORK_VERSION),
+			network_performance_advertised_version(network_game_host_required_capabilities(&server->game.variant), HALO_PORT_NETWORK_VERSION),
 			open, state != _network_game_server_state_pregame, server->game.variant.universal_variant.teams,
 			(short)server->game.variant.universal_variant.score_to_win,
 			server->game.variant.game_engine_index == game_engine_oddball &&
@@ -1954,7 +1998,7 @@ boolean network_game_server_start_network_game(
 		network_game_server_select_cache(server, &selection, FALSE);
 	}
 #endif
-	if (!network_game_server_performance_peers_support(server, network_game_variant_required_capabilities(&server->game.variant)) ||
+	if (!network_game_server_performance_peers_support(server, network_game_host_required_capabilities(&server->game.variant)) ||
 		!network_game_server_original_grenade_peers_support(server, &server->game.variant, server->game.player_count))
 		return FALSE;
 
@@ -3526,7 +3570,7 @@ void network_game_server_change_game_variant(
 		return;
 	}
 	if (!network_game_server_input_delay_change_allowed(server, performance_variant_get_flags(variant)) ||
-		!network_game_server_performance_peers_support(server, network_game_variant_required_capabilities(variant)) ||
+		!network_game_server_performance_peers_support(server, network_game_host_required_capabilities(variant)) ||
 		!network_game_server_original_grenade_peers_support(server, variant, server->game.player_count))
 		return;
 
@@ -3628,6 +3672,7 @@ boolean network_game_server_remove_client_machine_from_game(
 			server->client_machines[i].connection = NULL;
 			server->client_machines[i].last_received_update_sequence_number = 0;
 			network_game_server_performance_capabilities[i] = 0;
+			network_game_server_powerup_sync_acknowledged[i] = FALSE;
 			server->client_machines[i].last_heard_time = 0;
 			server->client_machines[i].machine_index = NONE;
 			server->client_machines[i].flags = 0;
@@ -4200,7 +4245,7 @@ static boolean network_game_server_setup_game_from_playlist(
 	if (game_engine_get_current_stage(&variant, map_name))
 	{
 		wchar_t machine_name[MAXIMUM_MACHINE_NAME_LENGTH] = L"<unknown>";
-		if (!network_game_server_performance_peers_support(server, network_game_variant_required_capabilities(&variant)))
+		if (!network_game_server_performance_peers_support(server, network_game_host_required_capabilities(&variant)))
 			return FALSE;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		/* Playlist setup starts a new match; the previous frozen cache may change. */
@@ -4311,6 +4356,7 @@ static boolean network_game_server_add_new_client(
 					{
 						server->client_machines[i].connection = new_connection;
 						network_game_server_performance_capabilities[i] = 0;
+						network_game_server_powerup_sync_acknowledged[i] = FALSE;
 						network_game_invalidate_machine(&server->game, i);
 						server->client_machines[i].machine_index = (short)i;
 						server->client_machines[i].flags =

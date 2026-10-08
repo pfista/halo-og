@@ -94,10 +94,14 @@ and is a renderer fix, not authorization to replace fonts.
 
 ## Experimental powerup replication
 
-`network.experimental_powerup_sync` is an opt-in local experiment, default
-false, for off-host camo/overshield rest-state reception and the host's periodic
-resting-object refresh traversal. The previous behavior remains selectable.
-It retains host gameplay authority and existing packet fields; multiplayer
+`network.experimental_powerup_sync` is an opt-in host preference, default
+false, exposed in Game Settings → Multiplayer. It selects off-host camo/overshield
+rest-state reception and the host's periodic resting-object refresh traversal.
+The choice is fixed for the hosted session; compatible joining clients follow
+On and Off without changing their saved preference. On requires explicit
+capability support and an acknowledgement before initial object replication.
+Off retains the previous object behavior and older-peer compatibility.
+It retains host gameplay authority and original object packet fields; multiplayer
 validation and original Xbox comparison remain pending. See
 [scope, testing and rollback](experimental-powerup-sync.md).
 

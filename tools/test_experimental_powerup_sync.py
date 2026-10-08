@@ -112,7 +112,7 @@ static struct equipment_definition *equipment_definition_get(long i) { assert(i=
 static struct model *model_definition_get(long i) { (void)i;return &model; }
 static struct item_datum *item_get(long i) { assert(i==OBJECT_INDEX);return &storage; }
 static struct unit_datum *unit_get(long i) { (void)i;return &unit; }
-static int config_boolean(char const *name) { assert(!strcmp(name,"network.experimental_powerup_sync"));return enabled; }
+static int network_powerup_sync_effective(void) { return enabled; }
 static void object_set_garbage(long i,int v) { (void)i;(void)v; }
 static void object_disconnect_from_map(long i) { SET_FLAG(object_get(i)->object.flags,_object_connected_to_map_bit,FALSE); }
 static void object_reconnect_to_map(long i,void *location) { (void)location;reconnects++;SET_FLAG(object_get(i)->object.flags,_object_connected_to_map_bit,TRUE); }
@@ -188,6 +188,9 @@ class ExperimentalPowerupSyncTests(unittest.TestCase):
         source = (ROOT / "port/linux/src/port_config.c").read_text()
         self.assertRegex(source, r'\{\s*"network\.experimental_powerup_sync",\s*'
                          r'_config_boolean,\s*"false",\s*NULL,\s*_environment_value,\s*_platform_all,')
+        receiver = SOURCE.read_text()
+        self.assertNotIn('config_boolean("network.experimental_powerup_sync")', receiver)
+        self.assertIn("network_powerup_sync_effective()", receiver)
 
     def test_create_and_state_receiver(self):
         source = SOURCE.read_text()
@@ -359,7 +362,7 @@ static boolean objects_host_state_moving[64];
 static struct distributed_object_state captured[68];
 static byte captured_kinds[68];
 static long captured_count;
-static boolean config_boolean(char const *name) { assert(!strcmp(name,"network.experimental_powerup_sync"));return enabled; }
+static int network_powerup_sync_effective(void) { return enabled; }
 static long distributed_host_placed_object(long index) { assert(index>=0 && index<objects_host_told_count);return present[index]?index:NONE; }
 static struct object_datum *object_get(long index) { assert(index>=0 && index<64);return &objects[index]; }
 static void distributed_state_from_object(long index,struct distributed_object_state *state) { state->object_index=index; }

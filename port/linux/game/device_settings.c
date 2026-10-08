@@ -1,6 +1,7 @@
 /* The menus edit a local draft. This is their shared save/apply boundary. */
 #include "device_settings.h"
 #include "port_config.h"
+#include "networking/network_powerup_sync.h"
 #include "../include/controller_settings.h"
 #include "native_video.h"
 #include "native_audio.h"
@@ -32,7 +33,7 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
     , "display.renderer", "display.render_height", "display.frame_limit", "display.anti_aliasing"
 #endif
-    , "game.show_default_game_types"
+    , "game.show_default_game_types", "network.experimental_powerup_sync"
 };
 
 static int device_setting_is_finite(double value)
@@ -96,6 +97,10 @@ int device_settings_apply(unsigned long changed_mask,
     if (changed_mask & ~((1UL << NUMBER_OF_DEVICE_SETTINGS) - 1)) return 0;
     if (!changed_mask) return 1;
     if (!values) return 0;
+    /* The remote host controls the current session. Preserve the local
+     * preference for a later hosted session, including direct API callers. */
+    if ((changed_mask & (1UL << _device_setting_experimental_powerup_sync)) &&
+        network_powerup_sync_controlled_by_host()) return 0;
     /* A local map-selection preference must retain at least one enabled set.
      * Unchanged rows come from the current config, not the caller's draft. */
     if (changed_mask & ((1UL << _device_setting_show_og_maps) | (1UL << _device_setting_show_community_maps)))

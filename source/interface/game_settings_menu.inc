@@ -2,6 +2,7 @@
  * retail widgets; gameplay uses the smaller, resident pause-menu assets. */
 #include "../../port/linux/include/halo_contributors.h"
 #include "../../port/linux/include/halo_original_credits.h"
+#include "networking/network_powerup_sync.h"
 #define DEVICE_SETTINGS_ENTRY "ui\\shell\\main_menu\\main_menu_item_settings"
 #define DEVICE_PROFILE_PICKER "ui\\shell\\main_menu\\settings_select\\player_setup\\player_profile_select_screen"
 #define DEVICE_OPTIONS_PREFIX "ui\\shell\\main_menu\\settings_select\\multiplayer_setup\\indicator_options_edit\\"
@@ -28,10 +29,10 @@ static short const device_settings_deadzone_presets[] = {0, 3277, 6553, 9000, 98
 static char const *const device_settings_deadzone_labels[] = {"0%", "10%", "20%", "Xbox", "30%", "40%", "49%"};
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 8
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 8, 7, 3, 4};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 8, 7, 3, 5};
 #else
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 6
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 6, 5, 3, 4};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 6, 5, 3, 5};
 #endif
 static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX_PAGE_ROWS] = {
     {NONE, NONE, NONE, NONE},
@@ -51,7 +52,7 @@ static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX
 #endif
     {_device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone, _device_setting_look_acceleration},
     {_device_setting_show_og_maps, _device_setting_show_community_maps, _device_setting_join_in_progress,
-     _device_setting_show_default_game_types}};
+     _device_setting_show_default_game_types, _device_setting_experimental_powerup_sync}};
 static short const device_settings_page_titles[_ds_page_count] = {_ds_game_label, _ds_audio_label, _ds_video_label, _ds_timer_label, _ds_controller_label, _ds_multiplayer_label};
 static short const device_settings_page_help[_ds_page_count] = {_ds_back_help, _ds_audio_help, _ds_video_help, _ds_timer_help, _ds_controller_help, _ds_multiplayer_help};
 #define DEVICE_SETTINGS_STRING_COUNT (_ds_value_start + MAXIMUM_NUMBER_OF_LOCAL_PLAYERS * NUMBER_OF_DEVICE_SETTINGS)
@@ -404,7 +405,7 @@ static boolean device_settings_build_native_pages(long strings, long const *head
         L"Choose fullscreen, VSync\r\nand smooth motion settings.",
 #endif
         L"Choose stick deadzones\r\nand look acceleration\r\nfor this device.",
-        L"Choose map sets and game types.\r\nAllow new players into matches\r\nafter they start."};
+        L"Choose map sets, game types\r\nand experimental powerup sync\r\nfor games you host."};
     struct ui_widget_definition *base[NUMBEROF(templates)];
     struct ui_widget_child_reference *chooser_rows;
     long i, tag, page, row;
@@ -603,7 +604,7 @@ static boolean device_settings_build(void)
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "RENDERER:", "RESOLUTION:", "FPS LIMIT:", "ANTI-ALIASING:"
 #endif
-        , "DEFAULT GAME TYPES:"
+        , "DEFAULT GAME TYPES:", "POWERUP SYNC (EXPERIMENTAL):"
         };
     static char const *const help[] = {
         "Hear the whole battlefield.\r\nAdjust master game audio.",
@@ -636,6 +637,7 @@ static boolean device_settings_build(void)
         "Smooth world edges with FXAA.\r\nOriginal HUD stays unchanged.\r\nRelaunch Halo to apply."
 #endif
         , "Show original built-in game types.\r\nCustom types and Team Slayer Pro\r\nstay visible when this option is off."
+        , "Experimental camo/overshield sync.\r\nHost: current > next; rehost to apply.\r\nClients follow host. Same version needed."
         };
     static char const *const heading_names[] = {"ui\\native_settings\\game_title", "ui\\native_settings\\audio_title", "ui\\native_settings\\video_title", "ui\\native_settings\\timer_title", "ui\\native_settings\\controller_title", "ui\\native_settings\\multiplayer_title"};
     static char const *const footer_names[] = {"ui\\native_settings\\game_help", "ui\\native_settings\\audio_help", "ui\\native_settings\\video_help", "ui\\native_settings\\timer_help", "ui\\native_settings\\controller_help", "ui\\native_settings\\multiplayer_help"};
@@ -1089,7 +1091,7 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "Renderer", "Resolution", "FPS Limit", "AA"
 #endif
-        , "Default Game Types"
+        , "Default Game Types", "Powerup Sync"
         };
     short row, local = (short)(draft - device_settings_drafts);
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
@@ -1147,8 +1149,20 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Faster" : "Original");
         else if (row == _device_setting_asset_quality)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Upres" : "Original");
+        else if (row == _device_setting_experimental_powerup_sync)
+        {
+            char const *next = draft->values[row] != 0.0 ? "ON" : "OFF";
+            int active = network_powerup_sync_effective();
+            if (network_powerup_sync_controlled_by_host())
+                snprintf(value, sizeof(value), "%s (Host)", active ? "ON" : "OFF");
+            else if (global_network_game_server_get() && active != (draft->values[row] != 0.0))
+                snprintf(value, sizeof(value), "%s > %s", active ? "ON" : "OFF", next);
+            else snprintf(value, sizeof(value), "%s", next);
+        }
         else snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "ON" : "OFF");
         if (device_settings.native_pages) snprintf(text, sizeof(text), "%s", value);
+        else if (row == _device_setting_experimental_powerup_sync && network_powerup_sync_controlled_by_host())
+            snprintf(text, sizeof(text), "%s: %s", names[row], value);
         else snprintf(text, sizeof(text), "%s: < %s >", names[row], value);
         device_settings_text(index, text);
         if (device_settings.native_pages) widget->parameters.list.selected_index = index;
@@ -1272,6 +1286,13 @@ static boolean game_settings_event(struct widget_instance *widget, short functio
         }
         for (row = 0; row < NUMBER_OF_DEVICE_SETTINGS; row++)
             if (draft->values[row] != draft->original[row]) changed |= 1UL << row;
+        /* Joining can begin while a local draft is open. Accept other rows
+         * without saving the now host-controlled preference. */
+        if (network_powerup_sync_controlled_by_host())
+        {
+            changed &= ~(1UL << _device_setting_experimental_powerup_sync);
+            draft->values[_device_setting_experimental_powerup_sync] = draft->original[_device_setting_experimental_powerup_sync];
+        }
         result = device_settings_apply(changed, draft->values);
         if (result <= 0)
         {
@@ -1299,8 +1320,14 @@ static boolean game_settings_event(struct widget_instance *widget, short functio
         if (widget->definition_tag_index == device_settings.row_tags[row] ||
             (device_settings.native_pages && widget->definition_tag_index == device_settings_native.spinner_tags[row])) break;
     if (row == NUMBER_OF_DEVICE_SETTINGS) return FALSE;
+    if (row == _device_setting_experimental_powerup_sync && network_powerup_sync_controlled_by_host())
+    {
+        device_settings_render_draft(draft);
+        return FALSE;
+    }
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-    if (row >= _device_setting_render_height && draft->values[_device_setting_renderer] == 0.0) return FALSE;
+    if (row != _device_setting_experimental_powerup_sync &&
+        row >= _device_setting_render_height && draft->values[_device_setting_renderer] == 0.0) return FALSE;
     if (row == _device_setting_render_height)
     {
         static short const choices[] = {0, 2160, 1440};
@@ -1378,6 +1405,9 @@ static void game_settings_input(struct widget_instance *widget, short function)
         struct widget_instance *footer;
         short count, setting;
         if (!draft || !draft->root || widget->parent != draft->root || draft->page <= _ds_game || draft->page >= _ds_page_count) return;
+        /* Host policy and connection ownership can change while this page is
+         * open; refresh the displayed override without changing its draft. */
+        if (draft->page == _ds_multiplayer) device_settings_render_draft(draft);
         if (device_settings.native_pages && draft->page == _ds_audio)
         {
             struct widget_instance *caption = widget_instance_find_by_tag_index_recursive(draft->root, device_settings_native.audio_accept_tag);

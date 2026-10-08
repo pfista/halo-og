@@ -34,7 +34,8 @@ Audio, Video, Controller and Multiplayer preferences belong to the local install
 part of a player profile, map or network gametype. Performance Options remain saved
 gametype options with host authority. Timer cue groups, volume, position and
 size are local preferences; the host still controls whether the timer and
-timer audio are enabled.
+timer audio are enabled. Experimental Powerup Sync is a saved host preference
+whose active value applies to every client in that hosted session.
 
 ## Controller
 
@@ -77,6 +78,14 @@ remain separate. See [menu repeat](menu-repeat.md).
 | Community Maps | `maps.show_community` | On | Show installed community maps, including alternate/refined imports |
 | Join In Progress | `network.join_in_progress` | On | Permit new players to join a running hosted match |
 | Default Game Types | `game.show_default_game_types` | Off | Show the original built-in game types in game-type menus |
+| Powerup Sync (Experimental) | `network.experimental_powerup_sync` | Off | Host-selected camo/overshield replication experiment; applies after rehosting |
+
+Powerup Sync is fixed when hosting starts. While hosting, a different saved or
+draft choice appears as **current > next** and takes effect after leaving and
+hosting again. Joining clients display **On/Off (Host)**, automatically use the
+host's choice and cannot edit that row. The temporary host value never replaces
+their saved preference. On sessions require compatible clients; Off sessions
+retain older-peer compatibility. See [scope and rollback](experimental-powerup-sync.md).
 
 Map visibility affects the host's map-selection list. Hidden maps remain
 available for joining and approved downloads. At least one set must remain

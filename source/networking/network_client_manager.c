@@ -926,6 +926,7 @@ void network_game_client_dispose(
 		network_game_client_directory_cancel();
 #endif
 		network_game_client_performance_host_capabilities = 0;
+		network_powerup_sync_client_end();
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		network_game_client_cache_offer_valid = FALSE;
 		network_game_client_cache_settings_pending = FALSE;
@@ -1309,6 +1310,18 @@ static boolean network_game_client_receive_performance_capability(
 	if (!global_network_game_server_get() && client->state >= _network_game_client_state_joining)
 		network_game_client_performance_host_capabilities = supported;
 	return TRUE;
+}
+
+static boolean network_game_client_send_powerup_sync_ack(struct network_game_client *client)
+{
+	word message[NETWORK_PERFORMANCE_MESSAGE_SIZE / sizeof(word)];
+	if (global_network_game_server_get() ||
+		!(network_game_client_performance_host_capabilities & NETWORK_PERFORMANCE_POWERUP_SYNC_FLAG))
+		return TRUE;
+	if (!network_powerup_sync_client_confirmed()) return FALSE;
+	network_performance_powerup_sync_encode((byte *)message, NETWORK_PERFORMANCE_SETTINGS_ACK,
+		network_powerup_sync_effective());
+	return network_game_client_write(client->connection, message, sizeof(message), NULL, 1);
 }
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
@@ -1898,6 +1911,11 @@ boolean network_game_client_game_has_started(
 
 		network_connection_keep_alive(client->connection);
 
+		/* The reliable acknowledgement precedes loaded, which is the server's
+		 * barrier before accepting requests for initial distributed objects.
+		 * This also covers loading directly into a match already in progress. */
+		if (!network_game_client_send_powerup_sync_ack(client)) return FALSE;
+
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		/* A late join can load directly after full settings. Confirm the same
 		   digest before its ordinary loaded message on the reliable stream. */
@@ -2253,6 +2271,7 @@ boolean network_game_client_initiate_join_game(
 		client && (client->state == _network_game_client_state_searching) && game && join_parameters && client->connection && !network_connection_connected(client->connection) && (game->platform == network_game_get_local_platform()));
 
 	network_game_client_performance_host_capabilities = 0;
+	if (!global_network_game_server_get()) network_powerup_sync_client_end();
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		network_game_client_cache_offer_valid = FALSE;
 		network_game_client_cache_settings_pending = FALSE;
@@ -2277,6 +2296,7 @@ boolean network_game_client_initiate_join_game(
 
 	if (success == TRUE)
 	{
+		if (!global_network_game_server_get()) network_powerup_sync_client_begin();
 		/* port: the join's wait counted from the connection made, not from
 		before a connect that took seconds (idle_joining) */
 		network_connection_keep_alive(client->connection);
@@ -2426,6 +2446,7 @@ void network_game_client_reset(
 		client);
 
 	network_game_client_performance_host_capabilities = 0;
+	network_powerup_sync_client_end();
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		network_game_client_cache_offer_valid = FALSE;
 		network_game_client_cache_settings_pending = FALSE;
@@ -2755,6 +2776,7 @@ static boolean network_game_client_process_incoming_messages(
 		&reliable))
 	{
 		unsigned performance_flags;
+		int powerup_sync_enabled;
 
 		if (network_game_client_receive_performance_capability(client,
 			(byte const *)message_packet, message_packet_size, reliable))
@@ -2769,12 +2791,35 @@ static boolean network_game_client_process_incoming_messages(
 			continue;
 		}
 #endif
+		/* EXPERIMENTAL_POWERUP_SYNC: only this established host's reliable
+		 * stream may install the session policy. Process it before full game
+		 * settings, even while joining/loading; never persist it locally. */
+		if (reliable && network_performance_powerup_sync_decode((byte const *)message_packet,
+			message_packet_size, NETWORK_PERFORMANCE_SETTINGS, &powerup_sync_enabled))
+		{
+			if (!global_network_game_server_get() && client->state >= _network_game_client_state_joining &&
+				(network_game_client_performance_host_capabilities & NETWORK_PERFORMANCE_POWERUP_SYNC_FLAG))
+			{
+				if (!network_powerup_sync_client_apply(powerup_sync_enabled) ||
+					!network_game_client_send_powerup_sync_ack(client))
+					return FALSE;
+			}
+			message_packet_size = sizeof(message_packet);
+			continue;
+		}
 
 		/* Only the established host's reliable stream may change options.
 		 * UDP and client-originated controls never reach this branch. */
 		if (reliable && network_performance_decode((byte const *)message_packet,
 			message_packet_size, NETWORK_PERFORMANCE_SETTINGS, &performance_flags))
 		{
+			/* V7 settings exclusively carry the session policy above. Do not
+			 * let malformed/mixed session flags enter saved variant padding. */
+			if (((byte const *)message_packet)[12] == NETWORK_PERFORMANCE_VERSION)
+			{
+				message_packet_size = sizeof(message_packet);
+				continue;
+			}
 			if (!global_network_game_server_get() &&
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 				!network_game_client_cache_settings_pending &&
@@ -3093,7 +3138,8 @@ static boolean network_game_client_idle_joining(
 				/* Earlier hosts reject unknown capability bits. Announce each
 				 * supported generation first: timer/markers, then timer audio,
 				 * then sound rules, input delay, Hardcore precision, Fiesta,
-				 * camo, expanded weapons, download wait, and actor-only audio. Each host
+				 * camo, expanded weapons, download wait, actor-only audio, and
+				 * experimental Powerup Sync. Each host
 				 * retains the newest capability it understands before the
 				 * reliable join request. */
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY, 3);
@@ -3137,6 +3183,12 @@ static boolean network_game_client_idle_joining(
 					supported & 4095);
 				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
 					return FALSE;
+				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
+					supported & 16383);
+				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))
+					return FALSE;
+				/* V6 hosts retain the preceding capability. V7 hosts learn the
+				 * experimental session bit before reliable join admission. */
 				network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY,
 					supported);
 				if (!network_game_client_write(client->connection, capability, sizeof(capability), NULL, 1))

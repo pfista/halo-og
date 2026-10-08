@@ -35,13 +35,16 @@ static const char *names[] = {"audio.volume", "audio.music_volume", "audio.effec
     "display.timer_position", "display.timer_scale", "display.fullscreen",
     "maps.show_og", "maps.show_community", "network.join_in_progress",
     "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration",
-    "input.fast_menu_repeat", "display.high_res_hud"};
+    "input.fast_menu_repeat", "display.high_res_hud", "network.experimental_powerup_sync", "game.show_default_game_types"};
 #define TEST_SETTING_COUNT (sizeof(names)/sizeof(names[0]))
 static double saved[TEST_SETTING_COUNT];
 static const char *renderer="angle",*antialiasing="off";
 static long render_height=480,frame_limit;
 static int fullscreen, native_fullscreen, write_ok, switch_ok, apply_ok, writes, audio_applies, video_applies, switches, starts, stops;
 static int write_fail_on, switch_fail_on, apply_fail_on;
+static int powerup_client_controlled,powerup_effective;
+int network_powerup_sync_controlled_by_host(void) { return powerup_client_controlled; }
+int network_powerup_sync_effective(void) { return powerup_effective; }
 static int index_of(const char *name) {
     for (unsigned i=0;i<TEST_SETTING_COUNT;i++) if (!strcmp(names[i],name)) return (int)i;
     assert(!"unknown preference"); return -1;
@@ -92,7 +95,8 @@ void ui_apply_main_menu_music_setting(void) { if (saved[5]) starts++; else stops
 static void reset(double values[NUMBER_OF_DEVICE_SETTINGS]) {
     for (unsigned i=0;i<TEST_SETTING_COUNT;i++) saved[i]=(i==7 || i==11 || i==12) ? 0.0 : 1.0;
     saved[18]=saved[19]=9000;
-    saved[21]=saved[22]=0;
+    saved[21]=saved[22]=saved[23]=0;
+    powerup_client_controlled=powerup_effective=0;
     saved[0]=0.15; fullscreen=native_fullscreen=1; write_ok=switch_ok=apply_ok=1;
     renderer="angle";antialiasing="off";render_height=480;frame_limit=0;
     writes=audio_applies=video_applies=switches=starts=stops=0;
@@ -136,36 +140,38 @@ static void check_controller_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) 
 }
 static void check_menu_repeat_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) {
     unsigned long menu_repeat = 1UL << _device_setting_fast_menu_repeat;
-    const double bad[] = {-1, 2, 0.5, NAN, INFINITY, -INFINITY};
+    const double retired[] = {0, 1, -1, 2, 0.5, NAN, INFINITY, -INFINITY};
     reset(values);
-    assert(values[_device_setting_fast_menu_repeat]==0 && halo_menu_repeat_milliseconds()==250);
+    /* The retired slot remains an API no-op. Old preferences and direct
+     * drafts cannot change the fixed immediate-press/hold navigation cadence. */
+    assert(values[_device_setting_fast_menu_repeat]==1 && halo_menu_repeat_is_fast());
+    assert(HALO_MENU_REPEAT_INITIAL_DELAY==500 && halo_menu_repeat_milliseconds()==100);
     assert(device_settings_apply(menu_repeat,values) && !writes);
-    for(unsigned i=0;i<sizeof(bad)/sizeof(bad[0]);i++) {
-        values[_device_setting_fast_menu_repeat]=bad[i];
-        assert(!device_settings_apply(menu_repeat,values));
+    write_ok=0;
+    for(unsigned i=0;i<sizeof(retired)/sizeof(retired[0]);i++) {
+        saved[21]=retired[i];
+        assert(device_settings_get(_device_setting_fast_menu_repeat)==1);
+        for(unsigned j=0;j<sizeof(retired)/sizeof(retired[0]);j++) {
+            values[_device_setting_fast_menu_repeat]=retired[j];
+            assert(device_settings_apply(menu_repeat,values));
+            assert(device_settings_get(_device_setting_fast_menu_repeat)==1 &&
+                halo_menu_repeat_milliseconds()==100 && !writes);
+            assert(isnan(retired[i]) ? isnan(saved[21]) : saved[21]==retired[i]);
+        }
     }
     assert(!writes && !audio_applies && !video_applies && !switches);
-    values[_device_setting_fast_menu_repeat]=1;
-    write_ok=0;
-    assert(!device_settings_apply(menu_repeat,values));
-    assert(saved[21]==0 && device_settings_get(_device_setting_fast_menu_repeat)==0 &&
-        halo_menu_repeat_milliseconds()==250 && writes==1);
-    write_ok=1;
-    assert(device_settings_apply(menu_repeat,values));
-    assert(saved[21]==1 && device_settings_get(_device_setting_fast_menu_repeat)==1 &&
-        halo_menu_repeat_milliseconds()==100 && writes==2);
-    assert(!audio_applies && !video_applies && !switches && !starts && !stops);
-    assert(device_settings_apply(menu_repeat,values) && writes==2);
-    values[_device_setting_fast_menu_repeat]=0;
-    assert(device_settings_apply(menu_repeat,values));
-    assert(saved[21]==0 && halo_menu_repeat_milliseconds()==250 && writes==3);
-    /* A mixed draft remains atomic when another backend rejects it. */
+    /* A mixed draft saves active rows while ignoring the retired slot. */
+    reset(values);values[_device_setting_fast_menu_repeat]=0;values[_device_setting_vsync]=0;
+    assert(device_settings_apply(menu_repeat | (1UL<<_device_setting_vsync),values));
+    assert(saved[21]==0 && saved[6]==0 && writes==1 && video_applies==1 &&
+        device_settings_get(_device_setting_fast_menu_repeat)==1 && halo_menu_repeat_milliseconds()==100);
+    /* Active rows remain atomic when a backend rejects the same draft. */
     reset(values);
-    values[_device_setting_fast_menu_repeat]=1;
+    values[_device_setting_fast_menu_repeat]=0;
     values[_device_setting_vsync]=0;
     apply_fail_on=1;
     assert(!device_settings_apply(menu_repeat | (1UL<<_device_setting_vsync),values));
-    assert(saved[21]==0 && saved[6]==1 && halo_menu_repeat_milliseconds()==250 && writes==2);
+    assert(saved[21]==0 && saved[6]==1 && halo_menu_repeat_milliseconds()==100 && writes==2);
 }
 static void check_hud_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) {
     unsigned long hud=1UL<<_device_setting_asset_quality;
@@ -195,11 +201,37 @@ static void check_hud_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) {
     assert(!device_settings_apply(hud|(1UL<<_device_setting_vsync),values));
     assert(saved[22]==0 && saved[6]==1 && writes==2 && video_applies==2);
 }
-int main(void) {
+static void check_powerup_sync_preference(double values[NUMBER_OF_DEVICE_SETTINGS]) {
+    unsigned long row=1UL<<_device_setting_experimental_powerup_sync;
+    reset(values);assert(values[_device_setting_experimental_powerup_sync]==0);
+    assert(device_settings_apply(row,values) && !writes);
+    const double bad[]={-1,2,.5,NAN,INFINITY};
+    for(unsigned i=0;i<sizeof(bad)/sizeof(bad[0]);i++) {
+        values[_device_setting_experimental_powerup_sync]=bad[i];assert(!device_settings_apply(row,values));
+    }
+    assert(!writes);
+    values[_device_setting_experimental_powerup_sync]=1;write_ok=0;
+    assert(!device_settings_apply(row,values) && saved[23]==0 && writes==1);
+    write_ok=1;assert(device_settings_apply(row,values));
+    assert(saved[23]==1 && writes==2 && powerup_effective==0); /* Current host remains latched until rehost. */
+    assert(!audio_applies && !video_applies && !switches);
+    powerup_client_controlled=1;powerup_effective=0;
+    assert(device_settings_get(_device_setting_experimental_powerup_sync)==1); /* Getter always keeps local preference. */
+    values[_device_setting_experimental_powerup_sync]=0;values[_device_setting_show_community_maps]=0;
+    assert(!device_settings_apply(row|(1UL<<_device_setting_show_community_maps),values));
+    assert(saved[23]==1 && saved[16]==1 && writes==2); /* Backend rejects a forged mixed client draft atomically. */
+    assert(device_settings_apply(1UL<<_device_setting_show_community_maps,values));
+    assert(saved[23]==1 && saved[16]==0 && writes==3);
+    powerup_client_controlled=0;
+    assert(device_settings_apply(row,values) && saved[23]==0 && writes==4);
+}
+int main(int argc,char **argv) {
     double values[NUMBER_OF_DEVICE_SETTINGS];
+    if(argc==2 && !strcmp(argv[1],"--powerup-sync")) { check_powerup_sync_preference(values);return 0; }
     check_controller_settings(values);
     check_menu_repeat_settings(values);
     check_hud_settings(values);
+    check_powerup_sync_preference(values);
     if (MOBILE_FULLSCREEN) {
         /* Android/iOS remain fullscreen and never read or persist the
          * desktop-only preference, even in a mixed settings draft. */
@@ -313,12 +345,13 @@ int main(void) {
     saved[13]=2; assert(device_settings_get(_device_setting_timer_scale)==1);
     saved[0]=NAN; assert(device_settings_get(0)==0); saved[0]=-1; assert(device_settings_get(0)==0);
     saved[0]=2; assert(device_settings_get(0)==1);
-    /* Every changed field rejects non-finite input before any side effect.
+    /* Every active changed field rejects non-finite input before any side effect.
      * Include a valid earlier change so a malformed later row cannot result
      * in a partially saved draft. */
     const double nonfinite[] = {NAN, INFINITY, -INFINITY};
     for (unsigned value=0;value<sizeof(nonfinite)/sizeof(nonfinite[0]);value++) {
         for (int setting=0;setting<NUMBER_OF_DEVICE_SETTINGS;setting++) {
+            if(setting==_device_setting_fast_menu_repeat) continue; /* Retired API slot is ignored. */
             reset(values);
             values[0]=0.2;
             values[setting]=nonfinite[value];
@@ -360,7 +393,7 @@ int main(void) {
         (1UL<<_device_setting_join_in_progress),values));
     assert(writes==2 && saved[6]==1 && saved[15]==1 && saved[16]==1 && saved[17]==1);
 #if MAC_FULLSCREEN
-    assert(NUMBER_OF_DEVICE_SETTINGS==27);
+    assert(NUMBER_OF_DEVICE_SETTINGS==29);
     reset(values);values[_device_setting_renderer]=1;values[_device_setting_render_height]=0;
     values[_device_setting_frame_limit]=120;values[_device_setting_anti_aliasing]=1;
     assert(device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_render_height)|
@@ -374,16 +407,16 @@ int main(void) {
         (1UL<<_device_setting_anti_aliasing)|(1UL<<_device_setting_vsync),values));
     assert(writes==2 && !strcmp(renderer,"angle") && !strcmp(antialiasing,"off") && render_height==480 && saved[6]==1);
     assert(video_applies==2 && !switches);
-    /* Controller/menu preferences and pending Metal choices share one draft.
-     * A live video refusal must roll every changed type back together. */
+    /* Controller preferences and pending Metal choices share one draft.
+     * A live video refusal rolls active rows back and ignores the retired slot. */
     reset(values);values[_device_setting_renderer]=1;values[_device_setting_frame_limit]=60;
-    values[_device_setting_left_stick_deadzone]=3277;values[_device_setting_fast_menu_repeat]=1;
+    values[_device_setting_left_stick_deadzone]=3277;values[_device_setting_fast_menu_repeat]=0;
     values[_device_setting_vsync]=0;apply_fail_on=1;
     assert(!device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_frame_limit)|
         (1UL<<_device_setting_left_stick_deadzone)|(1UL<<_device_setting_fast_menu_repeat)|
         (1UL<<_device_setting_vsync),values));
     assert(writes==2 && !strcmp(renderer,"angle") && frame_limit==0 && saved[18]==9000 &&
-        saved[21]==0 && saved[6]==1 && halo_menu_repeat_milliseconds()==250);
+        saved[21]==0 && saved[6]==1 && halo_menu_repeat_milliseconds()==100);
     assert(video_applies==2 && !audio_applies && !switches);
     reset(values);values[_device_setting_renderer]=1;values[_device_setting_anti_aliasing]=1;write_ok=0;
     assert(!device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_anti_aliasing),values));
@@ -398,7 +431,7 @@ int main(void) {
     assert(values[_device_setting_render_height]==720);
     assert(device_settings_apply(1UL<<_device_setting_render_height,values) && !writes);
 #else
-    assert(NUMBER_OF_DEVICE_SETTINGS==23);
+    assert(NUMBER_OF_DEVICE_SETTINGS==25);
 #endif
     puts("device settings save/apply tests passed");
 }
@@ -406,7 +439,7 @@ int main(void) {
 
 
 class DeviceSettingsTests(unittest.TestCase):
-    def run_save_apply_boundary(self, production_flags, platform_flags=()):
+    def run_save_apply_boundary(self, production_flags, platform_flags=(), arguments=()):
         with tempfile.TemporaryDirectory(prefix="halo-device-settings-") as folder:
             path = Path(folder)
             (path / "test.c").write_text(HARNESS)
@@ -422,7 +455,7 @@ class DeviceSettingsTests(unittest.TestCase):
             production = path / "device_settings.o"
             subprocess.run(["clang", *production_flags, *platform_flags, "-Wall", "-Wextra", "-Werror",
                             "-include", str(path / "c89_math_surface.h"),
-                            "-I", str(path), "-I", str(ROOT / "port/linux/game"),
+                            "-I", str(path), "-I", str(ROOT / "port/linux/game"), "-I", str(ROOT / "source"),
                             "-c", str(ROOT / "port/linux/game/device_settings.c"),
                             "-o", str(production)], check=True)
             executable = path / ("test.exe" if sys.platform == "win32" else "test")
@@ -431,7 +464,16 @@ class DeviceSettingsTests(unittest.TestCase):
                             "-iquote", str(ROOT / "port/linux/include"),
                             str(path / "test.c"), str(production),
                             "-o", str(executable)], check=True)
-            subprocess.run([str(executable)], check=True)
+            subprocess.run([str(executable), *arguments], check=True)
+
+    def test_powerup_host_preference_save_and_client_rejection(self):
+        for platform in ("HALO_MACOS", "HALO_LINUX", "HALO_WINDOWS", "HALO_ANDROID", "HALO_IOS"):
+            with self.subTest(platform=platform):
+                flags = ["-D" + platform + "=1"]
+                if platform == "HALO_IOS":
+                    flags.append("-DHALO_MACOS=1")
+                self.run_save_apply_boundary(["-std=gnu89", "-D__STRICT_ANSI__", "-O2"], flags,
+                                             arguments=("--powerup-sync",))
 
     def test_save_apply_boundary(self):
         self.run_save_apply_boundary(["-std=c99"])

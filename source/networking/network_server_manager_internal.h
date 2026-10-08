@@ -36,6 +36,10 @@ void network_game_server_performance_capability(
 	struct network_game_server_client_machine *machine, unsigned flags);
 boolean network_game_server_performance_supported(
 	struct network_game_server_client_machine *machine, unsigned flags);
+boolean network_game_server_powerup_sync_acknowledge(
+	struct network_game_server_client_machine *machine, int enabled);
+boolean network_game_server_powerup_sync_ready(
+	struct network_game_server *server, struct network_game_server_client_machine *machine);
 
 word network_game_server_get_state(
 	struct network_game_server *server,

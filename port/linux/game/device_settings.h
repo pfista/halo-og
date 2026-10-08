@@ -34,17 +34,21 @@ enum
     _device_setting_anti_aliasing,
 #endif
     _device_setting_show_default_game_types,
+    _device_setting_experimental_powerup_sync,
     NUMBER_OF_DEVICE_SETTINGS
 };
 
 /* Volumes are 0..1; switches are 0/1. Timer position is 0..2 and scale .5..1.
  * Stick deadzones are raw integer ranges 0..16000; Xbox is exactly 9000.
  * Mac renderer/AA choices are 0/1; height/cap are their config pixel/FPS values.
- * Asset quality, renderer, render height and AA describe saved choices for the next launch. */
+ * Asset quality, renderer, render height and AA describe saved choices for the next launch.
+ * Experimental powerup sync is a local hosting preference, applied after rehosting.
+ * Its getter preserves that preference while joined clients follow the host. */
 double device_settings_get(short setting);
 /* Save only changed rows, then apply to the current session. Returns 1 on
  * success, 0 on failure with prior settings restored, or -1 when a backend
  * also refused restoration (the menu must refresh its displayed values).
+ * Joined clients cannot change the experimental powerup-sync hosting preference.
  * A zero mask is a successful no-op. Call from the game thread. */
 int device_settings_apply(unsigned long changed_mask,
     const double values[NUMBER_OF_DEVICE_SETTINGS]);

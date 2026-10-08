@@ -716,7 +716,8 @@ static boolean network_game_server_send_performance_capability(
 		!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY) &&
 		!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY) &&
 		!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_SELF_MOVEMENT_FLAG) &&
-		!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_SELF_WEAPON_READY_FLAG))
+		!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_SELF_WEAPON_READY_FLAG) &&
+		!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_POWERUP_SYNC_FLAG))
 		return TRUE;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	supported = network_performance_runtime_supported_flags(TRUE, halo_performance_audio_available());
@@ -731,13 +732,38 @@ static boolean network_game_server_send_performance_capability(
 		network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY),
 		network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_DOWNLOAD_WAIT_CAPABILITY),
 		network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_SELF_MOVEMENT_FLAG) ||
-			network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_SELF_WEAPON_READY_FLAG));
+			network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_SELF_WEAPON_READY_FLAG),
+		network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_POWERUP_SYNC_FLAG));
 
 	/* A saved variant may contain flags this host cannot interpret. Confirm
 	 * runtime support before the full record, on the same reliable stream;
 	 * this also covers direct joins and joins to a match already in progress. */
 	network_performance_encode((byte *)capability, NETWORK_PERFORMANCE_CAPABILITY, supported);
 	return network_game_server_send_message_to_client_machine(server, machine, capability);
+}
+
+static boolean network_game_server_send_powerup_sync_settings(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *machine)
+{
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	word message[NETWORK_PERFORMANCE_MESSAGE_SIZE / sizeof(word)];
+#endif
+	/* The loopback client shares the host's latch and must not install a
+	 * separate client override (or need an acknowledgement of its own value). */
+	if (network_game_server_client_machine_is_local(server, machine)) return TRUE;
+#ifndef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	return !network_powerup_sync_host_enabled();
+#else
+	if (!network_game_server_performance_supported(machine, NETWORK_PERFORMANCE_POWERUP_SYNC_FLAG))
+		return !network_powerup_sync_host_enabled();
+	/* EXPERIMENTAL_POWERUP_SYNC: precedes full settings on this same reliable
+	 * stream for lobby joins, normal starts and joins to a running match. Off
+	 * is explicit so a client's local On preference cannot change the session. */
+	network_performance_powerup_sync_encode((byte *)message, NETWORK_PERFORMANCE_SETTINGS,
+		network_powerup_sync_host_enabled());
+	return network_game_server_send_message_to_client_machine(server, machine, message);
+#endif
 }
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
@@ -765,6 +791,8 @@ boolean network_game_server_send_game_settings_to_client_machine(
 	long offset;
 
 	if (!network_game_server_send_performance_capability(server, machine))
+		return FALSE;
+	if (!network_game_server_send_powerup_sync_settings(server, machine))
 		return FALSE;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	if (!network_game_server_send_cache_identity(server, machine, game)) return FALSE;
@@ -1053,6 +1081,7 @@ boolean network_game_server_send_game_settings_to_all_machines(
 		if (network_game_server_client_machine_is_joined_to_game(server, machine) &&
 			!network_game_server_machine_is_loading_late(server, machine) &&
 			(!network_game_server_send_performance_capability(server, machine)
+			 || !network_game_server_send_powerup_sync_settings(server, machine)
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 			 || !network_game_server_send_cache_identity(server, machine, game)
 #endif
@@ -1359,6 +1388,7 @@ boolean network_game_server_handle_client_message(
 			case _message_type_data:
 			{
 				unsigned performance_flags;
+				int powerup_sync_enabled;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 				struct network_expanded_cache_identity identity;
 				if (network_expanded_cache_decode((byte const *)message, message_buffer_size,
@@ -1374,6 +1404,15 @@ boolean network_game_server_handle_client_message(
 					break;
 				}
 #endif
+				/* This path is the client's reliable stream. Acknowledgement can
+				 * only confirm the admitted connection's immutable host policy. */
+				if (network_game_server_client_machine_is_joined_to_game(server, machine) &&
+					network_performance_powerup_sync_decode((byte const *)message, message_buffer_size,
+						NETWORK_PERFORMANCE_SETTINGS_ACK, &powerup_sync_enabled))
+				{
+					result = network_game_server_powerup_sync_acknowledge(machine, powerup_sync_enabled);
+					break;
+				}
 
 				/* This handler reads the client's reliable connection only.
 				 * Capability is allowed before joining; no client may send
@@ -1736,7 +1775,7 @@ static boolean network_game_server_handle_message_client_broadcast_game_search(
 			older builds had: network_client_manager.c) */
 			{
 				unsigned version = network_performance_advertised_version(
-					network_game_variant_required_capabilities(&game->variant), HALO_PORT_NETWORK_VERSION);
+					network_game_host_required_capabilities(&game->variant), HALO_PORT_NETWORK_VERSION);
 				advertisement.reserved[HALO_PORT_ADVERTISED_VERSION_OFFSET] = (byte)(version & 0xFF);
 				advertisement.reserved[HALO_PORT_ADVERTISED_VERSION_OFFSET + 1] = (byte)(version >> 8);
 			}
@@ -1875,7 +1914,7 @@ static boolean network_game_server_handle_message_client_join_game_request(
 			/* Discovery prevents stock clients joining an enabled session;
 			 * enforce it here too for stale advertisements and direct joins. */
 			if (!network_game_server_performance_supported(server_client_machine,
-				network_game_variant_required_capabilities(&network_game_server_get_game(server)->variant)))
+				network_game_host_required_capabilities(&network_game_server_get_game(server)->variant)))
 			{
 				struct message_server_machine_rejected rejection = { _rejection_code_version_too_old };
 				void *reply = create_network_game_message(_message_server_machine_rejected, &rejection, sizeof(rejection));
@@ -2578,6 +2617,14 @@ static boolean network_game_server_handle_message_client_loaded(
 	short message_size)
 {
 	boolean result = TRUE;
+	/* Without this barrier a late join could request initial distributed
+	 * objects before installing the host's policy. Stock/older peers need no
+	 * acknowledgement when the host is Off; the local host already has it. */
+	if (!network_game_server_powerup_sync_ready(server, client_machine))
+	{
+		network_event("client loaded without confirming the host's Powerup Sync setting");
+		return FALSE;
+	}
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 	if (!network_game_server_client_machine_has_cache_identity(server, client_machine))
 	{

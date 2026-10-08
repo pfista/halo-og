@@ -41,7 +41,8 @@ int main(int argc,char **argv) {
     assert(argc==5);
     int numeric=!strcmp(argv[2],"number") || !strcmp(argv[2],"number_failure");
     const char *read_setting=numeric || !strcmp(argv[3],"maps.show_og") || !strcmp(argv[3],"maps.show_community") ||
-        !strcmp(argv[3],"network.join_in_progress") || !strcmp(argv[3],"input.look_acceleration") ||
+        !strcmp(argv[3],"network.join_in_progress") || !strcmp(argv[3],"network.experimental_powerup_sync") ||
+        !strcmp(argv[3],"input.look_acceleration") ||
         !strcmp(argv[3],"input.fast_menu_repeat") || !strcmp(argv[3],"display.high_res_hud") ? argv[3]:"audio.menu_music";
     int original=numeric ? (int)config_integer(read_setting):
         !strcmp(read_setting,"display.high_res_hud") ? asset_quality_upres():config_boolean(read_setting);
@@ -73,6 +74,9 @@ enum { _gamepad_analog_button_a=0, _gamepad_analog_button_b=1,
 static struct { short pause_game_time_count; boolean sound_paused;
     struct widget_instance *active_widgets[4]; int initialization_thread; } widget_globals;
 static boolean settings_game_paused, settings_sound_paused, we_are_at_the_main_menu;
+static short settings_mode;
+static boolean main_menu_is_active(void) { return we_are_at_the_main_menu; }
+static boolean game_engine_running(void) { return settings_mode==1; }
 static boolean game_time_get_paused(void) { return settings_game_paused; }
 static void game_time_set_paused(boolean paused) { settings_game_paused=paused; }
 static void sound_pause(boolean paused) { settings_sound_paused=paused; }
@@ -83,9 +87,14 @@ static void game_time_start(void) { assert(0); }
 /* PRODUCTION WIDGET PAUSE LIFECYCLE */
 struct event_record { int unused; };
 static size_t ustrlen(const wchar_t *s) { return wcslen(s); }
-static void *global_network_game_server_get(void) { return NULL; }
+static int settings_host,settings_client_controlled,settings_host_powerup_sync;
+static void *global_network_game_server_get(void) { return settings_host ? &settings_host:NULL; }
+int network_powerup_sync_effective(void) { return settings_host_powerup_sync; }
+int network_powerup_sync_controlled_by_host(void) { return settings_client_controlled; }
 static unsigned long performance_options_get_flags(void) { return 0; }
 static boolean performance_options_set_host_flags(unsigned long flags) { (void)flags; return FALSE; }
+static boolean playlist_profile_variant_is_locked(struct game_variant const *variant) { (void)variant;return FALSE; }
+static struct game_variant *game_engine_get_variant(void) { return &edited; }
 static boolean widget_event_function_list_widget_goto_next_item(struct widget_instance *w,struct event_record *e,boolean *d) {
     (void)e; (void)d; w->parameters.list.selected_index=(w->parameters.list.selected_index+1)%w->parameters.list.number_of_items; return TRUE;
 }
@@ -107,6 +116,12 @@ int device_settings_apply(unsigned long mask,const double values[NUMBER_OF_DEVIC
  * boundary provides the production dimensions for Settings composition. */
 static long native_pause_frame_tag(short height);
 static long native_pause_legend_tag(void);
+static boolean native_multiplayer_pause_build(void) { return TRUE; }
+static struct ui_widget_definition const *native_multiplayer_pause_button_style(void);
+static struct ui_widget_definition const *native_multiplayer_pause_root(short layout);
+static long native_multiplayer_pause_resume_tag(void);
+static long native_multiplayer_pause_leave_tag(void);
+static long native_pause_resident_tag(long group,char const *name) { return tag_loaded(group,name); }
 #include "interface/performance_pause_menu.inc"
 #include "include/halo_og_version.h"
 #include "interface/game_settings_menu.inc"
@@ -121,6 +136,10 @@ static struct ui_widget_event_handler_reference original_entry_events[2];
 static long entry_id,profile_id,original_root_ids[3],original_list_ids[2],resume_id,quit_id;
 static struct ui_widget_definition native_frames[3];
 static int settings_assets[2];
+static struct ui_widget_definition const *native_multiplayer_pause_button_style(void) { return &originals[6]; }
+static struct ui_widget_definition const *native_multiplayer_pause_root(short layout) { assert(layout>=0 && layout<3);return &originals[layout]; }
+static long native_multiplayer_pause_resume_tag(void) { return resume_id; }
+static long native_multiplayer_pause_leave_tag(void) { return quit_id; }
 static long native_pause_frame_tag(short height) {
     const short heights[]={159,213,240};
     const char *names[]={"ui\\fixture\\pause_frame159","ui\\fixture\\pause_frame213","ui\\fixture\\pause_frame240"};
@@ -324,6 +343,8 @@ static void settings_setup(short mode) {
     assert(!widget_globals.pause_game_time_count && !settings_game_paused && !settings_sound_paused);
     setup(); memset(&device_settings,0,sizeof(device_settings)); memset(&device_settings_campaign,0,sizeof(device_settings_campaign));
     performance_pause_ready=FALSE;
+    settings_mode=mode;we_are_at_the_main_menu=mode==0;
+    settings_host=settings_client_controlled=settings_host_powerup_sync=0;
     memset(settings_map,0,sizeof(settings_map)); memset(originals,0,sizeof(originals));
     settings_header=(struct cache_file_tag_header){0,123};
     if(mode==0) {
@@ -402,6 +423,7 @@ static void settings_setup(short mode) {
     settings_values[_device_setting_right_stick_deadzone]=9000;
     settings_values[_device_setting_fast_menu_repeat]=0;
     settings_values[_device_setting_asset_quality]=0;
+    settings_values[_device_setting_experimental_powerup_sync]=0;
 }
 static struct widget_instance *open_settings(short layout,short page,short local) {
     unsigned previous_unloads=unload_calls;
@@ -425,8 +447,8 @@ static void settings_structure(void) {
     assert(device_settings.column[0][_ds_audio].child_widgets.count==6);
     assert(device_settings.column[0][_ds_video].child_widgets.count==6);
     assert(device_settings.column[0][_ds_timer].child_widgets.count==5);
-    assert(device_settings.column[0][_ds_controller].child_widgets.count==4);
-    assert(device_settings.column[0][_ds_multiplayer].child_widgets.count==3);
+    assert(device_settings.column[0][_ds_controller].child_widgets.count==3);
+    assert(device_settings.column[0][_ds_multiplayer].child_widgets.count==5);
     assert(!game_settings_is_adjustable(NULL));
     struct widget_instance item={0};
     for(unsigned i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) {
@@ -449,7 +471,7 @@ static void settings_structure(void) {
     assert(!memcmp(originals,originals_before,sizeof(originals)));
     assert(!memcmp(&chooser,&chooser_before,sizeof(chooser)));
     assert(!memcmp(&advanced,&advanced_before,sizeof(advanced)));
-    assert(pb_editor_build()); assert(register_calls==166 && register_calls<MAXIMUM_RUNTIME_UI_TAGS);
+    assert(pb_editor_build()); assert(register_calls<MAXIMUM_RUNTIME_UI_TAGS);
     long old=device_settings.entry_tag; scenario_tags_unload();
     cache_file_globals.tags_loaded=TRUE; global_tag_instances=settings_map;
     assert(!tag_index_is_group(old,'DeLa'));
@@ -714,10 +736,12 @@ static void settings_native_options(void) {
         L"MASTER VOLUME:",L"MUSIC VOLUME:",L"EFFECTS VOLUME:",L"DIALOGUE VOLUME:",L"TIMER VOLUME:",
         L"MENU MUSIC:",L"FULLSCREEN:",L"VSYNC:",L"SMOOTH MOTION:",L"COUNTDOWN:",L"BEEPS:",
         L"MINUTE ANNOUNCEMENTS:",L"ITEM CUES:",L"TIMER POSITION:",L"TIMER SIZE:",
-        L"OG MAPS:",L"COMMUNITY MAPS:",L"JOIN IN PROGRESS:",L"LEFT STICK DEADZONE:",L"RIGHT STICK DEADZONE:",L"LOOK ACCELERATION:",L"MENU REPEAT:",L"ASSET QUALITY:"};
+        L"OG MAPS:",L"COMMUNITY MAPS:",L"JOIN IN PROGRESS:",L"LEFT STICK DEADZONE:",L"RIGHT STICK DEADZONE:",L"LOOK ACCELERATION:",L"",L"ASSET QUALITY:",
+        L"DEFAULT GAME TYPES:",L"POWERUP SYNC (EXPERIMENTAL):"};
     static const short rows_by_page[5][6]={
-        {0,1,2,3,NONE,5}, {6,7,8,22,13,14}, {4,9,10,11,12}, {18,19,20,21}, {15,16,17}};
-    static const short counts[5]={6,6,5,4,3};
+        {0,1,2,3,NONE,5}, {6,7,8,22,13,14}, {4,9,10,11,12}, {18,19,20},
+        {15,16,17,_device_setting_show_default_game_types,_device_setting_experimental_powerup_sync}};
+    static const short counts[5]={6,6,5,3,5};
     settings_setup(0); assert(device_settings_build());
     assert(device_settings.native_pages && !game_settings_is_native_spinner(NULL));
     for(short page=_ds_audio;page<=_ds_multiplayer;page++) {
@@ -969,6 +993,52 @@ static void settings_multiplayer_staging(void) {
         dispose(root);
     }
 }
+static void settings_powerup_sync_staging(void) {
+    const short layouts[]={_ds_main,_ds_pause_1p,_ds_pause_4p,_ds_solo,_ds_coop};
+    for(unsigned i=0;i<NUMBEROF(layouts);i++) {
+        short layout=layouts[i],local=layout==_ds_pause_4p ? 3:0;
+        settings_setup(layout==_ds_main ? 0:layout<=_ds_pause_4p ? 1:2);assert(device_settings_build());
+        struct widget_instance *root=open_settings(layout,_ds_multiplayer,local);
+        struct widget_instance *control=setting_control(root,_device_setting_experimental_powerup_sync);
+        assert(device_settings_drafts[local].values[_device_setting_experimental_powerup_sync]==0);
+        assert(game_settings_event(control,_device_settings_next));
+        assert(!writes && settings_values[_device_setting_experimental_powerup_sync]==0);
+        assert(game_settings_event(root,_device_settings_cancel));dispose(root);
+        root=open_settings(layout,_ds_multiplayer,local);control=setting_control(root,_device_setting_experimental_powerup_sync);
+        assert(device_settings_drafts[local].values[_device_setting_experimental_powerup_sync]==0);
+        settings_host=1;settings_host_powerup_sync=0;
+        assert(game_settings_event(control,_device_settings_next));
+        assert(wcsstr(device_settings.text[_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_experimental_powerup_sync],L"OFF > ON"));
+        save_succeeds=FALSE;assert(!game_settings_event(root,_device_settings_accept));
+        assert(settings_values[_device_setting_experimental_powerup_sync]==0 && settings_host_powerup_sync==0);
+        save_succeeds=TRUE;assert(game_settings_event(root,_device_settings_accept));
+        assert(writes==2 && applied_mask==(1UL<<_device_setting_experimental_powerup_sync));
+        assert(settings_values[_device_setting_experimental_powerup_sync]==1 && settings_host_powerup_sync==0);
+        settings_host=0;settings_client_controlled=1;settings_host_powerup_sync=0;
+        struct widget_instance *column=control;while(column->parent!=root) column=column->parent;
+        settings_render_inputs(column);
+        assert(wcsstr(device_settings.text[_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_experimental_powerup_sync],L"OFF (Host)"));
+        assert(device_settings_drafts[local].values[_device_setting_experimental_powerup_sync]==1);
+        unsigned before=writes;assert(!game_settings_event(control,_device_settings_next));
+        assert(!game_settings_event(control,_device_settings_previous));
+        assert(game_settings_event(root,_device_settings_accept) && writes==before);
+        assert(settings_values[_device_setting_experimental_powerup_sync]==1);
+        dispose(root);settings_client_controlled=0;
+        /* A draft edited locally, then opened as a client, discards only this
+           host preference while still saving unrelated Multiplayer rows. */
+        root=open_settings(layout,_ds_multiplayer,local);control=setting_control(root,_device_setting_experimental_powerup_sync);
+        assert(game_settings_event(control,_device_settings_next));
+        assert(game_settings_event(setting_control(root,_device_setting_show_community_maps),_device_settings_next));
+        settings_client_controlled=1;settings_host_powerup_sync=1;
+        assert(game_settings_event(root,_device_settings_accept));
+        assert(applied_mask==(1UL<<_device_setting_show_community_maps));
+        assert(settings_values[_device_setting_experimental_powerup_sync]==1 && settings_values[_device_setting_show_community_maps]==0);
+        assert(device_settings_drafts[local].values[_device_setting_experimental_powerup_sync]==1);
+        column=control;while(column->parent!=root) column=column->parent;settings_render_inputs(column);
+        assert(wcsstr(device_settings.text[_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_experimental_powerup_sync],L"ON (Host)"));
+        dispose(root);
+    }
+}
 static struct widget_instance *enter_timer(struct widget_instance *audio,short layout,short local) {
     struct widget_instance *link=widget_instance_find_by_tag_index_recursive(audio,device_settings.timer_tags[layout]);
     assert(link && !game_settings_is_adjustable(link));
@@ -1186,46 +1256,20 @@ static void settings_acceleration_staging(void) {
     }
 }
 
-static void settings_menu_repeat_staging(void) {
+static void settings_retired_menu_repeat_absent(void) {
     const short layouts[]={_ds_main,_ds_pause_1p,_ds_pause_2p,_ds_pause_4p,_ds_solo,_ds_coop};
     const short modes[]={0,1,1,1,2,2}, locals[]={0,0,1,3,0,1};
     const short setting=_device_setting_fast_menu_repeat;
     for(unsigned layout=0;layout<NUMBEROF(layouts);layout++) {
         short local=locals[layout]; settings_setup(modes[layout]); assert(device_settings_build());
         struct widget_instance *root=open_settings(layouts[layout],_ds_controller,local);
-        struct widget_instance *repeat=setting_control(root,setting);
-        short index=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+setting;
-        assert(device_settings_drafts[local].values[setting]==0);
-        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Original":L"Menu Repeat: < Original >"));
-        assert(game_settings_event(repeat,_device_settings_next));
-        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Faster":L"Menu Repeat: < Faster >"));
-        assert(device_settings_drafts[local].values[setting]==1 && !writes && settings_values[setting]==0);
+        assert(!widget_instance_find_by_tag_index_recursive(root,device_settings.row_tags[setting]));
+        assert(!writes && settings_values[setting]==0);
         assert(game_settings_event(root,_device_settings_cancel)); dispose(root);
         root=open_settings(layouts[layout],_ds_controller,local);
-        assert(device_settings_drafts[local].values[setting]==0);
-        repeat=setting_control(root,setting);
-        assert(game_settings_event(repeat,_device_settings_previous));
-        save_succeeds=FALSE; assert(!game_settings_event(root,_device_settings_accept));
-        assert(writes==1 && errors==1 && settings_values[setting]==0);
-        assert(device_settings_drafts[local].values[setting]==1);
-        save_succeeds=TRUE; assert(game_settings_event(root,_device_settings_accept));
-        assert(writes==2 && applied_mask==(1UL<<setting) && settings_values[setting]==1);
-        assert(game_settings_event(root,_device_settings_accept) && writes==2); dispose(root);
-        /* The preference is shared by every local player, although each
-         * menu keeps its own unaccepted draft. */
-        short other=(local+1)%MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
-        root=open_settings(layouts[layout],_ds_controller,other);
-        assert(device_settings_drafts[other].values[setting]==1);
-        repeat=setting_control(root,setting);
-        assert(game_settings_event(repeat,_device_settings_previous));
-        assert(game_settings_event(root,_device_settings_cancel)); dispose(root);
-        assert(settings_values[setting]==1 && writes==2);
-        root=open_settings(layouts[layout],_ds_controller,local);
-        assert(device_settings_drafts[local].values[setting]==1);
-        repeat=setting_control(root,setting);
-        assert(game_settings_event(repeat,_device_settings_next));
+        assert(!widget_instance_find_by_tag_index_recursive(root,device_settings.row_tags[setting]));
         assert(game_settings_event(root,_device_settings_accept));
-        assert(writes==3 && applied_mask==(1UL<<setting) && settings_values[setting]==0);
+        assert(!writes && !applied_mask && settings_values[setting]==0);
         assert(settings_values[_device_setting_left_stick_deadzone]==9000 && settings_values[_device_setting_right_stick_deadzone]==9000);
         assert(settings_values[_device_setting_look_acceleration]==1);
         dispose(root);
@@ -1273,7 +1317,7 @@ static void settings_pause_and_campaign(void) {
     settings_setup(1); assert(performance_pause_remap_tag(original_root_ids[0])!=original_root_ids[0]);
     assert(!device_settings.native_pages);
     for(unsigned i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) assert(device_settings_native.spinner_tags[i]==NONE);
-    assert(register_calls==123 && !memcmp(originals,originals_before,sizeof(originals)));
+    assert(register_calls<MAXIMUM_RUNTIME_UI_TAGS && !memcmp(originals,originals_before,sizeof(originals)));
     for(unsigned i=0;i<3;i++) {
         assert(performance_pause_list_children[i][0].widget_tag.index==resume_id);
         assert(performance_pause_list_children[i][3].widget_tag.index==quit_id);
@@ -1284,7 +1328,7 @@ static void settings_pause_and_campaign(void) {
             assert(!TEST_FLAG(device_settings.screen[i+1][page].flags,_widget_pause_game_time_bit));
             struct ui_widget_child_reference *children=device_settings.screen_children[i+1][page];
             struct ui_widget_definition *frame=ui_widget_definition_get(children[0].widget_tag.index);
-            short height=page==_ds_game || page==_ds_multiplayer ? 159:
+            short height=page==_ds_game || page==_ds_controller ? 159:
                 page==_ds_audio || page==_ds_video ? 240:213;
             assert(frame->bounds.y1==height && frame->bounds.x0==-4 && frame->bounds.x1==222);
             assert(children[0].horizontal_offset==children[1].horizontal_offset-8);
@@ -1319,7 +1363,7 @@ static void settings_pause_and_campaign(void) {
     assert(device_settings.column[_ds_pause_1p][_ds_audio].child_widgets.count==7);
     assert(device_settings.column[_ds_pause_4p][_ds_video].child_widgets.count==7);
     assert(device_settings.column[_ds_pause_4p][_ds_timer].child_widgets.count==6);
-    assert(device_settings.column[_ds_pause_4p][_ds_controller].child_widgets.count==5);
+    assert(device_settings.column[_ds_pause_4p][_ds_controller].child_widgets.count==4);
     assert(game_settings_event(setting_control(two,_device_setting_master_volume),_device_settings_next));
     assert(device_settings_drafts[3].values[_device_setting_master_volume]==0.2 && device_settings_drafts[0].values[_device_setting_master_volume]==0.125);
     assert(!wcscmp(device_settings.text[_ds_value_start+3*NUMBER_OF_DEVICE_SETTINGS],L"Master: < 20% >"));
@@ -1365,7 +1409,7 @@ static void settings_pause_and_campaign(void) {
         assert(!memcmp(originals,originals_before,sizeof(originals)));
         one=open_settings(_ds_solo+i,_ds_audio,i); dispose(one);
     }
-    assert(register_calls==80);
+    assert(register_calls<MAXIMUM_RUNTIME_UI_TAGS);
 }
 static void settings_registration_failure(void) {
     settings_setup(0); assert(device_settings_build()); unsigned count=register_calls;
@@ -1486,8 +1530,8 @@ int main(int argc,char **argv) {
     if(argc==2 && !strcmp(argv[1],"--about-metrics")) { settings_about_metrics(); return 0; }
     if(argc==2 && !strcmp(argv[1],"--controller-metrics")) { settings_controller_metrics(); return 0; }
     settings_structure(); settings_native_chooser(); settings_about(); settings_native_options(); settings_game_chooser(); settings_staging();
-    settings_timer_staging(); settings_timer_video(); settings_multiplayer_staging(); settings_controller_staging(); settings_acceleration_staging();
-    settings_menu_repeat_staging(); settings_hud_staging();
+    settings_timer_staging(); settings_timer_video(); settings_multiplayer_staging(); settings_powerup_sync_staging(); settings_controller_staging(); settings_acceleration_staging();
+    settings_retired_menu_repeat_absent(); settings_hud_staging();
     settings_pause_and_campaign(); settings_registration_failure(); settings_cross_map_rebuild();
     puts("native game settings tests passed"); return 0;
 }
@@ -1509,7 +1553,7 @@ static unsigned mac_visible_rows(struct widget_instance *column) {
 }
 static void mac_settings_video(void) {
     settings_setup(0); assert(device_settings_build());
-    assert(NUMBER_OF_DEVICE_SETTINGS==27 && device_settings_page_counts[_ds_video]==8 && device_settings_page_counts[_ds_timer]==7);
+    assert(NUMBER_OF_DEVICE_SETTINGS==29 && device_settings_page_counts[_ds_video]==8 && device_settings_page_counts[_ds_timer]==7);
     for(unsigned i=0;i<8;i++) assert(device_settings.column_children[_ds_main][_ds_video][i].vertical_offset+28<321);
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_renderer],L"experimental"));
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_renderer],L"next launch"));
@@ -1713,8 +1757,8 @@ int main(int argc,char **argv) {
     if(argc==2 && !strcmp(argv[1],"--controller-metrics")) { settings_controller_metrics(); return 0; }
     mac_settings_video(); mac_settings_pause_layouts(); settings_about();
     settings_native_chooser(); settings_game_chooser(); settings_staging();
-    settings_timer_staging(); settings_multiplayer_staging(); settings_controller_staging();
-    settings_acceleration_staging(); settings_menu_repeat_staging(); settings_hud_staging();
+    settings_timer_staging(); settings_multiplayer_staging(); settings_powerup_sync_staging(); settings_controller_staging();
+    settings_acceleration_staging(); settings_retired_menu_repeat_absent(); settings_hud_staging();
     settings_registration_failure(); settings_cross_map_rebuild();
     puts("native game settings tests passed"); return 0;
 }
@@ -1724,6 +1768,25 @@ int main(int argc,char **argv) {
 
 
 class NativeGameSettingsTests(unittest.TestCase):
+    def test_powerup_sync_staging_and_host_display(self):
+        with tempfile.TemporaryDirectory(prefix="halo-powerup-settings-menu-") as folder:
+            directory = Path(folder)
+            for platform in ("HALO_MACOS", "HALO_LINUX", "HALO_WINDOWS", "HALO_ANDROID", "HALO_IOS"):
+                with self.subTest(platform=platform):
+                    fixture = game_settings_fixture_source(mac_video=platform == "HALO_MACOS")
+                    fixture = fixture[:fixture.rfind("int main(int argc,char **argv) {")]
+                    fixture += "int main(void) { settings_powerup_sync_staging();return 0; }\n"
+                    (directory / "fixture.c").write_text(fixture)
+                    binary = directory / (platform + (".exe" if sys.platform == "win32" else ""))
+                    defines = [f"-D{platform}=1"]
+                    if platform == "HALO_IOS":
+                        defines.append("-DHALO_MACOS=1")
+                    subprocess.run(["clang", "-std=c99", "-Wall", "-Wextra", "-Werror", "-Wno-multichar", "-Wno-format",
+                                    "-Wno-unused-function", "-D_CRT_SECURE_NO_WARNINGS", *defines,
+                                    "-I", str(ROOT / "source"), "-I", str(ROOT / "port/linux"),
+                                    str(directory / "fixture.c"), "-o", str(binary)], check=True)
+                    subprocess.run([str(binary)], check=True)
+
     def verify_controller_font_metrics(self, binary):
         """Measure deadzones and Controller choices with owned Xbox fonts."""
         from tools.verify_performance_sound_samples import Cache
@@ -1830,6 +1893,9 @@ class NativeGameSettingsTests(unittest.TestCase):
                 "Resolution: < Native >", "FPS Limit: < Uncapped >", "FPS Limit: < 120 FPS >", "AA: < FXAA >",
                 "Position: < Bottom Center >", "Timer Size: < 100% >", "Asset Quality: < Original >"))
             widths.append(("Original", 112))
+            widths.extend((value, 202) for value in ("Powerup Sync: OFF (Host)",
+                "Powerup Sync: ON (Host)", "Powerup Sync: < OFF > ON >", "Powerup Sync: < ON > OFF >"))
+            widths.append(("POWERUP SYNC (EXPERIMENTAL):", 300))
             for value, available in widths:
                 lines = value.splitlines()
                 self.assertLessEqual(len(lines), 3, value)
@@ -1944,6 +2010,15 @@ class ConfigBooleanPersistenceTests(unittest.TestCase):
             original = f'# player preferences\n[{table}]\n{key} = true # retain\n'
             self.run_save(original, original.replace('= true # retain', '= false # retain'), setting=setting)
 
+    def test_experimental_powerup_host_preference_save_reload_and_failure(self):
+        setting = "network.experimental_powerup_sync"
+        original = '# host preferences\n[network]\nexperimental_powerup_sync = false # optional\njoin_in_progress = true\n'
+        enabled = original.replace('= false # optional', '= true # optional')
+        self.run_save(original, enabled, setting=setting, value=1, original_value=0)
+        self.run_save(enabled, original, setting=setting, value=0, original_value=0)
+        self.run_save(original, original, setting=setting, mode="failure", value=1,
+                      original_value=0, success=False)
+
     def test_deadzone_raw_integers_save_reload_and_failure(self):
         for setting in ("input.left_stick_deadzone", "input.right_stick_deadzone"):
             _, key = setting.split(".")
@@ -1979,20 +2054,19 @@ class ConfigBooleanPersistenceTests(unittest.TestCase):
         self.run_save(missing, missing.replace('[display]\n', '[display]\nhigh_res_hud = true\n'),
                       setting=setting, value=1, original_value=0)
 
-    def test_menu_repeat_boolean_save_reload_and_failure(self):
+    def test_retired_menu_repeat_key_is_rejected_and_preserved(self):
         setting = "input.fast_menu_repeat"
         original = '# controller preferences\n[input]\nfast_menu_repeat = false # original menus\nleft_stick_deadzone = 4000 # manual value\n'
-        faster = original.replace('= false # original', '= true # original')
-        self.run_save(original, faster, setting=setting, value=1, original_value=0)
-        self.run_save(faster, original, setting=setting, original_value=0)
-        self.run_save(original, original, setting=setting, mode="failure", value=1,
-                      original_value=0, success=False)
-        malformed = original.replace('= false # original', '= "Original" # original')
-        self.run_save(malformed, malformed, setting=setting, value=1,
-                      original_value=0, success=False)
         missing = '# controller preferences\n[input]\nleft_stick_deadzone = 4000\n'
-        self.run_save(missing, missing.replace('[input]\n', '[input]\nfast_menu_repeat = true\n'),
-                      setting=setting, value=1, original_value=0)
+        for text in (original, original.replace('= false # original', '= true # original'),
+                     original.replace('= false # original', '= "Original" # original'), missing):
+            for value in (0, 1):
+                self.run_save(text, text, setting=setting, value=value, original_value=0, success=False)
+        # Retired settings stay intact as unknown document text when a current
+        # preference is saved beside them.
+        current = original + 'look_acceleration = true # Xbox\n'
+        self.run_save(current, current.replace('= true # Xbox', '= false # Xbox'),
+                      setting="input.look_acceleration")
 
 
 if __name__ == "__main__":
