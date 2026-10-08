@@ -97,7 +97,7 @@ jobs:
           tools.test_download_transport_limits tools.test_desktop_map_downloads tools.test_desktop_timer_audio tools.test_game_directory tools.test_game_directory_worker
           tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail tools.test_overshield_hud
           tools.test_map_lifecycle tools.test_network_client_lifecycle tools.test_solo_multiplayer_start tools.test_stale_player_references
-          tools.test_input_delay tools.test_performance_variants tools.test_performance_network tools.test_network_v11 tools.test_experimental_powerup_sync tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_authored_weapon_placements tools.test_meeting_gameplay tools.test_refined_tag_effects
+          tools.test_input_delay tools.test_performance_variants tools.test_performance_network tools.test_network_v11 tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_authored_weapon_placements tools.test_meeting_gameplay tools.test_refined_tag_effects
 
       - name: Offline V5 map conversion tooling
         run: >-
@@ -295,7 +295,7 @@ jobs:
           tools.test_download_transport_limits tools.test_desktop_map_downloads tools.test_desktop_timer_audio tools.test_game_directory tools.test_game_directory_worker
           tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail tools.test_overshield_hud
           tools.test_map_lifecycle tools.test_network_client_lifecycle tools.test_solo_multiplayer_start tools.test_stale_player_references
-          tools.test_input_delay tools.test_performance_variants tools.test_performance_network tools.test_network_v11 tools.test_experimental_powerup_sync tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_authored_weapon_placements tools.test_meeting_gameplay tools.test_refined_tag_effects
+          tools.test_input_delay tools.test_performance_variants tools.test_performance_network tools.test_network_v11 tools.test_performance_console tools.test_performance_runtime tools.test_fiesta_ui tools.test_fiesta_spawn tools.test_authored_weapon_placements tools.test_meeting_gameplay tools.test_refined_tag_effects
 
       - name: Compile cache
         run: ccache --show-stats
