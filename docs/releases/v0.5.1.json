@@ -1,5 +1,5 @@
 {
-  "summary": "Halo OG v0.5.1 adds four Digsite maps and Team Slayer Pro, with more control over player sounds and fixes for aiming and split-screen. Fresh Mac settings now select Native Metal, which reduces rendering overhead and prepares learned shaders before gameplay. Desktop players can change rendering resolution without restarting.",
+  "summary": "Halo OG v0.5.1 adds four Digsite maps and Team Slayer Pro, with more control over player sounds and fixes for aiming and split-screen. Fresh Mac settings now select Native Metal, which reduces rendering overhead and prepares learned shaders before gameplay. Desktop players can change rendering resolution without restarting. An experimental camo and Overshield sync repair is available through network.experimental_powerup_sync in config.toml and remains off by default.",
   "highlights": [
     "Digsite maps: play Chillout Dig, Damnation Dig, Exhibit Dig and Prisoner Dig in regular modes or with Fiesta Uncut and All. Regular versions keep their reviewed weapon sets and omit the Battle Rifle; Fiesta All uses the existing 31-weapon pack.",
     "Team Slayer Pro: a new locked preset includes timers, Precision Spread, stronger camo and Just Me sounds. Original built-in gametypes are hidden by default; enable Default Game Types in Game Settings to show them.",
