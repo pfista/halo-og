@@ -39,6 +39,7 @@ class MeetingGameplayTests(unittest.TestCase):
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
 #define csstrcasecmp _stricmp
@@ -61,7 +62,8 @@ class MeetingGameplayTests(unittest.TestCase):
 #define csstrlen strlen
 #define csstrncmp strncmp
 #define csprintf sprintf
-#define match_vassert(file,line,c,message) assert(c)
+/* Keep assertion failure nonreturning for every host compiler. */
+#define match_vassert(file,line,c,message) do { if (!(c)) { assert(c); abort(); } } while (0)
 #define match_assert_stack_frame(file,line) ((void)return_eip)
 typedef int boolean;
 typedef float real;
