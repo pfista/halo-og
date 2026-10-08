@@ -92,6 +92,12 @@ include checksums and provenance.
   and network changes actually included. State optional settings and defaults
   when they affect how players use a feature. Do not pad the overview with CI,
   test, documentation or refactoring work unless it has a direct player benefit.
+- Follow the community announcement prompt in the same guide for Discord and
+  Whop copy. Use concise player-facing bullets with bold category or feature
+  labels, usually three to six highlights (fewer for a small release), ordered
+  by player impact. Explain what players can do, hear or see; leave implementation
+  details in GitHub. Ground announcements in the live published release notes
+  and preserve testing-release status. Preparing copy does not authorize posting.
 - Author `docs/releases/<tag>.json` with `summary` and `highlights` before
   committing and building the release source. The generator reads that file
   from the exact build SHA and uses the same overview in the annotated tag and
