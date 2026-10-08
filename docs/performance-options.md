@@ -104,6 +104,13 @@ pistol/sniper roles in the map's globals weapon list, so reviewed replacements
 in those roles inherit it. Battle rifles and other added precision weapons
 need a reviewed role mapping before this rule applies to them.
 
+Precision Spread also centers the original pistol aim reticle using the requested
+PB beta 2.1 anchor offset `(1, 1)`. Pro includes both changes. The correction is
+applied while drawing, so turning Precision Spread off restores the authored
+placement without changing map tags. It recognizes the original pistol HUD and
+reticle sheet, including private copies made by the map converter; already
+corrected offsets, custom HUDs and zoom overlays retain their authored placement.
+
 The change retains the original cone RNG call, including at zero spread.
 Every player must support Hardcore before the host can enable or start it.
 Saved settings from an older host cannot enable the rule without that host's

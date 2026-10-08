@@ -60,6 +60,7 @@ symbols in this file:
 #include "game/game_globals.h"
 #include "game/players.h"
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "game/performance_variant.h"
 #include "render/teammate_view.h"
 #else
 #define teammate_view_hud_player_count local_player_count
@@ -942,6 +943,82 @@ finished:
 	return;
 }
 
+/* ---------- optional competitive reticle placement */
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+static boolean performance_pistol_reticle_tag_matches(
+	char const *name,
+	char const *original)
+{
+	static char const *prefixes[] =
+	{
+		"__native_weapons\\og\\",
+		"__native_hud\\stock\\",
+	};
+	long prefix;
+
+	if (!name)
+		return FALSE;
+	if (!csstrcasecmp(name, original))
+		return TRUE;
+
+	/* Converted copies keep the full original path after a 16-digit hash.
+	 * An arbitrary authored HUD with the same basename is not stock identity. */
+	for (prefix = 0; prefix < (long)(sizeof(prefixes) / sizeof(prefixes[0])); prefix++)
+	{
+		long length = csstrlen(prefixes[prefix]);
+		char const *fingerprint;
+		long digit;
+
+		if (csstrncmp(name, prefixes[prefix], length))
+			continue;
+		fingerprint = name + length;
+		for (digit = 0; digit < 16; digit++)
+		{
+			char value = fingerprint[digit];
+			if (!((value >= '0' && value <= '9') || (value >= 'a' && value <= 'f')))
+				break;
+		}
+		if (digit == 16 && fingerprint[16] == '\\' &&
+			!csstrcasecmp(fingerprint + 17, original))
+			return TRUE;
+	}
+	return FALSE;
+}
+
+static void performance_pistol_reticle_placement(
+	long weapon_index,
+	long hud_index,
+	short crosshair_index,
+	short item_index,
+	short state_index,
+	long bitmap_index,
+	short sequence_index,
+	struct hud_placement_definition *placement)
+{
+	if (weapon_index == NONE || !game_engine_running() ||
+		!(performance_variant_get_flags(game_engine_get_variant()) & _performance_option_hardcore) ||
+		weapon_definition_index_to_list_index(weapon_get(weapon_index)->definition_index) != 4 ||
+		crosshair_index != 0 || item_index != 0 || state_index != _crosshair_state_aim ||
+		sequence_index != 8 ||
+		placement->scale.i != 1.0f || placement->scale.j != 1.0f ||
+		placement->multiplayer_scaling_flags != 0 ||
+		!performance_pistol_reticle_tag_matches(tag_get_name(hud_index), "weapons\\pistol\\pistol") ||
+		!performance_pistol_reticle_tag_matches(tag_get_name(bitmap_index), "ui\\hud\\bitmaps\\combined\\hud_reticles"))
+		return;
+
+	/* Requested PB beta 2.1 correction: pistol crosshairs[0].overlay[0]
+	 * anchor offset x=1, y=1. Move the original reticle to the shot axis only
+	 * with Precision Spread (included in Pro). Never mutate shared map tags,
+	 * double-shift an already corrected HUD or overwrite an authored offset. */
+	if (placement->offset.x == 0 && placement->offset.y == 0)
+	{
+		placement->offset.x = 1;
+		placement->offset.y = 1;
+	}
+}
+#endif
+
 static void crosshairs_draw(
 	struct player_datum *player,
 	long weapon_index,
@@ -1189,12 +1266,20 @@ static void crosshairs_draw(
 										strip_path_name(tag_get_name(definition_indices[definition_index]))));
 								{
 									struct bitmap_group *bitmap_group = bitmap_group_get(verify_tag_reference(&element->crosshairs.bitmap));
+									struct hud_placement_definition placement = item->placement;
 									struct bitmap_data *bitmap = TAG_BLOCK_GET_ELEMENT(
 										&bitmap_group->bitmaps,
 										sequence ?
 											TAG_BLOCK_GET_ELEMENT(&sequence->sprites, frame_index, struct bitmap_group_sprite)->bitmap_index :
 											item->sequence_index,
 										struct bitmap_data);
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+									performance_pistol_reticle_placement(
+										weapon_index, definition_indices[definition_index],
+										crosshair_index, item_index, state_index,
+										element->crosshairs.bitmap.index, item->sequence_index, &placement);
+#endif
 
 									if (_texture_cache_bitmap_get_hardware_format(bitmap, FALSE, TRUE))
 									{
@@ -1234,7 +1319,7 @@ static void crosshairs_draw(
 											hud_draw_bitmap(
 												bitmap,
 												&absolute_placement,
-												&item->placement,
+												&placement,
 												&clip,
 												scale,
 												0.0f,
@@ -1248,7 +1333,7 @@ static void crosshairs_draw(
 											hud_draw_bitmap(
 												bitmap,
 												&absolute_placement,
-												&item->placement,
+												&placement,
 												sequence ?
 													&TAG_BLOCK_GET_ELEMENT(&sequence->sprites, frame_index, struct bitmap_group_sprite)->bounds :
 													NULL,

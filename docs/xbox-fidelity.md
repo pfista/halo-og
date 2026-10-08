@@ -195,11 +195,23 @@ fixed by the client correction.
 
 The October 5 meeting-feedback implementation adds an explicit Hardcore
 precision rule, default Off, independent of Stock/Practice aid presets. It
-changes only pistol/unscoped-sniper initial spread and retains maximum spread,
-buildup, recovery and firing RNG calls. Enabled matches require peer support
+changes pistol/unscoped-sniper initial spread and retains maximum spread,
+buildup, recovery and firing RNG calls. Precision Spread also applies the
+requested PB beta 2.1 pistol aim-reticle offset `(1, 1)` while drawing the
+original pistol HUD, including converter-owned stock copies. Stock placement
+returns when the option is off; custom HUDs, authored nonzero offsets and zoom
+overlays are preserved. This is an optional competitive correction, not a
+change to the original Xbox baseline. Enabled matches require peer support
 and a host acknowledgement; active match rules are locked. Local map filters
 do not restrict joining, and Join In Progress defaults On to retain the prior
 host behavior. These are requested options, not reference-Xbox corrections.
+
+The original pistol reticle sprite is 28 by 28 texels, with aiming ticks at
+`(13, 13)` and a draw center at `(14, 14)`, supporting the single-view `(1, 1)`
+correction. Production draw fixtures cover both bitmap paths, rule gating,
+converted tag identities and immutable map tags. In-game aiming still needs
+validation; split screen halves reticle size while keeping integer HUD offsets,
+so exact split-screen alignment is not established by these fixtures.
 
 Camo: Normal / Hardcore is a separate requested gametype rule, default Normal.
 Hardcore neutralizes the interpolated active-camouflage RGB tint in the shared
