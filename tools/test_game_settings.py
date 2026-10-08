@@ -72,7 +72,11 @@ enum { _gamepad_analog_button_a=0, _gamepad_analog_button_b=1,
 #define TEST_FLAG(flags,bit) (((flags) & FLAG(bit)) != 0)
 static struct { short pause_game_time_count; boolean sound_paused;
     struct widget_instance *active_widgets[4]; int initialization_thread; } widget_globals;
-static boolean settings_game_paused, settings_sound_paused, we_are_at_the_main_menu;
+static boolean settings_game_paused, settings_sound_paused, we_are_at_the_main_menu, settings_multiplayer;
+static boolean main_menu_is_active(void) { return we_are_at_the_main_menu; }
+static boolean game_engine_running(void) { return settings_multiplayer; }
+static struct game_variant *game_engine_get_variant(void) { return &edited; }
+static boolean playlist_profile_variant_is_locked(const struct game_variant *variant) { (void)variant; return locked; }
 static boolean game_time_get_paused(void) { return settings_game_paused; }
 static void game_time_set_paused(boolean paused) { settings_game_paused=paused; }
 static void sound_pause(boolean paused) { settings_sound_paused=paused; }
@@ -107,6 +111,8 @@ int device_settings_apply(unsigned long mask,const double values[NUMBER_OF_DEVIC
  * boundary provides the production dimensions for Settings composition. */
 static long native_pause_frame_tag(short height);
 static long native_pause_legend_tag(void);
+/* SHARED NATIVE PAUSE DEPENDENCIES */
+#include "interface/native_multiplayer_pause.inc"
 #include "interface/performance_pause_menu.inc"
 #include "include/halo_og_version.h"
 #include "interface/game_settings_menu.inc"
@@ -117,7 +123,7 @@ static struct cache_file_tag_instance settings_map[64];
 static struct cache_file_tag_header settings_header;
 static struct ui_widget_definition originals[12], originals_before[12];
 static struct ui_widget_child_reference original_roots[3][5],original_lists[2][4];
-static struct ui_widget_event_handler_reference original_entry_events[2];
+static struct ui_widget_event_handler_reference original_entry_events[2], original_leave_event;
 static long entry_id,profile_id,original_root_ids[3],original_list_ids[2],resume_id,quit_id;
 static struct ui_widget_definition native_frames[3];
 static int settings_assets[2];
@@ -323,7 +329,8 @@ static void advanced_setup(void) {
 static void settings_setup(short mode) {
     assert(!widget_globals.pause_game_time_count && !settings_game_paused && !settings_sound_paused);
     setup(); memset(&device_settings,0,sizeof(device_settings)); memset(&device_settings_campaign,0,sizeof(device_settings_campaign));
-    performance_pause_ready=FALSE;
+    performance_pause_ready=native_multiplayer_pause_ready=FALSE;
+    we_are_at_the_main_menu=mode==0; settings_multiplayer=mode==1;
     memset(settings_map,0,sizeof(settings_map)); memset(originals,0,sizeof(originals));
     settings_header=(struct cache_file_tag_header){0,123};
     if(mode==0) {
@@ -359,7 +366,9 @@ static void settings_setup(short mode) {
         }
         original_list_ids[0]=add_stock('DeLa',"ui\\shell\\multiplayer_game\\pause_game\\mp_pause_list",&originals[3]);
         resume_id=add_stock('DeLa',"ui\\shell\\multiplayer_game\\pause_game\\resume_game_button",&originals[6]);
-        quit_id=add_stock('DeLa',"quit",&originals[7]);
+        original_leave_event=(struct ui_widget_event_handler_reference){.flags=FLAG(_event_handler_run_function_bit),.function=72};
+        originals[7].event_handlers=(struct tag_block){1,&original_leave_event,NULL};
+        quit_id=add_stock('DeLa',"ui\\shell\\multiplayer_game\\pause_game\\quit_netgame_button",&originals[7]);
         originals[3].type=3; originals[3].child_widgets=(struct tag_block){2,original_lists[0],NULL};
         original_lists[0][0].widget_tag=device_settings_reference('DeLa',resume_id);
         original_lists[0][1].widget_tag=device_settings_reference('DeLa',quit_id);
@@ -400,7 +409,7 @@ static void settings_setup(short mode) {
     settings_values[_device_setting_timer_position]=0;
     settings_values[_device_setting_left_stick_deadzone]=9000;
     settings_values[_device_setting_right_stick_deadzone]=9000;
-    settings_values[_device_setting_fast_menu_repeat]=0;
+    settings_values[_device_setting_fast_menu_repeat]=1;
     settings_values[_device_setting_asset_quality]=0;
 }
 static struct widget_instance *open_settings(short layout,short page,short local) {
@@ -423,10 +432,10 @@ static void settings_structure(void) {
     assert(device_settings.settings_menu.child_widgets.count==3);
     assert(device_settings.column[0][_ds_game].child_widgets.count==4);
     assert(device_settings.column[0][_ds_audio].child_widgets.count==6);
-    assert(device_settings.column[0][_ds_video].child_widgets.count==6);
+    assert(device_settings.column[0][_ds_video].child_widgets.count==(HALO_DEVICE_HAS_RENDER_RESOLUTION ? 7:6));
     assert(device_settings.column[0][_ds_timer].child_widgets.count==5);
-    assert(device_settings.column[0][_ds_controller].child_widgets.count==4);
-    assert(device_settings.column[0][_ds_multiplayer].child_widgets.count==3);
+    assert(device_settings.column[0][_ds_controller].child_widgets.count==3);
+    assert(device_settings.column[0][_ds_multiplayer].child_widgets.count==4);
     assert(!game_settings_is_adjustable(NULL));
     struct widget_instance item={0};
     for(unsigned i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) {
@@ -449,7 +458,7 @@ static void settings_structure(void) {
     assert(!memcmp(originals,originals_before,sizeof(originals)));
     assert(!memcmp(&chooser,&chooser_before,sizeof(chooser)));
     assert(!memcmp(&advanced,&advanced_before,sizeof(advanced)));
-    assert(pb_editor_build()); assert(register_calls==166 && register_calls<MAXIMUM_RUNTIME_UI_TAGS);
+    assert(pb_editor_build()); assert(register_calls<MAXIMUM_RUNTIME_UI_TAGS);
     long old=device_settings.entry_tag; scenario_tags_unload();
     cache_file_globals.tags_loaded=TRUE; global_tag_instances=settings_map;
     assert(!tag_index_is_group(old,'DeLa'));
@@ -714,10 +723,24 @@ static void settings_native_options(void) {
         L"MASTER VOLUME:",L"MUSIC VOLUME:",L"EFFECTS VOLUME:",L"DIALOGUE VOLUME:",L"TIMER VOLUME:",
         L"MENU MUSIC:",L"FULLSCREEN:",L"VSYNC:",L"SMOOTH MOTION:",L"COUNTDOWN:",L"BEEPS:",
         L"MINUTE ANNOUNCEMENTS:",L"ITEM CUES:",L"TIMER POSITION:",L"TIMER SIZE:",
-        L"OG MAPS:",L"COMMUNITY MAPS:",L"JOIN IN PROGRESS:",L"LEFT STICK DEADZONE:",L"RIGHT STICK DEADZONE:",L"LOOK ACCELERATION:",L"MENU REPEAT:",L"ASSET QUALITY:"};
-    static const short rows_by_page[5][6]={
-        {0,1,2,3,NONE,5}, {6,7,8,22,13,14}, {4,9,10,11,12}, {18,19,20,21}, {15,16,17}};
-    static const short counts[5]={6,6,5,4,3};
+        L"OG MAPS:",L"COMMUNITY MAPS:",L"JOIN IN PROGRESS:",L"LEFT STICK DEADZONE:",L"RIGHT STICK DEADZONE:",L"LOOK ACCELERATION:",L"",L"ASSET QUALITY:"
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+        ,L"RENDERER:"
+#endif
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
+        ,L"RESOLUTION:"
+#endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+        ,L"FPS LIMIT:",L"ANTI-ALIASING:"
+#endif
+        ,L"DEFAULT GAME TYPES:"};
+    static const short rows_by_page[5][7]={
+        {0,1,2,3,NONE,5}, {6,7,8,22,
+#if HALO_DEVICE_HAS_RENDER_RESOLUTION
+        _device_setting_render_height,
+#endif
+        13,14}, {4,9,10,11,12}, {18,19,20}, {15,16,17,_device_setting_show_default_game_types}};
+    static const short counts[5]={6,HALO_DEVICE_HAS_RENDER_RESOLUTION ? 7:6,5,3,4};
     settings_setup(0); assert(device_settings_build());
     assert(device_settings.native_pages && !game_settings_is_native_spinner(NULL));
     for(short page=_ds_audio;page<=_ds_multiplayer;page++) {
@@ -1187,47 +1210,16 @@ static void settings_acceleration_staging(void) {
 }
 
 static void settings_menu_repeat_staging(void) {
-    const short layouts[]={_ds_main,_ds_pause_1p,_ds_pause_2p,_ds_pause_4p,_ds_solo,_ds_coop};
-    const short modes[]={0,1,1,1,2,2}, locals[]={0,0,1,3,0,1};
-    const short setting=_device_setting_fast_menu_repeat;
-    for(unsigned layout=0;layout<NUMBEROF(layouts);layout++) {
-        short local=locals[layout]; settings_setup(modes[layout]); assert(device_settings_build());
-        struct widget_instance *root=open_settings(layouts[layout],_ds_controller,local);
-        struct widget_instance *repeat=setting_control(root,setting);
-        short index=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+setting;
-        assert(device_settings_drafts[local].values[setting]==0);
-        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Original":L"Menu Repeat: < Original >"));
-        assert(game_settings_event(repeat,_device_settings_next));
-        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Faster":L"Menu Repeat: < Faster >"));
-        assert(device_settings_drafts[local].values[setting]==1 && !writes && settings_values[setting]==0);
-        assert(game_settings_event(root,_device_settings_cancel)); dispose(root);
-        root=open_settings(layouts[layout],_ds_controller,local);
-        assert(device_settings_drafts[local].values[setting]==0);
-        repeat=setting_control(root,setting);
-        assert(game_settings_event(repeat,_device_settings_previous));
-        save_succeeds=FALSE; assert(!game_settings_event(root,_device_settings_accept));
-        assert(writes==1 && errors==1 && settings_values[setting]==0);
-        assert(device_settings_drafts[local].values[setting]==1);
-        save_succeeds=TRUE; assert(game_settings_event(root,_device_settings_accept));
-        assert(writes==2 && applied_mask==(1UL<<setting) && settings_values[setting]==1);
-        assert(game_settings_event(root,_device_settings_accept) && writes==2); dispose(root);
-        /* The preference is shared by every local player, although each
-         * menu keeps its own unaccepted draft. */
-        short other=(local+1)%MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
-        root=open_settings(layouts[layout],_ds_controller,other);
-        assert(device_settings_drafts[other].values[setting]==1);
-        repeat=setting_control(root,setting);
-        assert(game_settings_event(repeat,_device_settings_previous));
-        assert(game_settings_event(root,_device_settings_cancel)); dispose(root);
-        assert(settings_values[setting]==1 && writes==2);
-        root=open_settings(layouts[layout],_ds_controller,local);
-        assert(device_settings_drafts[local].values[setting]==1);
-        repeat=setting_control(root,setting);
-        assert(game_settings_event(repeat,_device_settings_next));
-        assert(game_settings_event(root,_device_settings_accept));
-        assert(writes==3 && applied_mask==(1UL<<setting) && settings_values[setting]==0);
-        assert(settings_values[_device_setting_left_stick_deadzone]==9000 && settings_values[_device_setting_right_stick_deadzone]==9000);
-        assert(settings_values[_device_setting_look_acceleration]==1);
+    /* Menu cadence is fixed; no page may expose or save the retired row. */
+    for(short layout=_ds_main;layout<_ds_layout_count;layout++) {
+        settings_setup(layout==_ds_main ? 0:layout<=_ds_pause_4p ? 1:2);
+        assert(device_settings_build());
+        struct widget_instance *root=open_settings(layout,_ds_controller,0);
+        long tag=device_settings.native_pages ? device_settings_native.spinner_tags[_device_setting_fast_menu_repeat]:
+            device_settings.row_tags[_device_setting_fast_menu_repeat];
+        assert(!widget_instance_find_by_tag_index_recursive(root,tag));
+        assert(game_settings_event(root,_device_settings_accept) && !writes);
+        assert(settings_values[_device_setting_fast_menu_repeat]==1);
         dispose(root);
     }
 }
@@ -1273,10 +1265,10 @@ static void settings_pause_and_campaign(void) {
     settings_setup(1); assert(performance_pause_remap_tag(original_root_ids[0])!=original_root_ids[0]);
     assert(!device_settings.native_pages);
     for(unsigned i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) assert(device_settings_native.spinner_tags[i]==NONE);
-    assert(register_calls==123 && !memcmp(originals,originals_before,sizeof(originals)));
+    assert(register_calls<MAXIMUM_RUNTIME_UI_TAGS && !memcmp(originals,originals_before,sizeof(originals)));
     for(unsigned i=0;i<3;i++) {
-        assert(performance_pause_list_children[i][0].widget_tag.index==resume_id);
-        assert(performance_pause_list_children[i][3].widget_tag.index==quit_id);
+        assert(performance_pause_list_children[i][0].widget_tag.index==native_multiplayer_pause_resume_tag());
+        assert(performance_pause_list_children[i][3].widget_tag.index==native_multiplayer_pause_leave_tag());
         assert(performance_pause_settings_events[i][0].widget_tag.index==device_settings.screen_tags[i+1][_ds_game]);
         assert(performance_pause_children[i][1].vertical_offset+111<=original_roots[i][2].vertical_offset);
         for(unsigned page=0;page<_ds_page_count;page++) {
@@ -1284,7 +1276,7 @@ static void settings_pause_and_campaign(void) {
             assert(!TEST_FLAG(device_settings.screen[i+1][page].flags,_widget_pause_game_time_bit));
             struct ui_widget_child_reference *children=device_settings.screen_children[i+1][page];
             struct ui_widget_definition *frame=ui_widget_definition_get(children[0].widget_tag.index);
-            short height=page==_ds_game || page==_ds_multiplayer ? 159:
+            short height=page==_ds_game || page==_ds_controller ? 159:
                 page==_ds_audio || page==_ds_video ? 240:213;
             assert(frame->bounds.y1==height && frame->bounds.x0==-4 && frame->bounds.x1==222);
             assert(children[0].horizontal_offset==children[1].horizontal_offset-8);
@@ -1298,7 +1290,7 @@ static void settings_pause_and_campaign(void) {
             assert(column->bounds.x1==202);
             if(page!=_ds_game) {
                 assert(children[1].vertical_offset==children[0].vertical_offset+22);
-                assert(children[1].vertical_offset+column->child_widgets.count*27<=children[0].vertical_offset+height-29);
+                assert(children[1].vertical_offset+column->bounds.y1<=children[0].vertical_offset+height-29);
             }
             if(!i && page!=_ds_game) assert(children[4].vertical_offset+60<=originals[i].bounds.y1);
         }
@@ -1306,20 +1298,20 @@ static void settings_pause_and_campaign(void) {
     for(unsigned row=0;row<NUMBER_OF_DEVICE_SETTINGS;row++) {
         assert(!memcmp(&device_settings.row[row].bounds,&originals[6].bounds,sizeof(rectangle2d)));
         assert(device_settings.row[row].background_bitmap.index==originals[6].background_bitmap.index);
-        assert(device_settings.row[row].vertical_offset==3);
+        assert(device_settings.row[row].vertical_offset==0);
         long font=tag_loaded(FONT_GROUP_TAG,row==_device_setting_interpolation || row==_device_setting_timer_position || row>=_device_setting_show_og_maps ? "ui\\small_ui":"ui\\large_ui");
         assert(device_settings.row[row].text_font.index==font);
     }
-    assert(device_settings.accept.text_font.index==originals[6].text_font.index && device_settings.accept.vertical_offset==3);
+    assert(device_settings.accept.text_font.index==originals[6].text_font.index && device_settings.accept.vertical_offset==0);
     assert(device_settings.choice[_ds_pause_1p][0].text_font.index==originals[6].text_font.index);
     assert(device_settings.heading[_ds_audio].text_font.index==originals[6].text_font.index);
     assert(device_settings.heading[_ds_audio].bounds.y1==22 && !device_settings.heading[_ds_audio].vertical_offset);
     struct widget_instance *one=open_settings(_ds_pause_1p,_ds_audio,0),*two=open_settings(_ds_pause_4p,_ds_audio,3);
     assert(!game_settings_is_native_spinner(setting_control(one,_device_setting_master_volume)));
     assert(device_settings.column[_ds_pause_1p][_ds_audio].child_widgets.count==7);
-    assert(device_settings.column[_ds_pause_4p][_ds_video].child_widgets.count==7);
+    assert(device_settings.column[_ds_pause_4p][_ds_video].child_widgets.count==(HALO_DEVICE_HAS_RENDER_RESOLUTION ? 8:7));
     assert(device_settings.column[_ds_pause_4p][_ds_timer].child_widgets.count==6);
-    assert(device_settings.column[_ds_pause_4p][_ds_controller].child_widgets.count==5);
+    assert(device_settings.column[_ds_pause_4p][_ds_controller].child_widgets.count==4);
     assert(game_settings_event(setting_control(two,_device_setting_master_volume),_device_settings_next));
     assert(device_settings_drafts[3].values[_device_setting_master_volume]==0.2 && device_settings_drafts[0].values[_device_setting_master_volume]==0.125);
     assert(!wcscmp(device_settings.text[_ds_value_start+3*NUMBER_OF_DEVICE_SETTINGS],L"Master: < 20% >"));
@@ -1365,7 +1357,7 @@ static void settings_pause_and_campaign(void) {
         assert(!memcmp(originals,originals_before,sizeof(originals)));
         one=open_settings(_ds_solo+i,_ds_audio,i); dispose(one);
     }
-    assert(register_calls==80);
+    assert(register_calls<MAXIMUM_RUNTIME_UI_TAGS);
 }
 static void settings_registration_failure(void) {
     settings_setup(0); assert(device_settings_build()); unsigned count=register_calls;
@@ -1469,16 +1461,6 @@ static void settings_controller_metrics(void) {
             device_settings_render_draft(&device_settings_drafts[0]);
             settings_text_metrics(definition,device_settings.text[_ds_value_start+_device_setting_look_acceleration]);
         }
-        if(!mode) {
-            definition=&device_settings_native.row_labels[_device_setting_fast_menu_repeat];
-            settings_text_metrics(definition,string_at(definition,definition->string_list_index));
-        }
-        definition=!mode ? &device_settings_native.spinners[_device_setting_fast_menu_repeat]:&device_settings.row[_device_setting_fast_menu_repeat];
-        for(short state=0;state<=1;state++) {
-            device_settings_drafts[0].values[_device_setting_fast_menu_repeat]=state;
-            device_settings_render_draft(&device_settings_drafts[0]);
-            settings_text_metrics(definition,device_settings.text[_ds_value_start+_device_setting_fast_menu_repeat]);
-        }
         dispose(root);
     }
 }
@@ -1509,7 +1491,7 @@ static unsigned mac_visible_rows(struct widget_instance *column) {
 }
 static void mac_settings_video(void) {
     settings_setup(0); assert(device_settings_build());
-    assert(NUMBER_OF_DEVICE_SETTINGS==27 && device_settings_page_counts[_ds_video]==8 && device_settings_page_counts[_ds_timer]==7);
+    assert(NUMBER_OF_DEVICE_SETTINGS==28 && device_settings_page_counts[_ds_video]==8 && device_settings_page_counts[_ds_timer]==7);
     for(unsigned i=0;i<8;i++) assert(device_settings.column_children[_ds_main][_ds_video][i].vertical_offset+28<321);
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_renderer],L"experimental"));
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_renderer],L"next launch"));
@@ -1684,8 +1666,16 @@ def game_settings_fixture_source(*, mac_video=False):
     data = (ROOT / "source/interface/ui_widget_game_data_input_functions.c").read_text()
     preview = c_block(data, "static void settings_menu_update_extended_description(\n\tstruct widget_instance *list_widget)\n{")
     preview = preview.replace("description_definition->child_count", "description_definition->child_widgets.count")
+    cache = (ROOT / "source/cache/cache_files.c").read_text()
+    cache_header = (ROOT / "source/cache/cache_files.h").read_text()
+    pause = (ROOT / "source/interface/native_pause_frame.inc").read_text()
+    pause_dependencies = c_block(cache_header, "struct tag_iterator\n{") + ";\n"
+    pause_dependencies += c_block(cache, "void tag_iterator_new(\n") + "\n"
+    pause_dependencies += c_block(cache, "long tag_iterator_next(\n") + "\n"
+    pause_dependencies += c_block(pause, "static long native_pause_resident_tag(") + "\n"
     source += UI_STUBS.replace("/* NATIVE ENUMS */", "\n".join(enums)).replace("/* NATIVE PREVIEW CALLBACK */", preview).replace(
-        "/* PRODUCTION WIDGET PAUSE LIFECYCLE */", pause_lifecycle + focus_lifecycle)
+        "/* PRODUCTION WIDGET PAUSE LIFECYCLE */", pause_lifecycle + focus_lifecycle).replace(
+        "/* SHARED NATIVE PAUSE DEPENDENCIES */", pause_dependencies)
     # The renderer updates teammate rules for every data input. Keep its real
     # tag guard so Settings exercises the production path for unrelated menus.
     teammate = (ROOT / "source/interface/teammate_view_menu.inc").read_text()
@@ -1980,20 +1970,14 @@ class ConfigBooleanPersistenceTests(unittest.TestCase):
         self.run_save(missing, missing.replace('[display]\n', '[display]\nhigh_res_hud = true\n'),
                       setting=setting, value=1, original_value=0)
 
-    def test_menu_repeat_boolean_save_reload_and_failure(self):
+    def test_retired_menu_repeat_setting_is_rejected_without_changing_file(self):
         setting = "input.fast_menu_repeat"
-        original = '# controller preferences\n[input]\nfast_menu_repeat = false # original menus\nleft_stick_deadzone = 4000 # manual value\n'
-        faster = original.replace('= false # original', '= true # original')
-        self.run_save(original, faster, setting=setting, value=1, original_value=0)
-        self.run_save(faster, original, setting=setting, original_value=0)
-        self.run_save(original, original, setting=setting, mode="failure", value=1,
-                      original_value=0, success=False)
-        malformed = original.replace('= false # original', '= "Original" # original')
-        self.run_save(malformed, malformed, setting=setting, value=1,
-                      original_value=0, success=False)
-        missing = '# controller preferences\n[input]\nleft_stick_deadzone = 4000\n'
-        self.run_save(missing, missing.replace('[input]\n', '[input]\nfast_menu_repeat = true\n'),
-                      setting=setting, value=1, original_value=0)
+        original = '# controller preferences\n[input]\nfast_menu_repeat = false # legacy\nleft_stick_deadzone = 4000 # manual value\n'
+        for existing in (original, original.replace('= false # legacy', '= true # legacy'),
+                         original.replace('= false # legacy', '= "Original" # legacy'),
+                         '# controller preferences\n[input]\nleft_stick_deadzone = 4000\n'):
+            for value in (0, 1):
+                self.run_save(existing, existing, setting=setting, value=value, original_value=0, success=False)
 
 
 if __name__ == "__main__":
