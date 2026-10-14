@@ -7,9 +7,8 @@ picture and upscales it; its drawable size is not an equal native-resolution
 workload.
 
 The packet builder initializes only alignment and trailing padding before
-copying a payload. It still owns an immediate copy of transient guest geometry
-and preserves every wire byte, bound and rejection. It does not change resource
-lifetimes or submit packets asynchronously.
+copying a payload. It owns an immediate copy of transient guest geometry and
+preserves every wire byte, bound and rejection.
 
 The host retains one shared draw-input buffer up to 16 MiB, matching the guest's
 normal soft batch size. It copies guest bytes directly into that storage once
@@ -24,7 +23,7 @@ Each public prepare/encode call still validates the current geometry, textures,
 samplers and border companions. Encoding uses the pipeline and depth state from
 that validation without looking them up again. Draw order, state rebinding,
 blended pass boundaries, shader compiler flags and synchronous completion are
-unchanged.
+unchanged in the reference path.
 
 Native Metal decodes compact vertex input on the GPU by default. To compare with
 the CPU input path, set this in the local configuration and restart:
@@ -38,17 +37,90 @@ The default is `true`. Eligible draws snapshot their original compact streams
 into owned packet storage, and the vertex shader decodes the input registers.
 The original NV2A instruction translation then runs unchanged. Immediate draws
 and draws whose compact payload would be larger retain CPU expansion. There is
-no environment-variable override, geometry cache or asynchronous submission in
-this path. With `gpu_stats = true`, `Native vertex input` records the
+no environment-variable override. With `gpu_stats = true`, `Native vertex input` records the
 selected draw counts and compact/uploaded/reference vertex bytes per frame.
 
 The native host reuses a render pass for consecutive draws with blending
-disabled, no visibility query, and the same color and depth/stencil attachments.
-Every original draw state is rebound. Resource operations, clears, copies,
+disabled or ONE/ZERO/ADD replacement blending, no visibility query, and the
+same color and depth/stencil attachments.
+The reference path rebinds every original draw state. Resource operations, clears, copies,
 queries, presentation, attachment changes and packet completion end the pass.
-Blended draws preserve their original per-draw store boundary: the broader
-reuse experiment changed captured color bytes and was rejected. Atomic packet
-validation and synchronous completion remain in place.
+Destination-dependent blended draws preserve their original per-draw store
+boundary: the broader reuse experiment changed captured color bytes and was
+rejected. Replacement blending writes each enabled RGB/alpha channel without
+reading its previous value; masked channels retain their earlier writer. A
+following destination-dependent draw first stores that replacement run.
+Atomic packet validation remains in place.
+
+Packet preparation retains an immutable draw snapshot with its validated
+pipeline and depth/stencil state. Encoding reuses that preparation while still
+checking command-buffer/device validity and geometry-upload ordering. Direct
+mutable draw callers retain full validation. Packet bytes and resources remain
+owned through GPU completion.
+
+A full clear may start the next compatible destination-independent draw pass.
+Only uniform-definition metadata may intervene; cleared attachments must match
+the draw's objects and footprint. Queries, destination-dependent blending,
+partial or channel-masked clears and other resource operations retain separate
+clear passes. Uncleared color/depth/stencil aspects retain LOAD/STORE semantics.
+
+Geometry, texture, uniform and encoder binding reuse are enabled by default. Asynchronous
+submission remains opt-in. These local configuration values are the defaults:
+
+```ini
+[debug]
+metal_geometry_cache = true
+metal_cache_bindings = true
+metal_texture_cache = true
+metal_uniform_cache = true
+metal_async_submit = false
+```
+
+Restart after changing them. Geometry reuse requires GPU vertex decoding and
+compares active source bytes, declaration metadata, fixed attributes and original
+indices on every draw, including repeated draws after a same-frame memory edit.
+The CPU shadow and GPU caches each retain at most 2,048 entries and 64 MiB.
+Upload and packet-preparation storage temporarily adds to those limits.
+The first use retains a CPU snapshot and sends ordinary compact input; a second
+byte-identical use promotes it to owned private GPU buffers. Continuously changing
+geometry therefore avoids repeated private-buffer allocation. Set
+`metal_geometry_cache` and `metal_cache_bindings` to `false` to compare those
+paths. No environment overrides exist.
+Binding reuse skips setters only when state and resource bindings match within
+the same live encoder; every pass boundary invalidates them.
+
+Texture lookup uses bounded resource indices, exact metadata keys and cached
+layout plans. Render-target memo entries include the current backing dimensions.
+Alias ordering, memory-generation checks and full palette hashes still run;
+changing texture bytes or a palette within a frame remains visible.
+
+Uniform reuse shares only byte-identical vertex or pixel constant blocks within
+one owned packet. A hash selects candidates; a full byte comparison decides
+reuse, preserving signed zero and original register bits. Typed definitions
+precede their draws, and a complete definition/draw group is reserved before
+emission. Flushes reset the bounded dictionary, so references cannot cross
+packets. Legacy command-local uniform bounds remain strict. Either new cache
+can be disabled independently for comparison after a restart.
+
+Asynchronous submission requires interpolation at startup. It retains at most
+four packets with shared input buffers up to 16 MiB each, while preserving a
+separate limit of two queued presentations. Admission also holds the next query
+prefix once that presentation budget is full. Larger valid packets use owned
+temporary buffers within the same packet budget. Lens-flare queries submit their completed query group
+before the remaining frame drawing. Visibility reads wait through that query's
+END submission and return its exact current result; later incomplete drawing may
+continue. Attachment readbacks, callbacks, settings, explicit fences and exit
+still drain all accepted work. Turning interpolation off live fences each Present
+before updating original flip timing. Keep this option off until presentation and
+input latency have been assessed separately from throughput.
+
+With GPU statistics enabled, the submission mode and per-sequence GPU completion
+records distinguish accepted CPU frames from completed GPU work. Async Native
+timing and the on-screen counter track CPU submissions; GPU-end intervals measure
+renderer throughput, not physical presentation or input latency. The benchmark
+requires complete Present completion coverage before reporting async throughput.
+The copy stage includes acquiring storage; async waits for a reusable slot also
+appear in completion-wait timing, so it does not isolate memcpy cost.
 
 ## Repeatable game measurements
 
@@ -129,7 +201,10 @@ its existing VSync pacing rather than the native cap.
 `tools/test_metal_render_pass_reuse.py` compares intermediate color, depth,
 stencil and query bytes between isolated and reused passes with Metal API
 validation enabled. It covers attachment and command-buffer changes, copy/clear
-boundaries, rejection cleanup and fractional blended UNorm results.
+boundaries, rejection cleanup and fractional blended UNorm results. The BGRA8
+replacement cases cover overlapping/disjoint scissors, RGB/alpha write masks,
+depth/stencil pass and failure operations, and the store before fractional
+additive blending.
 
 The production ILP32 ordered-frame replay retains all 378 recorded checkpoints;
 the coalesced replay checks six final outputs from 126 original draws in one
@@ -651,3 +726,283 @@ accepted runs are `run-cpu-warm-a1/`, `run-gpu-warm-b1/`, `run-cpu-warm-a2/`,
 clean guest/host exits and no renderer faults. Runtime cache misses outside the
 matched window are retained in the evidence; the warmed matched-window filter
 does not imply every complete capture has zero misses.
+
+### Geometry reuse and bounded asynchronous submission
+
+The next pass retains byte-verified compact geometry, skips unchanged setters
+within a live encoder, and initially implemented an optional two-packet asynchronous queue.
+Source mutations invalidate reuse even within a frame. Promotion on the second
+identical use avoids allocation churn; bounded 32-byte comparisons replace the
+guest runtime's slow byte-at-a-time comparison. An earlier cache candidate
+reduced heavy-window throughput to 48 FPS and was rejected.
+
+The final candidate was tested sequentially on the same M5 Max at 3600x2338,
+using 75-second original Silent Cartographer captures with audio, FXAA,
+interpolation, the FPS counter and logging enabled; VSync and the cap were off.
+All three rows use the same frozen host/guest pair. The matched heavy window
+uses ticks 3--125, at least 800 original draws, complete packet/GPU completion
+coverage and warm shader/pipeline caches.
+
+| Final candidate settings | Heavy opening GPU-end FPS | FPS after tick 150 | Uploaded vertex MB per heavy frame |
+| --- | ---: | ---: | ---: |
+| Both caches off, synchronous | 52.9 | 104.3 | 7.18 |
+| Both caches on, synchronous (selected defaults) | 57.3 | 105.6 | 1.23 |
+| Both caches on, asynchronous | 62.2 | 126.7 | 1.14 |
+
+Synchronous reuse improves this heavy window by about 8%, with 83% fewer vertex
+bytes and 54% fewer packet bytes. About 94% of compact draws reuse verified CPU
+snapshots; retained geometry peaks near 44 MB. The asynchronous combination
+improves heavy-window throughput by about 18%. These are one-map samples:
+whole-gameplay baseline repeats range from 104 to 114 FPS, and the synchronous
+cache run does not improve the 95th-percentile gameplay interval. Simulation
+remains about 30 Hz. GPU-end throughput does not measure panel refresh or input
+latency, so asynchronous submission stays off by default.
+
+Metal API validation checks packet ownership while the GPU is held, two-buffer
+reuse, third-packet waiting, query/readback/fence boundaries, atomic malformed
+packet rejection, poisoned shutdown and geometry generation/lifetime handling.
+The encoder fixture preserves all 15,656 color/depth/stencil/query checkpoint
+bytes and the same 29 passes; cached binding setters fall from 1,121 to 808.
+Targeted CPU checks include exact source-byte mutation detection, unaligned and
+allocation-end sanitizer comparisons, ILP32 compilation and completion-log
+coverage. These fixtures do not establish complete retail-frame parity.
+
+This initial async implementation eliminates the measured submission wait, but
+a remaining frame gap tracks the previous GPU's duration. Event pumping averages
+only about 0.04 ms and does not explain it. The subsequent main-loop timing split
+and visibility completion change are described below.
+
+Evidence is under `build/metal-overlap-20261008/`: `comparison.json`,
+`run-baseline-native-a2/`, `run-caches-native-f1/` and `run-combined-native-e2/`.
+Each retains configuration, foreground checks, clean exits, launch logs and
+joined frame analysis. `candidate-v3/build.json` binds scoped source and binary
+hashes. Changed Metal units were rebuilt with the production host/ILP32 guest
+toolchains; unchanged baseline objects were reused. The measured pair predates
+the configuration-default change and explicitly selects each option.
+`candidate-defaults/build.json` records the subsequent compile/link check of the
+selected defaults; seven production configuration-parser checks confirm defaults,
+explicit overrides and malformed-value handling. These are scoped renderer
+builds used for the performance comparison.
+
+The subsequent full dual-renderer app rebuild at `a3a257fa` plus these local
+changes was installed into `/Applications/Halo OG.app`. The installed signature,
+both guest hashes and BuildInfo match the built package; the previous app and
+existing settings were preserved. `app-install-provenance.json` and
+`app-build-install.log` in the same evidence directory record that validation.
+The new caches use their enabled defaults; asynchronous submission remains off.
+A running instance retains the previous binary until Halo is quit and reopened.
+
+### Exact visibility completion without waiting for the remaining frame
+
+Main-loop phase markers, gated by the existing `debug.gpu_stats` setting,
+identify the remaining async stall before the first original draw. The original
+frame-begin lens-flare collection calls `D3DDevice_GetVisibilityTestResult`;
+its direct host readback drained all pending work even when no queued guest
+packet remained to produce a `VisibilityCollect` flush record. An absent flush
+record therefore did not exclude a query wait. Main-loop updates, statistics
+and event processing do not explain this stall.
+
+The async path now submits the completed lens-flare query group immediately
+after its original submission point, before the remaining world/HUD drawing.
+The host waits only through the submission containing that query's END and
+returns the exact current query words and version. It retains later pending
+packets and their resource ownership. Original draw order, query availability,
+two-packet ownership limits and full attachment/fence boundaries are preserved.
+Synchronous submission and non-native renderers retain their existing behavior.
+
+Four sequential 20-second native-resolution B30 captures compare the frozen
+initial async pair with this change. They use the same stock assets, learned
+shader cache, audio, FXAA, interpolation, uncapped/VSync-off settings and
+diagnostics. All pass foreground, settings, completion coverage and clean-exit
+checks. Each matched heavy window covers every original tick 3--125, at least
+800 draws per frame and warm shader/pipeline caches:
+
+| Heavy opening, two runs per variant | Initial async | Exact query completion |
+| --- | ---: | ---: |
+| GPU-end FPS at 3600x2338 | 59.5--59.8 | 95.2--99.4 |
+| Mean time before first draw | 7.085--7.115 ms | 0.338--0.350 ms |
+| Packets per frame | 1 | 2 |
+
+Pooled consecutive completed-GPU intervals give 59.64 versus 97.28 FPS, about
+63% improvement in this window. Mean original draws differ by only 0.032%.
+The new packets are `VisibilityReady` and `Present`; direct query readbacks
+average 0.0073--0.0076 ms per heavy frame. All selected and post-tick-150 frames
+remain cinematic. These short runs do not measure gameplay/combat FPS, panel
+presentation or input latency. Observed post-startup simulation remains
+29.960--30.028 Hz. Async stays off by default pending those separate checks.
+Summed packet GPU work rises from 6.70--6.75 to 7.42--7.64 ms per heavy frame;
+the throughput gain comes from overlap despite the extra submission cost.
+
+The production packet fixture under Metal API validation returns the exact
+query result while later drawing is held behind a shared event, retains its
+owned packet bytes after guest mutation, and verifies a color readback still
+drains the later packet. Native guest/host compilation passes; production
+main/render compilation without the native Metal define has no references to
+either new hook. All 26 analyzer checks pass. No full retail-frame or
+multi-window runtime parity is established by these checks.
+An isolated negative control restores the old full drain and fails exactly
+the early-query assertion, with no Metal validation errors. Its source delta,
+commands and result are in `query-boundary-negative-control/` below.
+
+Evidence is in `build/metal-frame-gap-20261009/`: `comparison.json`,
+`analyze_phases.py`, `run-async-phases-b1/`, `run-async-phases-b2/`,
+`run-prefix-phases-c1/` and `run-prefix-phases-c2/`. Frozen `diagnostic/build.json`
+and `prefix/build.json` bind the captured source and binary hashes. Each
+capture's lone unattributed flush is its final
+one-command `Exit` fence after the last frame, rather than missing frame work.
+
+### Texture lookup and packet-local uniform reuse
+
+Eight sequential 20-second B30 captures compare the two new caches separately,
+together, and disabled. They use one frozen production host/guest pair, the
+same stock assets and learned shaders, native 3600x2338 rendering, FXAA, audio,
+interpolation and uncapped/VSync-off settings. Every run passes foreground,
+settings, unique diagnostics, clean-exit and complete packet/GPU checks. The
+heavy window includes every original tick 3--125, warm pipelines, at least
+800 draws per frame and cinematic scene state.
+
+| Completed-GPU throughput in the heavy opening | New caches disabled | Both enabled |
+| --- | ---: | ---: |
+| Synchronous, one matched pair | 56.92 FPS | 63.07 FPS |
+| Asynchronous, two runs pooled | 97.45 FPS | 105.64 FPS |
+
+The synchronous gain is 10.8%; the two async comparisons improve by 9.6% and
+7.2%, with an 8.4% pooled gain. Mean original draw counts differ by 0.20% in
+the synchronous pair and 0.052% in the pooled async comparison. Packet bytes
+fall by about 28.7% in both modes. Texture preparation in the first isolated
+comparison falls from 1.84 to 0.18 ms per heavy frame. Uniform reuse alone
+reduces packet bytes from 5.84 to 4.09 MB per frame, with extra guest hashing
+work; its standalone FPS remains within baseline repeat variation, so an
+additional FPS gain beyond texture lookup is unproven. The combined result
+includes that cost. Timings overlap and should not
+be summed. Post-startup simulation is 29.969--30.047 Hz.
+
+The combined async path has substantially higher throughput than synchronous
+submission here. Async remains selectable pending gameplay input-latency and
+visible-pacing checks; completed-GPU intervals do not establish either. These
+short cinematic captures also do not establish combat or multiplayer gains.
+
+The production CPU checks cover same-frame texture/palette edits, exact
+lookup collisions, alias order, backing resize and resource retirement.
+Uniform tests cover bitwise equality, soft/hard/count flush boundaries,
+dictionary saturation and legacy oversized-draw fallback. The production
+GPU fixture under Metal validation preserves exact pixels and query words
+across expanded, compact and retained geometry inputs, rejects malformed or
+cross-packet uniform references atomically, and retains async packet ownership.
+
+Evidence is in `build/metal-texture-uniform-20261009/`: `summary.json`,
+`comparison.json`, `analyze.py`, eight `run-*/` captures and
+`candidate/build.json`. An initial probe run is retained under `excluded-*`:
+counting every list step added baseline overhead, so the selected pair counts
+lookup calls once instead. The dual-renderer app was rebuilt and installed at
+`/Applications/Halo OG.app`; signature verification passes and its native guest
+matches the measured pair. Settings are preserved. Installation fingerprints
+are in `app-install-provenance.json`.
+The earlier synchronous diagnostic fragment lost foreground to Messages and
+remains failed; it is excluded from FPS comparisons. This is a scoped native
+candidate build. It has not replaced the installed app described above.
+
+### Native-resolution C10 indoor throughput
+
+Subsequent performance work uses native resolution and one matched baseline
+versus candidate, rather than a resolution/feature matrix. The user's C10 indoor
+scene is preserved as a named private core. Restoring after foreground activation,
+settling neutral input and checking BSP 2 and the saved camera gives both runs
+the same original ticks 22663--23263. Both render 3600x2338 with FXAA, VSync,
+interpolation, direct camera and asynchronous submission enabled.
+
+The candidate indexes shader programs by their complete existing identity and
+verifies exact equality after hashing. It also permits four owned packet buffers
+while retaining the two-Present limit. Visibility prefixes no longer consume the
+entire buffer budget before CPU preparation/encoding of the draw tail. Once two
+presentations are pending, admission holds any further packet, including a query
+prefix; exact query END waits and attachment/fence/shutdown drains are unchanged.
+
+| Warm completed-GPU result | Before | Candidate |
+| --- | ---: | ---: |
+| Native throughput | 47.31 FPS | 70.64 FPS |
+| p95 completion interval | 22.29 ms | 15.19 ms |
+| Submission completion wait | 11.67 ms | 0 ms |
+| Packet copy and storage acquisition | 11.95 ms | 0.12 ms |
+| Guest shader-program lookup | 0.229 ms | 0.125 ms |
+
+Throughput improves 49.3%. Draw/pass workloads differ by less than 0.05%, all
+selected frames are warm and fully joined, and simulation remains approximately
+30 Hz. Copy/storage acquisition and completion-wait counters overlap. The combined
+comparison attributes most of the gain to removed submission stalls; total guest
+draw CPU remains approximately 1.59 ms. It does not isolate each change's FPS gain
+or establish physical input/display latency. A preceding matched C10 resolution
+comparison showed no benefit from reducing 2160p to 1440p; it remains separate
+from these native before/after results.
+
+The production GPU fixture verifies four immutable snapshots, fifth-packet
+waiting, a separate two-Present admission bound, exact visibility-prefix waits
+and full readback/fence/shutdown boundaries under Metal validation. The headless
+frame-budget case marks accepted GPU packets as presentations for admission
+testing; it does not test onscreen presentation. Focused CPU regressions cover
+full-key collisions and retained shader references, plus allocation failure and
+bounded synchronous storage. The shader translator and draw order are unchanged.
+
+Evidence is in `build/metal-c10-checkpoint-20261009/native-comparison.json`,
+`candidate-source.json`, `candidate-build.log` and `run-native-{before,after}/`.
+The measured candidate is installed at `/Applications/Halo OG.app`; its native
+host/guest hashes and BuildInfo match, and signature verification passes. The
+user's local playtest settings select Native height and async submission, with a
+config backup recorded in the comparison manifest. Other settings and the original
+profile remain intact. Async remains opt-in in the project defaults.
+
+### Destination-independent replacement blend runs
+
+Compatible ONE/ZERO/ADD draws now retain their render pass. Queries and all
+destination-dependent blends keep their existing boundaries. The production
+GPU fixture under Metal validation produces 20,008 identical checkpoint bytes
+across isolated, reused and cached modes. Six fractional BGRA8 replacement
+draws use one retained pass; full and complementary RGB/alpha masks both keep
+the required store before fractional additive blending. Depth/stencil history
+and the earlier additive regression also pass.
+
+The candidate is built and installed at `/Applications/Halo OG.app`. Signature
+verification passes, the native guest is unchanged, and normal configuration
+and original profile hashes are preserved. A fresh native-resolution baseline
+in the saved C10 room measures 66.70 completed-GPU FPS. The candidate capture
+`run-replacement-after/` is excluded because the locked Mac prevented verified
+foreground activation; no candidate FPS gain is established yet. Evidence is
+in `build/metal-c10-checkpoint-20261009/replacement-{source,install}.json`,
+`replacement-fixture.log`, `replacement-build.log` and
+`run-replacement-before/`.
+
+### Prepared draws and full-clear integration
+
+A fresh matched C10 capture at native 3600x2338 compares the installed
+replacement-blend build with retained draw preparation and compatible full-clear
+integration. Both use the same saved core, camera, BSP, map, shader warmup and
+async settings. All measured frames are warm, fully joined and continuously
+foreground; simulation remains approximately 30 Hz.
+
+| Completed capture | Before | Candidate |
+| --- | ---: | ---: |
+| Completed-GPU FPS | 74.62 | 74.31 |
+| CPU preparation plus encoding | 6.20 ms | 5.50 ms |
+| GPU work | 13.52 ms | 13.70 ms |
+
+CPU preparation/encoding falls 11.3%, while this pair establishes no FPS gain.
+Trimming both captures to their exact shared simulation-tick interior gives the
+same conclusion. CPU/GPU intervals overlap, and individual feature gains are
+not isolated. The draw-pass counter excludes standalone clear passes, so it
+does not measure the total pass reduction from clear integration.
+
+The production packet fixture under Metal validation compares full and
+individual-aspect clear results against separate submissions and analytic
+BGRA8/depth/stencil expectations. It covers masked channels, fractional additive
+rounding, query/copy/attachment/footprint boundaries, retained preparation after
+cache eviction and unchanged public validation. Existing async ownership and
+readback cases pass. The encoder fixture retains 20,008 identical checkpoint
+bytes across isolated, reused and cached modes.
+
+Evidence is in `build/metal-c10-prepare-clear-20261014/comparison.json`,
+`analyze.py`, `source.json`, `install.json` and `run-{before-active,after}/`.
+The first `run-before/` attempt is excluded because window activation stalled.
+The measured candidate is installed at `/Applications/Halo OG.app`; its
+signature and host/guest fingerprints verify. Normal settings and all 34 saved
+profile files are unchanged. This replaces the earlier installed candidate;
+the pair does not measure the replacement-blend change separately.
