@@ -28,7 +28,11 @@ enum halo_metal_capability {
     HALO_METAL_CAP_COPY_SUBRESOURCE = 4096u,
     HALO_METAL_CAP_VOLUME = 8192u, HALO_METAL_CAP_VOLUME_BORDER = 16384u,
     HALO_METAL_CAP_FXAA = 32768u,
-    HALO_METAL_CAP_COMPACT_VERTICES = 65536u
+    HALO_METAL_CAP_COMPACT_VERTICES = 65536u,
+    HALO_METAL_CAP_GEOMETRY_CACHE = 131072u,
+    HALO_METAL_CAP_ASYNC_SUBMIT = 262144u,
+    HALO_METAL_CAP_CACHE_BINDINGS = 524288u,
+    HALO_METAL_CAP_UNIFORM_SHARING = 1048576u
 };
 enum halo_metal_opcode {
     HALO_METAL_CREATE_TEXTURE = 1, HALO_METAL_DELETE_TEXTURE = 2,
@@ -41,7 +45,10 @@ enum halo_metal_opcode {
     HALO_METAL_PRESENT_SCALED = 16, HALO_METAL_CLEAR_CHANNELS = 17,
     HALO_METAL_DISPLAY_SETTINGS = 18, HALO_METAL_DRAW_ALPHA_BORDER = 19,
     HALO_METAL_COPY_SUBRESOURCE = 20, HALO_METAL_DRAW_VOLUME_BORDER = 21,
-    HALO_METAL_FXAA = 22, HALO_METAL_DRAW_COMPACT = 23
+    HALO_METAL_FXAA = 22, HALO_METAL_DRAW_COMPACT = 23,
+    HALO_METAL_CREATE_GEOMETRY = 24, HALO_METAL_DELETE_GEOMETRY = 25,
+    HALO_METAL_DRAW_GEOMETRY = 26, HALO_METAL_FENCE = 27,
+    HALO_METAL_DEFINE_UNIFORMS = 28, HALO_METAL_DRAW_UNIFORM_REFS = 29
 };
 enum halo_metal_format {
     HALO_METAL_RGBA8 = 1, HALO_METAL_BGRA8 = 2, HALO_METAL_DEPTH32_STENCIL8 = 3,
@@ -65,7 +72,13 @@ enum halo_metal_visibility_mode {
 /* Optional capabilities are advertised only to callers that opt in. This
  * keeps the original ABI-v1 guest's strict capability mask compatible. */
 enum { HALO_METAL_OFFSCREEN = 1u, HALO_METAL_ENABLE_FXAA = 2u,
-    HALO_METAL_ENABLE_COMPACT_VERTICES = 4u };
+    HALO_METAL_ENABLE_COMPACT_VERTICES = 4u, HALO_METAL_ENABLE_ASYNC_SUBMIT = 8u,
+    HALO_METAL_ENABLE_GEOMETRY_CACHE = 16u, HALO_METAL_ENABLE_CACHE_BINDINGS = 32u,
+    HALO_METAL_ENABLE_UNIFORM_SHARING = 64u };
+enum halo_metal_uniform_kind { HALO_METAL_UNIFORM_VERTEX = 1, HALO_METAL_UNIFORM_PIXEL = 2 };
+enum halo_metal_input_kind {
+    HALO_METAL_INPUT_EXPANDED = 0, HALO_METAL_INPUT_COMPACT = 1, HALO_METAL_INPUT_GEOMETRY = 2
+};
 
 struct halo_metal_ref { uint32_t id, generation; };
 struct halo_metal_packet {
@@ -257,6 +270,45 @@ struct halo_metal_draw_compact {
     struct halo_metal_draw draw;
     uint32_t vertex_bytes, volume_stage_mask, alpha_stage_mask, reserved;
 };
+/* Immutable compact input and uint32 indices. CREATE copies and validates
+ * command-local bytes once, then uploads private buffers in queue order.
+ * Geometry IDs are in a separate namespace, bounded to 2048 / 64 MiB live.
+ * DELETE invalidates the generation but encoded draws retain their buffers. */
+struct halo_metal_create_geometry {
+    struct halo_metal_command command;
+    struct halo_metal_ref resource;
+    uint32_t vertex_count, index_count, packed_mask, vertex_bytes;
+    uint32_t vertices_offset, indices_offset, reserved[2];
+};
+/* Only uniforms remain command-local. vertices_offset/indices_offset in the
+ * legacy draw prefix must be zero; every count/mask must match the resource. */
+struct halo_metal_draw_geometry {
+    struct halo_metal_draw draw;
+    struct halo_metal_ref geometry;
+    uint32_t volume_stage_mask, alpha_stage_mask;
+};
+/* Optional immutable packet-local uniform blocks. data_offset is aligned to 16
+ * bytes and lies inside this command; vertex/pixel sizes are exactly 3120/608.
+ * A definition becomes available only to later commands in this same packet.
+ * Raw original register bits, including unused nonfinite lanes, are preserved. */
+struct halo_metal_define_uniforms {
+    struct halo_metal_command command;
+    uint32_t kind, data_offset, data_size, reserved;
+};
+/* Uniform offsets in draw must name the exact payload start of earlier typed
+ * DEFINE_UNIFORMS commands. Arbitrary slices, other commands and other packets
+ * cannot supply uniform references. Expanded/compact vertices and indices stay
+ * command-local; geometry input retains the immutable geometry contract.
+ * vertex_bytes is nonzero only for compact input. geometry must be zero for
+ * expanded/compact input; cached input requires zero vertex/index offsets.
+ * Both reserved fields and the legacy draw reserved words remain zero.
+ * Legacy draw opcodes still require command-local uniform payloads. */
+struct halo_metal_draw_uniform_refs {
+    struct halo_metal_draw draw;
+    uint32_t vertex_bytes, volume_stage_mask, alpha_stage_mask, reserved;
+    struct halo_metal_ref geometry;
+    uint32_t input_kind, reserved2;
+};
 struct halo_metal_reply {
     uint32_t abi_version;
     int32_t status;
@@ -295,6 +347,12 @@ HALO_METAL_ASSERT(sizeof(struct halo_metal_draw) == 416, "draw ABI");
 HALO_METAL_ASSERT(sizeof(struct halo_metal_draw_alpha_border) == 424, "alpha border draw ABI");
 HALO_METAL_ASSERT(sizeof(struct halo_metal_draw_volume_border) == 424, "volume border draw ABI");
 HALO_METAL_ASSERT(sizeof(struct halo_metal_draw_compact) == 432, "compact vertex draw ABI");
+HALO_METAL_ASSERT(sizeof(struct halo_metal_create_geometry) == 48, "geometry creation ABI");
+HALO_METAL_ASSERT(sizeof(struct halo_metal_draw_geometry) == 432, "cached geometry draw ABI");
+HALO_METAL_ASSERT(sizeof(struct halo_metal_define_uniforms) == 24, "uniform definition ABI");
+HALO_METAL_ASSERT(sizeof(struct halo_metal_draw_uniform_refs) == 448, "uniform reference draw ABI");
+HALO_METAL_ASSERT(offsetof(struct halo_metal_draw_uniform_refs, geometry) == 432, "uniform draw geometry ABI");
+HALO_METAL_ASSERT(offsetof(struct halo_metal_draw_uniform_refs, input_kind) == 440, "uniform draw input ABI");
 HALO_METAL_ASSERT(offsetof(struct halo_metal_draw_volume_border, volume_stage_mask) == 416, "volume border mask ABI");
 HALO_METAL_ASSERT(offsetof(struct halo_metal_draw_volume_border, alpha_stage_mask) == 420, "volume alpha border mask ABI");
 

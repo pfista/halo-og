@@ -116,6 +116,9 @@ static struct { D3DPRESENT_PARAMETERS presentation;
     unsigned long next_vertex_shader_id,frame,draws; uint64_t resource_serial; } device;
 static struct { struct halo_metal_reply reply; } transport;
 static struct native_resource *resources;
+/* Exercise the uncached resource route; indexed lookup has its own fixture. */
+static struct native_resource *resource_lookup_first(DWORD data) { (void)data;return resources; }
+static struct native_resource *resource_lookup_next(struct native_resource *entry) { return entry->next; }
 static struct native_resource *history_sample_override;
 static DWORD D3D__RenderState[D3DRS_MAX],D3D__TextureState[D3DTSS_MAXSTAGES][D3DTSS_MAX];
 static uint32_t next_resource_id=1,next_program_id=1;
@@ -131,6 +134,11 @@ static long requested_width=640;
 static unsigned render_height=480;
 static uint32_t native_storage_width,native_storage_height;
 static unsigned frame_waits,frame_statistics,event_pumps,phase,wait_phase,pump_phase;
+/* Instrumentation and async submission are disabled in this history fixture. */
+static BOOL draw_diagnostics,async_submit,visibility_checkpoint_pending;
+static struct { BOOL active; uint64_t d3d_begin,statistics_begin,statistics_end,d3d_end; } frame_phases;
+static uint64_t monotonic_ns(void) { static uint64_t now;return ++now; }
+static void native_synchronize(enum native_flush_reason reason) { (void)reason;assert(0); }
 static long screenshot_every;
 static const char *screenshot_directory="";
 static int vsync;
@@ -542,7 +550,7 @@ class BackbufferHistoryTests(unittest.TestCase):
         # Compile the actual rendered-history route. The authored-texture path
         # is outside this harness; reaching it fails instead of supplying a mock
         # return that could conceal a missing history resolution branch.
-        texture = function(source, "texture_get").split("    for (entry=resources;entry;entry=entry->next)", 1)[0]
+        texture = function(source, "texture_get").split("    for (entry=resource_lookup_first(texture->Data);", 1)[0]
         production += "\n\n" + texture + '\n    (void)palette;(void)stage;native_fail("unexpected authored texture path",HALO_METAL_INVALID);\n}\n'
         probe = cls.directory / "history.c"
         flush_reasons = "enum native_flush_reason {" + source.split("enum native_flush_reason {", 1)[1].split("};", 1)[0] + "};"

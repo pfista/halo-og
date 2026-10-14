@@ -28,6 +28,7 @@ extern "C" {
 #include "metal_warmup_cache.h"
 #include "metal_packet_view.h"
 #import "metal_draw_encoder.h"
+#include "metal_geometry.h"
 
 namespace {
 constexpr uint32_t capabilities = HALO_METAL_CAP_TARGETS | HALO_METAL_CAP_UPLOAD |
@@ -96,18 +97,36 @@ struct Visibility {
     std::vector<id<MTLBuffer>> words;
 };
 struct PreparedFxaa { id<MTLTexture> scratch; id<MTLRenderPipelineState> pipeline; };
+struct Geometry {
+    uint32_t generation;
+    std::shared_ptr<const HaloMetalGeometry> input;
+};
+struct PreparedGeometry { Geometry geometry; };
 struct Prepared {
     std::map<size_t, Texture> textures;
     std::map<size_t, Program> programs;
     std::map<size_t, HaloMetalDraw> draws;
     std::map<size_t, PreparedFxaa> fxaa;
+    std::map<size_t, PreparedGeometry> geometry;
     // Validation, uploads and draws share this immutable host-owned packet.
-    // Synchronous completion precedes release of its strong buffer reference.
+    // Async submissions retain this complete preparation until GPU retirement.
     id<MTLBuffer> input_buffer = nil;
     // New successful functions remain private until every packet command has
     // passed validation. A rejected packet cannot publish compiler entries.
     HaloMetalFunctionCache<id<MTLFunction>> compiled_functions;
+    bool presented = false, fence = false, wait_prior = false;
 };
+using WarmupKeys = std::map<uintptr_t,HaloMetalFunctionKey>;
+struct Pending {
+    id<MTLCommandBuffer> command = nil;
+    Prepared prepared;
+    std::vector<HaloMetalPipelineWarmup> pipelines;
+    WarmupKeys warmup_keys;
+    uint64_t sequence = 0;
+    bool presented = false;
+};
+constexpr size_t AsyncPacketLimit = 4;
+constexpr size_t AsyncPresentLimit = 2;
 struct Context {
     id<MTLDevice> device;
     HaloMetalFunctionCache<id<MTLFunction>> compiled_functions;
@@ -116,6 +135,11 @@ struct Context {
     // overwrite this storage. Bound retention to the guest's 16 MiB soft batch
     // size; larger valid packets still use a temporary, exact-size buffer.
     id<MTLBuffer> draw_input_buffer = nil;
+    // Visibility prefixes and draw tails need independent storage. Keep the
+    // completed-frame budget separate so extra packet slots do not increase
+    // the number of queued presentations. Retire GPU work before reusing bytes.
+    std::array<id<MTLBuffer>,AsyncPacketLimit> async_input_buffers{};
+    std::vector<Pending> pending;
     id<MTLLibrary> clear_library;
     id<MTLRenderPipelineState> present_pipeline;
     id<MTLSamplerState> present_sampler;
@@ -129,6 +153,9 @@ struct Context {
     std::map<uint32_t, uint32_t> program_generations;
     std::map<uint32_t, Visibility> queries;
     std::map<uint32_t, uint32_t> query_generations;
+    std::map<uint32_t, Geometry> geometry;
+    std::map<uint32_t, uint32_t> geometry_generations;
+    size_t geometry_bytes = 0;
     halo_metal_ref active_query = {};
     HaloMetalDrawEncoder *draw_encoder;
     std::map<uint64_t, id<MTLRenderPipelineState>> clear_pipelines;
@@ -138,12 +165,18 @@ struct Context {
     bool poisoned = false;
     bool fxaa_enabled = false;
     bool compact_vertices_enabled = false;
+    bool geometry_cache_enabled = false;
+    bool async_submit_enabled = false, cache_bindings_enabled = false;
+    bool uniform_sharing_enabled = false;
     HaloMetalWarmupCache warmup;
     NSString *warmup_path = nil;
     bool warmup_dirty = false;
 };
 Context context;
 std::mutex lock;
+void reap_pending(bool wait_oldest = false);
+void drain_pending();
+void drain_pending_shutdown() noexcept;
 
 uint64_t metrics_start(void) {
     if (!context.metrics.enabled) return 0;
@@ -170,6 +203,9 @@ void metrics_report(void) {
         (unsigned long long)m.visibility_buffers,(unsigned long long)m.render_passes,
         (unsigned long long)m.shader_compile_hits,(unsigned long long)m.shader_compile_misses,
         (unsigned long long)(m.shader_compile_ns/1000),context.compiled_functions.size(),context.compiled_functions.sourceBytes());
+    host_logf(HOST_LOG_INFO,"Native Metal bindings: setters %llu, skipped %llu",
+        (unsigned long long)context.draw_encoder.bindingSetCount,
+        (unsigned long long)context.draw_encoder.bindingSkipCount);
     context.metrics = Metrics{}; context.metrics.enabled = true;
 }
 
@@ -194,9 +230,13 @@ int reply(uint32_t offset, uint32_t size, int status, uint32_t failed = UINT32_M
     halo_metal_reply result = {HALO_METAL_ABI_VERSION, status, failed,
         capabilities | (context.layer ? HALO_METAL_CAP_PRESENT_EXACT | HALO_METAL_CAP_PRESENT_SCALED : 0) |
             (context.fxaa_enabled ? HALO_METAL_CAP_FXAA : 0) |
-            (context.compact_vertices_enabled ? HALO_METAL_CAP_COMPACT_VERTICES : 0),
+            (context.compact_vertices_enabled ? HALO_METAL_CAP_COMPACT_VERTICES : 0) |
+            (context.geometry_cache_enabled ? HALO_METAL_CAP_GEOMETRY_CACHE : 0) |
+            (context.async_submit_enabled ? HALO_METAL_CAP_ASYNC_SUBMIT : 0) |
+            (context.cache_bindings_enabled ? HALO_METAL_CAP_CACHE_BINDINGS : 0) |
+            (context.uniform_sharing_enabled ? HALO_METAL_CAP_UNIFORM_SHARING : 0),
         context.submitted, context.completed,
-        (uint32_t)(context.textures.size() + context.programs.size() + context.queries.size()), version, bytes, 0};
+        (uint32_t)(context.textures.size() + context.programs.size() + context.queries.size() + context.geometry.size()), version, bytes, 0};
     return size == sizeof(result) && write_guest(offset, &result, sizeof(result)) ? status : HALO_METAL_MEMORY;
 }
 void validate_reply(uint32_t offset, uint32_t size) {
@@ -599,16 +639,35 @@ const HaloMetalFunctionKey *warmup_key(id<MTLFunction> function,const Prepared &
     for (const auto &entry : context.compiled_functions.entries()) if (entry.second == function) return &entry.first;
     return nullptr;
 }
-void warmup_learn(const Prepared &prepared) noexcept {
+WarmupKeys capture_warmup_keys(const Prepared &prepared,const std::vector<HaloMetalPipelineWarmup> &pipelines) noexcept {
+    WarmupKeys keys;
     try {
-        auto pipelines = [context.draw_encoder takeCreatedPipelines];
+        if (!context.warmup_path) return keys;
+        // Copy each referenced function key once, while both bounded source
+        // caches still contain it. Later submissions may evict either cache.
+        for (const auto &p : pipelines) for (id<MTLFunction> function : {p.vertex,p.fragment}) {
+            const uintptr_t identity = (uintptr_t)(__bridge void *)function;
+            if (keys.count(identity)) continue;
+            if (const auto *key = warmup_key(function,prepared)) keys.emplace(identity,*key);
+        }
+    } catch (...) { /* Optional learning must not fail valid rendering. */ }
+    return keys;
+}
+void warmup_learn(const Prepared &prepared, const std::vector<HaloMetalPipelineWarmup> &pipelines,
+                  const WarmupKeys *snapshot = nullptr) noexcept {
+    try {
         if (!context.warmup_path) return;
         const uint64_t before_revision = context.warmup.revision;
         for (const auto &entry : prepared.compiled_functions.entries()) context.warmup.learn(entry.first);
         // This list contains misses alone. Warm packets never scan the complete
         // function/pipeline caches, copy shader sources or touch disk.
         for (const auto &p : pipelines) {
-            const auto *vertex = warmup_key(p.vertex,prepared), *fragment = warmup_key(p.fragment,prepared);
+            auto key = [&](id<MTLFunction> function) -> const HaloMetalFunctionKey * {
+                if (!snapshot) return warmup_key(function,prepared);
+                auto found = snapshot->find((uintptr_t)(__bridge void *)function);
+                return found == snapshot->end() ? nullptr : &found->second;
+            };
+            const auto *vertex = key(p.vertex), *fragment = key(p.fragment);
             if (!vertex || !fragment) continue;
             context.warmup.learn(*vertex); context.warmup.learn(*fragment);
             // A newly learned fragment may have retired an old vertex at the
@@ -657,8 +716,49 @@ id<MTLSamplerState> sampler(halo_metal_sampler c,
     if (context.metrics.enabled) context.metrics.sampler_allocations++;
     sampler_cache_insert(context.samplers,key,result); return result;
 }
+size_t pending_present_count() {
+    size_t count = 0;
+    for (const auto &pending : context.pending) count += pending.presented;
+    return count;
+}
 id<MTLBuffer> packet_input_buffer(size_t bytes) {
     constexpr size_t retained_limit = 16u * 1024u * 1024u;
+    if (context.async_submit_enabled) {
+        reap_pending();
+        // Once two presentations are queued, also hold the next visibility
+        // prefix. This retains the previous frame lead while letting a split
+        // frame's CPU encoding overlap an earlier frame's GPU execution.
+        while (context.pending.size() >= AsyncPacketLimit || pending_present_count() >= AsyncPresentLimit)
+            reap_pending(true);
+        check(!context.poisoned,HALO_METAL_GPU_ERROR);
+        if (bytes > retained_limit) {
+            auto buffer = [context.device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
+            check(buffer != nil,HALO_METAL_MEMORY);
+            if (context.metrics.enabled) context.metrics.packet_buffers++;
+            return buffer;
+        }
+        id<MTLBuffer> __strong *slot = nullptr;
+        for (auto &candidate : context.async_input_buffers) {
+            bool busy = false;
+            for (const auto &pending : context.pending)
+                busy |= candidate && candidate == pending.prepared.input_buffer;
+            if (busy) continue;
+            if (!slot) slot = &candidate;
+            if (candidate && candidate.length >= bytes) { slot = &candidate; break; }
+        }
+        check(slot != nullptr,HALO_METAL_MEMORY);
+        if (!*slot || (*slot).length < bytes) {
+            size_t capacity = 16384;
+            while (capacity < bytes) capacity *= 2;
+            auto buffer = [context.device newBufferWithLength:capacity options:MTLResourceStorageModeShared];
+            if (!buffer && capacity != bytes)
+                buffer = [context.device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
+            check(buffer != nil,HALO_METAL_MEMORY);
+            *slot = buffer;
+            if (context.metrics.enabled) context.metrics.packet_buffers++;
+        }
+        return *slot;
+    }
     id<MTLBuffer> buffer = context.draw_input_buffer;
     if (!buffer || buffer.length < bytes) {
         size_t capacity = bytes;
@@ -676,21 +776,57 @@ id<MTLBuffer> packet_input_buffer(size_t bytes) {
     }
     return buffer;
 }
+using UniformDefinitions = std::map<uint32_t,uint32_t>;
+void validate_uniform_block(const HaloMetalPacketView &packet, uint32_t offset, uint32_t bytes) {
+    // Original shader constants are raw register storage. Unread lanes may
+    // contain nonfinite padding; preserve those bits for the NV2A program.
+    // The appended native viewport/input controls remain strictly finite.
+    for (uint32_t byte = bytes == HaloMetalVertexUniformSize ? 3072 : 0; byte < bytes; byte += 4) {
+        float value; memcpy(&value,packet.data() + offset + byte,4);
+        const bool finite = std::isfinite(value);
+        if (!finite) {
+            uint32_t bits; memcpy(&bits,packet.data() + offset + byte,sizeof(bits));
+            host_logf(HOST_LOG_ERROR,"Native Metal nonfinite %s uniform: byte %u packet offset %llu raw %08x",
+                bytes == HaloMetalVertexUniformSize ? "vertex" : "pixel",byte,
+                (unsigned long long)(uint64_t(offset)+byte),bits);
+        }
+        check(finite);
+    }
+}
 HaloMetalDraw prepare_draw(const HaloMetalPacketView &packet, size_t position, halo_metal_draw c,
                           id<MTLBuffer> __strong &input_buffer,
                           std::map<uint32_t, Texture> &textures, std::map<uint32_t, Program> &programs,
                           Visibility *query, uint32_t alpha_border_mask = 0, uint32_t volume_border_mask = 0,
-                          uint32_t command_index = UINT32_MAX, uint32_t compact_bytes = 0) {
-    const bool compact = c.command.opcode == HALO_METAL_DRAW_COMPACT;
-    const size_t fixed = compact ? sizeof(halo_metal_draw_compact) :
+                          uint32_t command_index = UINT32_MAX, uint32_t compact_bytes = 0,
+                          std::shared_ptr<const HaloMetalGeometry> geometry = {},
+                          const UniformDefinitions *uniforms = nullptr, uint32_t input_kind = HALO_METAL_INPUT_EXPANDED) {
+    const bool shared_uniforms = c.command.opcode == HALO_METAL_DRAW_UNIFORM_REFS;
+    check(shared_uniforms == (uniforms != nullptr));
+    const bool compact = c.command.opcode == HALO_METAL_DRAW_COMPACT || c.command.opcode == HALO_METAL_DRAW_GEOMETRY ||
+        (shared_uniforms && input_kind != HALO_METAL_INPUT_EXPANDED);
+    const size_t fixed = shared_uniforms ? sizeof(halo_metal_draw_uniform_refs) : compact ? sizeof(halo_metal_draw_compact) :
         c.command.opcode == HALO_METAL_DRAW ? sizeof(c) : sizeof(halo_metal_draw_volume_border);
     check(alpha_border_mask <= 15 && volume_border_mask <= 15 && !(alpha_border_mask & volume_border_mask));
     check(c.command.byte_size >= fixed && !c.reserved[0] && !c.reserved[1] && c.vertex_count && c.index_count && c.primitive <= 4);
-    inline_range(position,c.command.byte_size,fixed,c.vertices_offset,
-        compact ? compact_bytes : uint64_t(c.vertex_count) * HaloMetalVertexStride,16);
-    inline_range(position,c.command.byte_size,fixed,c.indices_offset,uint64_t(c.index_count) * 4,16);
-    inline_range(position,c.command.byte_size,fixed,c.vertex_uniforms_offset,HaloMetalVertexUniformSize,16);
-    inline_range(position,c.command.byte_size,fixed,c.pixel_uniforms_offset,HaloMetalPixelUniformSize,16);
+    if (geometry) {
+        check((c.command.opcode == HALO_METAL_DRAW_GEOMETRY ||
+            (shared_uniforms && input_kind == HALO_METAL_INPUT_GEOMETRY)) && !c.vertices_offset && !c.indices_offset &&
+            c.vertex_count == geometry->vertexCount() && c.index_count == geometry->indexCount() &&
+            c.packed_mask == geometry->packedMask() && compact_bytes == geometry->vertexBytes());
+    } else {
+        check(c.command.opcode != HALO_METAL_DRAW_GEOMETRY && (!shared_uniforms || input_kind != HALO_METAL_INPUT_GEOMETRY));
+        inline_range(position,c.command.byte_size,fixed,c.vertices_offset,
+            compact ? compact_bytes : uint64_t(c.vertex_count) * HaloMetalVertexStride,16);
+        inline_range(position,c.command.byte_size,fixed,c.indices_offset,uint64_t(c.index_count) * 4,16);
+    }
+    if (shared_uniforms) {
+        const auto vertex = uniforms->find(c.vertex_uniforms_offset), pixel = uniforms->find(c.pixel_uniforms_offset);
+        check(vertex != uniforms->end() && vertex->second == HALO_METAL_UNIFORM_VERTEX &&
+            pixel != uniforms->end() && pixel->second == HALO_METAL_UNIFORM_PIXEL);
+    } else {
+        inline_range(position,c.command.byte_size,fixed,c.vertex_uniforms_offset,HaloMetalVertexUniformSize,16);
+        inline_range(position,c.command.byte_size,fixed,c.pixel_uniforms_offset,HaloMetalPixelUniformSize,16);
+    }
     check(c.packed_mask <= UINT16_MAX);
     // Packed input registers contain instruction-visible integer bits. Their
     // float interpretation may be NaN and must never be normalized or tested.
@@ -710,23 +846,12 @@ HaloMetalDraw prepare_draw(const HaloMetalPacketView &packet, size_t position, h
             check(finite);
         }
     }
-    for (auto range : {std::pair<uint32_t,uint32_t>{c.vertex_uniforms_offset,HaloMetalVertexUniformSize},
-                      std::pair<uint32_t,uint32_t>{c.pixel_uniforms_offset,HaloMetalPixelUniformSize}})
-        // Original shader constants are raw register storage. Unread lanes may
-        // contain nonfinite padding; preserve those bits for the NV2A program.
-        // The appended native viewport/input controls remain strictly finite.
-        for (uint32_t byte = range.second == HaloMetalVertexUniformSize ? 3072 : 0;
-             byte < range.second; byte += 4) {
-            float value; memcpy(&value,packet.data() + range.first + byte,4);
-            const bool finite = std::isfinite(value);
-            if (!finite) {
-                uint32_t bits; memcpy(&bits,packet.data() + range.first + byte,sizeof(bits));
-                host_logf(HOST_LOG_ERROR,"Native Metal nonfinite %s uniform: byte %u packet offset %llu raw %08x",
-                    range.second == HaloMetalVertexUniformSize ? "vertex" : "pixel",byte,
-                    (unsigned long long)(uint64_t(range.first)+byte),bits);
-            }
-            check(finite);
-        }
+    // Earlier definitions were checked in the same immutable owned packet.
+    // Legacy draw payloads retain their command-local ranges and validation.
+    if (!shared_uniforms) {
+        validate_uniform_block(packet,c.vertex_uniforms_offset,HaloMetalVertexUniformSize);
+        validate_uniform_block(packet,c.pixel_uniforms_offset,HaloMetalPixelUniformSize);
+    }
     auto &p = program(programs,c.program); HaloMetalDraw draw;
     draw.vertexFunction = p.vertex; draw.fragmentFunction = p.fragment;
     draw.vertexCount = c.vertex_count; draw.indexCount = c.index_count; draw.packedMask = c.packed_mask;
@@ -801,6 +926,10 @@ HaloMetalDraw prepare_draw(const HaloMetalPacketView &packet, size_t position, h
         input_buffer.contents == packet.data(),HALO_METAL_MEMORY);
     draw.vertices = draw.indices = draw.vertexUniforms = draw.pixelUniforms = input_buffer;
     draw.vertexOffset = c.vertices_offset; draw.indexOffset = c.indices_offset;
+    if (geometry) {
+        draw.geometry = geometry;
+        draw.vertices = geometry->vertices(); draw.indices = geometry->indices();
+    }
     draw.vertexUniformOffset = c.vertex_uniforms_offset; draw.pixelUniformOffset = c.pixel_uniforms_offset;
     if (query) {
         check(query->begun && query->words.size() < 65536,HALO_METAL_UNSUPPORTED);
@@ -915,7 +1044,7 @@ PreparedFxaa prepare_fxaa(const Texture &source) {
         scratch = [context.device newTextureWithDescriptor:descriptor]; check(scratch != nil,HALO_METAL_MEMORY);
         context.fxaa_scratch = scratch;
     }
-    // Prepared retains older shapes until this synchronous submission completes.
+    // Prepared retains older shapes until this submission completes.
     // The context itself caches only one shape and the two accepted formats.
     return {scratch,existing->second};
 }
@@ -930,6 +1059,10 @@ void validate(const HaloMetalPacketView &packet, Prepared &prepared) {
     auto program_generations = context.program_generations;
     auto queries = context.queries;
     auto query_generations = context.query_generations;
+    auto geometry = context.geometry;
+    auto geometry_generations = context.geometry_generations;
+    UniformDefinitions uniforms; // Never survives this packet's preflight.
+    size_t geometry_bytes = context.geometry_bytes;
     auto active_query = context.active_query;
     size_t position = sizeof(header);
     for (uint32_t i = 0; i < header.command_count; i++) {
@@ -1042,13 +1175,13 @@ void validate(const HaloMetalPacketView &packet, Prepared &prepared) {
                     auto &t = resource(textures,c.source);
                     check(target(t) && (t.initialized & HALO_METAL_COLOR) && t.format == HALO_METAL_BGRA8 &&
                         context.layer.drawableSize.width == t.width && context.layer.drawableSize.height == t.height, HALO_METAL_UNSUPPORTED);
-                    break;
+                    prepared.presented = true; break;
                 }
                 case HALO_METAL_DISPLAY_SETTINGS: {
                     auto c = record<halo_metal_display_settings>(packet,position);
                     check(command.byte_size == sizeof(c) && context.layer && !c.reserved &&
                         !(c.display_flags & ~HALO_METAL_DISPLAY_VSYNC),HALO_METAL_UNSUPPORTED);
-                    break;
+                    prepared.wait_prior = true; break;
                 }
                 case HALO_METAL_PRESENT_SCALED: {
                     auto c = record<halo_metal_present_scaled>(packet,position);
@@ -1060,7 +1193,15 @@ void validate(const HaloMetalPacketView &packet, Prepared &prepared) {
                         t.format != HALO_METAL_DEPTH32_STENCIL8 &&
                         context.layer.drawableSize.width > 0 && context.layer.drawableSize.height > 0,
                         HALO_METAL_UNSUPPORTED);
+                    prepared.presented = true;
+                    prepared.wait_prior |= context.layer.displaySyncEnabled !=
+                        ((c.display_flags & HALO_METAL_DISPLAY_VSYNC) != 0);
                     break;
+                }
+                case HALO_METAL_FENCE: {
+                    check(context.async_submit_enabled && command.byte_size == sizeof(halo_metal_command) &&
+                        i + 1 == header.command_count,HALO_METAL_UNSUPPORTED);
+                    prepared.fence = true; break;
                 }
                 case HALO_METAL_CREATE_PROGRAM: {
                     auto c = record<halo_metal_program>(packet,position);
@@ -1078,12 +1219,60 @@ void validate(const HaloMetalPacketView &packet, Prepared &prepared) {
                     auto c = record<halo_metal_delete>(packet,position);
                     check(command.byte_size == sizeof(c)); program(programs,c.resource); programs.erase(c.resource.id); break;
                 }
+                case HALO_METAL_CREATE_GEOMETRY: {
+                    check(context.geometry_cache_enabled,HALO_METAL_UNSUPPORTED);
+                    auto c = record<halo_metal_create_geometry>(packet,position);
+                    check(command.byte_size >= sizeof(c) && !c.reserved[0] && !c.reserved[1] &&
+                        c.resource.id && c.resource.id <= 2048 && c.resource.generation &&
+                        c.vertex_count && c.index_count && c.vertex_bytes && geometry.size() < 2048);
+                    check(!geometry.count(c.resource.id) && c.resource.generation > geometry_generations[c.resource.id],HALO_METAL_STALE_RESOURCE);
+                    inline_range(position,command.byte_size,sizeof(c),c.vertices_offset,c.vertex_bytes,16);
+                    inline_range(position,command.byte_size,sizeof(c),c.indices_offset,uint64_t(c.index_count) * 4,16);
+                    const uint64_t bytes = uint64_t(c.vertex_bytes) + uint64_t(c.index_count) * 4;
+                    check(bytes <= 64u * 1024u * 1024u && geometry_bytes <= 64u * 1024u * 1024u - bytes,HALO_METAL_MEMORY);
+                    check(halo_metal_compact_vertices_valid(packet.data() + c.vertices_offset,c.vertex_bytes,c.vertex_count,c.packed_mask));
+                    for (uint32_t n = 0; n < c.index_count; n++) {
+                        uint32_t index; memcpy(&index,packet.data() + c.indices_offset + size_t(n) * 4,4);
+                        check(index < c.vertex_count);
+                    }
+                    auto input = HaloMetalGeometry::create(context.device,packet.data() + c.vertices_offset,c.vertex_bytes,
+                        c.vertex_count,packet.data() + c.indices_offset,c.index_count,c.packed_mask);
+                    check(bool(input),HALO_METAL_MEMORY);
+                    Geometry value{c.resource.generation,input};
+                    geometry.emplace(c.resource.id,value); geometry_bytes += input->bytes();
+                    geometry_generations[c.resource.id] = c.resource.generation;
+                    prepared.geometry.emplace(position,PreparedGeometry{value}); break;
+                }
+                case HALO_METAL_DELETE_GEOMETRY: {
+                    check(context.geometry_cache_enabled,HALO_METAL_UNSUPPORTED);
+                    auto c = record<halo_metal_delete>(packet,position);
+                    auto found = geometry.find(c.resource.id);
+                    check(command.byte_size == sizeof(c) && found != geometry.end() &&
+                        found->second.generation == c.resource.generation,HALO_METAL_STALE_RESOURCE);
+                    geometry_bytes -= found->second.input->bytes(); geometry.erase(found); break;
+                }
+                case HALO_METAL_DEFINE_UNIFORMS: {
+                    check(context.uniform_sharing_enabled,HALO_METAL_UNSUPPORTED);
+                    auto c = record<halo_metal_define_uniforms>(packet,position);
+                    check(command.byte_size >= sizeof(c) && !c.reserved &&
+                        (c.kind == HALO_METAL_UNIFORM_VERTEX || c.kind == HALO_METAL_UNIFORM_PIXEL));
+                    const uint32_t bytes = c.kind == HALO_METAL_UNIFORM_VERTEX ? HaloMetalVertexUniformSize : HaloMetalPixelUniformSize;
+                    check(c.data_size == bytes);
+                    inline_range(position,command.byte_size,sizeof(c),c.data_offset,bytes,16);
+                    validate_uniform_block(packet,c.data_offset,bytes);
+                    check(uniforms.emplace(c.data_offset,c.kind).second);
+                    break;
+                }
                 case HALO_METAL_DRAW:
                 case HALO_METAL_DRAW_ALPHA_BORDER:
                 case HALO_METAL_DRAW_VOLUME_BORDER:
-                case HALO_METAL_DRAW_COMPACT: {
+                case HALO_METAL_DRAW_COMPACT:
+                case HALO_METAL_DRAW_GEOMETRY:
+                case HALO_METAL_DRAW_UNIFORM_REFS: {
                     auto c = record<halo_metal_draw>(packet,position);
                     uint32_t mask = 0, volume_mask = 0, compact_bytes = 0;
+                    std::shared_ptr<const HaloMetalGeometry> geometry_input;
+                    uint32_t input_kind = HALO_METAL_INPUT_EXPANDED;
                     if (command.opcode == HALO_METAL_DRAW_ALPHA_BORDER) {
                         auto extended = record<halo_metal_draw_alpha_border>(packet,position);
                         check(command.byte_size >= sizeof(extended) && !extended.reserved &&
@@ -1107,9 +1296,45 @@ void validate(const HaloMetalPacketView &packet, Prepared &prepared) {
                         compact_bytes = extended.vertex_bytes;
                         volume_mask = extended.volume_stage_mask; mask = extended.alpha_stage_mask;
                     }
+                    if (command.opcode == HALO_METAL_DRAW_GEOMETRY) {
+                        check(context.geometry_cache_enabled && context.compact_vertices_enabled,HALO_METAL_UNSUPPORTED);
+                        auto extended = record<halo_metal_draw_geometry>(packet,position);
+                        auto found = geometry.find(extended.geometry.id);
+                        check(command.byte_size >= sizeof(extended) && found != geometry.end() &&
+                            found->second.generation == extended.geometry.generation,HALO_METAL_STALE_RESOURCE);
+                        check(extended.volume_stage_mask <= 15 && extended.alpha_stage_mask <= 15 &&
+                            !(extended.volume_stage_mask & extended.alpha_stage_mask));
+                        geometry_input = found->second.input;
+                        compact_bytes = geometry_input->vertexBytes();
+                        volume_mask = extended.volume_stage_mask; mask = extended.alpha_stage_mask;
+                    }
+                    if (command.opcode == HALO_METAL_DRAW_UNIFORM_REFS) {
+                        check(context.uniform_sharing_enabled,HALO_METAL_UNSUPPORTED);
+                        auto extended = record<halo_metal_draw_uniform_refs>(packet,position);
+                        check(command.byte_size >= sizeof(extended) && !extended.reserved && !extended.reserved2 &&
+                            extended.input_kind <= HALO_METAL_INPUT_GEOMETRY && extended.volume_stage_mask <= 15 &&
+                            extended.alpha_stage_mask <= 15 && !(extended.volume_stage_mask & extended.alpha_stage_mask));
+                        input_kind = extended.input_kind;
+                        volume_mask = extended.volume_stage_mask; mask = extended.alpha_stage_mask;
+                        if (input_kind == HALO_METAL_INPUT_GEOMETRY) {
+                            check(context.geometry_cache_enabled && context.compact_vertices_enabled,HALO_METAL_UNSUPPORTED);
+                            check(!extended.vertex_bytes);
+                            auto found = geometry.find(extended.geometry.id);
+                            check(found != geometry.end() && found->second.generation == extended.geometry.generation,
+                                HALO_METAL_STALE_RESOURCE);
+                            geometry_input = found->second.input; compact_bytes = geometry_input->vertexBytes();
+                        } else {
+                            check(!extended.geometry.id && !extended.geometry.generation);
+                            if (input_kind == HALO_METAL_INPUT_COMPACT) {
+                                check(context.compact_vertices_enabled,HALO_METAL_UNSUPPORTED);
+                                check(extended.vertex_bytes); compact_bytes = extended.vertex_bytes;
+                            } else check(!extended.vertex_bytes);
+                        }
+                    }
                     auto *query = active_query.id ? &visibility(queries,active_query) : nullptr;
                     prepared.draws.emplace(position,prepare_draw(packet,position,c,prepared.input_buffer,textures,programs,
-                        query,mask,volume_mask,i,compact_bytes)); break;
+                        query,mask,volume_mask,i,compact_bytes,geometry_input,
+                        command.opcode == HALO_METAL_DRAW_UNIFORM_REFS ? &uniforms : nullptr,input_kind)); break;
                 }
                 case HALO_METAL_CREATE_VISIBILITY: {
                     auto c = record<halo_metal_create_visibility>(packet,position);
@@ -1253,6 +1478,79 @@ void complete(id<MTLCommandBuffer> buffer, bool measured = false) {
         context.poisoned = true; throw Failure{HALO_METAL_GPU_ERROR,UINT32_MAX};
     }
 }
+void record_completion(id<MTLCommandBuffer> buffer,uint64_t sequence,bool presented,bool account_gpu) {
+    if (!context.metrics.enabled) return;
+    const double first = buffer.GPUStartTime, last = buffer.GPUEndTime;
+    const bool valid = std::isfinite(first) && std::isfinite(last) && first > 0 && last >= first &&
+        last < double(UINT64_MAX) / 1e9;
+    const uint64_t start = valid ? uint64_t(first * 1e9) : 0;
+    const uint64_t end = valid ? uint64_t(last * 1e9) : 0;
+    const uint64_t gpu = valid ? end - start : 0;
+    if (account_gpu && valid) { context.metrics.gpu_ns += gpu; context.metrics.gpu_samples++; }
+    host_logf(HOST_LOG_INFO,"Native Metal completion: sequence %llu, presented %u, gpu_start_ns %llu, gpu_end_ns %llu, gpu_ns %llu",
+        (unsigned long long)sequence,(unsigned)presented,(unsigned long long)start,
+        (unsigned long long)end,(unsigned long long)gpu);
+}
+void reap_pending(bool wait_oldest) {
+    while (!context.pending.empty()) {
+        auto &head = context.pending.front();
+        if (wait_oldest) {
+            const uint64_t started = metrics_start();
+            [head.command waitUntilCompleted];
+            context.metrics.completion_wait_ns += metrics_elapsed(started);
+        }
+        const auto status = head.command.status;
+        if (!wait_oldest && status != MTLCommandBufferStatusCompleted && status != MTLCommandBufferStatusError) break;
+        Pending retired = std::move(head);
+        context.pending.erase(context.pending.begin());
+        if (status != MTLCommandBufferStatusCompleted) {
+            host_logf(HOST_LOG_ERROR,"Native Metal command failure: sequence %llu: %s",
+                (unsigned long long)retired.sequence,retired.command.error.localizedDescription.UTF8String);
+            context.poisoned = true; throw Failure{HALO_METAL_GPU_ERROR,UINT32_MAX};
+        }
+        for (const auto &entry : retired.prepared.geometry) {
+            if (!entry.second.geometry.input->retireUpload(retired.command)) {
+                context.poisoned = true; throw Failure{HALO_METAL_GPU_ERROR,UINT32_MAX};
+            }
+        }
+        record_completion(retired.command,retired.sequence,retired.presented,true);
+        if (!context.poisoned) {
+            context.completed = retired.sequence;
+            warmup_learn(retired.prepared,retired.pipelines,&retired.warmup_keys);
+        }
+        // Only the oldest entry needs a blocking wait. Any following already
+        // completed entries can retire now without widening this boundary.
+        wait_oldest = false;
+    }
+}
+void drain_pending() {
+    while (!context.pending.empty()) reap_pending(true);
+    check(!context.poisoned,HALO_METAL_GPU_ERROR);
+}
+void drain_pending_through(uint64_t sequence) {
+    check(!context.poisoned,HALO_METAL_GPU_ERROR);
+    check(sequence && sequence <= context.submitted,HALO_METAL_UNDEFINED_CONTENT);
+    reap_pending();
+    // Visibility words become readable after their END packet completes.
+    // Later accepted drawing may keep running; a CPU query must not turn its
+    // narrower completion boundary into a wait for the rest of that frame.
+    while (context.completed < sequence) {
+        check(!context.pending.empty() && context.pending.front().sequence <= sequence,
+            HALO_METAL_UNDEFINED_CONTENT);
+        reap_pending(true);
+    }
+    // reap_pending may also retire later work that has already completed, but
+    // it blocks only on the selected oldest packet, never on a later one.
+    check(!context.poisoned,HALO_METAL_GPU_ERROR);
+}
+void drain_pending_shutdown() noexcept {
+    // Poison stops new work, but must not abandon a later accepted command or
+    // its resources while destroying the device/layer. Retire every entry.
+    while (!context.pending.empty()) {
+        try { reap_pending(true); }
+        catch (...) { context.poisoned = true; }
+    }
+}
 void upload(id<MTLCommandBuffer> buffer, const HaloMetalPacketView &packet, halo_metal_upload_ex c, Texture &texture) {
     NSUInteger tight = c.width * (c.plane == HALO_METAL_STENCIL ? 1u : 4u), rows = c.height;
     if (compressed(texture.format)) { tight = ((c.width + 3) / 4) * block_bytes(texture.format); rows = (c.height + 3) / 4; }
@@ -1350,7 +1648,7 @@ void fxaa(id<MTLCommandBuffer> buffer, Texture &source, const halo_metal_fxaa &c
     [encoder endEncoding];
     initialized(source,HALO_METAL_COLOR,false);
 }
-void execute(const HaloMetalPacketView &packet, const Prepared &prepared) {
+void execute(const HaloMetalPacketView &packet, Prepared &prepared) {
     // A failed packet must close its retained draw pass before command-buffer
     // ownership is released. Normal execution closes it before every boundary.
     struct DrawPassScope {
@@ -1358,6 +1656,7 @@ void execute(const HaloMetalPacketView &packet, const Prepared &prepared) {
         ~DrawPassScope() { [encoder endEncoding]; }
     } draw_scope{context.draw_encoder};
     auto header = record<halo_metal_packet>(packet,0);
+    if (context.async_submit_enabled && prepared.wait_prior) drain_pending();
     auto buffer = [context.queue commandBuffer]; check(buffer != nil,HALO_METAL_GPU_ERROR);
     buffer.label = [NSString stringWithFormat:@"Halo guest native frame %llu",header.frame_sequence];
     const uint64_t drawable_before = context.metrics.drawable_wait_ns;
@@ -1370,9 +1669,13 @@ void execute(const HaloMetalPacketView &packet, const Prepared &prepared) {
         // clears, copies, queries, resource changes and presentation in their
         // exact original order with a completed attachment store boundary.
         if (command.opcode != HALO_METAL_DRAW && command.opcode != HALO_METAL_DRAW_ALPHA_BORDER &&
-            command.opcode != HALO_METAL_DRAW_VOLUME_BORDER && command.opcode != HALO_METAL_DRAW_COMPACT)
+            command.opcode != HALO_METAL_DRAW_VOLUME_BORDER && command.opcode != HALO_METAL_DRAW_COMPACT &&
+            command.opcode != HALO_METAL_DRAW_GEOMETRY && command.opcode != HALO_METAL_DRAW_UNIFORM_REFS &&
+            command.opcode != HALO_METAL_DEFINE_UNIFORMS)
             [context.draw_encoder endEncoding];
         switch (command.opcode) {
+            case HALO_METAL_DEFINE_UNIFORMS: break; // Typed immutable CPU metadata; no GPU or attachment boundary.
+            case HALO_METAL_FENCE: break; // The packet's final completion boundary is below.
             case HALO_METAL_CREATE_TEXTURE:
             case HALO_METAL_CREATE_TEXTURE_EX: {
                 auto c = record<halo_metal_delete>(packet,position);
@@ -1456,10 +1759,26 @@ void execute(const HaloMetalPacketView &packet, const Prepared &prepared) {
                 remove_unused_program_pipelines(p,c.resource.id);
                 context.programs.erase(c.resource.id); break;
             }
+            case HALO_METAL_CREATE_GEOMETRY: {
+                auto c = record<halo_metal_create_geometry>(packet,position);
+                const auto &geometry = prepared.geometry.at(position).geometry;
+                check(geometry.input->upload(buffer),HALO_METAL_GPU_ERROR,i);
+                context.geometry.emplace(c.resource.id,geometry);
+                context.geometry_generations[c.resource.id] = c.resource.generation;
+                context.geometry_bytes += geometry.input->bytes(); break;
+            }
+            case HALO_METAL_DELETE_GEOMETRY: {
+                auto c = record<halo_metal_delete>(packet,position);
+                auto found = context.geometry.find(c.resource.id);
+                check(found != context.geometry.end() && found->second.generation == c.resource.generation,HALO_METAL_STALE_RESOURCE,i);
+                context.geometry_bytes -= found->second.input->bytes(); context.geometry.erase(found); break;
+            }
             case HALO_METAL_DRAW:
             case HALO_METAL_DRAW_ALPHA_BORDER:
             case HALO_METAL_DRAW_VOLUME_BORDER:
-            case HALO_METAL_DRAW_COMPACT: {
+            case HALO_METAL_DRAW_COMPACT:
+            case HALO_METAL_DRAW_GEOMETRY:
+            case HALO_METAL_DRAW_UNIFORM_REFS: {
                 auto c = record<halo_metal_draw>(packet,position); NSError *error = nil;
                 const auto &draw = prepared.draws.at(position);
                 check([context.draw_encoder encodeDraw:draw commandBuffer:buffer reusePass:YES error:&error],HALO_METAL_GPU_ERROR,i);
@@ -1497,7 +1816,28 @@ void execute(const HaloMetalPacketView &packet, const Prepared &prepared) {
     const uint64_t elapsed = metrics_elapsed(encode_started);
     const uint64_t drawable_elapsed = context.metrics.drawable_wait_ns - drawable_before;
     if (context.metrics.enabled) context.metrics.encode_ns += elapsed >= drawable_elapsed ? elapsed - drawable_elapsed : 0;
-    context.submitted = header.frame_sequence; complete(buffer,true); context.completed = header.frame_sequence;
+    auto pipelines = [context.draw_encoder takeCreatedPipelines];
+    if (!context.async_submit_enabled) {
+        context.submitted = header.frame_sequence; complete(buffer,true); context.completed = header.frame_sequence;
+        for (const auto &entry : prepared.geometry)
+            check(entry.second.geometry.input->retireUpload(buffer),HALO_METAL_GPU_ERROR);
+        record_completion(buffer,header.frame_sequence,prepared.presented,false);
+        warmup_learn(prepared,pipelines);
+    } else {
+        const bool fence = prepared.fence;
+        const bool presented = prepared.presented;
+        auto keys = capture_warmup_keys(prepared,pipelines);
+        check(context.pending.size() < AsyncPacketLimit && pending_present_count() < AsyncPresentLimit,
+            HALO_METAL_MEMORY);
+        // Reserve/retain before commit: allocation failure cannot lose a live
+        // command's ownership. Metal also retains every encoded resource.
+        context.pending.push_back(Pending{buffer,std::move(prepared),std::move(pipelines),std::move(keys),header.frame_sequence,
+            presented});
+        context.submitted = header.frame_sequence;
+        const uint64_t started = metrics_start(); [buffer commit];
+        context.metrics.commit_ns += metrics_elapsed(started);
+        if (fence) drain_pending(); else reap_pending();
+    }
 }
 }
 
@@ -1506,7 +1846,8 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
         try {
             validate_reply(output,size);
             check(!context.device && !(flags & ~(HALO_METAL_OFFSCREEN | HALO_METAL_ENABLE_FXAA |
-                HALO_METAL_ENABLE_COMPACT_VERTICES)) &&
+                HALO_METAL_ENABLE_COMPACT_VERTICES | HALO_METAL_ENABLE_ASYNC_SUBMIT |
+                HALO_METAL_ENABLE_GEOMETRY_CACHE | HALO_METAL_ENABLE_CACHE_BINDINGS | HALO_METAL_ENABLE_UNIFORM_SHARING)) &&
                 ((flags & HALO_METAL_OFFSCREEN) ? !window : window != 0));
             auto device = MTLCreateSystemDefaultDevice(); check(device != nil,HALO_METAL_GPU_ERROR);
             CAMetalLayer *layer = nil;
@@ -1535,12 +1876,20 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
             context.draw_encoder = draw_encoder;
             context.fxaa_library = fxaa_library; context.fxaa_enabled = (flags & HALO_METAL_ENABLE_FXAA) != 0;
             context.compact_vertices_enabled = (flags & HALO_METAL_ENABLE_COMPACT_VERTICES) != 0;
+            context.geometry_cache_enabled = (flags & HALO_METAL_ENABLE_GEOMETRY_CACHE) != 0;
+            context.async_submit_enabled = (flags & HALO_METAL_ENABLE_ASYNC_SUBMIT) != 0;
+            context.cache_bindings_enabled = (flags & HALO_METAL_ENABLE_CACHE_BINDINGS) != 0;
+            context.uniform_sharing_enabled = (flags & HALO_METAL_ENABLE_UNIFORM_SHARING) != 0;
+            context.draw_encoder.cacheBindingsEnabled = context.cache_bindings_enabled;
+            if (context.async_submit_enabled) context.pending.reserve(AsyncPacketLimit);
             context.fxaa_pipelines = std::move(fxaa_pipelines);
             // Reuse the existing gpu_stats environment override. Config-only
             // diagnostics can request this same established override in their
             // isolated launch environment; no ABI or application setting is added.
             context.metrics.enabled = getenv("HALO_GPU_STATS") != nullptr;
             context.draw_encoder.diagnosticsEnabled = context.metrics.enabled;
+            if (context.metrics.enabled) host_logf(HOST_LOG_INFO,"Native Metal submission mode: %s",
+                context.async_submit_enabled ? "async":"synchronous");
             if (layer) { layer.device = device; layer.pixelFormat = MTLPixelFormatBGRA8Unorm; layer.framebufferOnly = NO; }
             // host_main publishes this established, canonical per-app saves
             // root before guest startup. Headless fixtures skip persistence.
@@ -1550,11 +1899,14 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
                 if (root.length) context.warmup_path = [root stringByAppendingPathComponent:@"Cache/MetalWarmup-v1.bin"];
                 warmup_initialize();
                 context.draw_encoder.warmupLearningEnabled = context.warmup_path != nil;
-                static bool exit_registered = false;
-                if (!exit_registered && std::atexit([] {
-                    @autoreleasepool { std::lock_guard<std::mutex> guard(lock); warmup_save(); }
-                }) == 0) exit_registered = true;
             }
+            static bool exit_registered = false;
+            if (!exit_registered && std::atexit([] {
+                @autoreleasepool {
+                    std::lock_guard<std::mutex> guard(lock);
+                    drain_pending_shutdown(); warmup_save();
+                }
+            }) == 0) exit_registered = true;
             host_logf(HOST_LOG_INFO,"Native Metal guest command interface: %s",device.name.UTF8String);
             return reply(output,size,HALO_METAL_OK);
         } catch (Failure f) { return reply(output,size,f.status,f.index); }
@@ -1575,18 +1927,20 @@ extern "C" int host_metal_submit(uint32_t input,uint32_t bytes,uint32_t output,u
             const uint64_t packet_started = metrics_start();
             uint64_t started = packet_started;
             prepared.input_buffer = packet_input_buffer(bytes);
+            // Keep an independent reference through reply/diagnostic reads if
+            // an exact-sized async packet retires before this call returns.
+            id<MTLBuffer> __attribute__((objc_precise_lifetime)) input_buffer = prepared.input_buffer;
             check(copy_guest(input,prepared.input_buffer.contents,bytes),HALO_METAL_MEMORY);
             // Keep the current wire extent distinct from retained capacity.
             // This is the only guest packet copy; preflight and GPU draws use
-            // the same owned bytes under the existing synchronous host lock.
-            const HaloMetalPacketView packet(prepared.input_buffer.contents,bytes);
+            // the same owned bytes; async retirement owns them after return.
+            const HaloMetalPacketView packet(input_buffer.contents,bytes);
             context.metrics.packet_copy_ns += metrics_elapsed(started);
             started = metrics_start(); validate(packet,prepared);
             for (const auto &entry : prepared.compiled_functions.entries())
                 context.compiled_functions.insert(entry.first,entry.second);
             context.metrics.prepare_ns += metrics_elapsed(started);
             executing = true; execute(packet,prepared);
-            warmup_learn(prepared);
             if (context.metrics.enabled) {
                 const uint64_t ended = metrics_start();
                 const auto header = record<halo_metal_packet>(packet,0);
@@ -1606,7 +1960,7 @@ extern "C" int host_metal_submit(uint32_t input,uint32_t bytes,uint32_t output,u
                     (unsigned long long)(after.drawable_wait_ns-before.drawable_wait_ns),
                     (unsigned long long)(after.commit_ns-before.commit_ns),
                     (unsigned long long)(after.completion_wait_ns-before.completion_wait_ns),
-                    (unsigned long long)(after.gpu_ns-before.gpu_ns),
+                    (unsigned long long)(context.async_submit_enabled ? 0 : after.gpu_ns-before.gpu_ns),
                     (unsigned long long)(after.shader_compile_misses-before.shader_compile_misses),
                     (unsigned long long)(after.shader_compile_ns-before.shader_compile_ns),
                     (unsigned long long)(context.draw_encoder.pipelineCreationCount-pipelines_before),
@@ -1638,8 +1992,10 @@ extern "C" int host_metal_readback(uint32_t id,uint32_t generation,uint32_t plan
             validate_reply(output,size); check(context.device != nil,HALO_METAL_NOT_INITIALIZED); check(!context.poisoned,HALO_METAL_GPU_ERROR);
             if (plane == HALO_METAL_VISIBILITY) {
                 auto &query = visibility(context.queries,{id,generation});
-                check(query.ended && !query.begun && context.completed >= query.end_sequence,HALO_METAL_UNDEFINED_CONTENT);
+                check(query.ended && !query.begun,HALO_METAL_UNDEFINED_CONTENT);
                 check(bytes == sizeof(uint64_t) && guest_range(destination,bytes),HALO_METAL_MEMORY);
+                if (context.async_submit_enabled) drain_pending_through(query.end_sequence);
+                check(context.completed >= query.end_sequence,HALO_METAL_UNDEFINED_CONTENT);
                 uint64_t result = 0;
                 for (const auto &word : query.words) {
                     uint64_t value; memcpy(&value,word.contents,sizeof(value));
@@ -1656,6 +2012,7 @@ extern "C" int host_metal_readback(uint32_t id,uint32_t generation,uint32_t plan
             check(t.initialized & plane,HALO_METAL_UNDEFINED_CONTENT);
             NSUInteger pixel = plane == HALO_METAL_STENCIL ? 1 : 4, tight = t.width * pixel, row = (tight + 255) & ~NSUInteger(255);
             check(bytes == tight * t.height && guest_range(destination,bytes),HALO_METAL_MEMORY);
+            if (context.async_submit_enabled) drain_pending();
             auto staging = [context.device newBufferWithLength:row * t.height options:MTLResourceStorageModeShared]; check(staging != nil,HALO_METAL_GPU_ERROR);
             auto command = [context.queue commandBuffer]; auto blit = [command blitCommandEncoder];
             check(command && blit,HALO_METAL_GPU_ERROR);
@@ -1674,6 +2031,7 @@ extern "C" int host_metal_readback(uint32_t id,uint32_t generation,uint32_t plan
 }
 extern "C" void host_metal_shutdown(void) {
     @autoreleasepool { std::lock_guard<std::mutex> guard(lock);
+        drain_pending_shutdown();
         warmup_save();
         bool owned_view = context.layer != nil; context = Context{};
         if (owned_view) host_sdl_native_metal_release();

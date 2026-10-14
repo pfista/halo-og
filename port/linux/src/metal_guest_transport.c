@@ -7,7 +7,8 @@ _Static_assert(sizeof(void *) == 4, "Native transport runs in the ILP32 guest");
     HALO_METAL_CAP_DRAW | HALO_METAL_CAP_VISIBILITY | HALO_METAL_CAP_PRESENT_SCALED | \
     HALO_METAL_CAP_CLEAR_CHANNELS | HALO_METAL_CAP_BLACK_BORDER | HALO_METAL_CAP_ALPHA_BORDER | \
     HALO_METAL_CAP_COPY_SUBRESOURCE | HALO_METAL_CAP_VOLUME | HALO_METAL_CAP_VOLUME_BORDER | HALO_METAL_CAP_FXAA | \
-    HALO_METAL_CAP_COMPACT_VERTICES)
+    HALO_METAL_CAP_COMPACT_VERTICES | HALO_METAL_CAP_GEOMETRY_CACHE | \
+    HALO_METAL_CAP_ASYNC_SUBMIT | HALO_METAL_CAP_CACHE_BINDINGS | HALO_METAL_CAP_UNIFORM_SHARING)
 
 static void zero_bytes(void *pointer, uint32_t size) {
     unsigned char *p = pointer;
@@ -49,6 +50,13 @@ static uint32_t command_capability(uint32_t opcode) {
         case HALO_METAL_DRAW_ALPHA_BORDER: return HALO_METAL_CAP_DRAW | HALO_METAL_CAP_ALPHA_BORDER;
         case HALO_METAL_DRAW_VOLUME_BORDER: return HALO_METAL_CAP_DRAW | HALO_METAL_CAP_VOLUME | HALO_METAL_CAP_VOLUME_BORDER;
         case HALO_METAL_DRAW_COMPACT: return HALO_METAL_CAP_DRAW | HALO_METAL_CAP_COMPACT_VERTICES;
+        case HALO_METAL_CREATE_GEOMETRY: case HALO_METAL_DELETE_GEOMETRY:
+            return HALO_METAL_CAP_GEOMETRY_CACHE;
+        case HALO_METAL_DRAW_GEOMETRY:
+            return HALO_METAL_CAP_DRAW | HALO_METAL_CAP_COMPACT_VERTICES | HALO_METAL_CAP_GEOMETRY_CACHE;
+        case HALO_METAL_DEFINE_UNIFORMS: return HALO_METAL_CAP_UNIFORM_SHARING;
+        case HALO_METAL_DRAW_UNIFORM_REFS: return HALO_METAL_CAP_DRAW | HALO_METAL_CAP_UNIFORM_SHARING;
+        case HALO_METAL_FENCE: return HALO_METAL_CAP_ASYNC_SUBMIT;
         case HALO_METAL_CREATE_VISIBILITY: case HALO_METAL_DELETE_VISIBILITY:
         case HALO_METAL_BEGIN_VISIBILITY: case HALO_METAL_END_VISIBILITY: return HALO_METAL_CAP_VISIBILITY;
         default: return 0;
@@ -114,7 +122,9 @@ int halo_metal_guest_initialize(struct halo_metal_guest_transport *t, uint32_t w
                                uint32_t flags, uint32_t required) {
     if (!storage_valid(t)) return fail(t, HALO_METAL_INVALID, "invalid native packet storage");
     if (t->initialized) return fail(t, HALO_METAL_INVALID, "native transport already owns a host context");
-    if ((flags & ~(HALO_METAL_OFFSCREEN | HALO_METAL_ENABLE_FXAA | HALO_METAL_ENABLE_COMPACT_VERTICES)) ||
+    if ((flags & ~(HALO_METAL_OFFSCREEN | HALO_METAL_ENABLE_FXAA | HALO_METAL_ENABLE_COMPACT_VERTICES |
+        HALO_METAL_ENABLE_GEOMETRY_CACHE | HALO_METAL_ENABLE_ASYNC_SUBMIT | HALO_METAL_ENABLE_CACHE_BINDINGS |
+        HALO_METAL_ENABLE_UNIFORM_SHARING)) ||
         ((flags & HALO_METAL_OFFSCREEN) ? window != 0 : window == 0))
         return fail(t, HALO_METAL_INVALID, "native window handle and offscreen flag disagree");
     if (required & ~ALL_CAPABILITIES) return fail(t, HALO_METAL_UNSUPPORTED, "unknown required native capability");

@@ -8,6 +8,7 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #include "../include/halo_metal_abi.h"
+#include "metal_geometry.h"
 #include <vector>
 
 #if !defined(__cplusplus)
@@ -32,6 +33,9 @@ struct HaloMetalDraw {
     NSUInteger vertexCount = 0, indexCount = 0;
     bool compactVertices = false;
     NSUInteger vertexBytes = 0;
+    /* A factory-validated snapshot in private buffers. Direct callers without
+     * this proof still receive the complete compact/index content checks. */
+    std::shared_ptr<const HaloMetalGeometry> geometry;
     /* Active queries only. The caller owns a zeroed, fresh 8-byte result word
      * for each draw/encoder and aggregates words after GPU completion. There
      * is no implicit accumulation or CPU result-availability policy here. */
@@ -68,7 +72,7 @@ typedef NS_ENUM(NSInteger, HaloMetalDrawError) {
      commandBuffer:(id<MTLCommandBuffer>)commandBuffer error:(NSError **)error;
 /* Optional reuse is restricted to consecutive non-query, blend-disabled draws on the same
  * command buffer and exact attachment objects. Every original draw state is
- * still rebound. Blended draws preserve their original per-draw LOAD/STORE
+ * still validated. Blended draws preserve their original per-draw LOAD/STORE
  * rounding boundary. The caller must endEncoding before other GPU operations,
  * resource mutations, command-buffer submission or abandoning a packet.
  * The original encodeDraw overload always closes its pass before returning. */
@@ -77,6 +81,15 @@ typedef NS_ENUM(NSInteger, HaloMetalDrawError) {
 - (void)endEncoding;
 /* Cumulative successfully created draw passes, including isolated queries. */
 @property(nonatomic, readonly) NSUInteger renderPassCount;
+/* Defaults off. Suppresses exactly equal state/resource setters only within
+ * the same live, reusable render encoder. Every pass boundary invalidates it;
+ * buffer offsets and floating-point state bits are part of the comparison. */
+@property(nonatomic) BOOL cacheBindingsEnabled;
+/* Cumulative setter/skip counts while diagnosticsEnabled is on. Visibility
+ * setters remain isolated and are always submitted. Disabling diagnostics or
+ * clearing caches preserves the counters. */
+@property(nonatomic, readonly) NSUInteger bindingSetCount;
+@property(nonatomic, readonly) NSUInteger bindingSkipCount;
 /* Defaults off. Counters cover only synchronous pipeline creation attempts
  * while enabled, including failed attempts; cache hits do no timing work.
  * Disabling diagnostics or clearing caches preserves cumulative counters. */

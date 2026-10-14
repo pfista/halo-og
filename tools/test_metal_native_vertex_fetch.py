@@ -107,6 +107,8 @@ class VertexFetchTests(unittest.TestCase):
             C.c_uint32,C.c_uint32,C.POINTER(C.c_size_t)]
         cls.lib.metal_vertex_compact_pack.argtypes = [C.POINTER(Declaration),C.POINTER(Stream),C.c_void_p,
             C.c_uint32,C.c_uint32,C.c_void_p,C.c_size_t]
+        cls.lib.metal_vertex_compact_matches.argtypes = cls.lib.metal_vertex_compact_pack.argtypes
+        cls.lib.metal_vertex_bytes_equal.argtypes = [C.c_void_p,C.c_void_p,C.c_size_t]
         for name in ('metal_vertex_index_plan','metal_vertex_indices'):
             getattr(cls.lib,name).argtypes = [C.c_uint32,C.c_void_p,C.c_size_t,C.c_uint32,C.c_uint32,C.c_uint32] + \
                 ([C.c_void_p,C.c_size_t,C.POINTER(Plan)] if name.endswith('indices') else [C.POINTER(Plan)])
@@ -190,6 +192,73 @@ class VertexFetchTests(unittest.TestCase):
         if status:
             self.assertEqual(output.raw,b'\xa7'*(size.value+32))
         return status,output.raw[1:1+size.value]
+
+    def test_byte_equality_unaligned_blocks_and_every_mutation(self):
+        # Independent byte oracle across both sides of wide-load boundaries.
+        # Each possible differing byte must reject reuse, including the tail.
+        lengths = list(range(66)) + [95,96,97,127,128,129]
+        self.assertEqual(self.lib.metal_vertex_bytes_equal(None,None,0),1)
+        for length in lengths:
+            expected = bytes((i * 37 + 19) & 255 for i in range(length))
+            for left_offset,right_offset in [(0,0),(1,3),(3,7),(7,1)]:
+                left = C.create_string_buffer(b'x' * left_offset + expected + b'y',left_offset + length + 1)
+                right = C.create_string_buffer(b'a' * right_offset + expected + b'b',right_offset + length + 1)
+                a,b = C.addressof(left) + left_offset,C.addressof(right) + right_offset
+                self.assertEqual(self.lib.metal_vertex_bytes_equal(a,b,length),1)
+                for changed in range(length):
+                    actual = bytearray(expected); actual[changed] ^= 0x80
+                    right[right_offset + changed] = bytes([actual[changed]])
+                    self.assertEqual(self.lib.metal_vertex_bytes_equal(a,b,length),int(expected == bytes(actual)),
+                        (length,left_offset,right_offset,changed))
+                    right[right_offset + changed] = bytes([expected[changed]])
+                self.assertEqual(left.raw,b'x' * left_offset + expected + b'y')
+                self.assertEqual(right.raw,b'a' * right_offset + expected + b'b')
+        self.assertEqual(self.lib.metal_vertex_bytes_equal(None,1,1),0)
+        self.assertEqual(self.lib.metal_vertex_bytes_equal(1,None,1),0)
+        self.assertEqual(self.lib.metal_vertex_bytes_equal(C.c_void_p(-1),1,2),0)
+
+    def test_compact_reuse_detects_same_frame_source_and_metadata_changes(self):
+        # Prevent address/frame-only reuse from silently keeping old geometry
+        # after a second draw changes source bytes, stride or fixed registers.
+        d = declaration([(0,0,0x22,1),(3,1,0x16,0)])
+        source = C.create_string_buffer(bytes(range(64)),64)
+        packed = C.create_string_buffer(struct.pack('<I',0xffffffff),4)
+        fixed = C.create_string_buffer(struct.pack('<64f',*range(64)),256)
+        streams = (Stream*16)()
+        streams[0] = Stream(C.addressof(source),64,12)
+        streams[1] = Stream(C.addressof(packed),4,0)
+        size = C.c_size_t()
+        self.assertEqual(self.lib.metal_vertex_compact_size(C.byref(d),streams,1,2,C.byref(size)),OK)
+        snapshot = C.create_string_buffer(size.value)
+        self.assertEqual(self.lib.metal_vertex_compact_pack(C.byref(d),streams,fixed,1,2,snapshot,size.value),OK)
+        saved = snapshot.raw
+        def matches():
+            result = self.lib.metal_vertex_compact_matches(C.byref(d),streams,fixed,1,2,snapshot,size.value)
+            self.assertEqual(snapshot.raw,saved)
+            return result
+        self.assertEqual(matches(),1)
+        source[13] = b'\x80'
+        self.assertEqual(matches(),0)
+        source[13] = bytes([13])
+        self.assertEqual(matches(),1)
+        source[0] = b'\x80'  # Outside the selected original input span.
+        self.assertEqual(matches(),1)
+        packed[0] = b'\xfe'  # Packed bits, including float NaNs, are compared raw.
+        self.assertEqual(matches(),0)
+        packed[0] = b'\xff'
+        fixed[16] = b'\x01'  # A disabled nonpacked register.
+        self.assertEqual(matches(),0)
+        fixed[16] = b'\x00'
+        fixed[48] = b'\x01'  # Packed fixed fallback remains literal integer zero.
+        self.assertEqual(matches(),1)
+        streams[0].stride = 13
+        self.assertEqual(matches(),0)
+        streams[0].stride = 12
+        d.elements[0].reg = 1
+        self.assertEqual(matches(),0)
+        d.elements[0].reg = 0
+        streams[0].byte_count = 20
+        self.assertEqual(matches(),BOUNDS)
 
     def fetch_compact_with_cpu_reference(self,payload):
         # Execute the existing CPU decoder over the compact descriptor ranges.
@@ -470,7 +539,14 @@ class VertexFetchTests(unittest.TestCase):
             's[0].byte_count++; free(storage); } free(input); }\n'
             '{struct metal_vertex_index_plan p; unsigned char *input=malloc(1), output[12];\n'
             'assert(metal_vertex_indices(5,(const uint16_t*)input,1,3,0,0,output,12,&p)==METAL_VERTEX_BOUNDS);\n'
-            'free(input);}\nreturn 0;}\n')
+            'free(input);}\n'
+            'for(i=0;i<=129;i++)for(j=0;j<4;j++){\n'
+            'unsigned a_offset=offsets[j],b_offset=offsets[(j+1)%4],n;\n'
+            'unsigned char *a=malloc(i+a_offset),*b=malloc(i+b_offset);assert(a&&b);\n'
+            'for(n=0;n<i;n++)a[a_offset+n]=b[b_offset+n]=(unsigned char)(n*37+19);\n'
+            'assert(metal_vertex_bytes_equal(a+a_offset,b+b_offset,i)==1);\n'
+            'if(i){b[b_offset+i-1]^=0x80;assert(metal_vertex_bytes_equal(a+a_offset,b+b_offset,i)==0);}\n'
+            'free(a);free(b);}\nreturn 0;}\n')
         executable = self.directory/'sanitizers'
         subprocess.run(['clang','-std=c11','-O1','-g','-Wall','-Wextra','-Werror',
             '-DHALO_MACOS_NATIVE_METAL=1','-fsanitize=address,undefined','-fno-omit-frame-pointer',

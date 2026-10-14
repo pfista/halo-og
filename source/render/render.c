@@ -89,6 +89,7 @@ symbols in this file:
 #include "main/main.h"
 #include "cutscene/cinematics.h"
 #include "structures/structures.h"
+#include "../../port/linux/src/metal_frame_timing.h"
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "render/teammate_view.h"
 #endif
@@ -385,6 +386,7 @@ static void render_window(
 		structure_render_preprocess();
 		structure_render_lightmaps();
 		rasterizer_lens_flares_submit_occlusion_tests();
+		halo_metal_visibility_checkpoint();
 		render_object_shadows();
 		lights_render_diffuse();
 

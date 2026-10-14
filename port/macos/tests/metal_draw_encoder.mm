@@ -42,7 +42,8 @@ static void append(std::vector<uint8_t> &result, const std::vector<uint8_t> &byt
     result.insert(result.end(),bytes.begin(),bytes.end());
 }
 int main(int argc, const char **argv) { @autoreleasepool {
-    const bool reuse = argc > 1 && !strcmp(argv[1],"reuse");
+    const bool cached = argc > 1 && !strcmp(argv[1],"cached");
+    const bool reuse = cached || (argc > 1 && !strcmp(argv[1],"reuse"));
     require(argc <= 3 && (argc < 2 || reuse || !strcmp(argv[1],"isolated")), @"Invalid test mode");
     std::vector<uint8_t> checkpoints;
     id<MTLDevice> device = MTLCreateSystemDefaultDevice(); require(device != nil, @"No Metal device");
@@ -128,6 +129,9 @@ fragment float4 unsupportedTextureFragment(texture2d<float> t [[texture(4)]], sa
     s.viewport[2] = s.viewport[3] = 16; s.viewport[5] = 1;
     s.scissor[0] = s.scissor[1] = 4; s.scissor[2] = s.scissor[3] = 8;
     HaloMetalDrawEncoder *encoder = [[HaloMetalDrawEncoder alloc] initWithDevice:device];
+    require(!encoder.cacheBindingsEnabled && !encoder.bindingSetCount && !encoder.bindingSkipCount,
+            @"Binding cache or counters did not default to off and zero");
+    encoder.cacheBindingsEnabled = cached;
     require(!encoder.diagnosticsEnabled && encoder.pipelineCreationCount == 0 && encoder.pipelineCreationNanoseconds == 0,
             @"Pipeline diagnostics did not default to disabled and zero");
     require([encoder prepareDraw:draw error:&error], error.localizedDescription ?: @"First draw preparation failed");
@@ -155,7 +159,10 @@ fragment float4 unsupportedTextureFragment(texture2d<float> t [[texture(4)]], sa
     farther.pixelUniforms = uniforms(device, HaloMetalPixelUniformSize, green);
     id<MTLCommandBuffer> command = [queue commandBuffer];
     require(encode(encoder,draw,command,reuse,&error), error.localizedDescription ?: @"First draw encoding failed");
+    const NSUInteger firstSets = encoder.bindingSetCount;
     require(encode(encoder,farther,command,reuse,&error), error.localizedDescription ?: @"Second draw encoding failed");
+    require(encoder.bindingSetCount > firstSets && (cached ? encoder.bindingSkipCount > 0 : encoder.bindingSkipCount == 0),
+            @"Changing uniforms were skipped or equal bindings did not use the selected cache mode");
     [encoder endEncoding];
     require(encoder.renderPassCount == (reuse ? 1u : 2u), @"Consecutive compatible draws did not use the expected number of passes");
     complete(command);
@@ -360,6 +367,139 @@ fragment float4 unsupportedTextureFragment(texture2d<float> t [[texture(4)]], sa
     for (uint8_t value : alternateBytes) require(value == 0, @"Fractional blending changed isolated UNorm rounding");
     append(checkpoints,alternateBytes);
 
+    // ONE/ZERO/ADD replaces only the enabled channels. Keep fractional values
+    // in BGRA8 while changing masks, coverage, depth and stencil state in one
+    // compatible run; the last successful writer supplies each final channel.
+    description = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:16 height:16 mipmapped:NO];
+    description.storageMode = MTLStorageModeShared;
+    description.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+    id<MTLTexture> replacementColor = [device newTextureWithDescriptor:description];
+    description.pixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+    description.storageMode = MTLStorageModePrivate; description.usage = MTLTextureUsageRenderTarget;
+    id<MTLTexture> replacementDepth = [device newTextureWithDescriptor:description];
+    require(replacementColor && replacementDepth, @"Replacement blend attachments failed");
+    std::vector<uint8_t> replacementBytes(16*16*4);
+    for (size_t i=0;i<256;i++) {
+        replacementBytes[i*4]=31;replacementBytes[i*4+1]=63;
+        replacementBytes[i*4+2]=127;replacementBytes[i*4+3]=191;
+    }
+    [replacementColor replaceRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0 withBytes:replacementBytes.data() bytesPerRow:64];
+    command = [queue commandBuffer]; pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    pass.depthAttachment.texture = pass.stencilAttachment.texture = replacementDepth;
+    pass.depthAttachment.loadAction = pass.stencilAttachment.loadAction = MTLLoadActionClear;
+    pass.depthAttachment.storeAction = pass.stencilAttachment.storeAction = MTLStoreActionStore;
+    pass.depthAttachment.clearDepth = 1; pass.stencilAttachment.clearStencil = 3;
+    [[command renderCommandEncoderWithDescriptor:pass] endEncoding];
+    HaloMetalDraw replacement = draw;
+    replacement.color = replacementColor;replacement.depthStencil = replacementDepth;
+    replacement.state.color_write_mask = 15;replacement.state.blend_enabled = 1;
+    replacement.state.blend_source = 2;replacement.state.blend_destination = replacement.state.blend_operation = 1;
+    replacement.state.scissor[0] = replacement.state.scissor[1] = 0;
+    replacement.state.scissor[2] = replacement.state.scissor[3] = 12;
+    const float halfZ[4]={0,0,.5f,0}, eighthZ[4]={0,0,.125f,0};
+    const float replaceFirst[4]={17.49f/255,43.51f/255,97.49f/255,149.51f/255};
+    const float replaceOverlap[4]={.19f,.73f,.41f,.37f};
+    const float replaceRejected[4]={205.51f/255,33.49f/255,121.51f/255,9.49f/255};
+    const float replaceDisjoint[4]={.91f,.27f,.63f,.49f};
+    const float replaceAlpha[4]={63.51f/255,91.49f/255,11.49f/255,209.51f/255};
+    replacement.vertexUniforms = uniforms(device,HaloMetalVertexUniformSize,halfZ);
+    replacement.pixelUniforms = uniforms(device,HaloMetalPixelUniformSize,replaceFirst);
+    boundaryPasses = encoder.renderPassCount;
+    require(encode(encoder,replacement,command,reuse,&error), @"Fractional replacement blend failed");
+    HaloMetalDraw overlap = replacement;
+    overlap.state.color_write_mask = 3;overlap.state.scissor[0] = overlap.state.scissor[1] = 4;
+    overlap.state.stencil_compare = 3;overlap.state.stencil_fail = 3;overlap.state.stencil_pass = 4;
+    overlap.vertexUniforms = draw.vertexUniforms;
+    overlap.pixelUniforms = uniforms(device,HaloMetalPixelUniformSize,replaceOverlap);
+    require(encode(encoder,overlap,command,reuse,&error), @"Overlapping masked replacement blend failed");
+    HaloMetalDraw depthRejected = replacement;
+    depthRejected.state.scissor[2] = depthRejected.state.scissor[3] = 4;
+    depthRejected.state.stencil_compare = 3;depthRejected.state.stencil_depth_fail = 6;
+    depthRejected.vertexUniforms = farther.vertexUniforms;
+    depthRejected.pixelUniforms = uniforms(device,HaloMetalPixelUniformSize,replaceRejected);
+    require(encode(encoder,depthRejected,command,reuse,&error), @"Depth-rejected replacement blend failed");
+    HaloMetalDraw disjoint = replacement;
+    disjoint.state.color_write_mask = 12;disjoint.state.scissor[0] = 12;
+    disjoint.state.scissor[2] = disjoint.state.scissor[3] = 4;
+    disjoint.state.stencil_reference = 5;disjoint.state.stencil_write_mask = 15;
+    disjoint.vertexUniforms = uniforms(device,HaloMetalVertexUniformSize,eighthZ);
+    disjoint.pixelUniforms = uniforms(device,HaloMetalPixelUniformSize,replaceDisjoint);
+    require(encode(encoder,disjoint,command,reuse,&error), @"Disjoint masked replacement blend failed");
+    HaloMetalDraw alphaOnly = overlap;
+    alphaOnly.state.color_write_mask = 8;alphaOnly.state.scissor[2] = alphaOnly.state.scissor[3] = 4;
+    alphaOnly.state.stencil_reference = 8;alphaOnly.state.stencil_write_mask = 15;
+    alphaOnly.state.stencil_fail = 1;alphaOnly.state.stencil_pass = 6;
+    alphaOnly.vertexUniforms = disjoint.vertexUniforms;
+    alphaOnly.pixelUniforms = uniforms(device,HaloMetalPixelUniformSize,replaceAlpha);
+    require(encode(encoder,alphaOnly,command,reuse,&error), @"Alpha-only replacement blend failed");
+    HaloMetalDraw stencilRejected = depthRejected;
+    stencilRejected.state.scissor[0] = stencilRejected.state.scissor[1] = 8;
+    stencilRejected.state.stencil_fail = 2;stencilRejected.state.stencil_write_mask = 15;
+    stencilRejected.state.depth_write = 0;
+    require(encode(encoder,stencilRejected,command,reuse,&error), @"Stencil-rejected replacement blend failed");
+    [encoder endEncoding];complete(command);
+    const NSUInteger replacementPasses = encoder.renderPassCount-boundaryPasses;
+    require(replacementPasses == (reuse ? 1u : 6u), @"Replacement blend run did not retain exactly one compatible pass");
+    [replacementColor getBytes:replacementBytes.data() bytesPerRow:64 fromRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0];
+    const auto replacementDepthBytes = readPlane(device,queue,replacementDepth,true);
+    const auto replacementStencilBytes = readPlane(device,queue,replacementDepth,false);
+    for (unsigned y=0;y<16;y++) for (unsigned x=0;x<16;x++) {
+        uint8_t expected[4]={31,63,127,191}, stencilValue=3;
+        float expectedDepth=1;
+        if (x<12 && y<12) {
+            expected[0]=97;expected[1]=44;expected[2]=17;expected[3]=150;
+            expectedDepth=.5f;stencilValue=7;
+        }
+        if (x>=4 && y>=4) {
+            if (x<12 && y<12) { expected[1]=186;expected[2]=48;expectedDepth=.25f;stencilValue=8; }
+            else stencilValue=7;
+        }
+        if (x<4 && y<4) stencilValue=248;
+        if (x>=12 && y<4) { expected[0]=161;expected[3]=125;expectedDepth=.125f;stencilValue=5; }
+        if (x>=4 && x<8 && y>=4 && y<8) { expected[3]=210;expectedDepth=.125f;stencilValue=7; }
+        if (x>=8 && x<12 && y>=8 && y<12) stencilValue=0;
+        const size_t i=y*16+x;float actualDepth;
+        memcpy(&actualDepth,replacementDepthBytes.data()+i*4,4);
+        require(!memcmp(replacementBytes.data()+i*4,expected,4), @"BGRA8 replacement blend changed fractional color, alpha or masked history");
+        require(actualDepth==expectedDepth && replacementStencilBytes[i]==stencilValue,
+                @"Replacement blend changed depth/stencil pass, failure or masked writes");
+    }
+    append(checkpoints,replacementBytes);append(checkpoints,replacementDepthBytes);append(checkpoints,replacementStencilBytes);
+
+    // Destination-dependent ADD must first store the preceding replacement
+    // run. Each .49/255 channel then rounds to zero; retaining the blend across
+    // that boundary would add the unquantized values and produce one instead.
+    const float replacementFraction[4]={.49f/255,.49f/255,.49f/255,.49f/255};
+    const uint32_t replacementMasks[2][2]={{15,15},{9,6}};
+    NSUInteger replacementBoundaryPasses=0;
+    for (const auto &masks : replacementMasks) {
+        command = [queue commandBuffer];boundaryPasses = encoder.renderPassCount;
+        pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.colorAttachments[0].texture = replacementColor;
+        pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        pass.colorAttachments[0].clearColor = MTLClearColorMake(0,0,0,0);
+        [[command renderCommandEncoderWithDescriptor:pass] endEncoding];
+        HaloMetalDraw fractionalReplacement = rounded;
+        fractionalReplacement.color = replacementColor;fractionalReplacement.state.blend_destination = 1;
+        fractionalReplacement.pixelUniforms = uniforms(device,HaloMetalPixelUniformSize,replacementFraction);
+        fractionalReplacement.state.color_write_mask = masks[0];
+        require(encode(encoder,fractionalReplacement,command,reuse,&error), @"First replacement before fractional ADD failed");
+        fractionalReplacement.state.color_write_mask = masks[1];
+        require(encode(encoder,fractionalReplacement,command,reuse,&error), @"Masked replacement before fractional ADD failed");
+        HaloMetalDraw destinationAdd = fractionalReplacement;
+        destinationAdd.state.color_write_mask = 15;destinationAdd.state.blend_destination = 2;
+        require(encode(encoder,destinationAdd,command,reuse,&error), @"Destination-dependent ADD after replacement failed");
+        [encoder endEncoding];complete(command);
+        const NSUInteger passes=encoder.renderPassCount-boundaryPasses;
+        require(passes==(reuse ? 2u : 3u), @"Fractional ADD did not store the preceding replacement run");
+        replacementBoundaryPasses+=passes;
+        [replacementColor getBytes:replacementBytes.data() bytesPerRow:64 fromRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0];
+        for (uint8_t value : replacementBytes)
+            require(value==0, @"Replacement-to-ADD boundary changed fractional RGB, alpha or masked-channel rounding");
+        append(checkpoints,replacementBytes);
+    }
+
     // A rejected draw closes an earlier active pass without adding commands;
     // another encoder can then be used safely on that command buffer.
     command = [queue commandBuffer]; boundaryPasses = encoder.renderPassCount;
@@ -521,25 +661,135 @@ fragment float4 unsupportedTextureFragment(texture2d<float> t [[texture(4)]], sa
     auto packed = compact;packed.packedMask = 2;packed.vertexBytes += 4;
     packed.vertices = [device newBufferWithBytes:packedBytes.data() length:packedBytes.size() options:MTLResourceStorageModeShared];
     require([encoder prepareDraw:packed error:&error],@"Instruction-visible compact packed bits were rejected as nonfinite floats");
-    auto pixels = [&](HaloMetalDraw candidate) {
+    const uint32_t compactIndices[3] = {0,1,2}, invalidCompactIndices[3] = {0,1,3};
+    require(!HaloMetalGeometry::create(device,compactBytes.data()+16,(uint32_t)compact.vertexBytes,3,
+            invalidCompactIndices,3,0),@"Immutable factory accepted an out-of-range index");
+    auto geometry = HaloMetalGeometry::create(device,compactBytes.data()+16,(uint32_t)compact.vertexBytes,3,compactIndices,3,0);
+    require(geometry != nullptr,@"Immutable compact geometry allocation failed");
+    HaloMetalDraw immutable = compact;
+    immutable.vertices = geometry->vertices();immutable.indices = geometry->indices();
+    immutable.vertexOffset = immutable.indexOffset = 0;immutable.geometry = geometry;
+    require([encoder prepareDraw:immutable error:&error],@"Validated immutable private input rejected");
+    auto mismatched = immutable;mismatched.vertexCount++;
+    require(![encoder prepareDraw:mismatched error:&error],@"Immutable proof accepted mismatched bounds");
+    mismatched = immutable;mismatched.vertices = compact.vertices;
+    require(![encoder prepareDraw:mismatched error:&error],@"Immutable proof accepted another buffer");
+    mismatched = immutable;mismatched.geometry.reset();
+    require(![encoder prepareDraw:mismatched error:&error],@"Private input without proof bypassed validation");
+    const NSUInteger beforeUploadPasses = encoder.renderPassCount;
+    require(!encode(encoder,immutable,[queue commandBuffer],reuse,&error) && error.code == HaloMetalDrawInvalid &&
+            encoder.renderPassCount == beforeUploadPasses,@"Uninitialized immutable buffers reached a GPU encoder");
+    // Mutating the original source after construction cannot alter its proof.
+    memset(compactBytes.data()+16,0,compactBytes.size()-16);
+    auto pixels = [&](HaloMetalDraw candidate) { @autoreleasepool {
         [color replaceRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0 withBytes:initial.data() bytesPerRow:64];
         candidate.depthStencil = nil;candidate.state.depth_enabled = candidate.state.depth_write = candidate.state.stencil_enabled = 0;
         candidate.state.color_write_mask = 15;
         auto command = [queue commandBuffer];
+        if (candidate.geometry) {
+            require(candidate.geometry->upload(command),@"Immutable geometry upload failed");
+            require(!candidate.geometry->retireUpload(command),@"Unsubmitted upload manufactured completed readiness");
+            require(!candidate.geometry->retireUpload(clear),@"Unrelated completed command retired an immutable upload");
+        }
         require(encode(encoder,candidate,command,reuse,&error),error.localizedDescription ?: @"Geometry comparison failed");
         [encoder endEncoding];complete(command);
+        if (candidate.geometry) {
+            require(candidate.geometry->retireUpload(command),@"Exact completed immutable upload failed retirement");
+            require(!candidate.geometry->retireUpload(nil),@"Missing command retired an immutable upload");
+            command = nil;
+        }
         std::vector<uint8_t> result(16*16*4);
         [color getBytes:result.data() bytesPerRow:64 fromRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0];
         return result;
-    };
+    } };
     const auto expandedPixels = pixels(draw), compactPixels = pixels(compact);
     require(compactPixels == expandedPixels,@"Compact vertex pulling changed expanded reference pixels");
+    require(pixels(immutable) == compactPixels,@"Immutable geometry changed compact reference pixels");
+    require(geometry->readyForDraw([queue commandBuffer]),@"Completed immutable input lost upload readiness");
     for (unsigned y = 4; y < 12; y++) for (unsigned x = 4; x < 12; x++) {
         const size_t pixel = (y*16+x)*4;
         require(compactPixels[pixel] == 255 && compactPixels[pixel+1] == 0 &&
                 compactPixels[pixel+2] == 0 && compactPixels[pixel+3] == 255,@"Compact test drew no original red geometry");
     }
     append(checkpoints,compactPixels);
+
+    // The same buffer identities carry different geometry/uniform offsets.
+    // Keep the whole run in one pass so stale offsets, textures, samplers or
+    // pipeline state change the independent isolated-mode reference image.
+    [color replaceRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0 withBytes:initial.data() bytesPerRow:64];
+    HaloMetalDraw bound = draw; bound.depthStencil = nil;
+    bound.state.depth_enabled = bound.state.depth_write = bound.state.stencil_enabled = 0;
+    bound.state.color_write_mask = 15;
+    bound.state.scissor[0] = bound.state.scissor[1] = 0;
+    bound.state.scissor[2] = 4; bound.state.scissor[3] = 16;
+    std::vector<uint8_t> alternateVertices(HaloMetalVertexStride*6);
+    const float smallPositions[3][4] = {{-1,-1,0,1},{1,-1,0,1},{-1,1,0,1}};
+    for (unsigned i = 0; i < 3; i++) {
+        memcpy(alternateVertices.data()+i*HaloMetalVertexStride,positions[i],16);
+        memcpy(alternateVertices.data()+(i+3)*HaloMetalVertexStride,smallPositions[i],16);
+    }
+    bound.vertices = [device newBufferWithBytes:alternateVertices.data() length:alternateVertices.size()
+        options:MTLResourceStorageModeShared];
+    bound.vertexOffset = 0;
+    std::vector<uint8_t> alternateVS(HaloMetalVertexUniformSize*2), alternatePS(HaloMetalPixelUniformSize*4);
+    const float shifted[4] = {.5f,0,.25f,0}, blue[4] = {0,0,1,1}, white[4] = {1,1,1,1};
+    memcpy(alternateVS.data(),firstZ,16);memcpy(alternateVS.data()+HaloMetalVertexUniformSize,shifted,16);
+    memcpy(alternatePS.data(),red,16);memcpy(alternatePS.data()+HaloMetalPixelUniformSize,green,16);
+    memcpy(alternatePS.data()+HaloMetalPixelUniformSize*2,blue,16);
+    memcpy(alternatePS.data()+HaloMetalPixelUniformSize*3,white,16);
+    bound.vertexUniforms = [device newBufferWithBytes:alternateVS.data() length:alternateVS.size() options:MTLResourceStorageModeShared];
+    bound.pixelUniforms = [device newBufferWithBytes:alternatePS.data() length:alternatePS.size() options:MTLResourceStorageModeShared];
+    bound.vertexUniformOffset = bound.pixelUniformOffset = 0;
+    description = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:2 height:2 mipmapped:NO];
+    description.storageMode = MTLStorageModeShared;description.usage = MTLTextureUsageShaderRead;
+    auto checker = [device newTextureWithDescriptor:description], solid = [device newTextureWithDescriptor:description];
+    const uint8_t checkerBytes[16] = {255,0,0,255,0,255,0,255,0,0,255,255,255,255,255,255};
+    const uint8_t solidBytes[16] = {0,255,0,255,0,255,0,255,0,255,0,255,0,255,0,255};
+    [checker replaceRegion:MTLRegionMake2D(0,0,2,2) mipmapLevel:0 withBytes:checkerBytes bytesPerRow:8];
+    [solid replaceRegion:MTLRegionMake2D(0,0,2,2) mipmapLevel:0 withBytes:solidBytes bytesPerRow:8];
+    auto nearestDescription = [MTLSamplerDescriptor new], linearDescription = [MTLSamplerDescriptor new];
+    linearDescription.minFilter = linearDescription.magFilter = MTLSamplerMinMagFilterLinear;
+    auto nearest = [device newSamplerStateWithDescriptor:nearestDescription], linear = [device newSamplerStateWithDescriptor:linearDescription];
+    require(bound.vertices && bound.vertexUniforms && bound.pixelUniforms && checker && solid && nearest && linear,
+            @"Dynamic binding fixture allocation failed");
+    command = [queue commandBuffer];
+    require(encode(encoder,bound,command,reuse,&error), @"First dynamic binding draw failed");
+    bound.state.scissor[0] = 4;bound.vertexUniformOffset = HaloMetalVertexUniformSize;
+    bound.pixelUniformOffset = HaloMetalPixelUniformSize;
+    require(encode(encoder,bound,command,reuse,&error), @"Dynamic uniform offsets draw failed");
+    bound.state.scissor[0] = 8;bound.vertexOffset = HaloMetalVertexStride*3;
+    bound.vertexUniformOffset = 0;bound.pixelUniformOffset = HaloMetalPixelUniformSize*2;
+    require(encode(encoder,bound,command,reuse,&error), @"Dynamic geometry offset draw failed");
+    bound.state.scissor[0] = 12;bound.vertexOffset = 0;bound.pixelUniformOffset = HaloMetalPixelUniformSize*3;
+    bound.fragmentFunction = [library newFunctionWithName:@"sampledFragment"];
+    bound.textures[0] = checker;bound.samplers[0] = nearest;
+    require(encode(encoder,bound,command,reuse,&error), @"Dynamic sampled pipeline draw failed");
+    bound.state.scissor[0] = 0;bound.state.scissor[3] = 8;bound.textures[0] = solid;
+    require(encode(encoder,bound,command,reuse,&error), @"Dynamic texture draw failed");
+    bound.state.scissor[0] = 4;bound.textures[0] = checker;bound.samplers[0] = linear;
+    require(encode(encoder,bound,command,reuse,&error), @"Dynamic sampler draw failed");
+    bound.state.scissor[0] = 12;bound.state.scissor[3] = 4;
+    bound.fragmentFunction = draw.fragmentFunction;bound.pixelUniformOffset = HaloMetalPixelUniformSize*2;
+    bound.textures[0] = nil;bound.samplers[0] = nil;
+    require(encode(encoder,bound,command,reuse,&error), @"Removing sampled bindings failed");
+    const NSUInteger repeatSets = encoder.bindingSetCount, repeatSkips = encoder.bindingSkipCount;
+    require(encode(encoder,bound,command,reuse,&error), @"Repeating exact bindings failed");
+    require(cached ? (encoder.bindingSetCount == repeatSets && encoder.bindingSkipCount > repeatSkips) :
+            (encoder.bindingSetCount > repeatSets && encoder.bindingSkipCount == repeatSkips),
+            @"Exact repeated bindings did not respect cache selection");
+    if (cached) {
+        encoder.cacheBindingsEnabled = NO;encoder.cacheBindingsEnabled = YES;
+        require(encode(encoder,bound,command,reuse,&error) && encoder.bindingSetCount > repeatSets,
+                @"Toggling binding cache retained stale setter state");
+    }
+    [encoder endEncoding];complete(command);
+    [color getBytes:rgba.data() bytesPerRow:64 fromRegion:MTLRegionMake2D(0,0,16,16) mipmapLevel:0];
+    for (unsigned y = 8; y < 16; y++) for (unsigned x = 0; x < 4; x++) {
+        const size_t pixel = (y*16+x)*4;
+        require(rgba[pixel] == 255 && rgba[pixel+1] == 0 && rgba[pixel+2] == 0 && rgba[pixel+3] == 255,
+                @"Dynamic bindings drew no reference red region");
+    }
+    append(checkpoints,rgba);
     if (argc == 3) {
         FILE *file = fopen(argv[2],"wb"); require(file != nullptr, @"Checkpoint output failed");
         require(fwrite(checkpoints.data(),1,checkpoints.size(),file) == checkpoints.size() && fclose(file) == 0,
@@ -548,7 +798,12 @@ fragment float4 unsupportedTextureFragment(texture2d<float> t [[texture(4)]], sa
     printf("{\"complete\":true,\"color_depth_stencil_history\":true,\"state_and_resource_validation\":true,"
         "\"visibility_readonly_count\":64,\"visibility_occluded_count\":0,\"visibility_boolean\":1,"
         "\"visibility_offset_validation\":true,\"cpu_query_timing_verified\":false,"
-        "\"pass_reuse\":%s,\"render_passes\":%lu,\"checkpoint_bytes\":%zu}\n",
-        reuse ? "true" : "false",(unsigned long)encoder.renderPassCount,checkpoints.size());
+        "\"bgra8_replacement_history\":true,\"replacement_store_boundary\":true,"
+        "\"replacement_blend_draws\":6,\"replacement_blend_passes\":%lu,\"replacement_boundary_cases\":2,\"replacement_boundary_passes\":%lu,"
+        "\"pass_reuse\":%s,\"binding_cache\":%s,\"binding_sets\":%lu,\"binding_skips\":%lu,"
+        "\"render_passes\":%lu,\"checkpoint_bytes\":%zu}\n",
+        (unsigned long)replacementPasses,(unsigned long)replacementBoundaryPasses,
+        reuse ? "true" : "false",cached ? "true" : "false",(unsigned long)encoder.bindingSetCount,
+        (unsigned long)encoder.bindingSkipCount,(unsigned long)encoder.renderPassCount,checkpoints.size());
     return 0;
 } }

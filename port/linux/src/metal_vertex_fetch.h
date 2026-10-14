@@ -60,6 +60,16 @@ int metal_vertex_compact_size(const struct metal_vertex_declaration *declaration
 int metal_vertex_compact_pack(const struct metal_vertex_declaration *declaration,
     const struct metal_vertex_stream streams[16], const float fixed[16][4],
     uint32_t first, uint32_t count, void *compact, size_t compact_bytes);
+/* Byte-exact reuse check against every effective original stream span and the
+ * complete compact metadata/fixed prefix. No hash, frame/write-watch shortcut,
+ * allocation or output mutation. Returns 1 equal, 0 changed, negative invalid. */
+int metal_vertex_compact_matches(const struct metal_vertex_declaration *declaration,
+    const struct metal_vertex_stream streams[16], const float fixed[16][4],
+    uint32_t first, uint32_t count, const void *compact, size_t compact_bytes);
+/* Exact byte equality, including arbitrary alignment and a scalar bounded tail.
+ * No hashing, allocation, typed unaligned reads or reads beyond byte_count.
+ * Empty spans compare equal; invalid nonempty pointer/extents return false. */
+int metal_vertex_bytes_equal(const void *left, const void *right, size_t byte_count);
 
 /* Wire topology values: points 0, lines 1, line strip 2, triangles 3,
  * triangle strip 4. Xbox LINELOOP closes a line strip; QUADSTRIP preserves the

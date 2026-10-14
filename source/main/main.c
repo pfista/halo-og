@@ -388,6 +388,7 @@ symbols in this file:
 #include "text/draw_string.h"
 #include "text/font_group.h"
 #include "tag_files/files.h"
+#include "../../port/linux/src/metal_frame_timing.h"
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "camera/first_person_camera.h"
 #include "camera/static_camera.h"
@@ -3129,6 +3130,7 @@ void main_loop(
 
 	while (TRUE)
 	{
+		halo_metal_frame_mark(HALO_METAL_FRAME_LOOP_START);
 		if (!game_in_editor())
 		{
 			if (main_globals.switch_to_structure_bsp_index!=NONE)
@@ -3216,6 +3218,7 @@ void main_loop(
 			main_reset_map_private();
 		}
 
+		halo_metal_frame_mark(HALO_METAL_FRAME_UPDATE_BEGIN);
 		profile_frame_start();
 #if defined(HALO_PORT_MAXIMUM_NETWORK_PLAYERS) && !defined(HALO_MACOS) && !defined(HALO_IOS) && !defined(HALO_ANDROID)
 		halo_release_discovery_set_main_menu(main_globals.main_menu_scenario_loaded &&
@@ -3319,25 +3322,37 @@ void main_loop(
 
 				if (render_frame && !debug_no_drawing)
 				{
+					halo_metal_frame_mark(HALO_METAL_FRAME_RENDER_BEGIN);
 					profile_render_start();
 					render_interpolation_frame_begin();
+					halo_metal_frame_mark(HALO_METAL_FRAME_GAME_RENDER_BEGIN);
 					main_game_render((double)main_globals.seconds_elapsed);
+					halo_metal_frame_mark(HALO_METAL_FRAME_GAME_RENDER_END);
 					render_interpolation_frame_end();
 					profile_render_end();
+					halo_metal_frame_mark(HALO_METAL_FRAME_RENDER_END);
 				}
 			}
 			else
 			{
+				halo_metal_frame_mark(HALO_METAL_FRAME_RENDER_BEGIN);
 				profile_render_start();
+				halo_metal_frame_mark(HALO_METAL_FRAME_GAME_RENDER_BEGIN);
 				main_pregame_render();
+				halo_metal_frame_mark(HALO_METAL_FRAME_GAME_RENDER_END);
 				profile_render_end();
+				halo_metal_frame_mark(HALO_METAL_FRAME_RENDER_END);
 			}
 
+			halo_metal_frame_mark(HALO_METAL_FRAME_THROTTLE_BEGIN);
 			main_rasterizer_throttle();
+			halo_metal_frame_mark(HALO_METAL_FRAME_THROTTLE_END);
 
 			if (render_frame && !debug_no_drawing)
 			{
+				halo_metal_frame_mark(HALO_METAL_FRAME_PRESENT_BEGIN);
 				main_present_frame();
+				halo_metal_frame_mark(HALO_METAL_FRAME_PRESENT_END);
 			}
 		}
 
@@ -3351,6 +3366,7 @@ void main_loop(
 			main_reset_time();
 			main_globals.halt_time_scale = TRUE;
 		}
+		halo_metal_frame_mark(HALO_METAL_FRAME_LOOP_END);
 	}
 
 	error(_error_silent, "end of saved film");

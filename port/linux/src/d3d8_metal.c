@@ -12,6 +12,7 @@
 #include "metal_guest_transport.h"
 #include "metal_packet_room.h"
 #include "metal_vertex_fetch.h"
+#include "metal_uniform_cache.h"
 #include "metal_draw_state.h"
 #include "metal_fixed_function.h"
 #include "metal_mip_composite.h"
@@ -20,6 +21,7 @@
 #include "hud_hires.h"
 #include "text_hires.h"
 #include "halo_frame_pacing.h"
+#include "metal_frame_timing.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -47,6 +49,8 @@ static uint32_t render_height;
 static uint32_t native_storage_width, native_storage_height;
 static BOOL render_settings_initialized;
 static BOOL gpu_vertex_decode;
+static BOOL geometry_cache_enabled, async_submit, cache_bindings;
+static BOOL texture_cache_enabled, uniform_cache_enabled;
 static uint32_t native_render_height(void) {
     if (!render_settings_initialized) {
         long requested=config_integer("display.render_height");
@@ -148,6 +152,7 @@ struct vertex_shader_object {
 };
 struct native_resource {
     struct native_resource *next;
+    struct native_resource *cache_next, *hud_cache_next;
     struct native_resource *hud_override;
     struct halo_metal_ref ref;
     DWORD data, format_word, size_word;
@@ -157,8 +162,12 @@ struct native_resource {
     uint64_t last_rendered, text_revision;
     /* Only rendered-mip destinations allocate this bounded, per-level cache. */
     struct halo_metal_mip_composite_copy *mip_copy_cache;
+    /* Validated authored metadata is immutable for this Data/Format/Size key.
+       Pixel generations and palette contents are still checked on every use. */
+    struct xgpu_texture_mip_layout authored_layout;
+    struct xgpu_texture_volume_mip_layout authored_volume_layout;
     uint32_t format, usage, storage_width, storage_height, scale_mode;
-    BOOL mip_composite, volume, hud_checked, text_atlas;
+    BOOL mip_composite, volume, hud_checked, text_atlas, authored_layout_valid;
 };
 struct native_program {
     struct native_program *next;
@@ -197,14 +206,52 @@ static struct native_device device;
 /* Distinct cache identity; no original programmable slot is overwritten. */
 static struct vertex_shader_object fixed_function_vertex;
 static struct halo_metal_guest_transport transport;
+static struct metal_uniform_cache uniform_cache;
+static BOOL packet_group_active;
+static void resource_cache_reset(void);
 static uint64_t sequence;
 static uint32_t next_resource_id = 1, next_program_id = 1, next_query_id = 1;
 static struct native_resource *resources;
+#define NATIVE_RESOURCE_BUCKETS 4096u
+#define NATIVE_HUD_BUCKETS 64u
+#define NATIVE_TARGET_CACHE_SLOTS 64u
+static struct native_resource *resource_buckets[NATIVE_RESOURCE_BUCKETS];
+static struct native_resource *hud_resource_buckets[NATIVE_HUD_BUCKETS];
+static BOOL resource_index_ready;
+struct native_target_cache_key {
+    uint32_t data, format, size, logical_width, render_height, native_width, native_height;
+};
+struct native_target_cache_entry {
+    struct native_target_cache_key key;
+    struct native_resource *resource;
+    uint32_t storage_width, storage_height, scale_mode;
+};
+static struct native_target_cache_entry target_cache[NATIVE_TARGET_CACHE_SLOTS];
+static struct {
+    uint64_t target_hits, authored_hits, layout_hits, layout_plans, lookup_calls;
+} texture_cache_statistics;
 /* Keep the last completed indexed frame sampled at its original resolution
  * during the first resized frame. Its replacement is copied at Present. */
 static struct native_resource *history_sample_override;
 static struct native_resource *text_atlas_resource;
 static struct native_program *programs;
+#define NATIVE_GEOMETRY_SLOTS 2048u
+#define NATIVE_GEOMETRY_BUCKETS 4096u
+#define NATIVE_GEOMETRY_BYTES (64u * 1024u * 1024u)
+struct native_geometry {
+    struct halo_metal_ref ref;
+    struct vertex_shader_object *declaration;
+    const WORD *source_indices;
+    struct metal_vertex_index_plan plan;
+    uint32_t primitive, first, count, base, vertex_bytes, index_bytes, source_index_bytes;
+    void *vertices, *indices, *original_indices;
+    uint32_t next, uploaded;
+    uint64_t used;
+};
+static struct native_geometry geometry_slots[NATIVE_GEOMETRY_SLOTS];
+static uint32_t geometry_buckets[NATIVE_GEOMETRY_BUCKETS];
+static size_t geometry_bytes;
+static uint64_t geometry_clock;
 /* Original rasterizer.h verifies floating_point_zbuffer at byte0x3c in the
    linked ILP32 global. Character access reads that object's representation. */
 extern struct rasterizer_globals_definition rasterizer_globals;
@@ -227,7 +274,7 @@ static void native_fail(const char *operation, int status) {
 static void require_status(const char *operation, int status) {
     if (status) native_fail(operation,status);
 }
-/* Synchronous host submissions contain complete original commands in order.
+/* Owned packets contain complete original commands in order.
  * The soft limit bounds transient per-frame storage; one larger valid command
  * may use the existing 64MiB hard capacity and is submitted when complete. */
 #define NATIVE_BATCH_SOFT_BYTES (16u * 1024u * 1024u)
@@ -236,9 +283,13 @@ static uint64_t submitted_batches, submitted_commands, submitted_bytes, submit_w
 static uint64_t statistics_batches, statistics_commands, statistics_bytes, statistics_wall_ns;
 static uint32_t largest_statistics_batch;
 static BOOL draw_diagnostics;
+static BOOL visibility_checkpoint_pending;
 struct native_draw_profile {
     uint64_t draws, expansion_ns, textures_ns, state_ns, program_ns, emit_ns, submit_ns;
     uint64_t compact_draws, compact_bytes, expanded_bytes, vertex_bytes;
+    uint64_t geometry_hits, geometry_uploads, geometry_upload_bytes;
+    uint64_t visibility_reads, visibility_readback_ns;
+    uint64_t uniform_hits, uniform_definitions, uniform_saved_bytes;
 };
 static struct native_draw_profile draw_profile;
 enum native_flush_reason {
@@ -246,6 +297,7 @@ enum native_flush_reason {
     NATIVE_FLUSH_HARD_CAPACITY,
     NATIVE_FLUSH_COMMAND_LIMIT,
     NATIVE_FLUSH_VISIBILITY_COLLECT,
+    NATIVE_FLUSH_VISIBILITY_READY,
     NATIVE_FLUSH_KICK_PUSH_BUFFER,
     NATIVE_FLUSH_INSERT_CALLBACK,
     NATIVE_FLUSH_PRESENT,
@@ -261,7 +313,7 @@ struct native_flush_statistics {
 static struct native_flush_statistics flush_statistics[NATIVE_FLUSH_REASON_COUNT];
 static const char *native_flush_reason_name(enum native_flush_reason reason) {
     static const char *const names[NATIVE_FLUSH_REASON_COUNT]={
-        "SoftBatchLimit", "HardCapacity", "CommandLimit", "VisibilityCollect",
+        "SoftBatchLimit", "HardCapacity", "CommandLimit", "VisibilityCollect", "VisibilityReady",
         "KickPushBuffer", "InsertCallback", "Present", "Settings", "Resize",
         "Readback", "Exit"
     };
@@ -281,6 +333,34 @@ static void native_flush_statistics_log(unsigned long first,unsigned long last) 
 static uint64_t monotonic_ns(void) {
     struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);
     return (uint64_t)t.tv_sec*UINT64_C(1000000000)+(uint64_t)t.tv_nsec;
+}
+/* One guest-clock record spans the original main loop. It is diagnostic only:
+ * markers never submit or wait for GPU work, and no logging occurs per draw. */
+static struct {
+    uint64_t mark[HALO_METAL_FRAME_LOOP_END+1];
+    uint64_t first_draw,d3d_begin,statistics_begin,statistics_end,d3d_end;
+    unsigned long loop_frame;
+    BOOL active;
+} frame_phases;
+void halo_metal_frame_mark(enum halo_metal_frame_mark mark) {
+    if (!draw_diagnostics || mark<HALO_METAL_FRAME_LOOP_START || mark>HALO_METAL_FRAME_LOOP_END) return;
+    if (mark==HALO_METAL_FRAME_LOOP_START) {
+        memset(&frame_phases,0,sizeof(frame_phases));
+        frame_phases.active=TRUE;frame_phases.loop_frame=device.frame;
+    }
+    if (!frame_phases.active) return;
+    frame_phases.mark[mark]=monotonic_ns();
+    if (mark!=HALO_METAL_FRAME_LOOP_END || !frame_phases.d3d_end ||
+        !frame_phases.mark[HALO_METAL_FRAME_PRESENT_BEGIN] || device.frame<=frame_phases.loop_frame) return;
+#define PHASE(m) ((unsigned long long)frame_phases.mark[HALO_METAL_FRAME_##m])
+    platform_log("Native frame phases: frame %lu, loop-start %llu ns, update-begin %llu ns, render-begin %llu ns, game-begin %llu ns, first-draw %llu ns, game-end %llu ns, render-end %llu ns, throttle-begin %llu ns, throttle-end %llu ns, present-begin %llu ns, d3d-begin %llu ns, statistics-begin %llu ns, statistics-end %llu ns, d3d-end %llu ns, present-end %llu ns, loop-end %llu ns",
+        device.frame,PHASE(LOOP_START),PHASE(UPDATE_BEGIN),PHASE(RENDER_BEGIN),PHASE(GAME_RENDER_BEGIN),
+        (unsigned long long)frame_phases.first_draw,PHASE(GAME_RENDER_END),PHASE(RENDER_END),
+        PHASE(THROTTLE_BEGIN),PHASE(THROTTLE_END),PHASE(PRESENT_BEGIN),
+        (unsigned long long)frame_phases.d3d_begin,(unsigned long long)frame_phases.statistics_begin,
+        (unsigned long long)frame_phases.statistics_end,(unsigned long long)frame_phases.d3d_end,
+        PHASE(PRESENT_END),PHASE(LOOP_END));
+#undef PHASE
 }
 /* Guest-only draw phases exclude synchronous host submissions nested inside
    preparation/packet emission. GPU and completion timings remain separate. */
@@ -332,6 +412,7 @@ static void packet_flush(enum native_flush_reason reason) {
     int status=halo_metal_guest_submit(&transport);
     if (status) native_failed_packet();
     require_status("submit original commands",status);
+    metal_uniform_cache_reset(&uniform_cache);
     uint64_t ended=monotonic_ns(),duration=ended-started;
     submit_wall_ns+=duration;
     submitted_batches++;submitted_commands+=commands;submitted_bytes+=bytes;
@@ -341,7 +422,8 @@ static void packet_flush(enum native_flush_reason reason) {
         struct native_flush_statistics *s=&flush_statistics[reason];
         s->packets++;s->commands+=commands;s->bytes+=bytes;s->wall_ns+=duration;
         // Zero-based submission frame precedes Present's frame increment.
-        // Native timing records the completed frame after that increment;
+        // Native timing records the frame after that increment (accepted
+        // submission in async mode; host completion logs track GPU results);
         // sequence joins this reason/timing with the host's packet-stage log.
         platform_log("Native flush: frame %lu, sequence %llu, reason %s, commands %u, bytes %u, start %llu ns, end %llu ns, submit %llu ns",
             device.frame,(unsigned long long)packet_sequence,native_flush_reason_name(reason),commands,bytes,
@@ -356,9 +438,15 @@ static void packet_begin(uint32_t fixed,const uint32_t *payloads,uint32_t count)
     if (transport.recording) {
         if (transport.size != packet_expected_end) native_fail("unsealed queued command",HALO_METAL_INVALID);
         int room=halo_metal_packet_room(transport.size,transport.capacity,fixed,payloads,count,&end);
-        if (room || end>NATIVE_BATCH_SOFT_BYTES || transport.command_count>=65536u)
-            packet_flush(room ? NATIVE_FLUSH_HARD_CAPACITY:
+        if (room || end>NATIVE_BATCH_SOFT_BYTES || transport.command_count>=65536u) {
+            /* Uniform definitions and their referencing draw were reserved
+             * together. A soft-limit crossing must not separate that group. */
+            if (packet_group_active) {
+                if (room || transport.command_count>=65536u)
+                    native_fail("reserved uniform draw group",HALO_METAL_MEMORY);
+            } else packet_flush(room ? NATIVE_FLUSH_HARD_CAPACITY:
                 transport.command_count>=65536u ? NATIVE_FLUSH_COMMAND_LIMIT:NATIVE_FLUSH_SOFT_BATCH_LIMIT);
+        }
     }
     if (!transport.recording) {
         if (sequence==UINT64_MAX) native_fail("packet sequence overflow",HALO_METAL_MEMORY);
@@ -372,19 +460,86 @@ static uint32_t command_append(const void *record,uint32_t size) {
     require_status("append command",halo_metal_guest_append_command(&transport,record,size,&offset));
     return offset;
 }
-static void payload_append(uint32_t command,uint32_t field,const void *bytes,uint32_t size) {
+static uint32_t payload_append(uint32_t command,uint32_t field,const void *bytes,uint32_t size) {
     uint32_t offset=0;
     require_status("copy payload",halo_metal_guest_append_payload(&transport,bytes,size,&offset));
     require_status("patch payload",halo_metal_guest_patch_u32(&transport,command,field,offset));
+    return offset;
 }
 static void packet_finish(void) {
     if (!transport.recording || transport.size!=packet_expected_end)
         native_fail("complete original command reservation",HALO_METAL_INVALID);
-    if (transport.size>=NATIVE_BATCH_SOFT_BYTES || transport.command_count>=65536u)
+    if (!packet_group_active && (transport.size>=NATIVE_BATCH_SOFT_BYTES || transport.command_count>=65536u))
         packet_flush(transport.command_count>=65536u ? NATIVE_FLUSH_COMMAND_LIMIT:NATIVE_FLUSH_SOFT_BATCH_LIMIT);
 }
+static int uniform_group_room(uint32_t start,BOOL vertex_missing,BOOL pixel_missing,
+    const uint32_t *draw_payloads,uint32_t payload_count,uint32_t *end) {
+    uint32_t cursor=start;
+    const uint32_t sizes[]={sizeof(struct metal_draw_vertex_uniforms),sizeof(struct metal_draw_pixel_uniforms)};
+    const BOOL missing[]={vertex_missing,pixel_missing};
+    for (unsigned i=0;i<2;i++) if (missing[i]) {
+        int status=halo_metal_packet_room(cursor,transport.capacity,sizeof(struct halo_metal_define_uniforms),
+            &sizes[i],1,&cursor);
+        if (status) return status;
+    }
+    return halo_metal_packet_room(cursor,transport.capacity,sizeof(struct halo_metal_draw_uniform_refs),
+        draw_payloads,payload_count,end);
+}
+static uint32_t uniform_define(uint32_t kind,const void *bytes,uint32_t size,uint64_t hash) {
+    struct halo_metal_define_uniforms command={{HALO_METAL_DEFINE_UNIFORMS,0},kind,0,size,0};
+    packet_begin(sizeof(command),&size,1);
+    uint32_t command_offset=command_append(&command,sizeof(command));
+    uint32_t payload=payload_append(command_offset,offsetof(struct halo_metal_define_uniforms,data_offset),bytes,size);
+    packet_finish();
+    /* The cache retains offsets into this owned, sealed packet only. Exact
+     * bytes are checked on reuse; the hash is never a freshness guarantee. */
+    metal_uniform_cache_register(&uniform_cache,hash,kind,size,payload,transport.bytes,transport.size);
+    if (draw_diagnostics) draw_profile.uniform_definitions++;
+    return payload;
+}
+static void uniform_group_begin(const struct metal_draw_state_output *output,
+    const uint32_t *payloads,uint32_t payload_count,uint32_t *vertex_offset,uint32_t *pixel_offset) {
+    const uint32_t sizes[]={sizeof(output->vertex),sizeof(output->pixel)};
+    const uint32_t kinds[]={HALO_METAL_UNIFORM_VERTEX,HALO_METAL_UNIFORM_PIXEL};
+    const void *bytes[]={&output->vertex,&output->pixel};
+    uint64_t hashes[]={metal_uniform_hash(bytes[0],sizes[0]),metal_uniform_hash(bytes[1],sizes[1])};
+    uint32_t offsets[2]={0,0};
+    for (unsigned i=0;i<2;i++) metal_uniform_cache_find(&uniform_cache,hashes[i],kinds[i],sizes[i],
+        transport.bytes,transport.recording ? transport.size:0,bytes[i],&offsets[i]);
+    uint32_t end=0;
+    int room=uniform_group_room(transport.recording ? transport.size:sizeof(struct halo_metal_packet),
+        !offsets[0],!offsets[1],payloads,payload_count,&end);
+    uint32_t commands=1+!offsets[0]+!offsets[1];
+    if (transport.recording && (room || end>NATIVE_BATCH_SOFT_BYTES ||
+        commands>65536u-transport.command_count)) {
+        packet_flush(room ? NATIVE_FLUSH_HARD_CAPACITY:
+            commands>65536u-transport.command_count ? NATIVE_FLUSH_COMMAND_LIMIT:NATIVE_FLUSH_SOFT_BATCH_LIMIT);
+        offsets[0]=offsets[1]=0;
+        room=uniform_group_room(sizeof(struct halo_metal_packet),TRUE,TRUE,payloads,payload_count,&end);
+    }
+    require_status("reserve complete uniform draw group",room);
+    packet_group_active=TRUE;
+    for (unsigned i=0;i<2;i++) {
+        if (!offsets[i]) offsets[i]=uniform_define(kinds[i],bytes[i],sizes[i],hashes[i]);
+        else if (draw_diagnostics) {
+            draw_profile.uniform_hits++;
+            draw_profile.uniform_saved_bytes+=sizes[i];
+        }
+    }
+    *vertex_offset=offsets[0];*pixel_offset=offsets[1];
+}
+static void native_synchronize(enum native_flush_reason reason) {
+    if (!device.ready) return;
+    if (async_submit) {
+        /* A fence also drains already submitted work when no commands remain. */
+        struct halo_metal_command command={HALO_METAL_FENCE,0};
+        packet_begin(sizeof(command),NULL,0);
+        command_append(&command,sizeof(command));packet_finish();
+    }
+    packet_flush(reason);
+}
 void halo_metal_flush_pending(void) {
-    if (device.ready) packet_flush(NATIVE_FLUSH_EXIT);
+    native_synchronize(NATIVE_FLUSH_EXIT);
 }
 static void color_to_vec4(D3DCOLOR color, float out[4]) {
     out[0]=((color>>16)&255)/255.0f; out[1]=((color>>8)&255)/255.0f;
@@ -572,14 +727,29 @@ static void native_initialize(void) {
     void *storage = aligned_alloc(16, HALO_METAL_MAX_PACKET);
     if (!storage) native_fail("allocate packet",HALO_METAL_MEMORY);
     require_status("setup transport",halo_metal_guest_setup(&transport,storage,HALO_METAL_MAX_PACKET));
+    metal_uniform_cache_reset(&uniform_cache);
+    resource_cache_reset();
     int fxaa=!strcmp(config_string("display.anti_aliasing"),"fxaa");
     gpu_vertex_decode=config_boolean("debug.metal_gpu_vertex_decode");
+    geometry_cache_enabled=gpu_vertex_decode && config_boolean("debug.metal_geometry_cache");
+    async_submit=config_boolean("debug.metal_async_submit") && config_boolean("display.interpolation");
+    cache_bindings=config_boolean("debug.metal_cache_bindings");
+    texture_cache_enabled=config_boolean("debug.metal_texture_cache");
+    uniform_cache_enabled=config_boolean("debug.metal_uniform_cache");
     require_status("initialize native window",halo_metal_guest_initialize(&transport,
         platform_video_native_window(),(fxaa ? HALO_METAL_ENABLE_FXAA:0) |
-        (gpu_vertex_decode ? HALO_METAL_ENABLE_COMPACT_VERTICES:0),HALO_METAL_CAP_TARGETS | HALO_METAL_CAP_UPLOAD |
+        (gpu_vertex_decode ? HALO_METAL_ENABLE_COMPACT_VERTICES:0) |
+        (geometry_cache_enabled ? HALO_METAL_ENABLE_GEOMETRY_CACHE:0) |
+        (async_submit ? HALO_METAL_ENABLE_ASYNC_SUBMIT:0) |
+        (cache_bindings ? HALO_METAL_ENABLE_CACHE_BINDINGS:0) |
+        (uniform_cache_enabled ? HALO_METAL_ENABLE_UNIFORM_SHARING:0),HALO_METAL_CAP_TARGETS | HALO_METAL_CAP_UPLOAD |
         HALO_METAL_CAP_CLEAR | HALO_METAL_CAP_DRAW | HALO_METAL_CAP_READBACK |
         HALO_METAL_CAP_VISIBILITY | (fxaa ? HALO_METAL_CAP_FXAA:0) |
-        (gpu_vertex_decode ? HALO_METAL_CAP_COMPACT_VERTICES:0)));
+        (gpu_vertex_decode ? HALO_METAL_CAP_COMPACT_VERTICES:0) |
+        (geometry_cache_enabled ? HALO_METAL_CAP_GEOMETRY_CACHE:0) |
+        (async_submit ? HALO_METAL_CAP_ASYNC_SUBMIT:0) |
+        (cache_bindings ? HALO_METAL_CAP_CACHE_BINDINGS:0) |
+        (uniform_cache_enabled ? HALO_METAL_CAP_UNIFORM_SHARING:0)));
     /* platform_video_initialize has already synchronized the Retina window.
        Never resolve native pixels before that point or from display points. */
     native_storage_initialize();
@@ -1133,10 +1303,117 @@ static void target_storage_initialize(struct native_resource *entry) {
     } else { clear.color=entry->ref;clear.planes=HALO_METAL_COLOR; }
     packet_begin(sizeof(clear),NULL,0);command_append(&clear,sizeof(clear));packet_finish();
 }
+static uint32_t resource_cache_bucket(uint32_t data) {
+    data^=data>>16;data*=UINT32_C(0x7feb352d);data^=data>>15;
+    return data&(NATIVE_RESOURCE_BUCKETS-1);
+}
+static uint32_t hud_resource_bucket(long asset) {
+    return ((uint32_t)asset*UINT32_C(2654435761))&(NATIVE_HUD_BUCKETS-1);
+}
+static void resource_cache_reset(void) {
+    memset(resource_buckets,0,sizeof(resource_buckets));
+    memset(hud_resource_buckets,0,sizeof(hud_resource_buckets));
+    memset(target_cache,0,sizeof(target_cache));
+    resource_index_ready=FALSE;
+}
+static void resource_cache_rebuild(void) {
+    memset(resource_buckets,0,sizeof(resource_buckets));
+    memset(hud_resource_buckets,0,sizeof(hud_resource_buckets));
+    for (struct native_resource *entry=resources;entry;entry=entry->next) {
+        uint32_t bucket=resource_cache_bucket(entry->data);
+        entry->cache_next=resource_buckets[bucket];resource_buckets[bucket]=entry;
+        entry->hud_cache_next=NULL;
+        if (entry->description.hires && !entry->text_atlas) {
+            bucket=hud_resource_bucket(entry->hud_asset);
+            entry->hud_cache_next=hud_resource_buckets[bucket];hud_resource_buckets[bucket]=entry;
+        }
+    }
+    /* Reverse rebuilt chains to retain the original newest-first lookup and
+       tie behavior. Subsequent insertions prepend to both lists normally. */
+    for (uint32_t i=0;i<NATIVE_RESOURCE_BUCKETS;i++) {
+        struct native_resource *entry=resource_buckets[i],*head=NULL;
+        while (entry) { struct native_resource *next=entry->cache_next;entry->cache_next=head;head=entry;entry=next; }
+        resource_buckets[i]=head;
+    }
+    for (uint32_t i=0;i<NATIVE_HUD_BUCKETS;i++) {
+        struct native_resource *entry=hud_resource_buckets[i],*head=NULL;
+        while (entry) { struct native_resource *next=entry->hud_cache_next;entry->hud_cache_next=head;head=entry;entry=next; }
+        hud_resource_buckets[i]=head;
+    }
+    resource_index_ready=TRUE;
+}
+static void resource_insert(struct native_resource *entry) {
+    entry->next=resources;resources=entry;
+    if (!resource_index_ready) return;
+    uint32_t bucket=resource_cache_bucket(entry->data);
+    entry->cache_next=resource_buckets[bucket];resource_buckets[bucket]=entry;
+    if (entry->description.hires && !entry->text_atlas) {
+        bucket=hud_resource_bucket(entry->hud_asset);
+        entry->hud_cache_next=hud_resource_buckets[bucket];hud_resource_buckets[bucket]=entry;
+    }
+}
+static void resource_cache_remove(struct native_resource *entry) {
+    if (resource_index_ready) {
+        struct native_resource **link=&resource_buckets[resource_cache_bucket(entry->data)];
+        while (*link && *link!=entry) link=&(*link)->cache_next;
+        if (*link) *link=entry->cache_next;
+        if (entry->description.hires && !entry->text_atlas) {
+            link=&hud_resource_buckets[hud_resource_bucket(entry->hud_asset)];
+            while (*link && *link!=entry) link=&(*link)->hud_cache_next;
+            if (*link) *link=entry->hud_cache_next;
+        }
+    }
+    /* Retirement is rare, and clearing the bounded memo avoids any dangling
+       reference before the owner removes/frees its resource-list node. */
+    memset(target_cache,0,sizeof(target_cache));
+    entry->cache_next=entry->hud_cache_next=NULL;
+}
+static struct native_resource *resource_lookup_first(DWORD data) {
+    struct native_resource *entry=resources;
+    if (texture_cache_enabled) {
+        if (!resource_index_ready) resource_cache_rebuild();
+        entry=resource_buckets[resource_cache_bucket(data)];
+    }
+    if (draw_diagnostics) texture_cache_statistics.lookup_calls++;
+    return entry;
+}
+static struct native_resource *resource_lookup_next(struct native_resource *entry) {
+    entry=texture_cache_enabled ? entry->cache_next:entry->next;
+    return entry;
+}
+static uint32_t target_cache_bucket(const struct native_target_cache_key *key) {
+    uint32_t hash=key->data^key->format^key->size^key->logical_width^key->render_height;
+    hash^=key->native_width*UINT32_C(2654435761)^key->native_height*UINT32_C(2246822519);
+    return resource_cache_bucket(hash)&(NATIVE_TARGET_CACHE_SLOTS-1);
+}
+static struct native_resource *target_cache_find(const struct native_target_cache_key *key) {
+    const struct native_target_cache_entry *cached=&target_cache[target_cache_bucket(key)];
+    struct native_resource *entry=cached->resource;
+    if (!entry || cached->key.data!=key->data || cached->key.format!=key->format ||
+        cached->key.size!=key->size || cached->key.logical_width!=key->logical_width ||
+        cached->key.render_height!=key->render_height || cached->key.native_width!=key->native_width ||
+        cached->key.native_height!=key->native_height || entry->data!=key->data ||
+        entry->format_word!=key->format || entry->size_word!=key->size ||
+        entry->storage_width!=cached->storage_width || entry->storage_height!=cached->storage_height ||
+        entry->scale_mode!=cached->scale_mode || !(entry->usage&HALO_METAL_RENDER_TARGET)) return NULL;
+    if (draw_diagnostics) texture_cache_statistics.target_hits++;
+    return entry;
+}
+static void target_cache_store(const struct native_target_cache_key *key,struct native_resource *entry) {
+    target_cache[target_cache_bucket(key)]=(struct native_target_cache_entry){*key,entry,
+        entry->storage_width,entry->storage_height,entry->scale_mode};
+}
 static struct native_resource *target_get(const D3DSurface *surface) {
     struct native_resource *entry;
     unsigned long width,height; BOOL depth;
     if (!surface || !surface->Data) native_fail("missing original render target",HALO_METAL_INVALID);
+    struct native_target_cache_key cache_key;
+    if (texture_cache_enabled) {
+        cache_key=(struct native_target_cache_key){surface->Data,surface->Format,surface->Size,
+            (uint32_t)halo_screen_width(),native_render_height(),native_storage_width,native_storage_height};
+        entry=target_cache_find(&cache_key);
+        if (entry) return entry;
+    }
     surface_dimensions(surface,&width,&height,&depth);
     struct halo_metal_render_dimensions dimensions;
     if (native_render_height()) {
@@ -1148,11 +1425,14 @@ static struct native_resource *target_get(const D3DSurface *surface) {
         require_status("native target dimensions",halo_metal_render_native_target_dimensions(width,height,
             halo_screen_width(),native_storage_width,native_storage_height,&dimensions));
     }
-    for (entry=resources;entry;entry=entry->next)
+    for (entry=resource_lookup_first(surface->Data);entry;entry=resource_lookup_next(entry))
         if ((entry->usage&HALO_METAL_RENDER_TARGET) && entry->data==surface->Data &&
             entry->format_word==surface->Format && entry->size_word==surface->Size &&
             entry->storage_width==dimensions.storage_width && entry->storage_height==dimensions.storage_height &&
-            entry->scale_mode==dimensions.scale_mode) return entry;
+            entry->scale_mode==dimensions.scale_mode) {
+                if (texture_cache_enabled) target_cache_store(&cache_key,entry);
+                return entry;
+            }
     entry=calloc(1,sizeof(*entry));
     if (!entry) native_fail("allocate render target",HALO_METAL_MEMORY);
     entry->data=surface->Data;entry->format_word=surface->Format;entry->size_word=surface->Size;
@@ -1169,12 +1449,13 @@ static struct native_resource *target_get(const D3DSurface *surface) {
        zero allocation so untouched planes can safely be loaded by Metal.
        This uses no reference framebuffer or captured after-draw pixels. */
     target_storage_initialize(entry);
-    entry->next=resources;resources=entry;
+    resource_insert(entry);
+    if (texture_cache_enabled) target_cache_store(&cache_key,entry);
     return entry;
 }
 static struct native_resource *rendered_alias(DWORD data) {
     struct native_resource *entry,*best=NULL;
-    for (entry=resources;entry;entry=entry->next)
+    for (entry=resource_lookup_first(data);entry;entry=resource_lookup_next(entry))
         if (entry->data==data && (entry->usage&HALO_METAL_RENDER_TARGET) &&
             entry->format!=HALO_METAL_DEPTH32_STENCIL8 && (!best || entry->last_rendered>best->last_rendered)) best=entry;
     return best;
@@ -1249,6 +1530,7 @@ static void native_history_sample_retire(void) {
     struct native_resource *previous=*link;
     resource_delete(previous);
     packet_flush(NATIVE_FLUSH_RESIZE);
+    resource_cache_remove(previous);
     *link=previous->next;history_sample_override=NULL;
     free(previous->mip_copy_cache);free(previous);
 }
@@ -1380,7 +1662,7 @@ static struct native_resource *rendered_mip_composite(DWORD data,
         if (!composite->mip_copy_cache) native_fail("allocate rendered mip copy cache",HALO_METAL_MEMORY);
         composite->data=data;composite->description=*original;
         composite->format=plan.storage_format;composite->usage=HALO_METAL_SHADER_READ;composite->mip_composite=TRUE;
-        resource_create(composite);composite->next=resources;resources=composite;
+        resource_create(composite);resource_insert(composite);
         platform_log("Native rendered mip composite: Data %08lx %lux%lu levels %lu, independent original targets",
             data,original->width,original->height,original->levels);
     }
@@ -1415,7 +1697,9 @@ static unsigned long palette_hash(const D3DCOLOR *palette) {
  * Only an enabled, matching HUD bitmap reaches this allocation/upload path. */
 static struct native_resource *hud_texture_get(long asset) {
     struct native_resource *entry;
-    for (entry=resources;entry;entry=entry->next)
+    if (texture_cache_enabled && !resource_index_ready) resource_cache_rebuild();
+    for (entry=texture_cache_enabled ? hud_resource_buckets[hud_resource_bucket(asset)]:resources;
+        entry;entry=texture_cache_enabled ? entry->hud_cache_next:entry->next)
         if (entry->description.hires && !entry->text_atlas && entry->hud_asset==asset) return entry;
     unsigned long width=0,height=0;
     unsigned char *pixels=hud_hires_override_pixels(asset,&width,&height);
@@ -1456,7 +1740,7 @@ static struct native_resource *hud_texture_get(long asset) {
             mip_width=mip_width>1 ? mip_width/2:1;mip_height=mip_height>1 ? mip_height/2:1;
         }
     }
-    free(pixels);entry->next=resources;resources=entry;
+    free(pixels);resource_insert(entry);
     platform_log("Native high-res HUD: asset %ld uploaded %lux%lu, %lu mip levels",
         asset,width,height,entry->description.levels);
     return entry;
@@ -1494,7 +1778,7 @@ static struct native_resource *text_texture_get(unsigned long data) {
         /* Coverage is already the RGBA alpha channel, as with stock glyphs.
          * No HUD meter coverage transform or texture-channel swizzle applies. */
         entry->format=HALO_METAL_RGBA8;entry->usage=HALO_METAL_SHADER_READ;
-        resource_create(entry);entry->next=resources;resources=entry;
+        resource_create(entry);resource_insert(entry);
         text_atlas_resource=entry;
     }
     if (size) {
@@ -1523,29 +1807,42 @@ static struct native_resource *texture_get(D3DBaseTexture *texture,D3DPalette *p
     if (texture->Data==device.history_buffer.Data)
         entry=history_sample_override ? history_sample_override:target_get(&device.history_buffer);
     struct xgpu_texture_description original;
-    xgpu_texture_describe(texture->Format,texture->Size,&original);
     if (entry) {
+        xgpu_texture_describe(texture->Format,texture->Size,&original);
         if (!original.linear && !original.cube_map && original.depth==1 && original.levels>1 &&
             original.width==entry->description.width && original.height==entry->description.height)
             return rendered_mip_composite(texture->Data,&original);
         if (original.depth!=1) native_fail("rendered volume alias",HALO_METAL_UNSUPPORTED);
         return entry;
     }
-    for (entry=resources;entry;entry=entry->next)
+    for (entry=resource_lookup_first(texture->Data);entry;entry=resource_lookup_next(entry))
         if (!(entry->usage&HALO_METAL_RENDER_TARGET) && !entry->mip_composite && !entry->description.hires && entry->data==texture->Data &&
             entry->format_word==texture->Format && entry->size_word==texture->Size) break;
+    if (texture_cache_enabled && entry) {
+        original=entry->description;
+        if (draw_diagnostics) texture_cache_statistics.authored_hits++;
+    } else xgpu_texture_describe(texture->Format,texture->Size,&original);
     struct xgpu_texture_mip_layout layout;
     struct xgpu_texture_volume_mip_layout volume_layout;
     BOOL volume=((texture->Format&D3DFORMAT_DIMENSION_MASK)>>D3DFORMAT_DIMENSION_SHIFT)==3;
     int layout_status;
-    if (volume) {
-        if (!(transport.reply.capabilities&HALO_METAL_CAP_VOLUME))
-            native_fail("authored volume capability",HALO_METAL_UNSUPPORTED);
+    if (volume && !(transport.reply.capabilities&HALO_METAL_CAP_VOLUME))
+        native_fail("authored volume capability",HALO_METAL_UNSUPPORTED);
+    if (texture_cache_enabled && entry && entry->authored_layout_valid) {
+        layout=entry->authored_layout;
+        if (volume) volume_layout=entry->authored_volume_layout;
+        layout_status=0;
+        if (draw_diagnostics) texture_cache_statistics.layout_hits++;
+    } else if (volume) {
+        if (draw_diagnostics) texture_cache_statistics.layout_plans++;
         layout_status=xgpu_texture_volume_mip_layout(texture->Format,texture->Size,0,0,
             _xgpu_texture_copy_bgra,&volume_layout);
         layout=volume_layout.mip;
-    } else layout_status=xgpu_texture_mip_layout(texture->Format,texture->Size,0,0,
-        _xgpu_texture_copy_bgra,&layout);
+    } else {
+        if (draw_diagnostics) texture_cache_statistics.layout_plans++;
+        layout_status=xgpu_texture_mip_layout(texture->Format,texture->Size,0,0,
+            _xgpu_texture_copy_bgra,&layout);
+    }
     if (layout_status) {
         platform_log("Native unsupported texture: stage %u Data %08lx Format %08lx Size %08lx; format %lu dimensions %lux%lux%lu levels %lu cube %lu linear %lu; PS modes %08lx",
             stage,texture->Data,texture->Format,texture->Size,original.format,
@@ -1599,7 +1896,12 @@ static struct native_resource *texture_get(D3DBaseTexture *texture,D3DPalette *p
         entry->description=original;
         entry->volume=volume;
         entry->format=texture_format(layout.format);entry->usage=HALO_METAL_SHADER_READ;
-        resource_create(entry);entry->next=resources;resources=entry;
+        resource_create(entry);resource_insert(entry);
+    }
+    if (texture_cache_enabled && !entry->authored_layout_valid) {
+        entry->authored_layout=layout;
+        if (volume) entry->authored_volume_layout=volume_layout;
+        entry->authored_layout_valid=TRUE;
     }
     /* Protect before CRC validation as well as original uploads, so a later
      * source write invalidates this association on the next draw. A changed
@@ -1748,6 +2050,102 @@ static struct native_program *program_get(struct vertex_shader_object *vertex,ui
     packet_finish();free(vs);free(ps);
     entry->next=programs;programs=entry;return entry;
 }
+static uint32_t geometry_bucket(struct vertex_shader_object *declaration,const WORD *indices,
+    const struct metal_vertex_index_plan *plan,uint32_t type,uint32_t count) {
+    uintptr_t hash=((uintptr_t)declaration>>4)^((uintptr_t)indices>>2);
+    hash^=(uintptr_t)plan->source_first*UINT32_C(2654435761);
+    hash^=(uintptr_t)plan->source_count*UINT32_C(2246822519);
+    hash^=(uintptr_t)type*UINT32_C(3266489917)^count;
+    return (uint32_t)hash&(NATIVE_GEOMETRY_BUCKETS-1);
+}
+static size_t geometry_entry_bytes(const struct native_geometry *entry) {
+    return (size_t)entry->vertex_bytes+entry->index_bytes+entry->source_index_bytes;
+}
+static void geometry_remove(struct native_geometry *entry) {
+    uint32_t slot=(uint32_t)(entry-geometry_slots)+1;
+    uint32_t bucket=geometry_bucket(entry->declaration,entry->source_indices,&entry->plan,entry->primitive,entry->count);
+    uint32_t *link=&geometry_buckets[bucket];
+    while (*link && *link!=slot) link=&geometry_slots[*link-1].next;
+    if (*link!=slot) native_fail("geometry cache linkage",HALO_METAL_INVALID);
+    if (entry->uploaded) {
+        struct halo_metal_delete command={{HALO_METAL_DELETE_GEOMETRY,sizeof(command)},entry->ref};
+        packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();
+    }
+    *link=entry->next;geometry_bytes-=geometry_entry_bytes(entry);
+    free(entry->vertices);free(entry->indices);free(entry->original_indices);
+    struct halo_metal_ref ref=entry->ref;
+    memset(entry,0,sizeof(*entry));entry->ref=ref;
+}
+static struct native_geometry *geometry_find(D3DPRIMITIVETYPE type,uint32_t first,uint32_t count,
+    const WORD *indices,uint32_t base,const struct metal_vertex_index_plan *plan,
+    const struct metal_vertex_stream streams[16],uint32_t vertex_bytes) {
+    if (geometry_clock==UINT64_MAX) return NULL;
+    uint32_t slot=geometry_buckets[geometry_bucket(device.vertex_shader,indices,plan,type,count)];
+    while (slot) {
+        struct native_geometry *entry=&geometry_slots[slot-1];
+        slot=entry->next;
+        if (entry->declaration!=device.vertex_shader || entry->source_indices!=indices ||
+            entry->primitive!=(uint32_t)type || entry->first!=first || entry->count!=count || entry->base!=base ||
+            entry->vertex_bytes!=vertex_bytes || memcmp(&entry->plan,plan,sizeof(*plan))) continue;
+        /* Identity is a lookup hint only. Verify actual source bytes on every
+           draw, including a second draw in the same frame after a guest write.
+           Metadata/fixed values and raw indices are part of the comparison. */
+        int equal=metal_vertex_compact_matches(&device.vertex_shader->declaration,streams,device.attributes,
+            plan->source_first,plan->source_count,entry->vertices,entry->vertex_bytes);
+        if (equal<0) require_status("verify cached original streams",equal);
+        if (equal && (!indices || metal_vertex_bytes_equal(indices,entry->original_indices,entry->source_index_bytes))) {
+            entry->used=++geometry_clock;return entry;
+        }
+        geometry_remove(entry);return NULL;
+    }
+    return NULL;
+}
+static struct native_geometry *geometry_retain(D3DPRIMITIVETYPE type,uint32_t first,uint32_t count,
+    const WORD *indices,uint32_t base,const struct metal_vertex_index_plan *plan,
+    void *vertices,uint32_t vertex_bytes,void *rebased,uint32_t index_bytes,void *original) {
+    size_t original_bytes=indices ? (size_t)count*2:0;
+    size_t bytes=(size_t)vertex_bytes+index_bytes+original_bytes;
+    // An inability to cache keeps the exact ordinary compact draw path.
+    if (bytes>NATIVE_GEOMETRY_BYTES || geometry_clock==UINT64_MAX) return NULL;
+    if (original_bytes && !original) return NULL;
+    struct native_geometry *entry=NULL;
+    for (;;) {
+        struct native_geometry *oldest=NULL;
+        for (uint32_t i=0;i<NATIVE_GEOMETRY_SLOTS;i++) {
+            struct native_geometry *candidate=&geometry_slots[i];
+            if (!candidate->vertices && candidate->ref.generation!=UINT32_MAX) {
+                if (!entry) entry=candidate;
+            } else if (candidate->vertices && (!oldest || candidate->used<oldest->used)) oldest=candidate;
+        }
+        if (entry && bytes<=NATIVE_GEOMETRY_BYTES-geometry_bytes) break;
+        if (!oldest) return NULL;
+        geometry_remove(oldest);
+        if (oldest->ref.generation!=UINT32_MAX) entry=oldest;
+    }
+    uint32_t slot=(uint32_t)(entry-geometry_slots)+1;
+    entry->ref.id=slot;entry->ref.generation++;
+    entry->declaration=device.vertex_shader;entry->source_indices=indices;entry->plan=*plan;
+    entry->primitive=type;entry->first=first;entry->count=count;entry->base=base;
+    entry->vertices=vertices;entry->indices=rebased;entry->original_indices=original;
+    entry->vertex_bytes=vertex_bytes;entry->index_bytes=index_bytes;entry->source_index_bytes=(uint32_t)original_bytes;
+    entry->used=++geometry_clock;
+    uint32_t bucket=geometry_bucket(entry->declaration,indices,plan,type,count);
+    entry->next=geometry_buckets[bucket];geometry_buckets[bucket]=slot;geometry_bytes+=bytes;
+    // The first draw uses its ordinary compact payload. Keep only a CPU
+    // shadow until another draw verifies these exact bytes unchanged; dynamic
+    // inputs that change every use never allocate private GPU buffers.
+    return entry;
+}
+static void geometry_upload(struct native_geometry *entry) {
+    if (entry->uploaded) native_fail("duplicate immutable geometry upload",HALO_METAL_INVALID);
+    struct halo_metal_create_geometry command={{HALO_METAL_CREATE_GEOMETRY,sizeof(command)},entry->ref,
+        entry->plan.source_count,entry->plan.index_count,device.vertex_shader->declaration.packed_mask,entry->vertex_bytes,0,0,{0,0}};
+    uint32_t payloads[]={entry->vertex_bytes,entry->index_bytes};packet_begin(sizeof(command),payloads,2);
+    uint32_t offset=command_append(&command,sizeof(command));
+    payload_append(offset,offsetof(struct halo_metal_create_geometry,vertices_offset),entry->vertices,entry->vertex_bytes);
+    payload_append(offset,offsetof(struct halo_metal_create_geometry,indices_offset),entry->indices,entry->index_bytes);
+    packet_finish();entry->uploaded=TRUE;
+}
 static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD *indices,BOOL immediate) {
     if (!count || !device.ready) return;
     struct vertex_shader_object *vertex=device.fixed_function_selected ? &fixed_function_vertex:current_program();
@@ -1757,6 +2155,8 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
     if (device.fixed_function_selected && !immediate)
         native_fail("fixed-function stream/FVF draw is unsupported",HALO_METAL_UNSUPPORTED);
     uint64_t profile_started=draw_diagnostics ? monotonic_ns():0,profile_submitted=submit_wall_ns;
+    if (draw_diagnostics && frame_phases.active && !frame_phases.first_draw)
+        frame_phases.first_draw=profile_started;
     struct metal_vertex_index_plan plan;
     require_status("original primitive plan",metal_vertex_index_plan(type,indices,indices ? count*sizeof(WORD):0,
         count,first,indices ? device.base_vertex_index:0,&plan));
@@ -1793,12 +2193,27 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
         sizeof(struct halo_metal_packet),transport.capacity,compact_vertices ? sizeof(struct halo_metal_draw_compact):
         sizeof(struct halo_metal_draw_alpha_border),
         draw_payloads,4,&draw_end));
-    void *vertices=malloc(vertex_bytes);void *rebased=malloc(index_bytes);
+    /* Preserve acceptance of a single legacy draw near the hard limit: its
+     * optional definition records may cost more than command-local uniforms. */
+    BOOL shared_uniform_draw=uniform_cache_enabled &&
+        !uniform_group_room(sizeof(struct halo_metal_packet),TRUE,TRUE,draw_payloads,2,&draw_end);
+    struct native_geometry *geometry=compact_vertices && geometry_cache_enabled ?
+        geometry_find(type,first,count,indices,indices ? device.base_vertex_index:0,&plan,streams,vertex_bytes):NULL;
+    BOOL geometry_hit=geometry!=NULL;
+    void *vertices=geometry ? geometry->vertices:malloc(vertex_bytes);
+    void *rebased=geometry ? geometry->indices:malloc(index_bytes);
+    void *original_indices=NULL;
+    if (!geometry && compact_vertices && geometry_cache_enabled && indices) {
+        original_indices=malloc((size_t)count*2);
+        if (original_indices) memcpy(original_indices,indices,(size_t)count*2);
+    }
     if (!vertices || !rebased) native_fail("original stream allocation",HALO_METAL_MEMORY);
-    require_status("original primitive indices",metal_vertex_indices(type,indices,indices ? count*sizeof(WORD):0,
+    if (!geometry) require_status("original primitive indices",metal_vertex_indices(type,
+        original_indices ? original_indices:indices,indices ? count*sizeof(WORD):0,
         count,first,indices ? device.base_vertex_index:0,rebased,index_bytes,&plan));
     uint32_t packed=immediate ? 0 : device.vertex_shader->declaration.packed_mask;
-    if (immediate) memcpy(vertices,device.immediate_vertices,vertex_bytes);
+    if (geometry) { /* The verified immutable source snapshot is already owned. */ }
+    else if (immediate) memcpy(vertices,device.immediate_vertices,vertex_bytes);
     else if (compact_vertices)
         require_status("snapshot original compact streams",metal_vertex_compact_pack(
             &device.vertex_shader->declaration,streams,device.attributes,plan.source_first,plan.source_count,
@@ -1905,12 +2320,38 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
     memcpy(draw.samplers,output.samplers,sizeof(draw.samplers));draw.state=output.state;
     draw.vertex_count=plan.source_count;draw.index_count=plan.index_count;
     draw.packed_mask=packed;draw.primitive=plan.wire_primitive;
+    if (!geometry && compact_vertices && geometry_cache_enabled)
+        geometry=geometry_retain(type,first,count,indices,indices ? device.base_vertex_index:0,&plan,
+            vertices,vertex_bytes,rebased,index_bytes,original_indices);
+    BOOL geometry_upload_now=geometry_hit && geometry && !geometry->uploaded;
+    if (geometry_upload_now) geometry_upload(geometry);
+    BOOL geometry_draw=geometry && geometry->uploaded;
     uint32_t payloads[]={vertex_bytes,index_bytes,sizeof(output.vertex),sizeof(output.pixel)};
-    packet_begin(compact_vertices ? sizeof(struct halo_metal_draw_compact):
+    uint32_t uniform_payloads[]={sizeof(output.vertex),sizeof(output.pixel)};
+    if (shared_uniform_draw) uniform_group_begin(&output,geometry_draw ? NULL:payloads,geometry_draw ? 0:2,
+        &draw.vertex_uniforms_offset,&draw.pixel_uniforms_offset);
+    packet_begin(shared_uniform_draw ? sizeof(struct halo_metal_draw_uniform_refs):
+        geometry_draw ? sizeof(struct halo_metal_draw_geometry):compact_vertices ? sizeof(struct halo_metal_draw_compact):
         output.native_volume_border_mask ? sizeof(struct halo_metal_draw_volume_border):
-        output.native_alpha_border_mask ? sizeof(struct halo_metal_draw_alpha_border):sizeof(draw),payloads,4);
+        output.native_alpha_border_mask ? sizeof(struct halo_metal_draw_alpha_border):sizeof(draw),
+        shared_uniform_draw ? (geometry_draw ? NULL:payloads):(geometry_draw ? uniform_payloads:payloads),
+        shared_uniform_draw ? (geometry_draw ? 0:2):(geometry_draw ? 2:4));
     uint32_t offset;
-    if (compact_vertices) {
+    if (shared_uniform_draw) {
+        struct halo_metal_draw_uniform_refs extended={0};
+        extended.draw=draw;extended.draw.command.opcode=HALO_METAL_DRAW_UNIFORM_REFS;
+        extended.input_kind=geometry_draw ? HALO_METAL_INPUT_GEOMETRY:
+            compact_vertices ? HALO_METAL_INPUT_COMPACT:HALO_METAL_INPUT_EXPANDED;
+        if (geometry_draw) extended.geometry=geometry->ref;
+        else if (compact_vertices) extended.vertex_bytes=vertex_bytes;
+        extended.volume_stage_mask=output.native_volume_border_mask;
+        extended.alpha_stage_mask=output.native_alpha_border_mask;
+        offset=command_append(&extended,sizeof(extended));
+    } else if (geometry_draw) {
+        struct halo_metal_draw_geometry extended={draw,geometry->ref,output.native_volume_border_mask,output.native_alpha_border_mask};
+        extended.draw.command.opcode=HALO_METAL_DRAW_GEOMETRY;
+        offset=command_append(&extended,sizeof(extended));
+    } else if (compact_vertices) {
         struct halo_metal_draw_compact extended={draw,vertex_bytes,output.native_volume_border_mask,output.native_alpha_border_mask,0};
         extended.draw.command.opcode=HALO_METAL_DRAW_COMPACT;
         offset=command_append(&extended,sizeof(extended));
@@ -1923,11 +2364,16 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
         extended.draw.command.opcode=HALO_METAL_DRAW_ALPHA_BORDER;
         offset=command_append(&extended,sizeof(extended));
     } else offset=command_append(&draw,sizeof(draw));
-    payload_append(offset,offsetof(struct halo_metal_draw,vertices_offset),vertices,vertex_bytes);
-    payload_append(offset,offsetof(struct halo_metal_draw,indices_offset),rebased,index_bytes);
-    payload_append(offset,offsetof(struct halo_metal_draw,vertex_uniforms_offset),&output.vertex,sizeof(output.vertex));
-    payload_append(offset,offsetof(struct halo_metal_draw,pixel_uniforms_offset),&output.pixel,sizeof(output.pixel));
-    packet_finish();free(vertices);free(rebased);
+    if (!geometry_draw) {
+        payload_append(offset,offsetof(struct halo_metal_draw,vertices_offset),vertices,vertex_bytes);
+        payload_append(offset,offsetof(struct halo_metal_draw,indices_offset),rebased,index_bytes);
+    }
+    if (!shared_uniform_draw) {
+        payload_append(offset,offsetof(struct halo_metal_draw,vertex_uniforms_offset),&output.vertex,sizeof(output.vertex));
+        payload_append(offset,offsetof(struct halo_metal_draw,pixel_uniforms_offset),&output.pixel,sizeof(output.pixel));
+    } else packet_group_active=FALSE;
+    packet_finish();
+    if (!geometry) { free(vertices);free(rebased);free(original_indices); }
     device.draws++;
     color->last_rendered=rendered_serial_next();
     if (depth) depth->last_rendered=device.resource_serial;
@@ -1935,8 +2381,10 @@ static void draw_original(D3DPRIMITIVETYPE type,UINT first,UINT count,const WORD
         native_draw_phase(&profile_started,&profile_submitted,&draw_profile.emit_ns);
         draw_profile.draws++;
         draw_profile.expanded_bytes+=expanded_bytes;
-        draw_profile.vertex_bytes+=vertex_bytes;
+        draw_profile.vertex_bytes+=geometry_draw && !geometry_upload_now ? 0:vertex_bytes;
         if (compact_vertices) { draw_profile.compact_draws++;draw_profile.compact_bytes+=vertex_bytes; }
+        if (geometry_hit) draw_profile.geometry_hits++;
+        if (geometry_upload_now) { draw_profile.geometry_uploads++;draw_profile.geometry_upload_bytes+=vertex_bytes+index_bytes; }
     }
 }
 void WINAPI D3DDevice_DrawVertices(D3DPRIMITIVETYPE type,UINT first,UINT count) {
@@ -1965,7 +2413,7 @@ void WINAPI D3DDevice_End(void) {
 BOOL WINAPI D3DDevice_IsBusy(void) { return FALSE; }
 void WINAPI D3DDevice_KickPushBuffer(void) { if (device.ready) packet_flush(NATIVE_FLUSH_KICK_PUSH_BUFFER); }
 void WINAPI D3DDevice_InsertCallback(D3DCALLBACKTYPE type,D3DCALLBACK callback,DWORD context) {
-    (void)type; if (callback) { if (device.ready) packet_flush(NATIVE_FLUSH_INSERT_CALLBACK);callback(context); }
+    (void)type; if (callback) { native_synchronize(NATIVE_FLUSH_INSERT_CALLBACK);callback(context); }
 }
 static struct halo_metal_ref query_create(void) {
     struct halo_metal_create_visibility command={0};
@@ -1979,8 +2427,13 @@ static void query_collect(unsigned index) {
     if (!device.query_pending[index]) return;
     uint64_t result=0;
     packet_flush(NATIVE_FLUSH_VISIBILITY_COLLECT);
+    uint64_t started=draw_diagnostics ? monotonic_ns():0;
     require_status("read original visibility result",halo_metal_guest_readback(&transport,
         device.query_slots[index],HALO_METAL_VISIBILITY,&result,sizeof(result)));
+    if (draw_diagnostics) {
+        draw_profile.visibility_reads++;
+        draw_profile.visibility_readback_ns+=monotonic_ns()-started;
+    }
     device.query_results[index]=result ? VISIBILITY_ALL_SAMPLES:0;
     device.query_pending[index]=FALSE;
 }
@@ -2000,7 +2453,16 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index) {
     struct halo_metal_ref previous=device.query_slots[index];
     device.query_slots[index]=device.query_scratch;device.query_scratch=previous;
     device.query_pending[index]=TRUE;device.visibility_test_active=FALSE;
+    if (async_submit) visibility_checkpoint_pending=TRUE;
     return S_OK;
+}
+/* The original query group already ends its render passes. Submit it before
+ * the remaining world/HUD work, preserving command order and exact results.
+ * The next frame may then wait for this prefix without waiting for its tail. */
+void halo_metal_visibility_checkpoint(void) {
+    if (!async_submit || !device.ready || !visibility_checkpoint_pending || device.visibility_test_active) return;
+    visibility_checkpoint_pending=FALSE;
+    if (transport.recording) packet_flush(NATIVE_FLUSH_VISIBILITY_READY);
 }
 HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index,UINT *result,ULONGLONG *timestamp) {
     if (timestamp) *timestamp=0;
@@ -2150,6 +2612,22 @@ static void native_frame_statistics(void) {
             device.frame,(unsigned long long)draw_profile.compact_draws,(unsigned long long)draw_profile.draws,
             (unsigned long long)draw_profile.compact_bytes,(unsigned long long)draw_profile.vertex_bytes,
             (unsigned long long)draw_profile.expanded_bytes);
+        platform_log("Native geometry cache: frame %lu, hits %llu, uploads %llu, upload-bytes %llu, retained-bytes %llu",
+            device.frame,(unsigned long long)draw_profile.geometry_hits,(unsigned long long)draw_profile.geometry_uploads,
+            (unsigned long long)draw_profile.geometry_upload_bytes,(unsigned long long)geometry_bytes);
+        platform_log("Native visibility reads: frame %lu, reads %llu, readback %llu ns",
+            device.frame,(unsigned long long)draw_profile.visibility_reads,
+            (unsigned long long)draw_profile.visibility_readback_ns);
+        platform_log("Native uniform cache: frame %lu, hits %llu, definitions %llu, saved-bytes %llu",
+            device.frame,(unsigned long long)draw_profile.uniform_hits,
+            (unsigned long long)draw_profile.uniform_definitions,(unsigned long long)draw_profile.uniform_saved_bytes);
+        platform_log("Native texture cache: frame %lu, target-hits %llu, authored-hits %llu, layout-hits %llu, layout-plans %llu, lookup-calls %llu",
+            device.frame,(unsigned long long)texture_cache_statistics.target_hits,
+            (unsigned long long)texture_cache_statistics.authored_hits,
+            (unsigned long long)texture_cache_statistics.layout_hits,
+            (unsigned long long)texture_cache_statistics.layout_plans,
+            (unsigned long long)texture_cache_statistics.lookup_calls);
+        memset(&texture_cache_statistics,0,sizeof(texture_cache_statistics));
         memset(&draw_profile,0,sizeof(draw_profile));
     }
     if (previous_ns && ns>previous_ns && ns-previous_ns<UINT64_C(1000000000)) return;
@@ -2169,6 +2647,7 @@ static void native_frame_statistics(void) {
 }
 void WINAPI D3DDevice_Present(const RECT *source,const RECT *destination,void *unused,void *unused2) {
     (void)source;(void)destination;(void)unused;(void)unused2;
+    if (draw_diagnostics && frame_phases.active) frame_phases.d3d_begin=monotonic_ns();
     if (device.ready) {
         struct native_resource *back=target_get(&device.back_buffer);
         long screenshot_every=config_integer("debug.screenshot_every");
@@ -2177,6 +2656,10 @@ void WINAPI D3DDevice_Present(const RECT *source,const RECT *destination,void *u
         struct halo_metal_present_scaled command={0};command.command.opcode=HALO_METAL_PRESENT_SCALED;
         command.source=back->ref;command.display_flags=config_boolean("display.vsync") ? HALO_METAL_DISPLAY_VSYNC:0;
         packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();packet_flush(NATIVE_FLUSH_PRESENT);
+        visibility_checkpoint_pending=FALSE;
+        /* Live settings may disable interpolation after async initialization.
+           Original flip timing requires GPU completion before counting that frame. */
+        if (async_submit && !halo_interpolation_enabled()) native_synchronize(NATIVE_FLUSH_PRESENT);
         native_history_sample_retire();
     }
     device.frame++;
@@ -2192,9 +2675,17 @@ void WINAPI D3DDevice_Present(const RECT *source,const RECT *destination,void *u
         statistics_bytes=submitted_bytes;statistics_wall_ns=submit_wall_ns;largest_statistics_batch=0;
         native_flush_statistics_log(device.frame-60,device.frame-1);
     }
+    const BOOL tail_diagnostics=config_boolean("debug.gpu_stats");
+    uint64_t tail_started=tail_diagnostics ? monotonic_ns():0;
     native_frame_wait();
+    uint64_t cap_wait_ns=tail_diagnostics ? monotonic_ns()-tail_started:0;
+    if (draw_diagnostics && frame_phases.active) frame_phases.statistics_begin=monotonic_ns();
     if (device.ready) native_frame_statistics();
+    if (draw_diagnostics && frame_phases.active) frame_phases.statistics_end=monotonic_ns();
+    tail_started=tail_diagnostics ? monotonic_ns():0;
     platform_pump_events();vertical_blank_start();
+    uint64_t events_ns=tail_diagnostics ? monotonic_ns()-tail_started:0;
+    uint64_t flip_started=tail_diagnostics ? monotonic_ns():0;
     pthread_mutex_lock(&vertical_blank_lock);
     if (halo_interpolation_enabled()) flip_count++;
     else {
@@ -2202,7 +2693,13 @@ void WINAPI D3DDevice_Present(const RECT *source,const RECT *destination,void *u
         pending_flips++;
     }
     pthread_mutex_unlock(&vertical_blank_lock);
+    uint64_t flips_ns=tail_diagnostics ? monotonic_ns()-flip_started:0;
+    uint64_t resolution_started=tail_diagnostics ? monotonic_ns():0;
     native_resolution_commit();
+    if (tail_diagnostics) platform_log("Native frame tail: frame %lu, cap %llu ns, events %llu ns, flips %llu ns, resolution %llu ns",
+        device.frame,(unsigned long long)cap_wait_ns,(unsigned long long)events_ns,
+        (unsigned long long)flips_ns,(unsigned long long)(monotonic_ns()-resolution_started));
+    if (draw_diagnostics && frame_phases.active) frame_phases.d3d_end=monotonic_ns();
 }
 HRESULT WINAPI D3DDevice_PersistDisplay(void) { return S_OK; }
 long halo_screen_commit(void)

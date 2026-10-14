@@ -269,8 +269,18 @@ int main(void) {
     unsigned aa_found = 0;
     unsigned renderer_found = 0;
     unsigned gpu_input_found = 0;
+    unsigned caches_found = 0;
     for (unsigned i = 0; i < NUMBER_OF_CONFIG_SETTINGS; i++) {
         const struct config_setting *s = &config_settings[i];
+        if (!strcmp(s->name,"debug.metal_geometry_cache") ||
+            !strcmp(s->name,"debug.metal_cache_bindings") ||
+            !strcmp(s->name,"debug.metal_texture_cache") ||
+            !strcmp(s->name,"debug.metal_uniform_cache") ||
+            !strcmp(s->name,"debug.metal_async_submit")) {
+            const char *expected = !strcmp(s->name,"debug.metal_async_submit") ? "false" : "true";
+            if(s->type!=_config_boolean || s->environment || strcmp(s->default_value,expected)) return 8;
+            caches_found++;continue;
+        }
         if (!strcmp(s->name,"debug.metal_gpu_vertex_decode")) {
             if(s->type!=_config_boolean || s->environment || strcmp(s->default_value,"true")) return 6;
             gpu_input_found++;continue;
@@ -296,9 +306,13 @@ int main(void) {
     if (aa_found || renderer_found) return 4;
 #endif
     if (gpu_input_found != 1) return 7;
+    if (caches_found != 5) return 9;
     printf("%u %ld %ld %d %s %s\n", found, config_integer("display.frame_limit"), config_integer("display.render_height"),
         config_boolean("debug.metal_gpu_vertex_decode"),
         config_string("display.anti_aliasing"),config_string("display.renderer"));
+    printf("%d %d %d\n", config_boolean("debug.metal_geometry_cache"),
+        config_boolean("debug.metal_cache_bindings"),config_boolean("debug.metal_async_submit"));
+    printf("%d %d\n",config_boolean("debug.metal_texture_cache"),config_boolean("debug.metal_uniform_cache"));
     return 0;
 }
 '''
@@ -375,7 +389,10 @@ class NativeConfigTests(unittest.TestCase):
             environment.update(HALO_SAVE_ROOT=name, HALO_DATA_ROOT=name)
             result = subprocess.run([str(self.executables[target])], env=environment, capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            values = result.stdout.split()
+            lines = result.stdout.splitlines()
+            values = lines[0].split()
+            self.metal_caches = tuple(bool(int(value)) for value in lines[1].split())
+            self.metal_preparation_caches = tuple(bool(int(value)) for value in lines[2].split())
             self.gpu_vertex_decode = bool(int(values[3]))
             self.anti_aliasing = values[4] if len(values) >= 5 else ''
             self.renderer = values[5] if len(values) == 6 else ''
@@ -411,6 +428,25 @@ class NativeConfigTests(unittest.TestCase):
         _, text = self.config('native', content)
         self.assertFalse(self.gpu_vertex_decode)
         self.assertIn(content, text)
+
+    def test_caches_default_on_async_off_and_preserve_explicit_comparison_settings(self):
+        self.config('native')
+        self.assertEqual(self.metal_caches, (True, True, False))
+        self.assertEqual(self.metal_preparation_caches, (True, True))
+        content = ('[debug]\nmetal_geometry_cache = false # compare\n'
+                   'metal_cache_bindings = false\nmetal_async_submit = true\n')
+        _, text = self.config('native', content)
+        self.assertEqual(self.metal_caches, (False, False, True))
+        self.assertIn(content, text)
+        self.config('native', '[debug]\nmetal_geometry_cache = "false"\n'
+                    'metal_cache_bindings = 0\nmetal_async_submit = "true"\n')
+        self.assertEqual(self.metal_caches, (True, True, False))
+        content='[debug]\nmetal_texture_cache = false\nmetal_uniform_cache = false\n'
+        _, text=self.config('native',content)
+        self.assertEqual(self.metal_preparation_caches,(False,False))
+        self.assertIn(content,text)
+        self.config('native','[debug]\nmetal_texture_cache = 0\nmetal_uniform_cache = "false"\n')
+        self.assertEqual(self.metal_preparation_caches,(True,True))
 
     def test_native_aa_string_is_preserved_and_wrong_type_defaults_off(self):
         values, text = self.config('native', '[display]\nanti_aliasing = "fxaa" # smooth\n')

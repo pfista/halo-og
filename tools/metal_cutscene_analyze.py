@@ -34,6 +34,19 @@ PATTERNS = {
         r" frame (?P<frame>\d+), draws (?P<draws>\d+), expansion (?P<expansion_ns>\d+) ns, "
         r"textures (?P<textures_ns>\d+) ns, state (?P<state_ns>\d+) ns, program (?P<program_ns>\d+) ns, "
         r"emit (?P<emit_ns>\d+) ns, submit (?P<submit_ns>\d+) ns")),
+    "tails": ("Native frame tail:", _pattern("Native frame tail:",
+        r" frame (?P<frame>\d+), cap (?P<cap_wait_ns>\d+) ns, events (?P<events_ns>\d+) ns, "
+        r"flips (?P<flips_ns>\d+) ns, resolution (?P<resolution_ns>\d+) ns")),
+    "phases": ("Native frame phases:", _pattern("Native frame phases:",
+        r" frame (?P<frame>\d+), loop-start (?P<loop_start_ns>\d+) ns, "
+        r"update-begin (?P<update_begin_ns>\d+) ns, render-begin (?P<render_begin_ns>\d+) ns, "
+        r"game-begin (?P<game_begin_ns>\d+) ns, first-draw (?P<first_draw_ns>\d+) ns, "
+        r"game-end (?P<game_end_ns>\d+) ns, render-end (?P<render_end_ns>\d+) ns, "
+        r"throttle-begin (?P<throttle_begin_ns>\d+) ns, throttle-end (?P<throttle_end_ns>\d+) ns, "
+        r"present-begin (?P<present_begin_ns>\d+) ns, d3d-begin (?P<d3d_begin_ns>\d+) ns, "
+        r"statistics-begin (?P<statistics_begin_ns>\d+) ns, statistics-end (?P<statistics_end_ns>\d+) ns, "
+        r"d3d-end (?P<d3d_end_ns>\d+) ns, present-end (?P<present_end_ns>\d+) ns, "
+        r"loop-end (?P<loop_end_ns>\d+) ns")),
     "flushes": ("Native flush:", _pattern("Native flush:",
         r" frame (?P<frame>\d+), sequence (?P<sequence>\d+), reason (?P<reason>[A-Za-z][A-Za-z0-9_-]*), "
         r"commands (?P<commands>\d+), bytes (?P<bytes>\d+), start (?P<start_ns>\d+) ns, "
@@ -46,6 +59,9 @@ PATTERNS = {
         r"shader-misses (?P<shader_misses>\d+), shader-compile (?P<shader_compile_ns>\d+) ns, "
         r"pipelines (?P<pipelines>\d+), pipeline-create (?P<pipeline_create_ns>\d+) ns, "
         r"draws (?P<draws>\d+), passes (?P<passes>\d+), subresource-copies (?P<subresource_copies>\d+)")),
+    "completions": ("Native Metal completion:", _pattern("Native Metal completion:",
+        r" sequence (?P<sequence>\d+), presented (?P<presented>[01]), gpu_start_ns (?P<gpu_start_ns>\d+), "
+        r"gpu_end_ns (?P<gpu_end_ns>\d+), gpu_ns (?P<gpu_ns>\d+)")),
     "compiles": ("Native Metal compile:", _pattern("Native Metal compile:",
         r" sequence (?P<sequence>\d+), stage (?P<stage>vertex|fragment), source-bytes (?P<source_bytes>\d+), "
         r"fast (?P<fast>[01]), invariant (?P<invariant>[01]), start (?P<start_ns>\d+) ns, "
@@ -79,15 +95,18 @@ PATTERNS = {
 }
 HEX_FIELDS = {"vertex_handle", "packed", "texture_modes", "source_hash", "vertex_hash", "fragment_hash"}
 TEXT_FIELDS = {"reason", "stage", "name", "kind"}
-BOOL_FIELDS = {"initialized", "cinematic", "player_input", "fast", "invariant", "success", "blend_enabled"}
+BOOL_FIELDS = {"initialized", "cinematic", "player_input", "fast", "invariant", "success", "blend_enabled", "presented"}
 HOST_TIME_FIELDS = ("packet_copy_ns", "prepare_ns", "encode_ns", "drawable_wait_ns", "commit_ns",
                     "completion_wait_ns", "gpu_ns", "shader_compile_ns", "pipeline_create_ns")
 HOST_COUNT_FIELDS = ("shader_misses", "pipelines", "draws", "passes", "subresource_copies")
 GUEST_DRAW_PHASE_FIELDS = ("expansion_ns", "textures_ns", "state_ns", "program_ns", "emit_ns")
+GUEST_TAIL_FIELDS = ("cap_wait_ns", "events_ns", "flips_ns", "resolution_ns")
 LIMITATIONS = [
-    "Guest flush frame + 1 identifies the completed Native timing/scene frame; sequence joins host packets.",
+    "Guest flush frame + 1 identifies the Native timing/scene frame; sequence joins host packets and GPU completions.",
+    "Async Native timing measures accepted CPU submissions. GPU-end intervals measure renderer throughput, not physical presentation or input latency.",
     "Host and guest monotonic timestamps have separate clock domains and are not subtracted from one another.",
     "GPU timing overlaps completion wait; prepare includes compile and pipeline creation. Counters are not exclusive phases.",
+    "Packet copy includes acquiring storage; async slot waits also appear in completion-wait timing.",
     "Shader stage/event durations may overlap under concurrent compilation; compare prepare and host packet wall time for stalls.",
     "Present gaps include simulation, guest work, cap waits and logging. Counter association alone is not proof of a stall cause.",
     "Cold means a shader miss/compile event or pipeline creation was observed; warm requires complete unique packet joins with none.",
@@ -97,6 +116,8 @@ LIMITATIONS = [
     "Camera render-frame is a separate source counter. Native frame candidates share its simulation tick; they are not exact event-frame joins.",
     "Guest CPU is the sum of five instrumented draw phases after excluding nested submit time; it is not all guest frame work.",
     "Guest draw submit time includes synchronous submissions triggered during draws only and overlaps host packet time; it is not all frame submissions.",
+    "Optional frame tail phases follow the same-number Native timing record and can contribute to the next accepted CPU interval. Missing or duplicate tails are not counted.",
+    "Optional frame phase markers join only a unique same-number Native timing record. These are absolute guest timestamps, excluded from totals; zero denotes a missing optional marker.",
     "Guest phase timestamps and diagnostic logging add measurement cost; captures with different instrumentation are not equal-work CPU comparisons.",
 ]
 
@@ -186,9 +207,12 @@ def analyze_log(text, *, top=20, tick_cutoff=150, include_frames=False):
                    "unattributed_compile_lines": [], "unattributed_program_lines": [], "unattributed_scene_lines": [],
                    "unattributed_compile_identity_lines": [], "unmatched_compile_identity_lines": [],
                    "duplicate_compile_identities": [], "duplicate_compile_records": [],
-                   "unattributed_pipeline_lines": [], "unattributed_guest_work_lines": []}
+                   "unattributed_pipeline_lines": [], "unattributed_guest_work_lines": [],
+                   "unattributed_tail_lines": [], "unattributed_phase_lines": []}
     guest = _index(parsed["flushes"], "sequence")
     host = _index(parsed["packets"], "sequence")
+    completions = _index(parsed["completions"], "sequence")
+    async_mode = "Native Metal submission mode: async" in text
     compiles = _index(parsed["compiles"], "sequence")
     compile_identities = _index(parsed["compile_identities"], "sequence")
     pipeline_events = _index(parsed["pipeline_events"], "sequence")
@@ -196,12 +220,15 @@ def analyze_log(text, *, top=20, tick_cutoff=150, include_frames=False):
     timings = _index(parsed["timings"], "frame")
     scenes = _index(parsed["scenes"], "frame")
     guest_work = _index(parsed["guest_work"], "frame")
-    for source, index in (("guest", guest), ("host", host)):
+    tails = _index(parsed["tails"], "frame")
+    phases = _index(parsed["phases"], "frame")
+    for source, index in (("guest", guest), ("host", host), ("completion", completions)):
         for sequence, rows in index.items():
             if len(rows) > 1:
                 diagnostics["duplicate_sequences"].append(dict(source=source, sequence=sequence,
                                                                lines=[row["line"] for row in rows]))
-    for source, index in (("timing", timings), ("scene", scenes), ("guest_work", guest_work)):
+    for source, index in (("timing", timings), ("scene", scenes), ("guest_work", guest_work), ("tails", tails),
+                          ("phases", phases)):
         for frame, rows in index.items():
             if len(rows) > 1:
                 diagnostics["duplicate_frames"].append(dict(source=source, frame=frame,
@@ -212,6 +239,11 @@ def analyze_log(text, *, top=20, tick_cutoff=150, include_frames=False):
             if row["end_ns"] < row["start_ns"] or (duration_key and row[duration_key] != row["end_ns"] - row["start_ns"]):
                 diagnostics["record_errors"].append(dict(source=name, line=row["line"], error="invalid duration"))
     invalid_lines = {row["line"] for row in diagnostics["record_errors"]}
+    for row in parsed["completions"]:
+        if row["gpu_end_ns"] < row["gpu_start_ns"] or row["gpu_ns"] != row["gpu_end_ns"] - row["gpu_start_ns"] or \
+                (row["presented"] and not row["gpu_ns"]):
+            invalid_lines.add(row["line"])
+            diagnostics["record_errors"].append(dict(source="completions", line=row["line"], error="invalid GPU duration"))
     ambiguous_frames = {row["frame"] + 1 for rows in guest.values() if len(rows) != 1 for row in rows}
 
     packet_by_frame = defaultdict(list)
@@ -225,6 +257,12 @@ def analyze_log(text, *, top=20, tick_cutoff=150, include_frames=False):
         frame = flush["frame"] + 1
         matching = host.get(sequence, [])
         packet = matching[0] if len(matching) == 1 else None
+        completed = completions.get(sequence, [])
+        completion = completed[0] if len(completed) == 1 and completed[0]["line"] not in invalid_lines else None
+        if completion and packet:
+            packet = dict(packet, gpu_ns=completion["gpu_ns"])
+        elif async_mode and packet:
+            packet = dict(packet, gpu_ns=0)
         valid = packet is not None and flush["line"] not in invalid_lines
         if not matching:
             diagnostics["missing_host_sequences"].append(sequence)
@@ -274,6 +312,7 @@ def analyze_log(text, *, top=20, tick_cutoff=150, include_frames=False):
                 continue
             program_rows.append(program)
         item = dict(sequence=sequence, guest=flush, host=packet, join_complete=valid,
+                    completion=completion,
                     compiles=compile_rows, programs=program_rows, compile_identities=identity_rows,
                     pipeline_events=pipeline_rows)
         packet_by_frame[frame].append(item)
@@ -293,6 +332,10 @@ def analyze_log(text, *, top=20, tick_cutoff=150, include_frames=False):
                                                if len(timings.get(row["frame"], [])) != 1]
     diagnostics["unattributed_guest_work_lines"] = [row["line"] for row in parsed["guest_work"]
         if len(timings.get(row["frame"], [])) != 1 or len(guest_work[row["frame"]]) != 1]
+    diagnostics["unattributed_tail_lines"] = [row["line"] for row in parsed["tails"]
+        if len(timings.get(row["frame"], [])) != 1 or len(tails[row["frame"]]) != 1]
+    diagnostics["unattributed_phase_lines"] = [row["line"] for row in parsed["phases"]
+        if len(timings.get(row["frame"], [])) != 1 or len(phases[row["frame"]]) != 1]
     diagnostics["unattributed_compile_identity_lines"] = [row["line"] for row in parsed["compile_identities"]
                                                           if row["line"] not in attributed_identity_lines]
     diagnostics["unattributed_pipeline_lines"] = [row["line"] for row in parsed["pipeline_events"]
@@ -305,7 +348,7 @@ def analyze_log(text, *, top=20, tick_cutoff=150, include_frames=False):
     camera_markers = [dict(row, candidate_native_frames=tick_frames[row["tick"]],
                            association="same simulation tick candidates") for row in cameras]
 
-    frames, previous = [], None
+    frames, previous, previous_gpu = [], None, None
     for timing in parsed["timings"]:
         if len(timings[timing["frame"]]) != 1:
             previous = None
@@ -314,6 +357,10 @@ def analyze_log(text, *, top=20, tick_cutoff=150, include_frames=False):
         items = packet_by_frame.get(frame_number, [])
         work_rows = guest_work.get(frame_number, [])
         work = work_rows[0] if len(work_rows) == 1 else None
+        tail_rows = tails.get(frame_number, [])
+        tail = tail_rows[0] if len(tail_rows) == 1 else None
+        phase_rows = phases.get(frame_number, [])
+        phase = phase_rows[0] if len(phase_rows) == 1 else None
         totals = {key: 0 for key in ("guest_submit_ns", "host_packet_ns", "commands", "bytes", "packets",
                     "joined_packets", "compile_events", "compile_event_ns", "compile_failures", "programs",
                     "translation_ns", "pipeline_events", "pipeline_event_ns", "pipeline_failures") + HOST_TIME_FIELDS + HOST_COUNT_FIELDS}
@@ -324,6 +371,10 @@ def analyze_log(text, *, top=20, tick_cutoff=150, include_frames=False):
             totals["guest_draw_submit_ns"] = work["submit_ns"]
             for key in GUEST_DRAW_PHASE_FIELDS:
                 totals["guest_" + key] = work[key]
+        if tail:
+            totals["guest_tail_frames"] = 1
+            for key in GUEST_TAIL_FIELDS:
+                totals["guest_" + key] = tail[key]
         reasons = Counter()
         for item in items:
             flush, packet = item["guest"], item["host"]
@@ -376,12 +427,20 @@ def analyze_log(text, *, top=20, tick_cutoff=150, include_frames=False):
                 if previous["initialized"] and timing["initialized"]:
                     tick_delta = timing["tick"] - previous["tick"]
                     after_startup = previous["tick"] >= tick_cutoff and timing["tick"] >= tick_cutoff
-        frames.append(dict(frame=frame_number, guest_frame=frame_number - 1, timing=timing, scene=scene, guest_work=work,
+        frames.append(dict(frame=frame_number, guest_frame=frame_number - 1, timing=timing, scene=scene, guest_work=work, tail=tail,
+                           phases=phase,
                            scene_state=scene_state, previous_frame=previous_frame, present_gap_ns=gap,
                            present_gap_ms=gap / 1e6 if gap is not None else None, tick_delta=tick_delta,
                            after_startup=after_startup, cache_state=cache, cold_shader=cold_shader,
                            cold_pipeline=cold_pipeline, packet_coverage_complete=complete,
                            reasons=dict(reasons), totals=totals, packets=items))
+        presents = [item["completion"] for item in items if item["completion"] and item["completion"]["presented"]]
+        gpu_end = presents[0]["gpu_end_ns"] if len(presents) == 1 else None
+        gpu_gap = (gpu_end - previous_gpu[1] if gpu_end and previous_gpu and
+                   previous_gpu[0] == frame_number - 1 and gpu_end > previous_gpu[1] else None)
+        frames[-1].update(gpu_end_ns=gpu_end, gpu_gap_ns=gpu_gap,
+                          gpu_completion_complete=bool(items) and all(item["completion"] for item in items))
+        previous_gpu = (frame_number, gpu_end) if gpu_end else None
         previous = timing
     post_startup = [frame for frame in frames if frame["after_startup"]]
     top_frames = sorted((frame for frame in frames if frame["present_gap_ns"] is not None),
@@ -390,6 +449,7 @@ def analyze_log(text, *, top=20, tick_cutoff=150, include_frames=False):
     for row in parsed["flushes"]:
         reason_totals[row["reason"]].update(packets=1, commands=row["commands"], bytes=row["bytes"], submit_ns=row["submit_ns"])
     result = dict(schema_version=1, tick_cutoff=tick_cutoff, limitations=LIMITATIONS,
+                  submission_mode="async" if async_mode else "synchronous",
                   counts={key: len(parsed[key]) for key in PATTERNS}, diagnostics=diagnostics,
                   camera_markers=camera_markers,
                   summary=dict(frame_count=len(frames), all_gaps=gap_summary(frames),

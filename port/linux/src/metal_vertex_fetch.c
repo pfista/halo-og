@@ -329,6 +329,52 @@ int metal_vertex_compact_pack(const struct metal_vertex_declaration *declaration
     return METAL_VERTEX_OK;
 }
 
+int metal_vertex_bytes_equal(const void *left, const void *right, size_t byte_count)
+{
+    const unsigned char *a = left, *b = right;
+    if (!byte_count) return 1;
+    if (!a || !b || byte_count > UINTPTR_MAX - (uintptr_t)a ||
+        byte_count > UINTPTR_MAX - (uintptr_t)b) return 0;
+    if (a == b) return 1;
+    /* Guest musl memcmp compares one byte at a time. Constant-size memcpy
+       keeps these unaligned loads defined while LLVM lowers full blocks to
+       ordinary wide reads. Every block is wholly inside the accepted span. */
+    while (byte_count >= 32) {
+        uint64_t block_a[4], block_b[4];
+        memcpy(block_a,a,sizeof(block_a)); memcpy(block_b,b,sizeof(block_b));
+        if ((block_a[0] ^ block_b[0]) | (block_a[1] ^ block_b[1]) |
+            (block_a[2] ^ block_b[2]) | (block_a[3] ^ block_b[3])) return 0;
+        a += 32; b += 32; byte_count -= 32;
+    }
+    while (byte_count--) if (*a++ != *b++) return 0;
+    return 1;
+}
+
+int metal_vertex_compact_matches(const struct metal_vertex_declaration *declaration,
+    const struct metal_vertex_stream streams[16], const float fixed[16][4],
+    uint32_t first, uint32_t count, const void *compact, size_t compact_bytes)
+{
+    struct compact_vertex_plan plan;
+    uint32_t i;
+    int status;
+    if (!fixed) return METAL_VERTEX_INVALID;
+    if (256 > UINTPTR_MAX - (uintptr_t)fixed) return METAL_VERTEX_BOUNDS;
+    status = compact_vertex_plan(declaration, streams, first, count, &plan);
+    if (status) return status;
+    if (!compact || compact_bytes > UINTPTR_MAX - (uintptr_t)compact) return METAL_VERTEX_BOUNDS;
+    if (compact_bytes != plan.bytes) return 0;
+    memcpy(plan.input.fixed, fixed, 256);
+    for (i = 0; i < 16; i++) {
+        if (declaration->packed_mask & (1u << i)) memset(plan.input.fixed[i], 0, 16);
+    }
+    if (!metal_vertex_bytes_equal(compact, &plan.input, sizeof(plan.input))) return 0;
+    for (i = 0; i < 16; i++) {
+        if (plan.stream_bytes[i] && !metal_vertex_bytes_equal((const unsigned char *)compact + plan.stream_output[i],
+            (const unsigned char *)streams[i].pointer + plan.stream_first[i], plan.stream_bytes[i])) return 0;
+    }
+    return 1;
+}
+
 int metal_vertex_index_plan(uint32_t primitive, const uint16_t *indices,
     size_t index_bytes, uint32_t count, uint32_t first, uint32_t base,
     struct metal_vertex_index_plan *plan)

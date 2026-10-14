@@ -28,6 +28,20 @@ def guest_work(frame, draws=5, expansion=10, textures=20, state=30, program_ns=4
             f"state {state} ns, program {program_ns} ns, emit {emit} ns, submit {submit} ns")
 
 
+def tail(frame, cap=10, events=20, flips=30, resolution=40):
+    return (f"Native frame tail: frame {frame}, cap {cap} ns, events {events} ns, "
+            f"flips {flips} ns, resolution {resolution} ns")
+
+
+def phases(frame, epoch=9_000_000_000_000_000_001, game=True):
+    markers = ("loop-start", "update-begin", "render-begin", "game-begin", "first-draw", "game-end",
+               "render-end", "throttle-begin", "throttle-end", "present-begin", "d3d-begin",
+               "statistics-begin", "statistics-end", "d3d-end", "present-end", "loop-end")
+    fields = [f"{name} {0 if not game and name in ('game-begin', 'first-draw', 'game-end') else epoch + offset} ns"
+              for offset, name in enumerate(markers)]
+    return f"Native frame phases: frame {frame}, " + ", ".join(fields)
+
+
 def flush(frame, sequence, reason="present", commands=10, size=100, start=1000, duration=100):
     return (f"Native flush: frame {frame}, sequence {sequence}, reason {reason}, commands {commands}, bytes {size}, "
             f"start {start} ns, end {start + duration} ns, submit {duration} ns")
@@ -46,6 +60,11 @@ def packet(sequence, **changes):
             f"shader-misses {values['shader_misses']}, shader-compile {values['shader_compile']} ns, "
             f"pipelines {values['pipelines']}, pipeline-create {values['pipeline_create']} ns, "
             f"draws {values['draws']}, passes {values['passes']}, subresource-copies {values['copies']}")
+
+
+def completion(sequence, start, duration, presented=True):
+    return (f"Native Metal completion: sequence {sequence}, presented {int(presented)}, "
+            f"gpu_start_ns {start}, gpu_end_ns {start + duration}, gpu_ns {duration}")
 
 
 def compile_event(sequence, stage="vertex", success=1, start=900, duration=80):
@@ -110,6 +129,135 @@ class CutsceneLogTests(unittest.TestCase):
         self.assertEqual(frame["tick_delta"], 2)
         self.assertEqual(frame["scene_state"], "cinematic")
         self.assertEqual(result["summary"]["all_gaps"]["catchup_intervals"], 1)
+
+    def test_optional_frame_tails_join_unique_native_frames_independent_of_line_order(self):
+        result = self.analyze(tail(2,cap=90,events=80,flips=70,resolution=60), timing(1,100),
+                              timing(2,200), tail(1), timing(3,300))
+        first, second, old = result["frames"]
+        self.assertEqual(first["tail"]["frame"], 1)
+        self.assertEqual(first["tail"]["cap_wait_ns"], 10)
+        self.assertEqual(second["tail"]["cap_wait_ns"], 90)
+        self.assertIsNone(old["tail"])
+        self.assertNotIn("guest_cap_wait_ns", old["totals"])
+        self.assertEqual(first["totals"]["guest_cap_wait_ns"], 10)
+        self.assertEqual(second["totals"]["guest_events_ns"], 80)
+        totals = result["summary"]["totals"]
+        self.assertEqual(totals["guest_tail_frames"], 2)
+        self.assertEqual([totals["guest_"+key] for key in analyzer.GUEST_TAIL_FIELDS], [100,100,100,100])
+        self.assertEqual(result["summary"]["by_cache_state"]["unknown"]["totals"]["guest_flips_ns"], 100)
+        self.assertEqual(result["counts"]["tails"], 2)
+        self.assertEqual(result["diagnostics"]["unattributed_tail_lines"], [])
+
+    def test_duplicate_or_unattributed_tails_never_count_and_malformed_tails_remain_visible(self):
+        result = self.analyze(timing(1,100), tail(1), tail(1,cap=999), tail(2),
+            timing(3,300), timing(3,300), tail(3), timing(4,400), tail(4,cap=4),
+            "Native frame tail: truncated", tail(4).replace("events 20 ns", "events -20 ns"))
+        self.assertIsNone(result["frames"][0]["tail"])
+        self.assertNotIn("guest_cap_wait_ns", result["frames"][0]["totals"])
+        self.assertEqual(result["summary"]["totals"]["guest_tail_frames"], 1)
+        self.assertEqual(result["summary"]["totals"]["guest_cap_wait_ns"], 4)
+        duplicate = [row for row in result["diagnostics"]["duplicate_frames"] if row["source"] == "tails"]
+        self.assertEqual([row["frame"] for row in duplicate], [1])
+        self.assertEqual(len(result["diagnostics"]["unattributed_tail_lines"]), 4)
+        self.assertEqual(len(result["diagnostics"]["parse_errors"]), 2)
+
+    def test_frame_phase_attribution_preserves_integer_timestamps_without_changing_totals(self):
+        epoch = 9_000_000_000_000_000_001
+        existing = (timing(1, 100), packet(1), flush(0, 1), tail(1), guest_work(1),
+                    timing(2, 200), timing(3, 300))
+        baseline = self.analyze(*existing)
+        result = self.analyze(phases(2, epoch=epoch + 100, game=False), *existing,
+                              "halo-linux: " + phases(1, epoch=epoch))
+        first, second, old = result["frames"]
+        self.assertEqual(first["phases"]["frame"], 1)
+        self.assertEqual(first["phases"]["loop_start_ns"], epoch)
+        self.assertEqual(first["phases"]["first_draw_ns"], epoch + 4)
+        self.assertEqual(first["phases"]["statistics_end_ns"], epoch + 12)
+        self.assertEqual(first["phases"]["loop_end_ns"], epoch + 15)
+        self.assertEqual(second["phases"]["loop_start_ns"], epoch + 100)
+        self.assertEqual([second["phases"][key] for key in ("game_begin_ns", "first_draw_ns", "game_end_ns")],
+                         [0, 0, 0])
+        self.assertIsNone(old["phases"])
+        self.assertTrue(all(frame["phases"] is None for frame in baseline["frames"]))
+        self.assertEqual([frame["totals"] for frame in result["frames"]],
+                         [frame["totals"] for frame in baseline["frames"]])
+        self.assertEqual(result["summary"], baseline["summary"])
+        self.assertEqual(result["counts"]["phases"], 2)
+        self.assertEqual(result["diagnostics"]["unattributed_phase_lines"], [])
+
+        rejected = self.analyze(timing(1, 100), phases(1), phases(1, epoch=epoch + 1), phases(2),
+            timing(3, 300), timing(3, 300), phases(3), timing(4, 400), phases(4),
+            "Native frame phases: truncated", phases(4).replace(f"first-draw {epoch + 4}", "first-draw -1"),
+            phases(4) + " trailing junk")
+        self.assertIsNone(rejected["frames"][0]["phases"])
+        self.assertEqual(rejected["frames"][1]["phases"]["frame"], 4)
+        duplicate = [row for row in rejected["diagnostics"]["duplicate_frames"] if row["source"] == "phases"]
+        self.assertEqual([row["frame"] for row in duplicate], [1])
+        self.assertEqual(len(rejected["diagnostics"]["unattributed_phase_lines"]), 4)
+        self.assertEqual(len(rejected["diagnostics"]["parse_errors"]), 3)
+
+    def test_async_retirement_joins_original_packet_without_log_order_or_cpu_clock_guess(self):
+        epoch = 9_000_000_000_000_000_001
+        result = self.analyze("Native Metal submission mode: async",
+            completion(72, epoch + 15_000_000, 10_000_000),
+            timing(1, 100_000_000), timing(2, 101_000_000), timing(3, 102_000_000),
+            packet(72, gpu=9_999_999), flush(1, 72),
+            completion(70, epoch, 2_000_000, presented=False),
+            packet(70, gpu=8_888_888), flush(0, 70, "visibility-collect"),
+            completion(73, epoch + 45_000_000, 10_000_000),
+            packet(73, gpu=7_777_777), flush(2, 73),
+            packet(71, gpu=6_666_666), flush(0, 71),
+            completion(71, epoch + 2_000_000, 3_000_000))
+        self.assertEqual(result["submission_mode"], "async")
+        first, second, third = result["frames"]
+        self.assertEqual(first["totals"]["gpu_ns"], 5_000_000)
+        self.assertEqual(second["totals"]["gpu_ns"], 10_000_000)
+        self.assertEqual(third["totals"]["gpu_ns"], 10_000_000)
+        self.assertTrue(all(frame["gpu_completion_complete"] for frame in result["frames"]))
+        self.assertEqual(first["gpu_end_ns"], epoch + 5_000_000)
+        self.assertIsNone(first["gpu_gap_ns"])
+        self.assertEqual([second["present_gap_ns"], third["present_gap_ns"]], [1_000_000, 1_000_000])
+        self.assertEqual([second["gpu_gap_ns"], third["gpu_gap_ns"]], [20_000_000, 30_000_000])
+        self.assertEqual(second["packets"][0]["completion"]["sequence"], 72)
+
+    def test_async_missing_completion_never_counts_retired_packet_gpu_time_or_bridges_gap(self):
+        result = self.analyze("Native Metal submission mode: async",
+            timing(1, 100), packet(1, gpu=999), flush(0, 1), completion(1, 1000, 100),
+            timing(2, 200), packet(2, gpu=999), flush(1, 2),
+            timing(3, 300), packet(3, gpu=999), flush(2, 3), completion(3, 2000, 100))
+        middle, last = result["frames"][1:]
+        self.assertEqual(middle["totals"]["gpu_ns"], 0)
+        self.assertFalse(middle["gpu_completion_complete"])
+        self.assertIsNone(middle["gpu_end_ns"])
+        self.assertIsNone(last["gpu_gap_ns"])
+        self.assertEqual(result["summary"]["totals"]["gpu_ns"], 200)
+
+    def test_async_duplicate_and_invalid_completions_are_visible_and_not_counted(self):
+        invalid = completion(2, 2000, 100).replace("gpu_ns 100", "gpu_ns 99")
+        zero_present = completion(3, 0, 0)
+        result = self.analyze("Native Metal submission mode: async",
+            timing(1, 100), packet(1, gpu=999), flush(0, 1),
+            completion(1, 1000, 100), completion(1, 1000, 100),
+            timing(2, 200), packet(2, gpu=999), flush(1, 2), invalid,
+            timing(3, 300), packet(3, gpu=999), flush(2, 3), zero_present,
+            timing(4, 400), packet(4, gpu=999), flush(3, 4),
+            "Native Metal completion: malformed")
+        self.assertEqual(result["summary"]["totals"]["gpu_ns"], 0)
+        self.assertTrue(all(not frame["gpu_completion_complete"] and frame["gpu_end_ns"] is None
+                            for frame in result["frames"]))
+        duplicates = [row for row in result["diagnostics"]["duplicate_sequences"] if row["source"] == "completion"]
+        self.assertEqual([row["sequence"] for row in duplicates], [1])
+        self.assertEqual(len(result["diagnostics"]["parse_errors"]), 1)
+        self.assertEqual(len([row for row in result["diagnostics"]["record_errors"] if row["source"] == "completions"]), 2)
+
+    def test_empty_nonpresent_fence_is_valid_without_manufacturing_a_gpu_present(self):
+        result = self.analyze("Native Metal submission mode: async", timing(1, 100),
+            packet(1, gpu=999), flush(0, 1, "Fence"), completion(1, 0, 0, presented=False))
+        frame = result["frames"][0]
+        self.assertTrue(frame["gpu_completion_complete"])
+        self.assertEqual(frame["totals"]["gpu_ns"], 0)
+        self.assertIsNone(frame["gpu_end_ns"])
+        self.assertEqual(result["diagnostics"]["record_errors"], [])
 
     def test_cache_warmth_is_independent_of_tick_startup_and_scene_state(self):
         result = self.analyze(timing(1, 100_000_000), packet(1), flush(0, 1), scene(1),
@@ -214,7 +362,7 @@ class CutsceneLogTests(unittest.TestCase):
         host = (root / "port/macos/host/host_metal.mm").read_text()
         camera = (root / "source/camera/camera_scripting.c").read_text()
         for name, (marker, _) in analyzer.PATTERNS.items():
-            source = (host if name in ("packets", "compiles", "compile_identities", "pipeline_events")
+            source = (host if name in ("packets", "completions", "compiles", "compile_identities", "pipeline_events")
                       else camera if name.startswith("camera_") else guest)
             formats = re.findall(r'"(' + re.escape(marker) + r'[^"\n]+)"', source)
             if name.startswith("camera_"):

@@ -5,6 +5,8 @@
 #include <cstdarg>
 #include <stdexcept>
 #include <string>
+#include <atomic>
+#include <thread>
 extern "C" {
 struct host_guest_image host_image;
 void *host_sdl_native_metal_layer(uint32_t window) { (void)window; return nullptr; }
@@ -91,11 +93,15 @@ struct Packet {
         return host_metal_submit(packetAddress,(uint32_t)bytes.size(),base,sizeof(halo_metal_reply));
     }
 };
-static void initialize(bool compact = false) {
-    require(host_metal_initialize(0,HALO_METAL_OFFSCREEN | (compact ? HALO_METAL_ENABLE_COMPACT_VERTICES : 0),
+static void initialize(bool compact = false,bool async = false,bool uniforms = false,bool geometry = false) {
+    require(host_metal_initialize(0,HALO_METAL_OFFSCREEN | (compact ? HALO_METAL_ENABLE_COMPACT_VERTICES : 0) |
+        (async ? HALO_METAL_ENABLE_ASYNC_SUBMIT : 0) | (uniforms ? HALO_METAL_ENABLE_UNIFORM_SHARING : 0) |
+        (geometry ? HALO_METAL_ENABLE_GEOMETRY_CACHE : 0),
         base,sizeof(halo_metal_reply)) == HALO_METAL_OK,"device initialization");
     halo_metal_reply reply;memcpy(&reply,guest_pointer(base),sizeof(reply));
     require(bool(reply.capabilities & HALO_METAL_CAP_COMPACT_VERTICES) == compact,"compact capability requires explicit opt-in");
+    require(bool(reply.capabilities & HALO_METAL_CAP_ASYNC_SUBMIT) == async,"async capability requires explicit opt-in");
+    require(bool(reply.capabilities & HALO_METAL_CAP_UNIFORM_SHARING) == uniforms,"uniform capability requires explicit opt-in");
     context.metrics.enabled = true;
     Packet setup(1); setup.program();
     setup.append(halo_metal_create{{HALO_METAL_CREATE_TEXTURE,0},{1,1},HALO_METAL_RGBA8,4,4,0});
@@ -109,8 +115,477 @@ static void readback(uint8_t red) {
     for (size_t i = 0; i < 16; i++) require(pixels[i*4] == red && pixels[i*4+1] == 22 &&
         pixels[i*4+2] == 33 && pixels[i*4+3] == 255,"unchanged original output bytes");
 }
+struct GeometryPacket : Packet {
+    using Packet::Packet;
+    static std::vector<uint8_t> input() {
+        halo_metal_compact_vertex_input prefix{};
+        prefix.version = HALO_METAL_COMPACT_VERTEX_VERSION; prefix.vertex_count = 3; prefix.element_count = 1;
+        prefix.elements[0] = {0,0x42,sizeof(prefix),16};
+        const float positions[3][4] = {{-1,-1,0,1},{3,-1,0,1},{-1,3,0,1}};
+        std::vector<uint8_t> result(sizeof(prefix) + sizeof(positions));
+        memcpy(result.data(),&prefix,sizeof(prefix)); memcpy(result.data() + sizeof(prefix),positions,sizeof(positions));
+        return result;
+    }
+    void geometryProgram() {
+        const std::string text = R"MSL(#include <metal_stdlib>
+using namespace metal;
+struct V { float4 position [[position]]; };
+vertex V xgpu_vertex(uint id [[vertex_id]],device const uchar *input [[buffer(1)]]) {
+    return {((device const float4 *)(input + 528))[id]};
+}
+fragment float4 xgpu_fragment(constant float4 &color [[buffer(0)]]) { return color; }
+)MSL";
+        halo_metal_program command{}; command.command.opcode = HALO_METAL_CREATE_PROGRAM; command.resource = {1,1};
+        const size_t start = bytes.size(); bytes.resize(start + sizeof(command),0);
+        command.vertex_source_offset = payload(text.data(),text.size()); command.vertex_source_size = (uint32_t)text.size();
+        command.fragment_source_offset = payload(text.data(),text.size()); command.fragment_source_size = (uint32_t)text.size();
+        bytes.resize((bytes.size() + 7u) & ~size_t(7u),0); command.command.byte_size = (uint32_t)(bytes.size() - start);
+        memcpy(bytes.data() + start,&command,sizeof(command)); commands++;
+    }
+    uint32_t createGeometry(halo_metal_ref ref,bool invalidIndex = false) {
+        halo_metal_create_geometry command{}; command.command.opcode = HALO_METAL_CREATE_GEOMETRY;
+        command.resource = ref; command.vertex_count = command.index_count = 3;
+        const auto vertices = input(); command.vertex_bytes = (uint32_t)vertices.size();
+        const size_t start = bytes.size(); bytes.resize(start + sizeof(command),0);
+        command.vertices_offset = payload(vertices.data(),vertices.size());
+        const uint32_t indices[] = {0,1,invalidIndex ? 3u : 2u}; command.indices_offset = payload(indices,sizeof(indices));
+        bytes.resize((bytes.size() + 7u) & ~size_t(7u),0); command.command.byte_size = (uint32_t)(bytes.size() - start);
+        memcpy(bytes.data() + start,&command,sizeof(command)); commands++; return command.vertices_offset;
+    }
+    void geometryDraw(halo_metal_ref ref,uint8_t red,bool compact = false,bool mismatched = false) {
+        halo_metal_draw command{}; command.command.opcode = compact ? HALO_METAL_DRAW_COMPACT : HALO_METAL_DRAW_GEOMETRY;
+        command.program = {1,1}; command.color = {1,1}; command.vertex_count = mismatched ? 4 : 3; command.index_count = 3;
+        command.primitive = MTLPrimitiveTypeTriangle;
+        auto &s = command.state; s.color_write_mask = 15; s.blend_source = s.blend_destination = s.blend_operation = 1;
+        s.depth_compare = s.stencil_compare = 8; s.stencil_fail = s.stencil_depth_fail = s.stencil_pass = 1;
+        s.viewport[2] = s.viewport[3] = 4; s.viewport[5] = 1; s.scissor[2] = s.scissor[3] = 4;
+        const size_t start = bytes.size(); bytes.resize(start + sizeof(halo_metal_draw_geometry),0);
+        const auto vertices = input();
+        if (compact) {
+            command.vertices_offset = payload(vertices.data(),vertices.size());
+            const uint32_t indices[] = {0,1,2}; command.indices_offset = payload(indices,sizeof(indices));
+        }
+        command.vertex_uniforms_offset = payload(nullptr,HaloMetalVertexUniformSize);
+        command.pixel_uniforms_offset = payload(nullptr,HaloMetalPixelUniformSize);
+        const float color[] = {red / 255.0f,22.0f / 255.0f,33.0f / 255.0f,1};
+        memcpy(bytes.data() + command.pixel_uniforms_offset,color,sizeof(color));
+        bytes.resize((bytes.size() + 7u) & ~size_t(7u),0); command.command.byte_size = (uint32_t)(bytes.size() - start);
+        if (compact) {
+            halo_metal_draw_compact extended{command,(uint32_t)vertices.size(),0,0,0};
+            memcpy(bytes.data() + start,&extended,sizeof(extended));
+        } else {
+            halo_metal_draw_geometry extended{command,ref,0,0}; memcpy(bytes.data() + start,&extended,sizeof(extended));
+        }
+        commands++;
+    }
+    void deleteGeometry(halo_metal_ref ref) { append(halo_metal_delete{{HALO_METAL_DELETE_GEOMETRY,0},ref}); }
+};
+static void run_geometry_tests() {
+    host_metal_shutdown(); initialize(true);
+    GeometryPacket disabled(2); disabled.createGeometry({1,1});
+    require(disabled.submit() == HALO_METAL_UNSUPPORTED && context.geometry.empty() && context.submitted == 1,
+        "geometry creation requires explicit opt-in");
+    const auto setup = [](bool async) {
+        host_metal_shutdown();
+        require(host_metal_initialize(0,HALO_METAL_OFFSCREEN | HALO_METAL_ENABLE_COMPACT_VERTICES |
+            HALO_METAL_ENABLE_GEOMETRY_CACHE | (async ? HALO_METAL_ENABLE_ASYNC_SUBMIT : 0),
+            base,sizeof(halo_metal_reply)) == HALO_METAL_OK,"geometry device initialization");
+        halo_metal_reply reply; memcpy(&reply,guest_pointer(base),sizeof(reply));
+        require((reply.capabilities & HALO_METAL_CAP_GEOMETRY_CACHE) != 0,"geometry capability opt-in");
+        GeometryPacket p(1); p.geometryProgram();
+        p.append(halo_metal_create{{HALO_METAL_CREATE_TEXTURE,0},{1,1},HALO_METAL_RGBA8,4,4,0});
+        halo_metal_clear clear{}; clear.command.opcode = HALO_METAL_CLEAR; clear.color = {1,1};
+        clear.planes = HALO_METAL_COLOR; clear.width = clear.height = 4; p.append(clear);
+        require(p.submit() == HALO_METAL_OK,"geometry setup packet");
+    };
+    setup(false);
+    GeometryPacket reference(2); reference.geometryDraw({},11,true);
+    require(reference.submit() == HALO_METAL_OK,"compact geometry reference"); readback(11);
+    std::array<uint8_t,64> pixels{}; memcpy(pixels.data(),guest_pointer(base + 512),pixels.size());
+    const auto passes = context.draw_encoder.renderPassCount;
+    GeometryPacket rejected(3); rejected.createGeometry({1,1}); rejected.geometryDraw({1,1},99); rejected.createGeometry({2,1},true);
+    require(rejected.submit() == HALO_METAL_INVALID && context.submitted == 2 && context.completed == 2 &&
+        context.geometry.empty() && context.geometry_generations.empty() && context.draw_encoder.renderPassCount == passes,
+        "late invalid geometry rejects all creations and draws atomically"); readback(11);
+    GeometryPacket accepted(3); accepted.createGeometry({1,1}); accepted.geometryDraw({1,1},11);
+    require(accepted.submit() == HALO_METAL_OK,"create and draw cached geometry"); readback(11);
+    require(!memcmp(pixels.data(),guest_pointer(base + 512),pixels.size()),"cached and compact geometry have exact output bytes");
+    GeometryPacket stale(4); stale.geometryDraw({1,2},99);
+    require(stale.submit() == HALO_METAL_STALE_RESOURCE && context.submitted == 3,"unknown geometry generation rejected");
+    GeometryPacket mismatch(4); mismatch.geometryDraw({1,1},99,false,true);
+    require(mismatch.submit() == HALO_METAL_INVALID && context.submitted == 3,"cached draw metadata must match immutable snapshot");
+    GeometryPacket changed(4); changed.geometryDraw({1,1},44);
+    require(changed.submit() == HALO_METAL_OK,"cached geometry keeps per-draw uniforms"); readback(44);
+    {
+        GeometryPacket owned(5); const uint32_t vertices = owned.createGeometry({2,1}); owned.geometryDraw({2,1},55); owned.copy_to_guest();
+        Prepared prepared; prepared.input_buffer = packet_input_buffer(owned.bytes.size());
+        require(copy_guest(packetAddress,prepared.input_buffer.contents,(uint32_t)owned.bytes.size()),"copy geometry packet");
+        const HaloMetalPacketView packet(prepared.input_buffer.contents,owned.bytes.size()); validate(packet,prepared);
+        memset(guest_pointer(packetAddress),0,owned.bytes.size());
+        memset((uint8_t *)prepared.input_buffer.contents + vertices + sizeof(halo_metal_compact_vertex_input),0,48);
+        execute(packet,prepared); readback(55);
+    }
+    GeometryPacket later(6); later.geometryDraw({2,1},66);
+    require(later.submit() == HALO_METAL_OK,"geometry remains owned after packet storage reuse"); readback(66);
+    GeometryPacket replaced(7); replaced.deleteGeometry({1,1}); replaced.createGeometry({1,2}); replaced.geometryDraw({1,2},77);
+    require(replaced.submit() == HALO_METAL_OK && context.geometry.at(1).generation == 2,"deleted geometry ID safely advances generation"); readback(77);
+    setup(true);
+    GeometryPacket old(2); old.createGeometry({1,1}); old.geometryDraw({1,1},88);
+    require(old.submit() == HALO_METAL_OK,"async cached geometry draw");
+    std::weak_ptr<const HaloMetalGeometry> previous = context.geometry.at(1).input;
+    GeometryPacket newer(3); newer.deleteGeometry({1,1}); newer.createGeometry({1,2}); newer.geometryDraw({1,2},99);
+    require(newer.submit() == HALO_METAL_OK,"delete/recreate geometry across pending command buffers");
+    if (context.completed < 2) require(!previous.expired(),"pending draw owns deleted geometry");
+    readback(99); require(context.pending.empty() && context.completed == 3,"readback retires geometry work");
+    GeometryPacket retired(4); retired.geometryDraw({1,1},11);
+    require(retired.submit() == HALO_METAL_STALE_RESOURCE && context.submitted == 3,"deleted generation cannot draw"); readback(99);
+    GeometryPacket deletion(4); deletion.deleteGeometry({1,2});
+    require(deletion.submit() == HALO_METAL_OK && context.geometry.empty() && !context.geometry_bytes,"geometry delete releases live accounting");
+    GeometryPacket same(5); same.createGeometry({1,2});
+    require(same.submit() == HALO_METAL_STALE_RESOURCE && context.submitted == 4,"deleted generation cannot be recreated");
+    GeometryPacket fresh(5); fresh.createGeometry({1,3}); fresh.geometryDraw({1,3},111);
+    require(fresh.submit() == HALO_METAL_OK,"next generation recreates geometry"); readback(111);
+    host_metal_shutdown();
+}
 static void valid_draw(uint64_t sequence,uint8_t red,size_t padding = 0) {
     Packet packet(sequence); packet.draw(red,padding); require(packet.submit() == HALO_METAL_OK,"draw packet"); readback(red);
+}
+struct UniformPacket : Packet {
+    using Packet::Packet;
+    using Vertex = std::array<uint8_t,HaloMetalVertexUniformSize>;
+    using Pixel = std::array<uint8_t,HaloMetalPixelUniformSize>;
+    static Pixel pixel(uint8_t red) {
+        Pixel result{}; const float color[] = {red / 255.0f,22.0f / 255.0f,33.0f / 255.0f,1};
+        memcpy(result.data(),color,sizeof(color)); return result;
+    }
+    uint32_t define(uint32_t kind,const void *data) {
+        halo_metal_define_uniforms c{}; c.command.opcode = HALO_METAL_DEFINE_UNIFORMS; c.kind = kind;
+        c.data_size = kind == HALO_METAL_UNIFORM_VERTEX ? HaloMetalVertexUniformSize : HaloMetalPixelUniformSize;
+        const size_t start = bytes.size(); bytes.resize(start + sizeof(c),0);
+        c.data_offset = payload(data,c.data_size);
+        bytes.resize((bytes.size() + 7u) & ~size_t(7u),0); c.command.byte_size = (uint32_t)(bytes.size() - start);
+        memcpy(bytes.data() + start,&c,sizeof(c)); commands++; return c.data_offset;
+    }
+    size_t drawRefs(uint32_t vertex,uint32_t pixel,uint32_t inputKind = HALO_METAL_INPUT_EXPANDED,
+                    halo_metal_ref geometry = {}) {
+        halo_metal_draw_uniform_refs c{}; c.draw.command.opcode = HALO_METAL_DRAW_UNIFORM_REFS;
+        c.draw.program = {1,1}; c.draw.color = {1,1}; c.draw.vertex_count = c.draw.index_count = 3;
+        c.draw.primitive = MTLPrimitiveTypeTriangle; c.input_kind = inputKind; c.geometry = geometry;
+        auto &s = c.draw.state; s.color_write_mask = 15; s.blend_source = s.blend_destination = s.blend_operation = 1;
+        s.depth_compare = s.stencil_compare = 8; s.stencil_fail = s.stencil_depth_fail = s.stencil_pass = 1;
+        s.viewport[2] = s.viewport[3] = 4; s.viewport[5] = 1; s.scissor[2] = s.scissor[3] = 4;
+        const size_t start = bytes.size(); bytes.resize(start + sizeof(c),0);
+        if (inputKind != HALO_METAL_INPUT_GEOMETRY) {
+            if (inputKind == HALO_METAL_INPUT_COMPACT) {
+                const auto vertices = GeometryPacket::input(); c.vertex_bytes = (uint32_t)vertices.size();
+                c.draw.vertices_offset = payload(vertices.data(),vertices.size());
+            } else c.draw.vertices_offset = payload(nullptr,3 * HaloMetalVertexStride);
+            const uint32_t indices[] = {0,1,2}; c.draw.indices_offset = payload(indices,sizeof(indices));
+        }
+        c.draw.vertex_uniforms_offset = vertex; c.draw.pixel_uniforms_offset = pixel;
+        bytes.resize((bytes.size() + 7u) & ~size_t(7u),0); c.draw.command.byte_size = (uint32_t)(bytes.size() - start);
+        memcpy(bytes.data() + start,&c,sizeof(c)); commands++; return start;
+    }
+    void legacy(const Vertex &vertex,const Pixel &pixel,bool right = false) {
+        const size_t start = bytes.size(); draw(0);
+        halo_metal_draw c; memcpy(&c,bytes.data() + start,sizeof(c));
+        memcpy(bytes.data() + c.vertex_uniforms_offset,vertex.data(),vertex.size());
+        memcpy(bytes.data() + c.pixel_uniforms_offset,pixel.data(),pixel.size());
+        c.state.scissor[0] = right ? 2 : 0; c.state.scissor[2] = 2;
+        memcpy(bytes.data() + start,&c,sizeof(c));
+    }
+    void half(size_t start,bool right) {
+        halo_metal_draw c; memcpy(&c,bytes.data() + start,sizeof(c));
+        c.state.scissor[0] = right ? 2 : 0; c.state.scissor[2] = 2;
+        memcpy(bytes.data() + start,&c,sizeof(c));
+    }
+};
+static std::array<uint8_t,64> captured_color() {
+    require(host_metal_readback(1,1,HALO_METAL_COLOR,base+512,64,base,sizeof(halo_metal_reply)) == HALO_METAL_OK,
+        "uniform fixture color readback");
+    std::array<uint8_t,64> result; memcpy(result.data(),guest_pointer(base+512),result.size()); return result;
+}
+static uint64_t captured_query() {
+    require(host_metal_readback(5,1,HALO_METAL_VISIBILITY,base+256,8,base,sizeof(halo_metal_reply)) == HALO_METAL_OK,
+        "uniform fixture query readback");
+    uint64_t result; memcpy(&result,guest_pointer(base+256),sizeof(result)); return result;
+}
+static void run_uniform_tests() {
+    host_metal_shutdown(); initialize();
+    UniformPacket::Vertex vertex{};
+    // Raw original registers may contain nonfinite unused lanes. Their bits
+    // must survive sharing; the separate native controls remain finite.
+    const uint32_t rawNaN = 0x7fc00001; memcpy(vertex.data(),&rawNaN,sizeof(rawNaN));
+    const auto pixel = UniformPacket::pixel(44);
+    auto changed = pixel; changed[2] ^= 0x40; // Exactly one changed byte in the rendered red constant.
+    UniformPacket disabled(2); disabled.define(HALO_METAL_UNIFORM_VERTEX,vertex.data());
+    require(disabled.submit() == HALO_METAL_UNSUPPORTED && context.submitted == 1,"uniform definition requires opt-in");
+    UniformPacket disabledDraw(2); disabledDraw.drawRefs(0,0);
+    require(disabledDraw.submit() == HALO_METAL_UNSUPPORTED && context.submitted == 1,"uniform reference draw requires opt-in");
+    host_metal_shutdown(); initialize(true,false,true,true);
+    GeometryPacket geometry(2); geometry.createGeometry({1,1});
+    require(geometry.submit() == HALO_METAL_OK,"geometry for shared-uniform input comparison");
+    UniformPacket reference(3);
+    reference.append(halo_metal_create_visibility{{HALO_METAL_CREATE_VISIBILITY,0},{5,1},HALO_METAL_VISIBILITY_COUNTING,0});
+    reference.append(halo_metal_visibility{{HALO_METAL_BEGIN_VISIBILITY,0},{5,1}});
+    reference.legacy(vertex,pixel); reference.legacy(vertex,pixel); reference.legacy(vertex,changed,true);
+    reference.append(halo_metal_visibility{{HALO_METAL_END_VISIBILITY,0},{5,1}});
+    require(reference.submit() == HALO_METAL_OK,"legacy uniform byte-change reference");
+    const auto expected = captured_color(); require(captured_query() == 24,"three original half-screen draws count 24 samples");
+    require(expected[0] != expected[8],"single-byte constant change affects rendered reference pixels");
+    uint64_t sequence = 4;
+    for (uint32_t kind : {HALO_METAL_INPUT_EXPANDED,HALO_METAL_INPUT_COMPACT,HALO_METAL_INPUT_GEOMETRY}) {
+        UniformPacket shared(sequence++); shared.append(halo_metal_visibility{{HALO_METAL_BEGIN_VISIBILITY,0},{5,1}});
+        const auto v = shared.define(HALO_METAL_UNIFORM_VERTEX,vertex.data());
+        const auto p = shared.define(HALO_METAL_UNIFORM_PIXEL,pixel.data());
+        const halo_metal_ref g = kind == HALO_METAL_INPUT_GEOMETRY ? halo_metal_ref{1,1} : halo_metal_ref{};
+        shared.half(shared.drawRefs(v,p,kind,g),false); shared.half(shared.drawRefs(v,p,kind,g),false);
+        const auto different = shared.define(HALO_METAL_UNIFORM_PIXEL,changed.data());
+        shared.half(shared.drawRefs(v,different,kind,g),true);
+        shared.append(halo_metal_visibility{{HALO_METAL_END_VISIBILITY,0},{5,1}});
+        const auto passes = context.draw_encoder.renderPassCount;
+        require(shared.bytes.size() < reference.bytes.size() && shared.submit() == HALO_METAL_OK,
+            "shared vertex/pixel definitions reduce payload for all original input kinds");
+        require(captured_color() == expected && captured_query() == 24 && context.draw_encoder.renderPassCount == passes + 3,
+            "repeated and single-byte-changed uniforms preserve exact color/query/pass results");
+    }
+    const auto reject = [&](UniformPacket &packet,const char *message,int status = HALO_METAL_INVALID) {
+        const auto submitted = context.submitted, completed = context.completed;
+        const auto passes = context.draw_encoder.renderPassCount;
+        const auto version = context.textures.at(1).version, queryVersion = context.queries.at(5).version;
+        require(packet.submit() == status && context.submitted == submitted && context.completed == completed &&
+            context.draw_encoder.renderPassCount == passes && context.textures.at(1).version == version &&
+            context.queries.at(5).version == queryVersion && captured_color() == expected,message);
+    };
+    const auto validPrefix = [&](UniformPacket &packet) {
+        const auto v = packet.define(HALO_METAL_UNIFORM_VERTEX,vertex.data());
+        const auto p = packet.define(HALO_METAL_UNIFORM_PIXEL,pixel.data());
+        return std::pair<uint32_t,uint32_t>{v,p};
+    };
+    UniformPacket typed(sequence); auto refs = validPrefix(typed); typed.drawRefs(refs.second,refs.first);
+    reject(typed,"uniform references cannot swap vertex and pixel kinds");
+    UniformPacket interior(sequence); refs = validPrefix(interior); interior.drawRefs(refs.first+16,refs.second);
+    reject(interior,"uniform references reject aligned interior payload slices");
+    UniformPacket padding(sequence); refs = validPrefix(padding); padding.drawRefs(refs.first-16,refs.second);
+    reject(padding,"uniform references reject definition header/padding bytes");
+    UniformPacket future(sequence); const auto futureDraw = future.drawRefs(0,0); refs = validPrefix(future);
+    halo_metal_draw draw; memcpy(&draw,future.bytes.data()+futureDraw,sizeof(draw));
+    draw.vertex_uniforms_offset = refs.first; draw.pixel_uniforms_offset = refs.second;
+    memcpy(future.bytes.data()+futureDraw,&draw,sizeof(draw));
+    reject(future,"uniform references cannot point to future definitions");
+    UniformPacket previous(sequence); previous.drawRefs(refs.first,refs.second);
+    reject(previous,"uniform definitions do not leak across packets");
+    UniformPacket arbitrary(sequence); const auto legacyStart = arbitrary.bytes.size(); arbitrary.legacy(vertex,pixel);
+    memcpy(&draw,arbitrary.bytes.data()+legacyStart,sizeof(draw)); arbitrary.drawRefs(draw.vertex_uniforms_offset,draw.pixel_uniforms_offset);
+    reject(arbitrary,"earlier legacy payloads are not typed uniform definitions");
+    UniformPacket legacyRange(sequence); refs = validPrefix(legacyRange); const auto legacyDraw = legacyRange.bytes.size();
+    legacyRange.legacy(vertex,pixel); memcpy(&draw,legacyRange.bytes.data()+legacyDraw,sizeof(draw));
+    draw.vertex_uniforms_offset = refs.first; draw.pixel_uniforms_offset = refs.second;
+    memcpy(legacyRange.bytes.data()+legacyDraw,&draw,sizeof(draw));
+    reject(legacyRange,"legacy uniform bounds remain command-local even with sharing enabled");
+    UniformPacket lateNaN(sequence); refs = validPrefix(lateNaN); lateNaN.drawRefs(refs.first,refs.second);
+    auto invalidPixel = pixel; memcpy(invalidPixel.data()+4,&rawNaN,sizeof(rawNaN)); lateNaN.define(HALO_METAL_UNIFORM_PIXEL,invalidPixel.data());
+    reject(lateNaN,"late nonfinite pixel definition rejects earlier valid draws atomically");
+    UniformPacket lateVertexNaN(sequence); refs = validPrefix(lateVertexNaN); lateVertexNaN.drawRefs(refs.first,refs.second);
+    auto invalidVertex = vertex; memcpy(invalidVertex.data()+3072,&rawNaN,sizeof(rawNaN));
+    lateVertexNaN.define(HALO_METAL_UNIFORM_VERTEX,invalidVertex.data());
+    reject(lateVertexNaN,"nonfinite native vertex controls reject the whole packet");
+    UniformPacket wrongSize(sequence); wrongSize.define(HALO_METAL_UNIFORM_VERTEX,vertex.data());
+    halo_metal_define_uniforms definition; memcpy(&definition,wrongSize.bytes.data()+sizeof(halo_metal_packet),sizeof(definition));
+    definition.data_size--; memcpy(wrongSize.bytes.data()+sizeof(halo_metal_packet),&definition,sizeof(definition));
+    reject(wrongSize,"uniform definitions require the complete typed block size");
+    UniformPacket stale(sequence); refs = validPrefix(stale); stale.drawRefs(refs.first,refs.second,HALO_METAL_INPUT_GEOMETRY,{1,2});
+    reject(stale,"shared-uniform cached draw requires current geometry generation",HALO_METAL_STALE_RESOURCE);
+    UniformPacket mismatch(sequence); refs = validPrefix(mismatch); const auto mismatched = mismatch.drawRefs(refs.first,refs.second,HALO_METAL_INPUT_GEOMETRY,{1,1});
+    memcpy(&draw,mismatch.bytes.data()+mismatched,sizeof(draw)); draw.vertex_count = 4;
+    memcpy(mismatch.bytes.data()+mismatched,&draw,sizeof(draw)); reject(mismatch,"shared-uniform cached draw keeps exact geometry metadata");
+    // Definitions between compatible draws must not create GPU pass boundaries.
+    UniformPacket opaque(sequence++); refs = validPrefix(opaque); opaque.drawRefs(refs.first,refs.second);
+    const auto newPixel = opaque.define(HALO_METAL_UNIFORM_PIXEL,pixel.data()); opaque.drawRefs(refs.first,newPixel);
+    const auto passes = context.draw_encoder.renderPassCount;
+    require(opaque.submit() == HALO_METAL_OK && context.draw_encoder.renderPassCount == passes+1,
+        "uniform metadata does not interrupt a compatible original draw pass"); readback(44);
+    host_metal_shutdown(); initialize(false,true,true); captured_color();
+    auto event = [context.device newSharedEvent]; auto gate = [context.queue commandBuffer];
+    [gate encodeWaitForEvent:event value:1]; [gate commit];
+    UniformPacket owned(2); const auto ownedVertex = owned.define(HALO_METAL_UNIFORM_VERTEX,vertex.data());
+    const auto ownedPixelData = UniformPacket::pixel(88);
+    const auto ownedPixel = owned.define(HALO_METAL_UNIFORM_PIXEL,ownedPixelData.data()); owned.drawRefs(ownedVertex,ownedPixel);
+    require(owned.submit() == HALO_METAL_OK && context.completed == 1 && context.pending.size() == 1,"shared uniform async packet accepted behind gate");
+    const auto &prepared = context.pending.front().prepared;
+    const auto &preparedDraw = prepared.draws.begin()->second;
+    require(preparedDraw.vertexUniforms == prepared.input_buffer && preparedDraw.pixelUniforms == prepared.input_buffer &&
+        preparedDraw.vertexUniformOffset == ownedVertex && preparedDraw.pixelUniformOffset == ownedPixel,
+        "shared uniforms reference the same GPU-owned packet snapshot");
+    memset(guest_pointer(packetAddress),0,owned.bytes.size());
+    require(!memcmp((const uint8_t *)prepared.input_buffer.contents+ownedPixel,ownedPixelData.data(),ownedPixelData.size()),
+        "guest reuse cannot overwrite pending shared uniform bytes");
+    event.signaledValue = 1; readback(88);
+    require(context.pending.empty() && context.completed == 2,"readback retires shared uniform ownership");
+    UniformPacket crossPacket(3); crossPacket.drawRefs(ownedVertex,ownedPixel);
+    require(crossPacket.submit() == HALO_METAL_INVALID && context.submitted == 2,"retired packet definitions cannot be referenced"); readback(88);
+    host_metal_shutdown();
+}
+static void append_fence(Packet &packet) {
+    const halo_metal_command command{HALO_METAL_FENCE,sizeof(halo_metal_command)};
+    const size_t start = packet.bytes.size(); packet.bytes.resize(start + sizeof(command),0);
+    memcpy(packet.bytes.data() + start,&command,sizeof(command)); packet.commands++;
+}
+static void run_async_query_prefix_tests() {
+    host_metal_shutdown(); initialize(true,true); valid_draw(2,155);
+    auto prefixEvent = [context.device newSharedEvent]; auto tailEvent = [context.device newSharedEvent];
+    require(prefixEvent && tailEvent,"query prefix shared events");
+    auto prefixGate = [context.queue commandBuffer];
+    [prefixGate encodeWaitForEvent:prefixEvent value:1]; [prefixGate commit];
+    Packet prefix(3);
+    prefix.append(halo_metal_create_visibility{{HALO_METAL_CREATE_VISIBILITY,0},{2,1},HALO_METAL_VISIBILITY_BOOLEAN,0});
+    prefix.append(halo_metal_visibility{{HALO_METAL_BEGIN_VISIBILITY,0},{2,1}}); prefix.draw(166);
+    prefix.append(halo_metal_visibility{{HALO_METAL_END_VISIBILITY,0},{2,1}});
+    require(prefix.submit() == HALO_METAL_OK && context.pending.size() == 1 && context.completed == 2,
+        "query prefix is accepted while incomplete");
+    auto prefixCommand = context.pending.front().command;
+    auto tailGate = [context.queue commandBuffer];
+    [tailGate encodeWaitForEvent:tailEvent value:1]; [tailGate commit];
+    Packet tail(4); tail.draw(177);
+    require(tail.submit() == HALO_METAL_OK && context.pending.size() == 2,"later drawing is accepted after query prefix");
+    auto tailBuffer = context.pending.back().prepared.input_buffer;
+    memset(guest_pointer(packetAddress),0,tail.bytes.size());
+    prefixEvent.signaledValue = 1; [prefixCommand waitUntilCompleted];
+    require(prefixCommand.status == MTLCommandBufferStatusCompleted && context.completed == 2,
+        "completed query prefix still requires honest host retirement");
+    std::atomic<bool> readReturned{false}, returnedBeforeTailRelease{false};
+    std::thread release([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        returnedBeforeTailRelease = readReturned.load(); tailEvent.signaledValue = 1;
+    });
+    uint64_t result = 0;
+    const int status = host_metal_readback(2,1,HALO_METAL_VISIBILITY,base+256,sizeof(result),base,sizeof(halo_metal_reply));
+    readReturned = true;
+    memcpy(&result,guest_pointer(base+256),sizeof(result));
+    halo_metal_reply reply; memcpy(&reply,guest_pointer(base),sizeof(reply));
+    const bool pendingTail = context.pending.size() == 1 && context.pending.front().sequence == 4 &&
+        context.pending.front().command.status != MTLCommandBufferStatusCompleted && context.completed == 3 &&
+        context.pending.front().prepared.input_buffer == tailBuffer &&
+        !memcmp(tailBuffer.contents,tail.bytes.data(),tail.bytes.size());
+    release.join();
+    require(returnedBeforeTailRelease && status == HALO_METAL_OK && result == 1 && pendingTail,
+        "visibility readback waits only through END and preserves later gated packet ownership");
+    require(reply.submitted_sequence == 4 && reply.completed_sequence == 3 && reply.content_version == 1 &&
+        reply.byte_size == sizeof(result),"query result and completed sequence are exact while later work remains pending");
+    readback(177);
+    require(context.pending.empty() && context.completed == 4,"color readback retains its full completion boundary");
+}
+static void run_async_frame_budget_tests() {
+    host_metal_shutdown(); initialize(true,true); valid_draw(2,155);
+    auto event = [context.device newSharedEvent]; auto gate = [context.queue commandBuffer];
+    require(event && gate,"frame budget queue gate");
+    [gate encodeWaitForEvent:event value:1]; [gate commit];
+    Packet first(3); first.draw(166); require(first.submit() == HALO_METAL_OK,"first frame-budget packet");
+    Packet second(4); second.draw(177); require(second.submit() == HALO_METAL_OK,"second frame-budget packet");
+    // This fixture has no window/layer. Mark the accepted real GPU packets as
+    // frame ends to exercise admission, not onscreen presentation behavior.
+    context.pending[0].presented = true; context.pending[1].presented = true;
+    std::atomic<bool> returned{false}, returnedBeforeRelease{false};
+    std::thread release([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        returnedBeforeRelease = returned.load(); event.signaledValue = 1;
+    });
+    Packet prefix(5); prefix.draw(188); const int status = prefix.submit(); returned = true;
+    release.join();
+    require(!returnedBeforeRelease && status == HALO_METAL_OK,
+        "two queued presentations block the next prefix despite spare packet slots");
+    readback(188);
+    require(context.pending.empty() && context.completed == 5,"frame budget wait preserves ordered GPU completion");
+}
+static void run_async_tests() {
+    // A real queue wait makes ownership deterministic: GPU work cannot consume
+    // either snapshot until the CPU explicitly releases this shared event.
+    host_metal_shutdown(); initialize(true,true); valid_draw(2,155);
+    auto event = [context.device newSharedEvent]; require(event != nil,"async shared event");
+    auto gate = [context.queue commandBuffer]; require(gate != nil,"async queue gate");
+    [gate encodeWaitForEvent:event value:1]; [gate commit];
+    Packet first(3); first.draw(166); require(first.submit() == HALO_METAL_OK,"first owned async draw");
+    require(context.pending.size() == 1 && context.completed == 2,"submit acknowledges incomplete work honestly");
+    auto firstBuffer = context.pending.front().prepared.input_buffer;
+    memset(guest_pointer(packetAddress),0,first.bytes.size());
+    const auto version = context.textures.at(1).version;
+    const auto passes = context.draw_encoder.renderPassCount;
+    Packet rejected(4); rejected.draw(199); rejected.invalid();
+    require(rejected.submit() == HALO_METAL_UNSUPPORTED && context.submitted == 3 && context.completed == 2 &&
+        context.pending.size() == 1 && context.textures.at(1).version == version &&
+        context.draw_encoder.renderPassCount == passes,"late rejection leaves accepted queued work and content unchanged");
+    Packet second(4); second.draw(177); require(second.submit() == HALO_METAL_OK,"second owned async draw");
+    require(context.pending.size() == 2 && firstBuffer != context.pending.back().prepared.input_buffer,
+        "two pending packets use distinct owned buffers");
+    memset(guest_pointer(packetAddress),0,second.bytes.size());
+    require(!memcmp(firstBuffer.contents,first.bytes.data(),first.bytes.size()) &&
+        !memcmp(context.pending.back().prepared.input_buffer.contents,second.bytes.data(),second.bytes.size()),
+        "guest mutation and later packet copy preserve both pending snapshots");
+    Packet third(5); third.draw(188); require(third.submit() == HALO_METAL_OK,"third owned split-frame packet");
+    Packet fourth(6); fourth.draw(189); require(fourth.submit() == HALO_METAL_OK,"fourth owned split-frame packet");
+    require(context.pending.size() == 4,"two split frames can retain four packets without waiting");
+    const Packet *snapshots[] = {&first,&second,&third,&fourth};
+    for (size_t i = 0; i < 4; ++i) {
+        const auto buffer = context.pending[i].prepared.input_buffer;
+        require(!memcmp(buffer.contents,snapshots[i]->bytes.data(),snapshots[i]->bytes.size()),
+            "all queued packets retain original bytes after guest reuse");
+        for (size_t j = 0; j < i; ++j)
+            require(buffer != context.pending[j].prepared.input_buffer,"each queued packet owns distinct storage");
+    }
+    std::atomic<bool> fifthReturned{false}, returnedBeforeRelease{false};
+    std::thread release([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        returnedBeforeRelease = fifthReturned.load(); event.signaledValue = 1;
+    });
+    Packet fifth(7); fifth.draw(190); const int fifthStatus = fifth.submit(); fifthReturned = true;
+    release.join();
+    require(!returnedBeforeRelease && fifthStatus == HALO_METAL_OK && context.pending.size() <= 4,
+        "fifth packet waits for owned slot instead of increasing queue depth");
+    readback(190);
+    require(context.pending.empty() && context.completed == 7,"readback drains ordered submissions");
+    for (const auto &slot : context.async_input_buffers)
+        require(slot.length <= 16u*1024u*1024u,"all four async buffers retain bounded capacity");
+    Packet draw(8); draw.draw(199); require(draw.submit() == HALO_METAL_OK,"draw before explicit fence");
+    Packet fence(9); append_fence(fence); require(fence.submit() == HALO_METAL_OK &&
+        context.completed == 9 && context.pending.empty(),"explicit fence completes all earlier packets"); readback(199);
+    Packet oversized(10); oversized.draw(201,17u*1024u*1024u);
+    require(oversized.submit() == HALO_METAL_OK,"oversized async packet");
+    memset(guest_pointer(packetAddress),0,oversized.bytes.size());
+    Packet following(11); following.draw(202); require(following.submit() == HALO_METAL_OK,"packet after oversized submission");
+    readback(202);
+    for (const auto &slot : context.async_input_buffers)
+        require(slot.length <= 16u*1024u*1024u,"oversized async input never enlarges retained pool");
+    Packet begin(12);
+    begin.append(halo_metal_create_visibility{{HALO_METAL_CREATE_VISIBILITY,0},{2,1},HALO_METAL_VISIBILITY_BOOLEAN,0});
+    begin.append(halo_metal_visibility{{HALO_METAL_BEGIN_VISIBILITY,0},{2,1}}); begin.draw(203);
+    require(begin.submit() == HALO_METAL_OK,"query begin and draw in async packet");
+    Packet end(13); end.draw(204); end.append(halo_metal_visibility{{HALO_METAL_END_VISIBILITY,0},{2,1}});
+    require(end.submit() == HALO_METAL_OK,"query draws and END across async packets");
+    uint64_t result = 0;
+    require(host_metal_readback(2,1,HALO_METAL_VISIBILITY,base+256,sizeof(result),base,sizeof(halo_metal_reply)) == HALO_METAL_OK,
+        "visibility readback fences END sequence"); memcpy(&result,guest_pointer(base+256),sizeof(result));
+    require(result == 1 && context.completed == 13 && context.pending.empty(),"queued Boolean query has actual visible samples");
+    Packet again(14); again.append(halo_metal_visibility{{HALO_METAL_BEGIN_VISIBILITY,0},{2,1}}); again.draw(205);
+    again.append(halo_metal_visibility{{HALO_METAL_END_VISIBILITY,0},{2,1}});
+    require(again.submit() == HALO_METAL_OK,"second query with pending result words");
+    Packet reset(15); reset.append(halo_metal_visibility{{HALO_METAL_BEGIN_VISIBILITY,0},{2,1}});
+    reset.append(halo_metal_visibility{{HALO_METAL_END_VISIBILITY,0},{2,1}});
+    require(reset.submit() == HALO_METAL_OK,"empty query resets pending old result words");
+    require(host_metal_readback(2,1,HALO_METAL_VISIBILITY,base+256,sizeof(result),base,sizeof(halo_metal_reply)) == HALO_METAL_OK,
+        "reset visibility readback"); memcpy(&result,guest_pointer(base+256),sizeof(result));
+    require(!result && context.completed == 15,"earlier GPU query writes cannot contaminate reset result");
+    auto shutdownEvent = [context.device newSharedEvent]; auto shutdownGate = [context.queue commandBuffer];
+    [shutdownGate encodeWaitForEvent:shutdownEvent value:1]; [shutdownGate commit];
+    Packet final(16); final.draw(206); require(final.submit() == HALO_METAL_OK && !context.pending.empty(),"pending work before shutdown");
+    context.poisoned = true; // Teardown must drain accepted work even after poison.
+    std::thread shutdownRelease([&] { std::this_thread::sleep_for(std::chrono::milliseconds(20)); shutdownEvent.signaledValue = 1; });
+    host_metal_shutdown(); shutdownRelease.join();
+    require(shutdownGate.status == MTLCommandBufferStatusCompleted && !context.device && context.pending.empty(),
+        "poisoned shutdown drains accepted GPU work before clearing ownership");
+    initialize(); valid_draw(2,207);
+    Packet disabled(3); append_fence(disabled);
+    require(disabled.submit() == HALO_METAL_UNSUPPORTED && context.submitted == 2 && context.completed == 2,
+        "legacy context does not silently accept async fence opcode");
 }
 int main(int argc,char **argv) { @autoreleasepool {
     try {
@@ -181,7 +656,12 @@ int main(int argc,char **argv) { @autoreleasepool {
             readback(155);
             Packet validCompact(3);validCompact.draw(166,0,false,true);
             require(validCompact.submit() == HALO_METAL_OK,"compact packet dispatch");readback(166);
-            printf("{\"complete\":true,\"changing_payload_bytes\":true,\"atomic_rejection\":true,\"bounded_reuse\":true,\"retained_16mib\":true,\"exact_capacity\":true,\"growth_and_oversize\":true,\"command_ranges\":true,\"same_owned_storage\":true,\"guest_mutation_isolated\":true,\"shutdown_reset\":true,\"compact_opt_in\":true,\"compact_atomic_rejection\":true}\n");
+            run_geometry_tests();
+            run_uniform_tests();
+            run_async_query_prefix_tests();
+            run_async_frame_budget_tests();
+            run_async_tests();
+            printf("{\"complete\":true,\"changing_payload_bytes\":true,\"atomic_rejection\":true,\"bounded_reuse\":true,\"retained_16mib\":true,\"exact_capacity\":true,\"growth_and_oversize\":true,\"command_ranges\":true,\"same_owned_storage\":true,\"guest_mutation_isolated\":true,\"shutdown_reset\":true,\"compact_opt_in\":true,\"compact_atomic_rejection\":true,\"geometry_wire\":true,\"geometry_owned\":true,\"geometry_generation\":true,\"uniform_sharing\":true,\"uniform_byte_equivalence\":true,\"uniform_typed_ranges\":true,\"uniform_atomic_rejection\":true,\"uniform_async_ownership\":true,\"async_snapshots\":true,\"async_bound\":true,\"async_readback_fence\":true,\"async_query_fence\":true,\"async_query_prefix\":true,\"async_poisoned_shutdown\":true}\n");
         }
         host_metal_shutdown(); return 0;
     } catch (const std::exception &error) { fprintf(stderr,"%s\n",error.what()); return 1; }

@@ -18,6 +18,94 @@ except ImportError:
 
 
 class SamplingTests(unittest.TestCase):
+    def async_log(self, completion_rows):
+        return "\n".join(("Native Metal submission mode: async", *(
+            f"Native timing: frame {frame}, monotonic {100_000_000 + frame*1_000_000} ns, tick {149+frame}, initialized 1"
+            for frame in (1,2,3)), *(
+            f"Native flush: frame {frame-1}, sequence {40+frame}, reason Present, commands 1, bytes 16, "
+            "start 1000 ns, end 1100 ns, submit 100 ns" for frame in (1,2,3)), *completion_rows))
+
+    @staticmethod
+    def gpu_completed(sequence, end, duration=5_000_000, presented=True):
+        return (f"Native Metal completion: sequence {sequence}, presented {int(presented)}, "
+                f"gpu_start_ns {end-duration}, gpu_end_ns {end}, gpu_ns {duration}")
+
+    def test_gpu_completion_throughput_joins_reordered_sequences_and_uses_gpu_end_clock(self):
+        epoch = 9_000_000_000_000_000_001
+        parsed = benchmark.parse_log(self.async_log((
+            self.gpu_completed(43, epoch + 60_000_000), self.gpu_completed(41, epoch),
+            self.gpu_completed(42, epoch + 20_000_000))))
+        self.assertEqual(parsed["submission_mode"], "async")
+        self.assertEqual(parsed["parse_errors"], [])
+        cpu = benchmark.native_summary(parsed["frame_timing"])
+        gpu = benchmark.gpu_completion_summary(parsed)
+        self.assertEqual(cpu["render_fps"], 1000)
+        self.assertEqual(gpu["interval_count"], 2)
+        self.assertEqual(gpu["elapsed_seconds"], .06)
+        self.assertAlmostEqual(gpu["render_fps"], 1000/30)
+        self.assertEqual(gpu["p50_ms"], 30)
+        self.assertEqual(gpu["max_ms"], 40)
+        self.assertIn("GPU-end", gpu["scope"])
+        self.assertIn("not physical presentation or input latency", gpu["scope"])
+
+    def test_missing_first_middle_or_final_present_completion_rejects_the_capture(self):
+        rows = tuple(self.gpu_completed(40+frame, 100_000_000+frame*20_000_000) for frame in (1,2,3))
+        for missing in range(3):
+            with self.subTest(missing_frame=missing+1):
+                parsed = benchmark.parse_log(self.async_log(rows[:missing]+rows[missing+1:]))
+                with self.assertRaises(ValueError):
+                    benchmark.gpu_completion_summary(parsed)
+
+    def test_ambiguous_completion_flush_or_timing_association_is_rejected(self):
+        rows = tuple(self.gpu_completed(40+frame, 100_000_000+frame*20_000_000) for frame in (1,2,3))
+        original = self.async_log(rows)
+        bad_logs = (
+            original + "\n" + rows[0],
+            original + "\nNative flush: frame 0, sequence 41, reason Present, commands 1, bytes 16, start 1000 ns, end 1100 ns, submit 100 ns",
+            original + "\nNative timing: frame 1, monotonic 101000000 ns, tick 150, initialized 1",
+            original + "\n" + self.gpu_completed(999, 200_000_000),
+            original + "\nNative flush: frame 0, sequence 44, reason Present, commands 1, bytes 16, start 1000 ns, end 1100 ns, submit 100 ns\n"
+            + self.gpu_completed(44, 200_000_000),
+        )
+        for index, text in enumerate(bad_logs):
+            with self.subTest(case=index), self.assertRaises(ValueError):
+                benchmark.gpu_completion_summary(benchmark.parse_log(text))
+
+    def test_invalid_gpu_durations_fail_and_malformed_completion_records_are_reported(self):
+        rows = tuple(self.gpu_completed(40+frame, 100_000_000+frame*20_000_000) for frame in (1,2,3))
+        for bad in (rows[1].replace("gpu_ns 5000000", "gpu_ns 4999999"),
+                    self.gpu_completed(42, 0, duration=0)):
+            with self.subTest(completion=bad), self.assertRaises(ValueError):
+                benchmark.gpu_completion_summary(benchmark.parse_log(self.async_log((rows[0],bad,rows[2]))))
+        malformed = ("Native Metal completion: truncated", rows[1] + "broken",
+                     rows[1].replace("presented 1", "presented 2"),
+                     rows[1].replace("gpu_ns 5000000", "gpu_ns -5000000"))
+        for bad in malformed:
+            with self.subTest(malformed=bad):
+                parsed = benchmark.parse_log(self.async_log((rows[0],bad,rows[2])))
+                self.assertEqual(len(parsed["parse_errors"]), 1)
+                self.assertIn("completion", parsed["parse_errors"][0])
+                with self.assertRaises(ValueError):
+                    benchmark.gpu_completion_summary(parsed)
+
+    def test_nonincreasing_gpu_end_timestamps_reject_cpu_acceptance_fps(self):
+        for middle in (120_000_000, 110_000_000):
+            rows = (self.gpu_completed(41,120_000_000), self.gpu_completed(42,middle),
+                    self.gpu_completed(43,160_000_000))
+            with self.subTest(gpu_end_ns=middle), self.assertRaises(ValueError):
+                benchmark.gpu_completion_summary(benchmark.parse_log(self.async_log(rows)))
+
+    def test_empty_nonpresent_fence_after_last_cpu_frame_is_excluded_from_gpu_fps(self):
+        rows = tuple(self.gpu_completed(40+frame, 100_000_000+frame*20_000_000) for frame in (1,2,3))
+        log = self.async_log(rows) + "\n" + (
+            "Native flush: frame 3, sequence 44, reason Fence, commands 1, bytes 16, start 1000 ns, end 1100 ns, submit 100 ns\n"
+            + self.gpu_completed(44, 0, duration=0, presented=False))
+        parsed = benchmark.parse_log(log)
+        self.assertEqual(parsed["parse_errors"], [])
+        gpu = benchmark.gpu_completion_summary(parsed)
+        self.assertEqual(gpu["interval_count"], 2)
+        self.assertEqual(gpu["render_fps"], 50)
+
     def test_exit_during_foreground_observation_is_not_focus_loss(self):
         process = SimpleNamespace(pid=123, returncode=None)
         process.poll = lambda: process.returncode

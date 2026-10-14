@@ -108,6 +108,17 @@ class PacketBufferPolicyTests(unittest.TestCase):
         cls.addClassCleanup(cls.temp.cleanup)
         folder = Path(cls.temp.name)
         production = function(SOURCE.read_text(), "packet_input_buffer")
+        # This CPU fixture exercises synchronous allocation and injected
+        # allocation failures. The production GPU fixture covers async packet
+        # ownership/admission; retain only the synchronous path here.
+        start = production.index("if (context.async_submit_enabled)")
+        opening = production.index("{", start)
+        depth = 1
+        end = opening + 1
+        while depth:
+            depth += (production[end] == "{") - (production[end] == "}")
+            end += 1
+        production = production[:start] + production[end:]
         replacements = {
             "id<MTLBuffer>": "std::shared_ptr<Buffer>",
             "nil": "nullptr",

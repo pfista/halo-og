@@ -23,6 +23,9 @@ HARNESS = r'''
 #include "port/linux/src/metal_mip_composite.c"
 /* RESOURCE */
 static struct native_resource *resources, *sources[16];
+/* Preserve the original uncached lookup route; resource-index correctness has
+   a separate production-helper fixture. */
+static void resource_insert(struct native_resource *entry) { entry->next=resources;resources=entry; }
 static struct { struct { uint32_t capabilities; } reply; } transport;
 static struct halo_metal_copy_subresource commands[16];
 static uint32_t command_count, allocations, next_id=1000;

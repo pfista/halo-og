@@ -9,7 +9,8 @@ Example (use a fresh output directory for each run)::
     --seconds 40 --render-height 0 --fps-limit 0 --vsync off
 
 This is a bounded camera workload, not a multiplayer or campaign fidelity gate.
-Native timings include diagnostic logging, completed presentation and cap waits.
+Native timings include diagnostic logging and cap waits. In async mode they
+measure CPU acceptance; separate GPU-end timings measure renderer throughput.
 ANGLE renders its original logical picture and upscales it; its fullscreen
 drawable size is not an equal native-resolution rendering workload. Do not use
 this tool's results to claim retail parity, all-scene performance, or 120 FPS.
@@ -35,6 +36,8 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 LEVELS = {"chillout": r"levels\test\chillout\chillout", "b30": r"levels\b30\b30"}
 FRAME_TIMING = re.compile(r"Native timing: frame (\d+), monotonic (\d+) ns, tick (-?\d+), initialized ([01])")
+COMPLETION = re.compile(r"Native Metal completion: sequence (\d+), presented ([01]), gpu_start_ns (\d+), gpu_end_ns (\d+), gpu_ns (\d+)\s*$", re.MULTILINE)
+FLUSH_FRAME = re.compile(r"Native flush: frame (\d+), sequence (\d+),")
 DISPLAY = re.compile(
     r"Native display: ([0-9.]+) FPS, ([0-9.]+) simulation Hz, "
     r"(\d+)x(\d+) storage, (\d+)x(\d+) logical, cap (-?\d+), interpolation ([01]), ticks (-?\d+)-(-?\d+)")
@@ -56,7 +59,7 @@ SUBMISSIONS = re.compile(r"Native submissions frames (\d+)-(\d+): (\d+) batches,
                          r"(\d+) bytes, (\d+) host-submit us, largest (\d+) bytes")
 FAULT = re.compile(r"Validation Error|failed assertion|ASSERTION FAILED|Assertion failed|EXCEPTION halt in|"
                    r"guest abort|SIGSEGV|signal (?:10|11)|GL error|command buffer was aborted|"
-                   r"Native Metal: .* failed|Native unsupported", re.I)
+                   r"Native Metal: .* failed|Native Metal command failure|Native unsupported", re.I)
 SCRIPT_ERROR = re.compile(r"overflowed client buffer|not a valid|not found|syntax error|unable to parse|failed to compile", re.I)
 
 
@@ -159,14 +162,53 @@ def parse_log(text):
         if match:
             keys = ("first_frame", "last_frame", "batches", "commands", "bytes", "host_submit_us", "largest_batch_bytes")
             submissions.append(dict(zip(keys, map(int, match.groups()))))
+        if "Native Metal completion:" in line and not COMPLETION.search(line):
+            errors.append("Malformed native GPU completion: " + line)
     angle_sizes = [dict(logical_width=int(a), logical_height=int(b), presentation_width=int(c), presentation_height=int(d))
                    for a, b, c, d in re.findall(r"screen: (\d+)x(\d+) drawn at (\d+)x(\d+)", text)]
+    completions = [dict(zip(("sequence", "presented", "gpu_start_ns", "gpu_end_ns", "gpu_ns"), map(int, match.groups())))
+                   for match in COMPLETION.finditer(text)]
+    flushes = [dict(frame=int(match[1]) + 1, sequence=int(match[2])) for match in FLUSH_FRAME.finditer(text)]
     return {"frame_timing": timings, "display_telemetry": displays, "host_metrics": metrics,
+            "gpu_completions": completions, "flush_frames": flushes,
+            "submission_mode": "async" if "Native Metal submission mode: async" in text else "synchronous",
             "submission_blocks": submissions, "parse_errors": errors, "angle_sizes": angle_sizes,
             "drawable_sizes": [list(map(int, pair)) for pair in re.findall(r"Metal drawable (\d+)x(\d+)", text)],
             "guest_exit_records": list(map(int, re.findall(r"Game exited \((-?\d+)\)", text))),
             "faults": [line for line in text.splitlines() if FAULT.search(line)],
             "renderer_records": re.findall(r"Renderer active: ([^;\r\n]+)", text)}
+
+
+def gpu_completion_summary(parsed, cutoff=150):
+    """Use completed present packets; never count enqueued CPU frames as GPU FPS."""
+    from collections import Counter
+    flushes, completions = parsed["flush_frames"], parsed["gpu_completions"]
+    if any(count != 1 for count in Counter(row["sequence"] for row in completions).values()) or \
+            any(count != 1 for count in Counter(row["sequence"] for row in flushes).values()):
+        raise ValueError("Ambiguous GPU completion sequence")
+    frames = {row["sequence"]: row["frame"] for row in flushes}
+    rows = []
+    for row in completions:
+        if row["gpu_end_ns"] < row["gpu_start_ns"] or row["gpu_ns"] != row["gpu_end_ns"] - row["gpu_start_ns"] or \
+                (row["presented"] and not row["gpu_ns"]):
+            raise ValueError("Invalid GPU completion duration")
+        if row["presented"]:
+            if row["sequence"] not in frames:
+                raise ValueError("GPU completion missing frame association")
+            rows.append(dict(frame=frames[row["sequence"]], ns=row["gpu_end_ns"]))
+    timings = {row["frame"]: row for row in parsed["frame_timing"]}
+    if len(timings) != len(parsed["frame_timing"]):
+        raise ValueError("Ambiguous Native timing frame")
+    if len({row["frame"] for row in rows}) != len(rows):
+        raise ValueError("Ambiguous GPU completion frame")
+    if {row["frame"] for row in rows} != set(timings):
+        raise ValueError("GPU completion missing Native timing or completed Present")
+    rows.sort(key=lambda row: row["frame"])
+    if any(current["ns"] <= previous["ns"] for previous, current in zip(rows, rows[1:])):
+        raise ValueError("Nonincreasing GPU completion timestamp")
+    result = native_summary([dict(timings[row["frame"]], ns=row["ns"]) for row in rows], cutoff)
+    result["scope"] = "Consecutive GPU-end intervals after simulation tick 150; renderer throughput, not physical presentation or input latency."
+    return result
 
 
 def aggregate_host_metrics(rows, timings):
@@ -512,6 +554,10 @@ def run(args):
             raise RuntimeError("Game exited before the requested duration")
         if args.renderer == "metal":
             record["timing_summary"] = native_summary(parsed["frame_timing"])
+            if parsed["submission_mode"] == "async":
+                record["cpu_submission_summary"] = dict(record["timing_summary"],
+                    scope="Consecutive accepted CPU submissions after simulation tick 150; includes cap waits.")
+                record["timing_summary"] = gpu_completion_summary(parsed)
             record["host_metrics_summary"] = aggregate_host_metrics(parsed["host_metrics"], parsed["frame_timing"])
             if not parsed["display_telemetry"] or not parsed["host_metrics"]:
                 raise RuntimeError("Native display or host telemetry missing")

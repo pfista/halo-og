@@ -75,6 +75,16 @@ struct BindingRequirement {
     NSUInteger index = 0;
     MTLTextureType textureType = MTLTextureType2D;
 };
+struct EncoderBindings {
+    bool valid = false;
+    id<MTLRenderPipelineState> pipeline = nil;
+    id<MTLDepthStencilState> depth = nil;
+    halo_metal_draw_state state = {};
+    id<MTLBuffer> vertices = nil, vertexUniforms = nil, pixelUniforms = nil;
+    NSUInteger vertexOffset = 0, vertexUniformOffset = 0, pixelUniformOffset = 0;
+    id<MTLTexture> textures[4] = {};
+    id<MTLSamplerState> samplers[8] = {};
+};
 }
 
 @interface HaloMetalPipelineEntry : NSObject {
@@ -102,6 +112,9 @@ struct BindingRequirement {
     HaloMetalPipelineInterval _lastPipelineCreationInterval;
     BOOL _warmupLearningEnabled;
     std::vector<HaloMetalPipelineWarmup> _createdPipelines;
+    BOOL _cacheBindingsEnabled;
+    EncoderBindings _bindings;
+    NSUInteger _bindingSetCount, _bindingSkipCount;
 }
 - (instancetype)initWithDevice:(id<MTLDevice>)device {
     if (!device) return nil;
@@ -116,9 +129,18 @@ struct BindingRequirement {
         if (_activeEncoder) [_activeEncoder endEncoding];
         _activeEncoder = nil; _activeCommandBuffer = nil;
         _activeColor = nil; _activeDepthStencil = nil;
+        _bindings = {};
     }
 }
 - (NSUInteger)renderPassCount { @synchronized(self) { return _renderPassCount; } }
+- (BOOL)cacheBindingsEnabled { @synchronized(self) { return _cacheBindingsEnabled; } }
+- (void)setCacheBindingsEnabled:(BOOL)enabled {
+    @synchronized(self) {
+        if (_cacheBindingsEnabled != enabled) { _cacheBindingsEnabled = enabled; _bindings = {}; }
+    }
+}
+- (NSUInteger)bindingSetCount { @synchronized(self) { return _bindingSetCount; } }
+- (NSUInteger)bindingSkipCount { @synchronized(self) { return _bindingSkipCount; } }
 - (BOOL)diagnosticsEnabled { @synchronized(self) { return _diagnosticsEnabled; } }
 - (void)setDiagnosticsEnabled:(BOOL)enabled { @synchronized(self) { _diagnosticsEnabled = enabled; } }
 - (NSUInteger)pipelineCreationCount { @synchronized(self) { return _pipelineCreationCount; } }
@@ -224,19 +246,23 @@ struct BindingRequirement {
         (draw.primitive == MTLPrimitiveTypeLineStrip && draw.indexCount < 2) ||
         (draw.primitive == MTLPrimitiveTypeTriangleStrip && draw.indexCount < 3))
         return fail(error, HaloMetalDrawInvalid, @"Invalid original geometry/topology");
-    if ((draw.compactVertices ?
+    const bool immutableGeometry = draw.geometry && draw.compactVertices &&
+        draw.geometry->matches(_device,draw.vertices,draw.vertexOffset,draw.vertexBytes,draw.vertexCount,
+            draw.indices,draw.indexOffset,draw.indexCount,draw.packedMask);
+    if ((draw.geometry && !immutableGeometry) || (draw.compactVertices ?
             (draw.vertexBytes > HALO_METAL_MAX_PACKET ||
              !range(draw.vertices,draw.vertexOffset,draw.vertexBytes,1,16,_device) ||
-             draw.indices.storageMode == MTLStorageModePrivate ||
-             draw.vertices.storageMode == MTLStorageModePrivate || draw.vertexCount > UINT32_MAX ||
-             !halo_metal_compact_vertices_valid((const uint8_t *)draw.vertices.contents + draw.vertexOffset,
-                 draw.vertexBytes,(uint32_t)draw.vertexCount,draw.packedMask)) :
+             draw.vertexCount > UINT32_MAX ||
+             (!immutableGeometry && (draw.indices.storageMode == MTLStorageModePrivate ||
+              draw.vertices.storageMode == MTLStorageModePrivate ||
+              !halo_metal_compact_vertices_valid((const uint8_t *)draw.vertices.contents + draw.vertexOffset,
+                  draw.vertexBytes,(uint32_t)draw.vertexCount,draw.packedMask)))) :
             (draw.vertexBytes || !range(draw.vertices,draw.vertexOffset,draw.vertexCount,HaloMetalVertexStride,16,_device))) ||
         !range(draw.indices, draw.indexOffset, draw.indexCount, 4, 4, _device) ||
         !range(draw.vertexUniforms, draw.vertexUniformOffset, 1, HaloMetalVertexUniformSize, 16, _device) ||
         !range(draw.pixelUniforms, draw.pixelUniformOffset, 1, HaloMetalPixelUniformSize, 16, _device))
         return fail(error, HaloMetalDrawInvalid, @"Original input/uniform buffer range, alignment or device is invalid");
-    if (draw.indices.storageMode != MTLStorageModePrivate) {
+    if (!immutableGeometry && draw.indices.storageMode != MTLStorageModePrivate) {
         const uint8_t *bytes = (const uint8_t *)draw.indices.contents + draw.indexOffset;
         for (NSUInteger i = 0; i < draw.indexCount; i++) {
             uint32_t index; memcpy(&index, bytes + i * 4, 4);
@@ -448,11 +474,18 @@ struct BindingRequirement {
         id<MTLDepthStencilState> depth = nil;
         HaloMetalPipelineEntry *entry = [self prepareDraw:draw depthState:&depth error:error];
         if (!entry) { [self endEncoding]; return NO; }
+        if (draw.geometry && !draw.geometry->readyForDraw(command)) {
+            [self endEncoding];
+            return fail(error,HaloMetalDrawInvalid,@"Immutable geometry upload is not ordered before this draw");
+        }
         // Query passes keep their fresh result buffer and Reset semantics.
-        // Blended draws keep the original per-draw store boundary: coalescing
-        // them changed captured BGRA8 results despite matching depth/stencil.
-        // Only blend-disabled draws may retain attachment contents in a pass.
-        const BOOL reusable = reusePass && !draw.visibilityBuffer && !draw.state.blend_enabled;
+        // Destination-dependent blending keeps its per-draw store boundary:
+        // retaining those draws changed captured BGRA8 rounding. ONE/ZERO/ADD
+        // replaces the written RGB and alpha channels, so each channel's last
+        // writer can be quantized when this destination-independent run ends.
+        const bool replacement = draw.state.blend_source == 2 && draw.state.blend_destination == 1 &&
+            draw.state.blend_operation == 1;
+        const BOOL reusable = reusePass && !draw.visibilityBuffer && (!draw.state.blend_enabled || replacement);
         id<MTLRenderCommandEncoder> encoder = _activeEncoder;
         if (!reusable || !encoder || _activeCommandBuffer != command ||
             _activeColor != draw.color || _activeDepthStencil != draw.depthStencil) {
@@ -479,26 +512,66 @@ struct BindingRequirement {
             }
         }
         const halo_metal_draw_state &s = draw.state;
-        [encoder setRenderPipelineState:entry.pipeline]; [encoder setDepthStencilState:depth];
-        [encoder setViewport:MTLViewport{s.viewport[0], s.viewport[1], s.viewport[2], s.viewport[3], s.viewport[4], s.viewport[5]}];
-        [encoder setScissorRect:MTLScissorRect{s.scissor[0], s.scissor[1], s.scissor[2], s.scissor[3]}];
-        [encoder setFrontFacingWinding:s.front_winding ? MTLWindingCounterClockwise : MTLWindingClockwise];
-        [encoder setCullMode:(MTLCullMode)s.cull_mode];
-        [encoder setDepthClipMode:s.depth_clip_mode ? MTLDepthClipModeClamp : MTLDepthClipModeClip];
-        [encoder setTriangleFillMode:s.fill_mode ? MTLTriangleFillModeLines : MTLTriangleFillModeFill];
-        [encoder setDepthBias:s.depth_bias slopeScale:s.slope_depth_bias clamp:s.depth_bias_clamp];
-        [encoder setStencilReferenceValue:s.stencil_reference];
-        [encoder setBlendColorRed:s.blend_color[0] green:s.blend_color[1] blue:s.blend_color[2] alpha:s.blend_color[3]];
-        [encoder setVertexBuffer:draw.vertices offset:draw.vertexOffset atIndex:1];
-        [encoder setVertexBuffer:draw.vertexUniforms offset:draw.vertexUniformOffset atIndex:0];
-        [encoder setFragmentBuffer:draw.pixelUniforms offset:draw.pixelUniformOffset atIndex:0];
+        const bool cached = _cacheBindingsEnabled && reusable && _bindings.valid;
+        const halo_metal_draw_state &previous = _bindings.state;
+        auto bind = [&](bool equal, auto setter) {
+            if (!cached || !equal) { setter(); if (_diagnosticsEnabled) _bindingSetCount++; }
+            else if (_diagnosticsEnabled) _bindingSkipCount++;
+        };
+        bind(_bindings.pipeline == entry.pipeline, [&] { [encoder setRenderPipelineState:entry.pipeline]; });
+        bind(_bindings.depth == depth, [&] { [encoder setDepthStencilState:depth]; });
+        bind(!memcmp(previous.viewport,s.viewport,sizeof(s.viewport)), [&] {
+            [encoder setViewport:MTLViewport{s.viewport[0], s.viewport[1], s.viewport[2], s.viewport[3], s.viewport[4], s.viewport[5]}];
+        });
+        bind(!memcmp(previous.scissor,s.scissor,sizeof(s.scissor)), [&] {
+            [encoder setScissorRect:MTLScissorRect{s.scissor[0], s.scissor[1], s.scissor[2], s.scissor[3]}];
+        });
+        bind(previous.front_winding == s.front_winding, [&] {
+            [encoder setFrontFacingWinding:s.front_winding ? MTLWindingCounterClockwise : MTLWindingClockwise];
+        });
+        bind(previous.cull_mode == s.cull_mode, [&] { [encoder setCullMode:(MTLCullMode)s.cull_mode]; });
+        bind(previous.depth_clip_mode == s.depth_clip_mode, [&] {
+            [encoder setDepthClipMode:s.depth_clip_mode ? MTLDepthClipModeClamp : MTLDepthClipModeClip];
+        });
+        bind(previous.fill_mode == s.fill_mode, [&] {
+            [encoder setTriangleFillMode:s.fill_mode ? MTLTriangleFillModeLines : MTLTriangleFillModeFill];
+        });
+        bind(!memcmp(&previous.depth_bias,&s.depth_bias,sizeof(float)) &&
+             !memcmp(&previous.slope_depth_bias,&s.slope_depth_bias,sizeof(float)) &&
+             !memcmp(&previous.depth_bias_clamp,&s.depth_bias_clamp,sizeof(float)), [&] {
+            [encoder setDepthBias:s.depth_bias slopeScale:s.slope_depth_bias clamp:s.depth_bias_clamp];
+        });
+        bind(previous.stencil_reference == s.stencil_reference, [&] { [encoder setStencilReferenceValue:s.stencil_reference]; });
+        bind(!memcmp(previous.blend_color,s.blend_color,sizeof(s.blend_color)), [&] {
+            [encoder setBlendColorRed:s.blend_color[0] green:s.blend_color[1] blue:s.blend_color[2] alpha:s.blend_color[3]];
+        });
+        bind(_bindings.vertices == draw.vertices && _bindings.vertexOffset == draw.vertexOffset, [&] {
+            [encoder setVertexBuffer:draw.vertices offset:draw.vertexOffset atIndex:1];
+        });
+        bind(_bindings.vertexUniforms == draw.vertexUniforms && _bindings.vertexUniformOffset == draw.vertexUniformOffset, [&] {
+            [encoder setVertexBuffer:draw.vertexUniforms offset:draw.vertexUniformOffset atIndex:0];
+        });
+        bind(_bindings.pixelUniforms == draw.pixelUniforms && _bindings.pixelUniformOffset == draw.pixelUniformOffset, [&] {
+            [encoder setFragmentBuffer:draw.pixelUniforms offset:draw.pixelUniformOffset atIndex:0];
+        });
         for (unsigned i = 0; i < 4; i++) {
-            [encoder setFragmentTexture:draw.textures[i] atIndex:i];
-            [encoder setFragmentSamplerState:draw.samplers[i] atIndex:i];
-            [encoder setFragmentSamplerState:draw.samplers[4+i] atIndex:4+i];
+            bind(_bindings.textures[i] == draw.textures[i], [&] { [encoder setFragmentTexture:draw.textures[i] atIndex:i]; });
+            bind(_bindings.samplers[i] == draw.samplers[i], [&] { [encoder setFragmentSamplerState:draw.samplers[i] atIndex:i]; });
+            bind(_bindings.samplers[4+i] == draw.samplers[4+i], [&] { [encoder setFragmentSamplerState:draw.samplers[4+i] atIndex:4+i]; });
         }
-        if (draw.visibilityBuffer)
+        if (draw.visibilityBuffer) {
             [encoder setVisibilityResultMode:draw.visibilityMode offset:draw.visibilityOffset];
+            if (_diagnosticsEnabled) _bindingSetCount++;
+        }
+        if (_cacheBindingsEnabled && reusable) {
+            _bindings.pipeline = entry.pipeline; _bindings.depth = depth; _bindings.state = s;
+            _bindings.vertices = draw.vertices; _bindings.vertexOffset = draw.vertexOffset;
+            _bindings.vertexUniforms = draw.vertexUniforms; _bindings.vertexUniformOffset = draw.vertexUniformOffset;
+            _bindings.pixelUniforms = draw.pixelUniforms; _bindings.pixelUniformOffset = draw.pixelUniformOffset;
+            for (unsigned i = 0; i < 4; i++) _bindings.textures[i] = draw.textures[i];
+            for (unsigned i = 0; i < 8; i++) _bindings.samplers[i] = draw.samplers[i];
+            _bindings.valid = true;
+        } else _bindings = {};
         [encoder drawIndexedPrimitives:draw.primitive indexCount:draw.indexCount indexType:MTLIndexTypeUInt32
             indexBuffer:draw.indices indexBufferOffset:draw.indexOffset];
         if (!reusable) [encoder endEncoding];

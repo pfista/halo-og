@@ -352,6 +352,17 @@ static const struct config_setting config_settings[] =
 	{ "debug.metal_gpu_vertex_decode", _config_boolean, "true", NULL, _environment_value, _platform_all,
 		"Decode native Metal vertex input on the GPU. Restart after\n"
 		"changing; false retains the CPU comparison path." },
+	{ "debug.metal_geometry_cache", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Reuse byte-verified native Metal geometry. Restart after changing." },
+	{ "debug.metal_cache_bindings", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Reuse unchanged native Metal encoder bindings. Restart after changing." },
+	{ "debug.metal_texture_cache", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Cache native Metal texture lookup and immutable layouts. Restart after changing." },
+	{ "debug.metal_uniform_cache", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Share byte-identical native Metal shader constants within each packet. Restart after changing." },
+	{ "debug.metal_async_submit", _config_boolean, "false", NULL, _environment_value, _platform_all,
+		"Overlap native Metal submission with GPU execution when interpolation\n"
+		"is enabled. Bounded to two pending presentations; restart after changing." },
 	{ "debug.gpu_trace_frame", _config_integer, "-1", "HALO_GPU_TRACE", _environment_value, _platform_all,
 		"Log every draw of this frame; -1 none." },
 	{ "debug.gpu_trace_constants", _config_boolean, "false", "HALO_GPU_TRACE_CONSTANTS", _environment_set_is_true, _platform_all,
