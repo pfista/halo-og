@@ -171,9 +171,10 @@ struct native_resource {
 };
 struct native_program {
     struct native_program *next;
+    struct native_program *cache_next;
     struct halo_metal_ref ref;
     struct vertex_shader_object *vertex;
-    uint32_t packed_mask, depth_contract, alpha_border_mask, volume_border_mask, compact_vertices;
+    uint32_t packed_mask, depth_contract, alpha_border_mask, volume_border_mask, compact_vertices, cache_hash;
     struct nv2a_pixel_shader_key key;
 };
 struct native_device {
@@ -235,6 +236,8 @@ static struct {
 static struct native_resource *history_sample_override;
 static struct native_resource *text_atlas_resource;
 static struct native_program *programs;
+#define NATIVE_PROGRAM_BUCKETS 2048u
+static struct native_program *program_buckets[NATIVE_PROGRAM_BUCKETS], *last_program;
 #define NATIVE_GEOMETRY_SLOTS 2048u
 #define NATIVE_GEOMETRY_BUCKETS 4096u
 #define NATIVE_GEOMETRY_BYTES (64u * 1024u * 1024u)
@@ -1953,15 +1956,60 @@ static struct native_resource *texture_get(D3DBaseTexture *texture,D3DPalette *p
     entry->generation=generation;entry->palette_hash=hash;
     return entry;
 }
+static BOOL program_matches(const struct native_program *entry,struct vertex_shader_object *vertex,uint32_t packed,
+    const struct nv2a_pixel_shader_key *key,uint32_t alpha_border_mask,uint32_t volume_border_mask,uint32_t depth_contract,
+    BOOL compact_vertices) {
+    return entry->vertex==vertex && entry->packed_mask==packed && entry->alpha_border_mask==alpha_border_mask &&
+        entry->depth_contract==depth_contract && entry->volume_border_mask==volume_border_mask &&
+        entry->compact_vertices==(uint32_t)compact_vertices && !memcmp(&entry->key,key,sizeof(*key));
+}
+static uint32_t program_hash(struct vertex_shader_object *vertex,uint32_t packed,
+    const struct nv2a_pixel_shader_key *key,uint32_t alpha_border_mask,uint32_t volume_border_mask,uint32_t depth_contract,
+    BOOL compact_vertices) {
+    _Static_assert(sizeof(*key)%sizeof(uint32_t)==0,"native program key words");
+    const uint64_t identity=(uint64_t)(uintptr_t)vertex;
+    const uint32_t words[]={(uint32_t)identity,(uint32_t)(identity>>32),packed,alpha_border_mask,
+        volume_border_mask,depth_contract,(uint32_t)compact_vertices};
+    uint32_t hash=UINT32_C(2166136261);
+    for (size_t i=0;i<sizeof(words)/sizeof(words[0]);i++)
+        hash=(hash^words[i])*UINT32_C(16777619);
+    /* Match the complete key used by memcmp, including its initialized padding.
+       memcpy reads each word without changing the key's aliasing contract. */
+    for (size_t i=0;i<sizeof(*key);i+=sizeof(uint32_t)) {
+        uint32_t word;memcpy(&word,(const unsigned char *)key+i,sizeof(word));
+        hash=(hash^word)*UINT32_C(16777619);
+    }
+    /* Combiner flags occupy high word bits; mix them into the bucket index. */
+    hash^=hash>>16;hash*=UINT32_C(0x7feb352d);
+    hash^=hash>>15;hash*=UINT32_C(0x846ca68b);
+    hash^=hash>>16;
+    return hash;
+}
+static struct native_program *program_cache_find(struct vertex_shader_object *vertex,uint32_t packed,
+    const struct nv2a_pixel_shader_key *key,uint32_t alpha_border_mask,uint32_t volume_border_mask,uint32_t depth_contract,
+    BOOL compact_vertices) {
+    if (last_program && program_matches(last_program,vertex,packed,key,alpha_border_mask,volume_border_mask,
+        depth_contract,compact_vertices)) return last_program;
+    uint32_t hash=program_hash(vertex,packed,key,alpha_border_mask,volume_border_mask,depth_contract,compact_vertices);
+    for (struct native_program *entry=program_buckets[hash&(NATIVE_PROGRAM_BUCKETS-1)];entry;entry=entry->cache_next)
+        if (entry->cache_hash==hash && program_matches(entry,vertex,packed,key,alpha_border_mask,volume_border_mask,
+            depth_contract,compact_vertices)) { last_program=entry;return entry; }
+    return NULL;
+}
+static void program_cache_insert(struct native_program *entry) {
+    entry->cache_hash=program_hash(entry->vertex,entry->packed_mask,&entry->key,entry->alpha_border_mask,
+        entry->volume_border_mask,entry->depth_contract,entry->compact_vertices);
+    uint32_t bucket=entry->cache_hash&(NATIVE_PROGRAM_BUCKETS-1);
+    entry->cache_next=program_buckets[bucket];program_buckets[bucket]=entry;
+    /* Preserve process-lifetime ownership and original newest-first ordering. */
+    entry->next=programs;programs=entry;last_program=entry;
+}
 static struct native_program *program_get(struct vertex_shader_object *vertex,uint32_t packed,
     const struct nv2a_pixel_shader_key *key, uint32_t alpha_border_mask,uint32_t volume_border_mask,uint32_t depth_contract,
     BOOL compact_vertices) {
-    struct native_program *entry;
-    for (entry=programs;entry;entry=entry->next)
-        if (entry->vertex==vertex && entry->packed_mask==packed && entry->alpha_border_mask==alpha_border_mask &&
-            entry->depth_contract==depth_contract && entry->volume_border_mask==volume_border_mask &&
-            entry->compact_vertices==(uint32_t)compact_vertices &&
-            !memcmp(&entry->key,key,sizeof(*key))) return entry;
+    struct native_program *entry=program_cache_find(vertex,packed,key,alpha_border_mask,volume_border_mask,
+        depth_contract,compact_vertices);
+    if (entry) return entry;
     const BOOL diagnostics=config_boolean("debug.gpu_stats");
     const uint64_t translation_started=diagnostics ? monotonic_ns():0;
     char *vs=vertex==&fixed_function_vertex ? metal_fixed_function_vertex_to_msl():
@@ -2048,7 +2096,7 @@ static struct native_program *program_get(struct vertex_shader_object *vertex,ui
             command.vertex_source_size,command.fragment_source_size,
             (unsigned long long)translation_ns);
     packet_finish();free(vs);free(ps);
-    entry->next=programs;programs=entry;return entry;
+    program_cache_insert(entry);return entry;
 }
 static uint32_t geometry_bucket(struct vertex_shader_object *declaration,const WORD *indices,
     const struct metal_vertex_index_plan *plan,uint32_t type,uint32_t count) {
