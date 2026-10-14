@@ -1407,6 +1407,16 @@ id<MTLRenderPipelineState> clear_pipeline(uint32_t color_format, uint32_t planes
     check(result != nil, HALO_METAL_GPU_ERROR);
     context.clear_pipelines.emplace(key,result); return result;
 }
+void mark_clear_initialized(const halo_metal_clear &c, uint32_t mask) {
+    if (c.color.id) {
+        auto &color = resource(context.textures,c.color);
+        initialized(color,HALO_METAL_COLOR,mask == 15 && full(color,c.x,c.y,c.width,c.height));
+    }
+    if (c.depth_stencil.id) {
+        auto &depth = resource(context.textures,c.depth_stencil);
+        initialized(depth,c.planes & 6,full(depth,c.x,c.y,c.width,c.height));
+    }
+}
 void clear(id<MTLCommandBuffer> buffer, halo_metal_clear c, uint32_t mask = 15) {
     Texture *color = c.color.id ? &resource(context.textures,c.color) : nullptr;
     Texture *depth = c.depth_stencil.id ? &resource(context.textures,c.depth_stencil) : nullptr;
@@ -1452,8 +1462,7 @@ void clear(id<MTLCommandBuffer> buffer, halo_metal_clear c, uint32_t mask = 15) 
         [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     }
     [encoder endEncoding];
-    if (color) initialized(*color,HALO_METAL_COLOR,mask == 15 && full(*color,c.x,c.y,c.width,c.height));
-    if (depth) initialized(*depth,c.planes & 6,full(*depth,c.x,c.y,c.width,c.height));
+    mark_clear_initialized(c,mask);
 }
 void complete(id<MTLCommandBuffer> buffer, bool measured = false) {
     uint64_t started = measured ? metrics_start() : 0;
@@ -1649,6 +1658,59 @@ void fxaa(id<MTLCommandBuffer> buffer, Texture &source, const halo_metal_fxaa &c
     [encoder endEncoding];
     initialized(source,HALO_METAL_COLOR,false);
 }
+MTLRenderPassDescriptor *clear_before_draw(const HaloMetalPacketView &packet, const Prepared &prepared,
+    uint32_t command_index, size_t position, const halo_metal_clear &c, uint32_t mask,
+    size_t &draw_position) {
+    Texture *color = c.color.id ? &resource(context.textures,c.color) : nullptr;
+    Texture *depth = c.depth_stencil.id ? &resource(context.textures,c.depth_stencil) : nullptr;
+    if ((color && (mask != 15 || !full(*color,c.x,c.y,c.width,c.height))) ||
+        (depth && !full(*depth,c.x,c.y,c.width,c.height))) return nil;
+
+    // Only packet-local uniform definitions may intervene: they have no GPU
+    // commands or observable resource/attachment mutations. All other ops keep
+    // the original standalone clear, including another clear or a query.
+    const auto header = record<halo_metal_packet>(packet,0);
+    size_t next_position = position + c.command.byte_size;
+    for (uint32_t next_index = command_index + 1; next_index < header.command_count; next_index++) {
+        const auto next = record<halo_metal_command>(packet,next_position);
+        if (next.opcode == HALO_METAL_DEFINE_UNIFORMS) {
+            next_position += next.byte_size;
+            continue;
+        }
+        auto found = prepared.draws.find(next_position);
+        if (found == prepared.draws.end()) return nil;
+        const HaloMetalDraw &draw = [found->second draw];
+        const bool replacement = draw.state.blend_source == 2 && draw.state.blend_destination == 1 &&
+            draw.state.blend_operation == 1;
+        // A destination-dependent blend must read the separately stored clear
+        // value. Combining it would change fractional UNorm rounding.
+        if (draw.visibilityBuffer || (draw.state.blend_enabled && !replacement)) return nil;
+        id<MTLTexture> target = draw.color ?: draw.depthStencil;
+        if ((color && (color->object != draw.color || color->width != target.width || color->height != target.height)) ||
+            (depth && (depth->object != draw.depthStencil || depth->width != target.width || depth->height != target.height)))
+            return nil;
+
+        auto pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.renderTargetWidth = target.width; pass.renderTargetHeight = target.height;
+        pass.renderTargetArrayLength = 1; pass.defaultRasterSampleCount = 1;
+        if (draw.color) {
+            pass.colorAttachments[0].texture = draw.color;
+            pass.colorAttachments[0].loadAction = color ? MTLLoadActionClear : MTLLoadActionLoad;
+            pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+            if (color) pass.colorAttachments[0].clearColor = MTLClearColorMake(c.rgba[0],c.rgba[1],c.rgba[2],c.rgba[3]);
+        }
+        if (draw.depthStencil) {
+            pass.depthAttachment.texture = pass.stencilAttachment.texture = draw.depthStencil;
+            pass.depthAttachment.loadAction = depth && (c.planes & HALO_METAL_DEPTH) ? MTLLoadActionClear : MTLLoadActionLoad;
+            pass.stencilAttachment.loadAction = depth && (c.planes & HALO_METAL_STENCIL) ? MTLLoadActionClear : MTLLoadActionLoad;
+            pass.depthAttachment.storeAction = pass.stencilAttachment.storeAction = MTLStoreActionStore;
+            if (depth) { pass.depthAttachment.clearDepth = c.depth; pass.stencilAttachment.clearStencil = c.stencil; }
+        }
+        draw_position = next_position;
+        return pass;
+    }
+    return nil;
+}
 void execute(const HaloMetalPacketView &packet, Prepared &prepared) {
     // A failed packet must close its retained draw pass before command-buffer
     // ownership is released. Normal execution closes it before every boundary.
@@ -1664,6 +1726,8 @@ void execute(const HaloMetalPacketView &packet, Prepared &prepared) {
     const NSUInteger passes_before = context.draw_encoder.renderPassCount;
     uint64_t encode_started = metrics_start();
     size_t position = sizeof(header);
+    MTLRenderPassDescriptor *initial_draw_pass = nil;
+    size_t initial_draw_position = 0;
     for (uint32_t i = 0; i < header.command_count; i++) {
         auto command = record<halo_metal_command>(packet,position);
         // Contiguous original draws alone may share a pass. Keep uploads,
@@ -1694,10 +1758,15 @@ void execute(const HaloMetalPacketView &packet, Prepared &prepared) {
                 auto c = record<halo_metal_upload_ex>(packet,position); auto &t = resource(context.textures,c.resource);
                 upload(buffer,packet,c,t); break;
             }
-            case HALO_METAL_CLEAR: clear(buffer,record<halo_metal_clear>(packet,position)); break;
+            case HALO_METAL_CLEAR:
             case HALO_METAL_CLEAR_CHANNELS: {
-                auto c = record<halo_metal_clear_channels>(packet,position);
-                clear(buffer,c.clear,c.color_write_mask); break;
+                auto c = record<halo_metal_clear>(packet,position);
+                const uint32_t mask = command.opcode == HALO_METAL_CLEAR_CHANNELS ?
+                    record<halo_metal_clear_channels>(packet,position).color_write_mask : 15;
+                initial_draw_pass = clear_before_draw(packet,prepared,i,position,c,mask,initial_draw_position);
+                if (initial_draw_pass) mark_clear_initialized(c,mask);
+                else clear(buffer,c,mask);
+                break;
             }
             case HALO_METAL_DISPLAY_SETTINGS: {
                 auto c = record<halo_metal_display_settings>(packet,position);
@@ -1783,8 +1852,10 @@ void execute(const HaloMetalPacketView &packet, Prepared &prepared) {
                 auto c = record<halo_metal_draw>(packet,position); NSError *error = nil;
                 HaloMetalPreparedDraw *prepared_draw = prepared.draws.at(position);
                 const HaloMetalDraw &draw = [prepared_draw draw];
+                check(!initial_draw_pass || initial_draw_position == position,HALO_METAL_GPU_ERROR,i);
                 check([context.draw_encoder encodePreparedPacketDraw:prepared_draw commandBuffer:buffer reusePass:YES
-                    initialPass:nil error:&error],HALO_METAL_GPU_ERROR,i);
+                    initialPass:initial_draw_pass error:&error],HALO_METAL_GPU_ERROR,i);
+                initial_draw_pass = nil;
                 if (context.metrics.enabled) context.metrics.draws++;
                 if (context.active_query.id)
                     visibility(context.queries,context.active_query).words.push_back(draw.visibilityBuffer);

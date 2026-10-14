@@ -310,6 +310,162 @@ static uint64_t captured_query() {
         "uniform fixture query readback");
     uint64_t result; memcpy(&result,guest_pointer(base+256),sizeof(result)); return result;
 }
+struct ClearPacket : Packet {
+    using Packet::Packet;
+    void colorDraw(const float rgba[4],uint32_t mask = 15,uint32_t x = 0,uint32_t width = 4,
+                   halo_metal_ref depth = {},bool additive = false,uint32_t stencil = 7,uint32_t height = 4) {
+        const size_t start = bytes.size(); draw(0);
+        halo_metal_draw c; memcpy(&c,bytes.data()+start,sizeof(c));
+        c.depth_stencil = depth; c.state.color_write_mask = mask;
+        c.state.scissor[0] = x; c.state.scissor[2] = width; c.state.scissor[3] = height;
+        c.state.blend_enabled = 1; c.state.blend_source = 2;
+        c.state.blend_destination = additive ? 2 : 1;
+        if (depth.id) {
+            c.state.depth_enabled = c.state.depth_write = 1; c.state.depth_compare = 2;
+            c.state.viewport[4] = .25f;
+            c.state.stencil_enabled = 1; c.state.stencil_compare = 3;
+            c.state.stencil_reference = stencil; c.state.stencil_read_mask = c.state.stencil_write_mask = 255;
+            c.state.stencil_pass = 4;
+        }
+        memcpy(bytes.data()+c.pixel_uniforms_offset,rgba,16); memcpy(bytes.data()+start,&c,sizeof(c));
+    }
+    void clearing(uint32_t planes = 7,uint32_t mask = 15,uint32_t width = 4,
+                  halo_metal_ref color = {1,1},halo_metal_ref depth = {2,1}) {
+        halo_metal_clear c{}; c.command.opcode = mask == 15 ? HALO_METAL_CLEAR : HALO_METAL_CLEAR_CHANNELS;
+        c.color = planes & HALO_METAL_COLOR ? color : halo_metal_ref{};
+        c.depth_stencil = planes & 6 ? depth : halo_metal_ref{};
+        c.planes = planes; c.width = c.height = width;
+        c.rgba[0] = .49f/255; c.rgba[1] = .51f/255; c.rgba[2] = 10.49f/255; c.rgba[3] = 127.51f/255;
+        c.depth = .75f; c.stencil = 7;
+        if (mask == 15) append(c);
+        else {
+            halo_metal_clear_channels extended{c,mask,0}; extended.clear.command.byte_size = sizeof(extended);
+            const size_t start = bytes.size(); bytes.resize(start+sizeof(extended),0);
+            memcpy(bytes.data()+start,&extended,sizeof(extended)); commands++;
+        }
+    }
+};
+static std::vector<uint8_t> captured_plane(uint32_t resource,uint32_t plane,uint32_t extent = 4) {
+    const uint32_t size = extent*extent*(plane == HALO_METAL_STENCIL ? 1 : 4);
+    require(host_metal_readback(resource,1,plane,base+512,size,base,sizeof(halo_metal_reply)) == HALO_METAL_OK,
+        "clear fixture plane readback");
+    const auto *data = (const uint8_t *)guest_pointer(base+512);
+    return {data,data+size};
+}
+static void initialize_clear_fixture() {
+    host_metal_shutdown();
+    require(host_metal_initialize(0,HALO_METAL_OFFSCREEN,base,sizeof(halo_metal_reply)) == HALO_METAL_OK,
+        "clear fixture device initialization");
+    ClearPacket setup(1); setup.program();
+    for (uint32_t id : {1u,3u})
+        setup.append(halo_metal_create{{HALO_METAL_CREATE_TEXTURE,0},{id,1},HALO_METAL_BGRA8,4,4,0});
+    for (uint32_t id : {2u,4u})
+        setup.append(halo_metal_create{{HALO_METAL_CREATE_TEXTURE,0},{id,1},HALO_METAL_DEPTH32_STENCIL8,
+            id == 2 ? 4u : 8u,id == 2 ? 4u : 8u,0});
+    const auto seed = [&](uint32_t planes,uint32_t extent,halo_metal_ref color,halo_metal_ref depth) {
+        const size_t position = setup.bytes.size(); setup.clearing(planes,15,extent,color,depth);
+        halo_metal_clear c; memcpy(&c,setup.bytes.data()+position,sizeof(c));
+        const float rgba[] = {15.49f/255,25.51f/255,35.49f/255,45.51f/255};
+        memcpy(c.rgba,rgba,16); c.depth = .875f; c.stencil = 5;
+        memcpy(setup.bytes.data()+position,&c,sizeof(c));
+    };
+    seed(7,4,{1,1},{2,1}); seed(HALO_METAL_COLOR,4,{3,1},{});
+    seed(HALO_METAL_DEPTH|HALO_METAL_STENCIL,8,{}, {4,1});
+    setup.append(halo_metal_create_visibility{{HALO_METAL_CREATE_VISIBILITY,0},{5,1},HALO_METAL_VISIBILITY_COUNTING,0});
+    require(setup.submit() == HALO_METAL_OK,"clear fixture resource initialization");
+}
+static void submit_clear_plan(ClearPacket &p,bool shouldFold,uint32_t mask = 15) {
+    p.copy_to_guest(); Prepared prepared;
+    prepared.input_buffer = packet_input_buffer(p.bytes.size());
+    require(copy_guest(packetAddress,prepared.input_buffer.contents,(uint32_t)p.bytes.size()),"owned clear fixture packet");
+    const HaloMetalPacketView view(prepared.input_buffer.contents,p.bytes.size()); validate(view,prepared);
+    const size_t position = sizeof(halo_metal_packet);
+    const auto c = record<halo_metal_clear>(view,position);
+    size_t drawPosition = 0;
+    auto folded = clear_before_draw(view,prepared,0,position,c,mask,drawPosition);
+    require(bool(folded) == shouldFold,"clear eligibility must retain observable boundaries and exact footprint");
+    const auto passes = context.draw_encoder.renderPassCount;
+    execute(view,prepared);
+    if (shouldFold) require(context.draw_encoder.renderPassCount == passes+1,
+        "folded full clear starts one pass shared by both masked replacement draws");
+}
+static void run_clear_fusion_tests() {
+    const float color[] = {200.51f/255,99.49f/255,50.51f/255,31.49f/255};
+    const auto snapshot = [] {
+        std::vector<uint8_t> result;
+        for (const auto &bytes : {captured_plane(1,HALO_METAL_COLOR),captured_plane(2,HALO_METAL_DEPTH),
+                captured_plane(2,HALO_METAL_STENCIL),captured_plane(3,HALO_METAL_COLOR),
+                captured_plane(4,HALO_METAL_DEPTH,8),captured_plane(4,HALO_METAL_STENCIL,8)})
+            result.insert(result.end(),bytes.begin(),bytes.end());
+        return result;
+    };
+    // A separately submitted clear is the original store/quantization reference.
+    // Masked replacement draws leave fractional clear channels observable.
+    for (uint32_t planes : {7u,1u,2u,4u}) {
+        std::vector<uint8_t> expected;
+        for (bool together : {false,true}) {
+            initialize_clear_fixture(); ClearPacket p(2); p.clearing(planes);
+            if (!together) { require(p.submit() == HALO_METAL_OK,"separate full clear reference"); p = ClearPacket(3); }
+            const uint32_t reference = planes & HALO_METAL_STENCIL ? 7 : 5;
+            p.colorDraw(color,9,0,2,{2,1},false,reference,3);
+            p.colorDraw(color,6,2,2,{2,1},false,reference,3);
+            if (together) submit_clear_plan(p,true);
+            else require(p.submit() == HALO_METAL_OK,"draw after separate full clear");
+            const auto actual = snapshot();
+            if (!together) expected = actual;
+            else require(actual == expected,"fused full-clear color/depth/stencil bytes match standalone store reference");
+            const auto pixels = captured_plane(1,HALO_METAL_COLOR);
+            const auto depths = captured_plane(2,HALO_METAL_DEPTH), stencil = captured_plane(2,HALO_METAL_STENCIL);
+            for (unsigned i = 0; i < 16; i++) {
+                const bool left = i%4 < 2, drawn = i/4 < 3, clearColor = planes & HALO_METAL_COLOR;
+                const uint8_t bgra[] = {uint8_t(drawn && !left ? 51 : clearColor ? 10 : 35),
+                    uint8_t(drawn && !left ? 99 : clearColor ? 1 : 26),
+                    uint8_t(drawn && left ? 201 : clearColor ? 0 : 15),
+                    uint8_t(drawn && left ? 31 : clearColor ? 128 : 46)};
+                float z; memcpy(&z,depths.data()+i*4,4);
+                const float expectedDepth = drawn ? .25f : planes & HALO_METAL_DEPTH ? .75f : .875f;
+                require(!memcmp(pixels.data()+i*4,bgra,4) && z == expectedDepth &&
+                    stencil[i] == reference + (drawn ? 1 : 0),
+                    "fractional BGRA clear, logical masks, alpha and depth/stencil comparisons have analytic results");
+            }
+        }
+    }
+    // Adding two sub-half-byte values without an intervening UNorm store
+    // yields 1; the original clear store rounds the destination to 0 first.
+    const float fractional[] = {.49f/255,.49f/255,.49f/255,.49f/255};
+    initialize_clear_fixture(); ClearPacket additive(2); additive.clearing(HALO_METAL_COLOR);
+    halo_metal_clear c; memcpy(&c,additive.bytes.data()+sizeof(halo_metal_packet),sizeof(c));
+    memcpy(c.rgba,fractional,16); memcpy(additive.bytes.data()+sizeof(halo_metal_packet),&c,sizeof(c));
+    additive.colorDraw(fractional,15,0,4,{},true); submit_clear_plan(additive,false);
+    const auto zero = captured_plane(1,HALO_METAL_COLOR);
+    require(std::all_of(zero.begin(),zero.end(),[](uint8_t value) { return value == 0; }),
+        "destination-dependent first draw reads separately quantized fractional clear");
+    // These cases must preserve partial clears, aspect masks, query results,
+    // copies observing the clear, and exact attachment/footprint ordering.
+    for (unsigned kind = 0; kind < 6; kind++) {
+        std::vector<uint8_t> expected;
+        for (bool together : {false,true}) {
+            initialize_clear_fixture(); ClearPacket p(2);
+            if (kind == 0) p.clearing(HALO_METAL_COLOR,15,2);
+            else if (kind == 1) p.clearing(HALO_METAL_COLOR,9);
+            else if (kind == 4) p.clearing(HALO_METAL_COLOR,15,4,{3,1});
+            else if (kind == 5) p.clearing(HALO_METAL_DEPTH|HALO_METAL_STENCIL,15,8,{}, {4,1});
+            else p.clearing(HALO_METAL_COLOR);
+            if (!together) { require(p.submit() == HALO_METAL_OK,"isolated boundary clear reference"); p = ClearPacket(3); }
+            if (kind == 2) p.append(halo_metal_visibility{{HALO_METAL_BEGIN_VISIBILITY,0},{5,1}});
+            if (kind == 3) p.append(halo_metal_copy{{HALO_METAL_COPY,0},{1,1},{3,1},0,0,0,0,4,4});
+            p.colorDraw(color,9,0,2,kind == 5 ? halo_metal_ref{4,1} : halo_metal_ref{});
+            if (kind == 2) p.append(halo_metal_visibility{{HALO_METAL_END_VISIBILITY,0},{5,1}});
+            if (together) submit_clear_plan(p,false,kind == 1 ? 9 : 15);
+            else require(p.submit() == HALO_METAL_OK,"isolated boundary draw reference");
+            const auto actual = snapshot();
+            if (!together) expected = actual;
+            else require(actual == expected,"nonfusible clear preserves original observable plane bytes");
+            if (kind == 2) require(captured_query() == 8,"clear boundary query counts only eight drawn samples");
+        }
+    }
+    host_metal_shutdown();
+}
 static void run_uniform_tests() {
     host_metal_shutdown(); initialize();
     UniformPacket::Vertex vertex{};
@@ -688,6 +844,7 @@ int main(int argc,char **argv) { @autoreleasepool {
             Packet validCompact(3);validCompact.draw(166,0,false,true);
             require(validCompact.submit() == HALO_METAL_OK,"compact packet dispatch");readback(166);
             run_geometry_tests();
+            run_clear_fusion_tests();
             run_uniform_tests();
             run_async_query_prefix_tests();
             run_async_frame_budget_tests();
