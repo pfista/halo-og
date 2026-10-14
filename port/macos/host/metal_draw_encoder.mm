@@ -1,4 +1,4 @@
-#import "metal_draw_encoder.h"
+#import "metal_draw_encoder_internal.h"
 #include "metal_compact_vertex.h"
 #include <chrono>
 #include <cmath>
@@ -96,6 +96,37 @@ struct EncoderBindings {
 @property(nonatomic, strong) id<MTLFunction> vertex, fragment;
 @end
 @implementation HaloMetalPipelineEntry
+@end
+
+@interface HaloMetalPreparedDraw ()
+- (instancetype)initWithDraw:(const HaloMetalDraw &)draw
+                       owner:(HaloMetalDrawEncoder *)owner
+                       entry:(HaloMetalPipelineEntry *)entry
+                  depthState:(id<MTLDepthStencilState>)depth;
+@property(nonatomic, readonly, strong) HaloMetalDrawEncoder *owner;
+@property(nonatomic, readonly, strong) HaloMetalPipelineEntry *entry;
+@property(nonatomic, readonly, strong) id<MTLDepthStencilState> depthState;
+@end
+@implementation HaloMetalPreparedDraw {
+    HaloMetalDraw _draw;
+}
+- (instancetype)initWithDraw:(const HaloMetalDraw &)draw
+                       owner:(HaloMetalDrawEncoder *)owner
+                       entry:(HaloMetalPipelineEntry *)entry
+                  depthState:(id<MTLDepthStencilState>)depth {
+    if ((self = [super init])) {
+        _draw = draw; _owner = owner; _entry = entry; _depthState = depth;
+    }
+    return self;
+}
+- (const HaloMetalDraw &)draw { return _draw; }
+@end
+
+@interface HaloMetalDrawEncoder ()
+- (BOOL)validateInitialPass:(MTLRenderPassDescriptor *)pass draw:(const HaloMetalDraw &)draw error:(NSError **)error;
+- (BOOL)encodeValidatedDraw:(const HaloMetalDraw &)draw commandBuffer:(id<MTLCommandBuffer>)command
+                     entry:(HaloMetalPipelineEntry *)entry depthState:(id<MTLDepthStencilState>)depth
+                 reusePass:(BOOL)reusePass initialPass:(MTLRenderPassDescriptor *)initialPass error:(NSError **)error;
 @end
 
 @implementation HaloMetalDrawEncoder {
@@ -461,6 +492,48 @@ struct EncoderBindings {
         return YES;
     }
 }
+- (HaloMetalPreparedDraw *)preparePacketDraw:(const HaloMetalDraw &)draw
+                           usedTextureMask:(uint32_t *)mask error:(NSError **)error {
+    @synchronized(self) {
+        id<MTLDepthStencilState> depth = nil;
+        HaloMetalPipelineEntry *entry = [self prepareDraw:draw depthState:&depth error:error];
+        if (!entry) return nil;
+        HaloMetalPreparedDraw *prepared = [[HaloMetalPreparedDraw alloc] initWithDraw:draw
+            owner:self entry:entry depthState:depth];
+        if (!prepared) {
+            fail(error,HaloMetalDrawEncoderFailure,@"Original packet draw snapshot allocation failed");
+            return nil;
+        }
+        if (mask) *mask = entry->usedTextureMask;
+        return prepared;
+    }
+}
+- (BOOL)validateInitialPass:(MTLRenderPassDescriptor *)pass draw:(const HaloMetalDraw &)draw error:(NSError **)error {
+    id<MTLTexture> target = draw.color ?: draw.depthStencil;
+    if (draw.visibilityBuffer || pass.visibilityResultBuffer ||
+        pass.renderTargetWidth != target.width || pass.renderTargetHeight != target.height ||
+        pass.renderTargetArrayLength != 1 || pass.defaultRasterSampleCount != 1 ||
+        pass.colorAttachments[0].texture != draw.color ||
+        pass.depthAttachment.texture != draw.depthStencil || pass.stencilAttachment.texture != draw.depthStencil)
+        return fail(error,HaloMetalDrawInvalid,@"Initial packet pass does not match the prepared draw attachments or footprint");
+    for (NSUInteger i = 1; i < 8; i++)
+        if (pass.colorAttachments[i].texture || pass.colorAttachments[i].resolveTexture)
+            return fail(error,HaloMetalDrawInvalid,@"Initial packet pass has an additional color attachment");
+    for (MTLRenderPassAttachmentDescriptor *attachment in @[
+            pass.colorAttachments[0],pass.depthAttachment,pass.stencilAttachment]) {
+        if (attachment.resolveTexture || attachment.level || attachment.slice || attachment.depthPlane ||
+            (attachment.texture && ((attachment.loadAction != MTLLoadActionLoad &&
+              attachment.loadAction != MTLLoadActionClear) || attachment.storeAction != MTLStoreActionStore)))
+            return fail(error,HaloMetalDrawInvalid,@"Initial packet pass requires original Load/Clear and Store attachments without resolves");
+    }
+    // A separate clear quantizes BGRA/RGBA before destination-dependent
+    // blending. Only a destination-independent first draw can fold that clear.
+    const bool replacement = draw.state.blend_source == 2 && draw.state.blend_destination == 1 &&
+        draw.state.blend_operation == 1;
+    if (draw.state.blend_enabled && !replacement)
+        return fail(error,HaloMetalDrawInvalid,@"Initial packet clear requires a destination-independent draw");
+    return YES;
+}
 - (BOOL)encodeDraw:(const HaloMetalDraw &)draw commandBuffer:(id<MTLCommandBuffer>)command error:(NSError **)error {
     return [self encodeDraw:draw commandBuffer:command reusePass:NO error:error];
 }
@@ -474,24 +547,62 @@ struct EncoderBindings {
         id<MTLDepthStencilState> depth = nil;
         HaloMetalPipelineEntry *entry = [self prepareDraw:draw depthState:&depth error:error];
         if (!entry) { [self endEncoding]; return NO; }
-        if (draw.geometry && !draw.geometry->readyForDraw(command)) {
+        return [self encodeValidatedDraw:draw commandBuffer:command entry:entry depthState:depth
+            reusePass:reusePass initialPass:nil error:error];
+    }
+}
+- (BOOL)encodePreparedPacketDraw:(HaloMetalPreparedDraw *)prepared
+                   commandBuffer:(id<MTLCommandBuffer>)command reusePass:(BOOL)reusePass
+                     initialPass:(MTLRenderPassDescriptor *)initialPass error:(NSError **)error {
+    @synchronized(self) {
+        if (error) *error = nil;
+        if (!command || command.commandQueue.device != _device || command.status != MTLCommandBufferStatusNotEnqueued) {
             [self endEncoding];
-            return fail(error,HaloMetalDrawInvalid,@"Immutable geometry upload is not ordered before this draw");
+            return fail(error,HaloMetalDrawInvalid,@"Draw requires an unsubmitted command buffer on the encoder device");
         }
-        // Query passes keep their fresh result buffer and Reset semantics.
-        // Destination-dependent blending keeps its per-draw store boundary:
-        // retaining those draws changed captured BGRA8 rounding. ONE/ZERO/ADD
-        // replaces the written RGB and alpha channels, so each channel's last
-        // writer can be quantized when this destination-independent run ends.
-        const bool replacement = draw.state.blend_source == 2 && draw.state.blend_destination == 1 &&
-            draw.state.blend_operation == 1;
-        const BOOL reusable = reusePass && !draw.visibilityBuffer && (!draw.state.blend_enabled || replacement);
-        id<MTLRenderCommandEncoder> encoder = _activeEncoder;
-        if (!reusable || !encoder || _activeCommandBuffer != command ||
-            _activeColor != draw.color || _activeDepthStencil != draw.depthStencil) {
+        if (![prepared isMemberOfClass:HaloMetalPreparedDraw.class] || prepared.owner != self ||
+            !prepared.entry || !prepared.depthState) {
             [self endEncoding];
-            MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
-            id<MTLTexture> target = draw.color ?: draw.depthStencil;
+            return fail(error,HaloMetalDrawInvalid,@"Packet draw preparation belongs to another encoder or is absent");
+        }
+        return [self encodeValidatedDraw:[prepared draw] commandBuffer:command entry:prepared.entry
+            depthState:prepared.depthState reusePass:reusePass initialPass:initialPass error:error];
+    }
+}
+- (BOOL)encodeValidatedDraw:(const HaloMetalDraw &)draw commandBuffer:(id<MTLCommandBuffer>)command
+                     entry:(HaloMetalPipelineEntry *)entry depthState:(id<MTLDepthStencilState>)depth
+                 reusePass:(BOOL)reusePass initialPass:(MTLRenderPassDescriptor *)initialPass error:(NSError **)error {
+    // Both entry points hold the encoder lock and validate the command.
+    // Public mutable draws are fully prepared on every invocation. Packet
+    // draws instead retain that exact preparation and their resource copy.
+    if (draw.geometry && !draw.geometry->readyForDraw(command)) {
+        [self endEncoding];
+        return fail(error,HaloMetalDrawInvalid,@"Immutable geometry upload is not ordered before this draw");
+    }
+    MTLRenderPassDescriptor *initial = initialPass ? [initialPass copy] : nil;
+    if (initialPass && !initial) {
+        [self endEncoding];
+        return fail(error,HaloMetalDrawEncoderFailure,@"Initial packet pass copy failed");
+    }
+    if (initial && ![self validateInitialPass:initial draw:draw error:error]) {
+        [self endEncoding];
+        return NO;
+    }
+    // Query passes keep their fresh result buffer and Reset semantics.
+    // Destination-dependent blending keeps its per-draw store boundary:
+    // retaining those draws changed captured BGRA8 rounding. ONE/ZERO/ADD
+    // replaces the written RGB and alpha channels, so each channel's last
+    // writer can be quantized when this destination-independent run ends.
+    const bool replacement = draw.state.blend_source == 2 && draw.state.blend_destination == 1 &&
+        draw.state.blend_operation == 1;
+    const BOOL reusable = reusePass && !draw.visibilityBuffer && (!draw.state.blend_enabled || replacement);
+    id<MTLRenderCommandEncoder> encoder = _activeEncoder;
+    if (initial || !reusable || !encoder || _activeCommandBuffer != command ||
+        _activeColor != draw.color || _activeDepthStencil != draw.depthStencil) {
+        [self endEncoding];
+        MTLRenderPassDescriptor *pass = initial ?: [MTLRenderPassDescriptor renderPassDescriptor];
+        id<MTLTexture> target = draw.color ?: draw.depthStencil;
+        if (!initial) {
             pass.renderTargetWidth = target.width; pass.renderTargetHeight = target.height;
             if (draw.color) {
                 pass.colorAttachments[0].texture = draw.color;
@@ -502,80 +613,80 @@ struct EncoderBindings {
                 pass.depthAttachment.loadAction = pass.stencilAttachment.loadAction = MTLLoadActionLoad;
                 pass.depthAttachment.storeAction = pass.stencilAttachment.storeAction = MTLStoreActionStore;
             }
-            if (draw.visibilityBuffer) pass.visibilityResultBuffer = draw.visibilityBuffer;
-            encoder = [command renderCommandEncoderWithDescriptor:pass];
-            if (!encoder) return fail(error, HaloMetalDrawEncoderFailure, @"Original draw render encoder creation failed");
-            _renderPassCount++;
-            if (reusable) {
-                _activeEncoder = encoder; _activeCommandBuffer = command;
-                _activeColor = draw.color; _activeDepthStencil = draw.depthStencil;
-            }
         }
-        const halo_metal_draw_state &s = draw.state;
-        const bool cached = _cacheBindingsEnabled && reusable && _bindings.valid;
-        const halo_metal_draw_state &previous = _bindings.state;
-        auto bind = [&](bool equal, auto setter) {
-            if (!cached || !equal) { setter(); if (_diagnosticsEnabled) _bindingSetCount++; }
-            else if (_diagnosticsEnabled) _bindingSkipCount++;
-        };
-        bind(_bindings.pipeline == entry.pipeline, [&] { [encoder setRenderPipelineState:entry.pipeline]; });
-        bind(_bindings.depth == depth, [&] { [encoder setDepthStencilState:depth]; });
-        bind(!memcmp(previous.viewport,s.viewport,sizeof(s.viewport)), [&] {
-            [encoder setViewport:MTLViewport{s.viewport[0], s.viewport[1], s.viewport[2], s.viewport[3], s.viewport[4], s.viewport[5]}];
-        });
-        bind(!memcmp(previous.scissor,s.scissor,sizeof(s.scissor)), [&] {
-            [encoder setScissorRect:MTLScissorRect{s.scissor[0], s.scissor[1], s.scissor[2], s.scissor[3]}];
-        });
-        bind(previous.front_winding == s.front_winding, [&] {
-            [encoder setFrontFacingWinding:s.front_winding ? MTLWindingCounterClockwise : MTLWindingClockwise];
-        });
-        bind(previous.cull_mode == s.cull_mode, [&] { [encoder setCullMode:(MTLCullMode)s.cull_mode]; });
-        bind(previous.depth_clip_mode == s.depth_clip_mode, [&] {
-            [encoder setDepthClipMode:s.depth_clip_mode ? MTLDepthClipModeClamp : MTLDepthClipModeClip];
-        });
-        bind(previous.fill_mode == s.fill_mode, [&] {
-            [encoder setTriangleFillMode:s.fill_mode ? MTLTriangleFillModeLines : MTLTriangleFillModeFill];
-        });
-        bind(!memcmp(&previous.depth_bias,&s.depth_bias,sizeof(float)) &&
-             !memcmp(&previous.slope_depth_bias,&s.slope_depth_bias,sizeof(float)) &&
-             !memcmp(&previous.depth_bias_clamp,&s.depth_bias_clamp,sizeof(float)), [&] {
-            [encoder setDepthBias:s.depth_bias slopeScale:s.slope_depth_bias clamp:s.depth_bias_clamp];
-        });
-        bind(previous.stencil_reference == s.stencil_reference, [&] { [encoder setStencilReferenceValue:s.stencil_reference]; });
-        bind(!memcmp(previous.blend_color,s.blend_color,sizeof(s.blend_color)), [&] {
-            [encoder setBlendColorRed:s.blend_color[0] green:s.blend_color[1] blue:s.blend_color[2] alpha:s.blend_color[3]];
-        });
-        bind(_bindings.vertices == draw.vertices && _bindings.vertexOffset == draw.vertexOffset, [&] {
-            [encoder setVertexBuffer:draw.vertices offset:draw.vertexOffset atIndex:1];
-        });
-        bind(_bindings.vertexUniforms == draw.vertexUniforms && _bindings.vertexUniformOffset == draw.vertexUniformOffset, [&] {
-            [encoder setVertexBuffer:draw.vertexUniforms offset:draw.vertexUniformOffset atIndex:0];
-        });
-        bind(_bindings.pixelUniforms == draw.pixelUniforms && _bindings.pixelUniformOffset == draw.pixelUniformOffset, [&] {
-            [encoder setFragmentBuffer:draw.pixelUniforms offset:draw.pixelUniformOffset atIndex:0];
-        });
-        for (unsigned i = 0; i < 4; i++) {
-            bind(_bindings.textures[i] == draw.textures[i], [&] { [encoder setFragmentTexture:draw.textures[i] atIndex:i]; });
-            bind(_bindings.samplers[i] == draw.samplers[i], [&] { [encoder setFragmentSamplerState:draw.samplers[i] atIndex:i]; });
-            bind(_bindings.samplers[4+i] == draw.samplers[4+i], [&] { [encoder setFragmentSamplerState:draw.samplers[4+i] atIndex:4+i]; });
+        if (draw.visibilityBuffer) pass.visibilityResultBuffer = draw.visibilityBuffer;
+        encoder = [command renderCommandEncoderWithDescriptor:pass];
+        if (!encoder) return fail(error, HaloMetalDrawEncoderFailure, @"Original draw render encoder creation failed");
+        _renderPassCount++;
+        if (reusable) {
+            _activeEncoder = encoder; _activeCommandBuffer = command;
+            _activeColor = draw.color; _activeDepthStencil = draw.depthStencil;
         }
-        if (draw.visibilityBuffer) {
-            [encoder setVisibilityResultMode:draw.visibilityMode offset:draw.visibilityOffset];
-            if (_diagnosticsEnabled) _bindingSetCount++;
-        }
-        if (_cacheBindingsEnabled && reusable) {
-            _bindings.pipeline = entry.pipeline; _bindings.depth = depth; _bindings.state = s;
-            _bindings.vertices = draw.vertices; _bindings.vertexOffset = draw.vertexOffset;
-            _bindings.vertexUniforms = draw.vertexUniforms; _bindings.vertexUniformOffset = draw.vertexUniformOffset;
-            _bindings.pixelUniforms = draw.pixelUniforms; _bindings.pixelUniformOffset = draw.pixelUniformOffset;
-            for (unsigned i = 0; i < 4; i++) _bindings.textures[i] = draw.textures[i];
-            for (unsigned i = 0; i < 8; i++) _bindings.samplers[i] = draw.samplers[i];
-            _bindings.valid = true;
-        } else _bindings = {};
-        [encoder drawIndexedPrimitives:draw.primitive indexCount:draw.indexCount indexType:MTLIndexTypeUInt32
-            indexBuffer:draw.indices indexBufferOffset:draw.indexOffset];
-        if (!reusable) [encoder endEncoding];
-        return YES;
     }
+    const halo_metal_draw_state &s = draw.state;
+    const bool cached = _cacheBindingsEnabled && reusable && _bindings.valid;
+    const halo_metal_draw_state &previous = _bindings.state;
+    auto bind = [&](bool equal, auto setter) {
+        if (!cached || !equal) { setter(); if (_diagnosticsEnabled) _bindingSetCount++; }
+        else if (_diagnosticsEnabled) _bindingSkipCount++;
+    };
+    bind(_bindings.pipeline == entry.pipeline, [&] { [encoder setRenderPipelineState:entry.pipeline]; });
+    bind(_bindings.depth == depth, [&] { [encoder setDepthStencilState:depth]; });
+    bind(!memcmp(previous.viewport,s.viewport,sizeof(s.viewport)), [&] {
+        [encoder setViewport:MTLViewport{s.viewport[0], s.viewport[1], s.viewport[2], s.viewport[3], s.viewport[4], s.viewport[5]}];
+    });
+    bind(!memcmp(previous.scissor,s.scissor,sizeof(s.scissor)), [&] {
+        [encoder setScissorRect:MTLScissorRect{s.scissor[0], s.scissor[1], s.scissor[2], s.scissor[3]}];
+    });
+    bind(previous.front_winding == s.front_winding, [&] {
+        [encoder setFrontFacingWinding:s.front_winding ? MTLWindingCounterClockwise : MTLWindingClockwise];
+    });
+    bind(previous.cull_mode == s.cull_mode, [&] { [encoder setCullMode:(MTLCullMode)s.cull_mode]; });
+    bind(previous.depth_clip_mode == s.depth_clip_mode, [&] {
+        [encoder setDepthClipMode:s.depth_clip_mode ? MTLDepthClipModeClamp : MTLDepthClipModeClip];
+    });
+    bind(previous.fill_mode == s.fill_mode, [&] {
+        [encoder setTriangleFillMode:s.fill_mode ? MTLTriangleFillModeLines : MTLTriangleFillModeFill];
+    });
+    bind(!memcmp(&previous.depth_bias,&s.depth_bias,sizeof(float)) &&
+         !memcmp(&previous.slope_depth_bias,&s.slope_depth_bias,sizeof(float)) &&
+         !memcmp(&previous.depth_bias_clamp,&s.depth_bias_clamp,sizeof(float)), [&] {
+        [encoder setDepthBias:s.depth_bias slopeScale:s.slope_depth_bias clamp:s.depth_bias_clamp];
+    });
+    bind(previous.stencil_reference == s.stencil_reference, [&] { [encoder setStencilReferenceValue:s.stencil_reference]; });
+    bind(!memcmp(previous.blend_color,s.blend_color,sizeof(s.blend_color)), [&] {
+        [encoder setBlendColorRed:s.blend_color[0] green:s.blend_color[1] blue:s.blend_color[2] alpha:s.blend_color[3]];
+    });
+    bind(_bindings.vertices == draw.vertices && _bindings.vertexOffset == draw.vertexOffset, [&] {
+        [encoder setVertexBuffer:draw.vertices offset:draw.vertexOffset atIndex:1];
+    });
+    bind(_bindings.vertexUniforms == draw.vertexUniforms && _bindings.vertexUniformOffset == draw.vertexUniformOffset, [&] {
+        [encoder setVertexBuffer:draw.vertexUniforms offset:draw.vertexUniformOffset atIndex:0];
+    });
+    bind(_bindings.pixelUniforms == draw.pixelUniforms && _bindings.pixelUniformOffset == draw.pixelUniformOffset, [&] {
+        [encoder setFragmentBuffer:draw.pixelUniforms offset:draw.pixelUniformOffset atIndex:0];
+    });
+    for (unsigned i = 0; i < 4; i++) {
+        bind(_bindings.textures[i] == draw.textures[i], [&] { [encoder setFragmentTexture:draw.textures[i] atIndex:i]; });
+        bind(_bindings.samplers[i] == draw.samplers[i], [&] { [encoder setFragmentSamplerState:draw.samplers[i] atIndex:i]; });
+        bind(_bindings.samplers[4+i] == draw.samplers[4+i], [&] { [encoder setFragmentSamplerState:draw.samplers[4+i] atIndex:4+i]; });
+    }
+    if (draw.visibilityBuffer) {
+        [encoder setVisibilityResultMode:draw.visibilityMode offset:draw.visibilityOffset];
+        if (_diagnosticsEnabled) _bindingSetCount++;
+    }
+    if (_cacheBindingsEnabled && reusable) {
+        _bindings.pipeline = entry.pipeline; _bindings.depth = depth; _bindings.state = s;
+        _bindings.vertices = draw.vertices; _bindings.vertexOffset = draw.vertexOffset;
+        _bindings.vertexUniforms = draw.vertexUniforms; _bindings.vertexUniformOffset = draw.vertexUniformOffset;
+        _bindings.pixelUniforms = draw.pixelUniforms; _bindings.pixelUniformOffset = draw.pixelUniformOffset;
+        for (unsigned i = 0; i < 4; i++) _bindings.textures[i] = draw.textures[i];
+        for (unsigned i = 0; i < 8; i++) _bindings.samplers[i] = draw.samplers[i];
+        _bindings.valid = true;
+    } else _bindings = {};
+    [encoder drawIndexedPrimitives:draw.primitive indexCount:draw.indexCount indexType:MTLIndexTypeUInt32
+        indexBuffer:draw.indices indexBufferOffset:draw.indexOffset];
+    if (!reusable) [encoder endEncoding];
+    return YES;
 }
 @end

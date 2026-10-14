@@ -28,6 +28,7 @@ extern "C" {
 #include "metal_warmup_cache.h"
 #include "metal_packet_view.h"
 #import "metal_draw_encoder.h"
+#import "metal_draw_encoder_internal.h"
 #include "metal_geometry.h"
 
 namespace {
@@ -105,7 +106,7 @@ struct PreparedGeometry { Geometry geometry; };
 struct Prepared {
     std::map<size_t, Texture> textures;
     std::map<size_t, Program> programs;
-    std::map<size_t, HaloMetalDraw> draws;
+    std::map<size_t, HaloMetalPreparedDraw *> draws;
     std::map<size_t, PreparedFxaa> fxaa;
     std::map<size_t, PreparedGeometry> geometry;
     // Validation, uploads and draws share this immutable host-owned packet.
@@ -793,7 +794,7 @@ void validate_uniform_block(const HaloMetalPacketView &packet, uint32_t offset, 
         check(finite);
     }
 }
-HaloMetalDraw prepare_draw(const HaloMetalPacketView &packet, size_t position, halo_metal_draw c,
+HaloMetalPreparedDraw *prepare_draw(const HaloMetalPacketView &packet, size_t position, halo_metal_draw c,
                           id<MTLBuffer> __strong &input_buffer,
                           std::map<uint32_t, Texture> &textures, std::map<uint32_t, Program> &programs,
                           Visibility *query, uint32_t alpha_border_mask = 0, uint32_t volume_border_mask = 0,
@@ -944,7 +945,7 @@ HaloMetalDraw prepare_draw(const HaloMetalPacketView &packet, size_t position, h
     }
     NSError *error = nil; uint32_t used = 0;
     const uint64_t pipelines_before = context.metrics.enabled ? context.draw_encoder.pipelineCreationCount : 0;
-    const BOOL prepared_ok = [context.draw_encoder usedTextureMaskForDraw:draw mask:&used error:&error];
+    HaloMetalPreparedDraw *prepared_draw = [context.draw_encoder preparePacketDraw:draw usedTextureMask:&used error:&error];
     if (context.metrics.enabled && context.draw_encoder.pipelineCreationCount != pipelines_before) {
         const auto interval = context.draw_encoder.lastPipelineCreationInterval;
         const auto header = record<halo_metal_packet>(packet,0);
@@ -957,7 +958,7 @@ HaloMetalDraw prepare_draw(const HaloMetalPacketView &packet, size_t position, h
             (unsigned long long)interval.started,(unsigned long long)interval.ended,
             (unsigned long long)(interval.ended-interval.started),interval.succeeded ? 1u : 0u);
     }
-    if (!prepared_ok) {
+    if (!prepared_draw) {
         host_logf(HOST_LOG_ERROR,"Native original draw preparation: %s",error.localizedDescription.UTF8String);
         throw Failure{error.code == HaloMetalDrawUnsupported ? HALO_METAL_UNSUPPORTED :
             error.code == HaloMetalDrawPipelineFailure ? HALO_METAL_GPU_ERROR : HALO_METAL_INVALID,UINT32_MAX};
@@ -972,7 +973,7 @@ HaloMetalDraw prepare_draw(const HaloMetalPacketView &packet, size_t position, h
         (c.state.stencil_fail != 1 || c.state.stencil_depth_fail != 1 || c.state.stencil_pass != 1)) written |= HALO_METAL_STENCIL;
     if (depth && written) initialized(*depth,written,false);
     if (query) query->words.push_back(draw.visibilityBuffer);
-    return draw;
+    return prepared_draw;
 }
 /* Fixed, bounded directional FXAA: diagonal luma estimates the edge direction,
  * then two/four bilinear taps smooth only edges that exceed local contrast.
@@ -1780,8 +1781,10 @@ void execute(const HaloMetalPacketView &packet, Prepared &prepared) {
             case HALO_METAL_DRAW_GEOMETRY:
             case HALO_METAL_DRAW_UNIFORM_REFS: {
                 auto c = record<halo_metal_draw>(packet,position); NSError *error = nil;
-                const auto &draw = prepared.draws.at(position);
-                check([context.draw_encoder encodeDraw:draw commandBuffer:buffer reusePass:YES error:&error],HALO_METAL_GPU_ERROR,i);
+                HaloMetalPreparedDraw *prepared_draw = prepared.draws.at(position);
+                const HaloMetalDraw &draw = [prepared_draw draw];
+                check([context.draw_encoder encodePreparedPacketDraw:prepared_draw commandBuffer:buffer reusePass:YES
+                    initialPass:nil error:&error],HALO_METAL_GPU_ERROR,i);
                 if (context.metrics.enabled) context.metrics.draws++;
                 if (context.active_query.id)
                     visibility(context.queries,context.active_query).words.push_back(draw.visibilityBuffer);

@@ -2,6 +2,8 @@
  * Callers own compilation, source-layout preparation, uploads, target history,
  * resource lifetimes, synchronization and presentation. This module only
  * validates and encodes draws against existing attachments using LOAD/STORE.
+ * The internal packet interface can retain preparation and start a compatible
+ * full-clear draw pass without changing the public mutable-draw contract.
  */
 #ifndef HALO_METAL_DRAW_ENCODER_H
 #define HALO_METAL_DRAW_ENCODER_H
@@ -70,9 +72,10 @@ typedef NS_ENUM(NSInteger, HaloMetalDrawError) {
 - (BOOL)usedTextureMaskForDraw:(const HaloMetalDraw &)draw mask:(uint32_t *)mask error:(NSError **)error;
 - (BOOL)encodeDraw:(const HaloMetalDraw &)draw
      commandBuffer:(id<MTLCommandBuffer>)commandBuffer error:(NSError **)error;
-/* Optional reuse is restricted to consecutive non-query, blend-disabled draws on the same
- * command buffer and exact attachment objects. Every original draw state is
- * still validated. Blended draws preserve their original per-draw LOAD/STORE
+/* Optional reuse is restricted to consecutive non-query, blend-disabled or
+ * ONE/ZERO/ADD replacement draws on the same command buffer and exact
+ * attachment objects. Every original draw state is still validated.
+ * Destination-dependent blends preserve their original per-draw LOAD/STORE
  * rounding boundary. The caller must endEncoding before other GPU operations,
  * resource mutations, command-buffer submission or abandoning a packet.
  * The original encodeDraw overload always closes its pass before returning. */

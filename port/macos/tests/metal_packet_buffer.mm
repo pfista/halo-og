@@ -413,7 +413,7 @@ static void run_uniform_tests() {
     const auto ownedPixel = owned.define(HALO_METAL_UNIFORM_PIXEL,ownedPixelData.data()); owned.drawRefs(ownedVertex,ownedPixel);
     require(owned.submit() == HALO_METAL_OK && context.completed == 1 && context.pending.size() == 1,"shared uniform async packet accepted behind gate");
     const auto &prepared = context.pending.front().prepared;
-    const auto &preparedDraw = prepared.draws.begin()->second;
+    const HaloMetalDraw &preparedDraw = [prepared.draws.begin()->second draw];
     require(preparedDraw.vertexUniforms == prepared.input_buffer && preparedDraw.pixelUniforms == prepared.input_buffer &&
         preparedDraw.vertexUniformOffset == ownedVertex && preparedDraw.pixelUniformOffset == ownedPixel,
         "shared uniforms reference the same GPU-owned packet snapshot");
@@ -639,9 +639,40 @@ int main(int argc,char **argv) { @autoreleasepool {
                 validate(captured_view,captured_prepared);
                 memset(guest_pointer(packetAddress),0,captured.bytes.size());
                 require(captured_view.data() == captured_prepared.input_buffer.contents &&
-                    captured_prepared.draws.begin()->second.vertices == captured_prepared.input_buffer &&
+                    [captured_prepared.draws.begin()->second draw].vertices == captured_prepared.input_buffer &&
                     !memcmp(captured_view.data(),captured.bytes.data(),captured.bytes.size()),
                     "preflight and draw share immutable host-owned packet bytes");
+                const auto token = captured_prepared.draws.begin()->second;
+                HaloMetalDraw mutableDraw = [token draw];
+                mutableDraw.state.color_write_mask = 16;
+                NSError *error = nil;
+                uint32_t used = 0;
+                auto rejectedCommand = [context.queue commandBuffer];
+                const auto priorPasses = context.draw_encoder.renderPassCount;
+                require(![context.draw_encoder prepareDraw:mutableDraw error:&error] && error &&
+                    ![context.draw_encoder usedTextureMaskForDraw:mutableDraw mask:&used error:&error] && error &&
+                    ![context.draw_encoder encodeDraw:mutableDraw commandBuffer:rejectedCommand reusePass:YES error:&error] && error &&
+                    [token draw].state.color_write_mask == 15 && context.draw_encoder.renderPassCount == priorPasses,
+                    "retained packet preparation never grants validation bypass to a changed public draw");
+                auto initial = [MTLRenderPassDescriptor renderPassDescriptor];
+                initial.renderTargetWidth = 3; initial.renderTargetHeight = 4;
+                initial.renderTargetArrayLength = initial.defaultRasterSampleCount = 1;
+                initial.colorAttachments[0].texture = [token draw].color;
+                initial.colorAttachments[0].loadAction = MTLLoadActionClear;
+                initial.colorAttachments[0].storeAction = MTLStoreActionStore;
+                require(![context.draw_encoder encodePreparedPacketDraw:token commandBuffer:rejectedCommand
+                    reusePass:YES initialPass:initial error:&error] && error,
+                    "prepared clear cannot shrink the complete target footprint");
+                initial.renderTargetWidth = 4; initial.colorAttachments[1].texture = [token draw].color;
+                require(![context.draw_encoder encodePreparedPacketDraw:token commandBuffer:rejectedCommand
+                    reusePass:YES initialPass:initial error:&error] && error &&
+                    context.draw_encoder.renderPassCount == priorPasses,
+                    "prepared clear cannot inject another color attachment or encode rejected commands");
+                auto otherEncoder = [[HaloMetalDrawEncoder alloc] initWithDevice:context.device];
+                require(![otherEncoder encodePreparedPacketDraw:token commandBuffer:rejectedCommand
+                    reusePass:YES initialPass:nil error:&error] && error,
+                    "retained packet draw belongs only to its preparing encoder");
+                [context.draw_encoder clearCaches];
                 execute(captured_view,captured_prepared); readback(155);
             }
             Packet disabledCompact(14);disabledCompact.draw(166,0,false,true);
