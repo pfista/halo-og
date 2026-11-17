@@ -14,10 +14,11 @@ v10 (`d1c7243cb20eab4488efa1266e259b1f4d5240f6`, local
 `694cc79d48654d862d3ecda51e71ea559f93bd2d`). These are focused ports, not merges
 of intervening upstream changes.
 
-**Reviewed through:** OpenCE
+**Detailed integration checkpoint:** OpenCE
 `685bf260a0a648a1d898928a99b17428a2549b92` (October 4, 2026 review).
-Review subsequent diffs individually. Keep review and integration boundaries
-separate, and record new decisions here with their validation and local commit.
+The November 17 catch-up inventoried merged history through
+`307a42ee04ba58ccafbc231353629e67476af5cd` and reviewed selected production
+diffs. Review subsequent candidates individually.
 
 The following decisions still constrain integration. Excluded/deferred changes
 were diff-reviewed and remain unintegrated; their runtime behavior is unvalidated.
@@ -91,6 +92,41 @@ simulation timing, input, authority, fairness, compatibility and service
 requirements. Split cosmetic or gameplay changes from useful fixes; defer
 uncertain effects. The glyph-padding correction preserves original font pixels
 and is a renderer fix, not authorization to replace fonts.
+
+## November 17 fog and audio fixes
+
+Halo OG v0.5.2 includes these selected OpenCE changes. The local commits
+are `9cd6a3bc` (fog), `f062d349` (ADPCM), `fca61064`, `6a6c0118` and
+`0ee9010b` (looping sounds), and `b12d8a92` (Windows lighting).
+
+| Area | Decision and evidence |
+| --- | --- |
+| Split-screen fog (`5a56e3d1`) | Use each pane's own previous camera matrix in the shared fog pass. A four-pane sanitizer probe reproduced an out-of-bounds write in the previous code. |
+| Xbox ADPCM (`56b2a0e8`) | Decode the predictor as frame zero and ignore the final padding nibble in the mixer and timer importer. Independent mono and stereo vectors caught both old decoders. Existing timer WAVs retain their original bytes. |
+| Looping sounds (`91021ae4`, `c94e7053`, `88eb3e3c`) | Preserve listener obstruction as emitters refresh, retire tracks as soon as their owner disappears, and release detached channels before the audio device flushes on map unload. Checks covered new and existing loops, two updates in one millisecond, and mixed playing and queued samples. |
+| Windows lighting (`d635d837`) | Keep the dynamic-light partition allocation in `object_lights.c`. A 32-bit Windows link probe verified a single owner. The current Halo OG partition fits in 12 bytes. |
+
+Fourteen focused audio tests passed. The installed Mac build completed two
+55-second offline map changes with muted output. Native Metal went from Chill
+Out to Prisoner with 12 effect commands. ANGLE went from Halo to The Silent
+Cartographer with 11. Both exited cleanly. Comparing
+playback with an Xbox, seeing fog with four players and testing Windows in-game
+remain playtest checks.
+
+The networking review covered OpenCE agreements 12 through 44. Halo OG retains
+base v11. The 43-to-44 change covers automated MCC package offers and dedicated
+MCC hosting. For v11, the earlier pregame keep-alive width correction
+(`904fbbfc`) merits independent verification against existing lobby traffic.
+
+## Grenade and airborne turning
+
+Halo OG selectively adapts the turn-during-throw condition from OpenCE
+`abae0d09`, the airborne condition from `69863af7`, and the network agreement
+rule from `fc247a81` in `d9043136`. These affect simulated aim. The host can enable both for
+eligible player bipeds with **Player Turning → Follow Aim** before a match.
+Stock uses the Xbox rules. Since `3ca81ef5`, the optional desktop Direct Camera follows current
+player facing independently of the body’s animation limits. See
+[Player turning](performance-options.md#player-turning) for testing.
 
 ## Experimental powerup replication
 
