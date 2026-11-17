@@ -1196,6 +1196,13 @@ static boolean refresh_sound(
 		sound->playing_channel_index==NONE ||
 			channel_get(sound->playing_channel_index)->sound_index==sound_index);
 
+	/* A component can outlive its loop even within the same render millisecond. */
+	if (sound->type != _sound_impulse &&
+		!datum_try_and_get(looping_sound_data, sound->source_identifier))
+	{
+		return FALSE;
+	}
+
 	if (TEST_FLAG(sound->flags, _sound_delayed_bit) ||
 		!sound->track_proc ||
 		sound->start_time >= sound_manager_globals.render_time ||
