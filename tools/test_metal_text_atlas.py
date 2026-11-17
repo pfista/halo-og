@@ -33,8 +33,10 @@ def declaration(source, start):
 
 def fixture_source():
     native = NATIVE.read_text()
-    description = declaration((ROOT / 'port/linux/src/xgpu.h').read_text(),
-                              'struct xgpu_texture_description\n')
+    xgpu = (ROOT / 'port/linux/src/xgpu.h').read_text()
+    texture_types = '\n'.join(declaration(xgpu, name + '\n') for name in (
+        'struct xgpu_texture_description', 'enum xgpu_texture_copy_format',
+        'struct xgpu_texture_mip_layout', 'struct xgpu_texture_volume_mip_layout'))
     resource = declaration(native, 'struct native_resource {')
     create = declaration(native, 'static void resource_create(')
     adapter = declaration(native, 'static struct native_resource *text_texture_get(')
@@ -55,8 +57,13 @@ typedef uint32_t DWORD;
 typedef int BOOL;
 #define TRUE 1
 #define D3DFMT_A8R8G8B8 6
-''' + description + '\n' + resource + r'''
+''' + texture_types + '\n' + resource + r'''
 static struct native_resource *resources, *text_atlas_resource;
+/* The atlas uses its own lookup. Keep the ownership list for teardown and counts. */
+static void resource_insert(struct native_resource *entry) {
+    entry->next = resources;
+    resources = entry;
+}
 static uint32_t next_resource_id=1;
 static struct { uint32_t capacity; } transport;
 static struct text_hires_atlas_pixels provided;
