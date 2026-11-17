@@ -2382,8 +2382,8 @@ static void update_channel_for_impulse_sound(
 	return;
 }
 
-void sound_stop_all(
-	void)
+static void sound_stop_all_internal(
+	boolean unloading_map)
 {
 	if (sound_manager_globals.initialized)
 	{
@@ -2395,6 +2395,21 @@ void sound_stop_all(
 			sound_index = data_next_index(sound_data, sound_index);
 		}
 
+		if (unloading_map)
+		{
+			short channel_index;
+			for (channel_index = 0; channel_index < sound_manager_globals.channel_count; channel_index++)
+			{
+				struct sound_channel_datum *channel = channel_get(channel_index);
+				/* Detached channels can still hold references into the outgoing map.
+				 * Stop them before the platform flush waits for stopped channels. */
+				if (channel->playing_permutation || channel->queued_permutation)
+				{
+					channel_stop(channel_index);
+					channel->sound_index = NONE;
+				}
+			}
+		}
 		data_delete_all(looping_sound_data);
 		sound_manager_globals.platform_definition->flush();
 	}
@@ -2402,6 +2417,11 @@ void sound_stop_all(
 	sound_manager_globals.game_time_when_no_scripted_dialog_will_be_playing = 0;
 
 	return;
+}
+
+void sound_stop_all(void)
+{
+	sound_stop_all_internal(FALSE);
 }
 
 long sound_new_impulse(
@@ -3236,7 +3256,7 @@ void sound_dispose_from_old_map(
 		sound_manager_globals.render_time = system_milliseconds();
 	}
 
-	sound_stop_all();
+	sound_stop_all_internal(TRUE);
 	if (looping_sound_data)
 	{
 		data_delete_all(looping_sound_data);
