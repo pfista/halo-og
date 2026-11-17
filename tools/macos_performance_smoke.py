@@ -18,7 +18,8 @@ from macos_benchmark import Console, FAULT
 from macos_multiplayer_smoke import ROOT, BUILD, prepare, read_log
 
 STATUS = re.compile(r'^performance options: flags=(\d+) ticks=(-?\d+) markers=(\d+)/(\d+)\s*$', re.M)
-MATCH_RULE_FLAGS = 32 | 64 | 128 | 256
+FOLLOW_AIM = 16384
+MATCH_RULE_FLAGS = 32 | 64 | 128 | 256 | FOLLOW_AIM
 
 
 def free_port():
@@ -44,10 +45,10 @@ def main():
     parser.add_argument('--map-source', type=Path,
                         help='Converted v5 cache; omit for a map already in assets/maps')
     parser.add_argument('--markers', type=int, required=True)
-    parser.add_argument('--flags', type=int, choices=range(512), default=3,
+    parser.add_argument('--flags', type=int, default=3,
                         help='Requested bits: timer=1, markers=2, audio=4, silent movement=8, '
                              'silent weapons=16, input delay=32, precision Hardcore=64, '
-                             'Fiesta=128, Hardcore camo=256')
+                             'Fiesta=128, Hardcore camo=256, Follow Aim=16384')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--late-join', action='store_true')
     parser.add_argument('--hold-seconds', type=int, default=0,
@@ -59,6 +60,8 @@ def main():
     parser.add_argument('--renderer', choices=('angle', 'metal'), default='angle',
                         help='Use the matching native host/guest pair for this renderer')
     args = parser.parse_args()
+    if args.flags < 0 or args.flags & ~(511 | FOLLOW_AIM):
+        parser.error('Unsupported smoke-test flags')
     BUILD = ROOT / ('build/macos-metal' if args.renderer == 'metal' else 'build/macos')
     if not re.fullmatch(r'[A-Za-z0-9_ -]{1,31}', args.map) or args.markers < 1:
         parser.error('Provide a safe map name and its expected positive marker count')
@@ -129,6 +132,7 @@ def main():
             config = config.replace('test_input = "bot:42"', 'test_input = ""')
         if role == 'host' and args.visible_host:
             config = config.replace('hidden_window = true', 'hidden_window = false')
+        config = config.replace('[network]\n', '[network]\npublic_games = false\n')
         config = config.replace('[debug]\n', f'[debug]\ntelnet_console = true\ntelnet_console_port = {port}\n')
         config += '\n[game]\nconsole_log = "all"\n[update]\nauto = false\n'
         if args.flags & 4:

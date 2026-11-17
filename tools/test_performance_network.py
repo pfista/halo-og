@@ -42,7 +42,7 @@ enum { _performance_option_timer_audio=4, _performance_option_silent_movement=8,
        _performance_option_silent_weapon_ready=16, _performance_option_input_delay=32, _performance_option_hardcore=64,
        _performance_option_fiesta=128, _performance_option_hardcore_camo=256,
        _performance_option_self_movement=4096, _performance_option_self_weapon_ready=8192,
-       PERFORMANCE_MATCH_RULE_FLAGS=480, PERFORMANCE_OPTIONS_MASK=12799,
+       _performance_option_turn_with_aim=16384, PERFORMANCE_MATCH_RULE_FLAGS=16864, PERFORMANCE_OPTIONS_MASK=29183,
        _network_game_server_state_pregame=1, _network_game_server_state_ingame=2,
        _network_game_server_state_postgame=3, _message_server_begin_game=2,
        _network_game_client_state_joining=1, _network_game_client_state_pregame=2, _network_game_client_state_ingame=3,
@@ -70,7 +70,7 @@ static word network_game_server_performance_capabilities[MAXIMUM_NETWORK_MACHINE
 static int network_game_server_start_players[16];
 static boolean network_game_server_started_with_five_players;
 static int recordings=1,apply_calls,override_calls,pregame_sends,setting_sends,start_sends,opened;
-static unsigned runtime_flags,capabilities[11],capability_count;
+static unsigned runtime_flags,capabilities[12],capability_count;
 static unsigned network_game_client_performance_host_capabilities;
 static char shown[512];
 int halo_performance_audio_available(void) {return recordings;}
@@ -111,7 +111,7 @@ static int network_game_server_send_message_to_all_machines(struct network_game_
     (void)s;(void)m;start_sends++;return TRUE;
 }
 static int network_game_client_write(void *connection,void *packet,unsigned size,void *address,int reliable) {
-    (void)connection;assert(!address && reliable==1 && capability_count<11);
+    (void)connection;assert(!address && reliable==1 && capability_count<12);
     assert(network_performance_decode(packet,size,NETWORK_PERFORMANCE_CAPABILITY,&capabilities[capability_count++]));
     return TRUE;
 }
@@ -234,11 +234,11 @@ int main(void) {
      * never advertise audio support to an enabled host. */
     struct network_game_client client={0};
     recordings=0;capability_count=0;assert(announce(&client));
-    assert(capability_count==11 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==59 && capabilities[4]==123 && capabilities[5]==251 && capabilities[6]==507 && capabilities[7]==1019 && capabilities[8]==2043 && capabilities[9]==4091 && capabilities[10]==16379);
+    assert(capability_count==12 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==59 && capabilities[4]==123 && capabilities[5]==251 && capabilities[6]==507 && capabilities[7]==1019 && capabilities[8]==2043 && capabilities[9]==4091 && capabilities[10]==16379 && capabilities[11]==32763);
     recordings=1;capability_count=0;assert(announce(&client));
-    assert(capability_count==11 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31 && capabilities[3]==63 && capabilities[4]==127 && capabilities[5]==255 && capabilities[6]==511 && capabilities[7]==1023 && capabilities[8]==2047 && capabilities[9]==4095 && capabilities[10]==16383);
+    assert(capability_count==12 && capabilities[0]==3 && capabilities[1]==7 && capabilities[2]==31 && capabilities[3]==63 && capabilities[4]==127 && capabilities[5]==255 && capabilities[6]==511 && capabilities[7]==1023 && capabilities[8]==2047 && capabilities[9]==4095 && capabilities[10]==16383 && capabilities[11]==32767);
     capability_count=0;assert(announce_without_queue(&client));
-    assert(capability_count==11 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==27 && capabilities[4]==27 && capabilities[5]==27 && capabilities[6]==27 && capabilities[7]==27 && capabilities[8]==27 && capabilities[9]==27 && capabilities[10]==27);
+    assert(capability_count==12 && capabilities[0]==3 && capabilities[1]==3 && capabilities[2]==27 && capabilities[3]==27 && capabilities[4]==27 && capabilities[5]==27 && capabilities[6]==27 && capabilities[7]==27 && capabilities[8]==27 && capabilities[9]==27 && capabilities[10]==27 && capabilities[11]==27);
     assert(!network_game_server_performance_peers_support_without_queue(&server,32));
     assert(strstr(shown,"This build does not support"));
     assert(!network_game_server_performance_peers_support_without_queue(&server,128));
@@ -497,6 +497,15 @@ int main(void) {
     assert(!network_game_server_start_network_game(&server) && !server.sent_start_game_message);
     server.game.variant.flags=0;
     network_game_server_performance_capability(&server.client_machines[1],16383);
+    assert(!performance_options_set_host_flags(16384));unchanged(0,sound_calls);
+    assert(strstr(shown,"Follow Aim unavailable"));
+    assert(!network_game_server_performance_peers_support_without_queue(&server,16384));
+    network_game_server_performance_capability(&server.client_machines[1],32767);
+    assert(performance_options_set_host_flags(16384));unchanged(16384,++sound_calls);
+    server.sent_start_game_message=TRUE;
+    assert(!performance_options_set_host_flags(0));unchanged(16384,sound_calls);
+    server.sent_start_game_message=FALSE;
+    assert(performance_options_set_host_flags(0));unchanged(0,++sound_calls);
     assert(!performance_options_set_host_flags(4104));unchanged(0,sound_calls);
     assert(!performance_options_set_host_flags(8208));unchanged(0,sound_calls);
     assert(performance_options_set_host_flags(12288));unchanged(12288,++sound_calls);

@@ -276,6 +276,7 @@ symbols in this file:
 #include "scenario/scenario.h"
 #include "structures/structure_bsp_definitions.h"
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "../../port/linux/game/performance_options.h"
 #include "performance_sound.h"
 #endif
 
@@ -3305,6 +3306,22 @@ static void biped_update_turning(
 		real turn_error;
 		real facing_alignment;
 		boolean turn_right;
+		boolean use_moving_turn = biped->biped.state==biped_state_moving ||
+			TEST_FLAG(flags, _biped_turns_without_animating_bit);
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* OpenCE abae0d09, 69863af7 and fc247a81: the throw and airborne
+		 * animations otherwise leave the player's body facing its old aim.
+		 * Halo OG selects this gameplay rule through the shared gametype. */
+		if (!use_moving_turn && biped->unit.player_index!=NONE &&
+			(biped->unit.animation.state==_unit_state_throw_grenade ||
+			 biped->unit.animation.state==_unit_state_airborne) &&
+			(performance_options_get_flags() & _performance_option_turn_with_aim))
+		{
+			char const *name = tag_name_strip_path(tag_get_name(biped->definition_index));
+			use_moving_turn = !_stricmp(name, "cyborg") || !_stricmp(name, "cyborg_mp");
+		}
+#endif
 
 		if (TEST_FLAG(flags, _biped_climbs_anything_bit))
 		{
@@ -3363,8 +3380,7 @@ static void biped_update_turning(
 				turn_right = FALSE;
 		}
 
-		if (biped->biped.state==biped_state_moving ||
-			TEST_FLAG(flags, _biped_turns_without_animating_bit))
+		if (use_moving_turn)
 		{
 			if (!TEST_FLAG(biped->unit.control_flags, _unit_control_look_dont_turn_bit))
 			{

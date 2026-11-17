@@ -51,7 +51,7 @@ typedef float real;
 #define network_event(...) ((void)0)
 enum { _game_variant_draw_object_in_motion_sensor_bit=0, _game_variant_infinite_grenades_bit=2 };
 enum { _performance_option_input_delay=32, _performance_option_hardcore=64, _performance_option_fiesta=128,
-       _performance_option_hardcore_camo=256, PERFORMANCE_MATCH_RULE_FLAGS=480,
+       _performance_option_hardcore_camo=256, _performance_option_turn_with_aim=16384, PERFORMANCE_MATCH_RULE_FLAGS=16864,
        _starting_equipment_fiesta=2, _starting_equipment_generic=1, _starting_equipment_custom=0,
        _network_game_client_state_joining=1, _network_game_client_state_pregame=2,
        _network_game_client_state_ingame=3, _network_game_client_state_postgame=4,
@@ -411,7 +411,7 @@ static void active_input_delay(void) {
     assert(client.game.variant.flags==263 && applied_flags==263);
 }
 static void host_delay_acknowledgement(void) {
-    const unsigned unknown_flags[]={32,39,64,96,127,128,135,255,256,263,511,4096,8192,12295,12549};
+    const unsigned unknown_flags[]={32,39,64,96,127,128,135,255,256,263,511,4096,8192,12295,12549,16384,16391};
     for(unsigned i=0;i<sizeof(unknown_flags)/sizeof(unknown_flags[0]);i++) {
         struct network_game game=defaults(); reset();
         client.state=_network_game_client_state_pregame;
@@ -560,6 +560,23 @@ static void self_audio_acknowledgement(void) {
         assert(network_game_client_performance_host_capabilities==4095);
         assert(client.game.variant.flags==0 && applied_flags==0);
     }
+    /* Follow Aim survives a full-settings broadcast and late join only with v7 acknowledgement. */
+    struct network_game_server turn_host={.game=defaults()};
+    struct network_game_server_client_machine turn_peer={.supported=32767};
+    turn_host.game.variant.flags=16384;
+    assert(network_game_variant_required_capabilities(&turn_host.game.variant)==16384);
+    assert(!network_performance_can_join(16384,16383));
+    assert(network_performance_can_join(16384,32767));
+    reset();client.state=_network_game_client_state_pregame;
+    assert(network_game_server_send_game_settings_to_client_machine(&turn_host,&turn_peer,&turn_host.game,sizeof(turn_host.game)));
+    assert(network_game_client_performance_host_capabilities==32767 && applied_flags==16384);
+    turn_host.machines[1]=(struct network_game_server_client_machine){.supported=32767,.joined=TRUE};
+    reset();client.state=_network_game_client_state_pregame;
+    assert(network_game_server_send_game_settings_to_all_machines(&turn_host,&turn_host.game,sizeof(turn_host.game)));
+    assert(network_game_client_performance_host_capabilities==32767 && applied_flags==16384);
+    reset();client.state=_network_game_client_state_pregame;turn_peer.supported=16383;
+    assert(network_game_server_send_game_settings_to_client_machine(&turn_host,&turn_peer,&turn_host.game,sizeof(turn_host.game)));
+    assert(network_game_client_performance_host_capabilities==16383 && applied_flags==0);
     /* Actor-only aids can change live while preselected match rules remain
      * fixed through a full-record update on the same reliable stream. */
     struct network_game game=defaults();

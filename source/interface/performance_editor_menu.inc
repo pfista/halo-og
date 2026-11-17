@@ -3,12 +3,12 @@
 #define PB_EDIT_PATH PB_EDIT_PREFIX "playlist_edit\\gametype_edit_screen"
 #define PB_EDIT_RUNTIME "ui\\native_pb\\editor"
 enum { _pb_editor_initialize = 32000, _pb_editor_accept = 32001 };
-enum { _pb_editor_row_count = 9, _pb_editor_row_spacing = 27 };
+enum { _pb_editor_row_count = 10, _pb_editor_row_spacing = 25 };
 static unsigned const pb_editor_option_flags[_pb_editor_row_count - 1] = {
     _performance_option_match_timer, _performance_option_spawn_markers,
     _performance_option_timer_audio, _performance_option_silent_movement,
     _performance_option_silent_weapon_ready, _performance_option_input_delay,
-    _performance_option_hardcore, _performance_option_hardcore_camo};
+    _performance_option_hardcore, _performance_option_hardcore_camo, _performance_option_turn_with_aim};
 static struct
 {
     struct ui_widget_definition root, list, entry, screen, heading, menu, help;
@@ -17,9 +17,9 @@ static struct
     struct ui_widget_child_reference menu_children[_pb_editor_row_count], row_children[_pb_editor_row_count][2], preview_children[2];
     struct ui_widget_event_handler_reference entry_events[2], menu_events[3];
     struct ui_widget_game_data_input_reference list_input, menu_input;
-    struct string_list strings[9];
-    struct string_list_entry string_entries[9][22];
-    wchar_t string_text[9][22][256];
+    struct string_list strings[10];
+    struct string_list_entry string_entries[10][24];
+    wchar_t string_text[10][24][256];
     long root_tag, list_tag, menu_tag, spinner_tag[_pb_editor_row_count];
     short last_preset;
     unsigned last_flags;
@@ -71,12 +71,13 @@ static long pb_editor_register(char const *name, struct ui_widget_definition *de
 static boolean pb_editor_build(void)
 {
     static char const *const labels[] = {"PERFORMANCE", "PRESET:", "MATCH TIMER:", "SPAWN MARKERS:", "TIMER SOUNDS:",
-        "MOVEMENT SOUNDS:", "WEAPON SOUNDS:", "INPUT DELAY:", "PRECISION SPREAD:", "CAMO:", "PERFORMANCE"};
+        "MOVEMENT SOUNDS:", "WEAPON SOUNDS:", "INPUT DELAY:", "PRECISION SPREAD:", "CAMO:", "PLAYER TURNING:", "PERFORMANCE"};
     static char const *const presets[] = {"DEFAULT", "PRACTICE", "PRO", "CUSTOM"};
     static char const *const toggles[] = {"OFF", "ON"};
     static char const *const sounds[] = {"NORMAL", "JUST ME", "SILENT"};
     static char const *const delays[] = {"OFF", "33MS"};
     static char const *const camo[] = {"NORMAL", "STRONGER"};
+    static char const *const turning[] = {"STOCK", "FOLLOW AIM"};
     static char const *const help[] = {
         "The familiar battlefield. Practice aids off.\r\nMatch rules stay as selected below.",
         "Learn the ground before you hold it.\r\nTimer, announcements and spawn markers on.",
@@ -99,11 +100,13 @@ static boolean pb_editor_build(void)
         "A familiar margin of error.\r\nOriginal pistol and unscoped sniper spread.",
         "Make the first shot count.\r\nZero initial pistol/sniper spread; rapid fire spreads.",
         "The familiar blue shimmer.\r\nOriginal active camouflage tint.",
-        "Now you see me...\r\nRemove the blue tint; reveal timing stays the same."};
-    static char const *const row_names[] = {"ui\\native_pb\\preset_row", "ui\\native_pb\\timer_row", "ui\\native_pb\\markers_row", "ui\\native_pb\\audio_row", "ui\\native_pb\\movement_row", "ui\\native_pb\\weapon_row", "ui\\native_pb\\delay_row", "ui\\native_pb\\hardcore_row", "ui\\native_pb\\camo_row"};
-    static char const *const label_names[] = {"ui\\native_pb\\preset_label", "ui\\native_pb\\timer_label", "ui\\native_pb\\markers_label", "ui\\native_pb\\audio_label", "ui\\native_pb\\movement_label", "ui\\native_pb\\weapon_label", "ui\\native_pb\\delay_label", "ui\\native_pb\\hardcore_label", "ui\\native_pb\\camo_label"};
-    static char const *const spinner_names[] = {"ui\\native_pb\\preset_spinner", "ui\\native_pb\\timer_spinner", "ui\\native_pb\\markers_spinner", "ui\\native_pb\\audio_spinner", "ui\\native_pb\\movement_spinner", "ui\\native_pb\\weapon_spinner", "ui\\native_pb\\delay_spinner", "ui\\native_pb\\hardcore_spinner", "ui\\native_pb\\camo_spinner"};
-    long labels_tag, presets_tag, toggles_tag, sounds_tag, delays_tag, camo_tag, help_tag, i, tag;
+        "Now you see me...\r\nRemove the blue tint; reveal timing stays the same.",
+        "Use original Xbox body turning during\r\ngrenade throws and jumps.",
+        "Turn your body toward your aim while\r\nthrowing a grenade or in the air."};
+    static char const *const row_names[] = {"ui\\native_pb\\preset_row", "ui\\native_pb\\timer_row", "ui\\native_pb\\markers_row", "ui\\native_pb\\audio_row", "ui\\native_pb\\movement_row", "ui\\native_pb\\weapon_row", "ui\\native_pb\\delay_row", "ui\\native_pb\\hardcore_row", "ui\\native_pb\\camo_row", "ui\\native_pb\\turning_row"};
+    static char const *const label_names[] = {"ui\\native_pb\\preset_label", "ui\\native_pb\\timer_label", "ui\\native_pb\\markers_label", "ui\\native_pb\\audio_label", "ui\\native_pb\\movement_label", "ui\\native_pb\\weapon_label", "ui\\native_pb\\delay_label", "ui\\native_pb\\hardcore_label", "ui\\native_pb\\camo_label", "ui\\native_pb\\turning_label"};
+    static char const *const spinner_names[] = {"ui\\native_pb\\preset_spinner", "ui\\native_pb\\timer_spinner", "ui\\native_pb\\markers_spinner", "ui\\native_pb\\audio_spinner", "ui\\native_pb\\movement_spinner", "ui\\native_pb\\weapon_spinner", "ui\\native_pb\\delay_spinner", "ui\\native_pb\\hardcore_spinner", "ui\\native_pb\\camo_spinner", "ui\\native_pb\\turning_spinner"};
+    long labels_tag, presets_tag, toggles_tag, sounds_tag, delays_tag, camo_tag, turning_tag, help_tag, i, tag;
     struct ui_widget_definition *preview_text;
     struct string_list *original_strings;
     pb_editor.ready = FALSE;
@@ -137,7 +140,8 @@ static boolean pb_editor_build(void)
     sounds_tag = pb_editor_strings(6, "ui\\native_pb\\sound_values", sounds, NUMBEROF(sounds));
     delays_tag = pb_editor_strings(7, "ui\\native_pb\\delay_values", delays, NUMBEROF(delays));
     camo_tag = pb_editor_strings(8, "ui\\native_pb\\camo_values", camo, NUMBEROF(camo));
-    if (labels_tag == NONE || presets_tag == NONE || toggles_tag == NONE || sounds_tag == NONE || delays_tag == NONE || camo_tag == NONE || help_tag == NONE) return FALSE;
+    turning_tag = pb_editor_strings(9, "ui\\native_pb\\turning_values", turning, NUMBEROF(turning));
+    if (turning_tag == NONE || labels_tag == NONE || presets_tag == NONE || toggles_tag == NONE || sounds_tag == NONE || delays_tag == NONE || camo_tag == NONE || help_tag == NONE) return FALSE;
     /* Performance options reuse the Indicators preview image. */
     {
         static char const *const caption[] = {"Performance options like\r\ntimers, spawn markers,\r\nand more.\r\n\r\nThis gametype:"};
@@ -167,7 +171,9 @@ static boolean pb_editor_build(void)
     {
         pb_editor.menu_children[i] = pb_editor.menu_children[i - 1];
     }
-    /* Nine rows fit above the stock help box without changing Xbox fonts. */
+    /* Keep the last row above the stock help at y=321. */
+    pb_editor.menu_children[0].vertical_offset -= 7;
+    pb_editor.row[0].bounds.y1 = pb_editor.row[0].bounds.y0 + _pb_editor_row_spacing;
     for (i = 0; i < _pb_editor_row_count; i++)
         pb_editor.menu_children[i].vertical_offset = pb_editor.menu_children[0].vertical_offset + i * _pb_editor_row_spacing;
     pb_editor.menu.child_widgets.count = _pb_editor_row_count;
@@ -188,7 +194,7 @@ static boolean pb_editor_build(void)
         if (tag == NONE) return FALSE;
         pb_editor.row_children[i][0].widget_tag = pb_editor_reference(UI_WIDGET_DEFINITION_TAG, tag);
         pb_editor.spinner[i].text_label_string_list = pb_editor_reference(UNICODE_STRING_LIST_TAG,
-            i == 0 ? presets_tag : i < 4 || i == 7 ? toggles_tag : i < 6 ? sounds_tag : i == 6 ? delays_tag : camo_tag);
+            i == 0 ? presets_tag : i < 4 || i == 7 ? toggles_tag : i < 6 ? sounds_tag : i == 6 ? delays_tag : i == 8 ? camo_tag : turning_tag);
         pb_editor.spinner[i].bounds.x1 = 142;
         pb_editor.spinner[i].list_footer_bounds.x0 = 142;
         pb_editor.spinner[i].list_footer_bounds.x1 = 148;
@@ -205,7 +211,7 @@ static boolean pb_editor_build(void)
     if (pb_editor.menu_tag == NONE) return FALSE;
     pb_editor.heading = pb_editor.label[0];
     pb_editor.heading.bounds = (rectangle2d){24, 54, 60, 566};
-    pb_editor.heading.string_list_index = 10;
+    pb_editor.heading.string_list_index = NUMBEROF(labels) - 1;
     pb_editor.heading.horizontal_offset = pb_editor.heading.vertical_offset = 0;
     pb_editor.heading.text_color = (real_argb_color){1, 1, 1, 1};
     tag = pb_editor_register("ui\\native_pb\\heading", &pb_editor.heading);
@@ -311,9 +317,8 @@ static void pb_editor_sync(struct widget_instance *menu)
         short preset = spinners[0]->parameters.list.selected_index;
         if (preset < 3)
         {
-            /* Pro selects its complete pregame rules. Default and Practice
-             * retain independently selected match rules. Fiesta is separate. */
-            flags = preset == 2 ? (flags & _performance_option_fiesta) | PERFORMANCE_PRO_FLAGS :
+            /* All presets preserve starting equipment and player turning. */
+            flags = preset == 2 ? (flags & (_performance_option_fiesta | _performance_option_turn_with_aim)) | PERFORMANCE_PRO_FLAGS :
                 (flags & PERFORMANCE_MATCH_RULE_FLAGS) | (preset ? PERFORMANCE_PRACTICE_FLAGS : 0);
             for (row = 1; row < _pb_editor_row_count; row++)
                 spinners[row]->parameters.list.selected_index = pb_editor_option_selection(flags, row);

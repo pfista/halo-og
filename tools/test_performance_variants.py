@@ -165,8 +165,8 @@ static void format_and_default(void) {
     assert(_performance_option_match_timer == 1 && _performance_option_spawn_markers == 2 &&
         _performance_option_timer_audio == 4 && _performance_option_silent_movement == 8 &&
         _performance_option_silent_weapon_ready == 16 && _performance_option_input_delay == 32 && _performance_option_hardcore == 64 && _performance_option_fiesta == 128 && _performance_option_hardcore_camo == 256 &&
-        PERFORMANCE_MATCH_RULE_FLAGS == 480 &&
-        PERFORMANCE_PRACTICE_FLAGS == 7 && PERFORMANCE_OPTIONS_MASK == 12799 &&
+        _performance_option_turn_with_aim == 16384 && PERFORMANCE_MATCH_RULE_FLAGS == (480 | 16384) &&
+        PERFORMANCE_PRACTICE_FLAGS == 7 && PERFORMANCE_OPTIONS_MASK == (12799 | 16384) &&
         _performance_option_self_movement == 4096 && _performance_option_self_weapon_ready == 8192 &&
         PERFORMANCE_INPUT_DELAY_MILLISECONDS == 33);
     assert(performance_variant_get_flags(NULL) == 0);
@@ -334,6 +334,7 @@ static void self_sound_modes(void) {
     const unsigned offsets[] = {29,30,31,41,42,43};
     const int32_t profile = (int32_t)FLAG(_saved_game_file_index_valid_bit);
     assert(PERFORMANCE_PRO_FLAGS == (1u|4u|64u|256u|4096u|8192u));
+    for (unsigned turning = 0; turning <= 1; ++turning)
     for (short movement = 0; movement < 3; movement++)
     for (short weapon = 0; weapon < 3; weapon++) {
         unsigned sound_flags = performance_variant_sound_flags(movement,8,4096) |
@@ -342,12 +343,16 @@ static void self_sound_modes(void) {
         assert(performance_variant_sound_mode(sound_flags,16,8192) == weapon);
         for (unsigned extras = 0; extras <= 511; extras++) {
             if (extras & 24) continue;
-            unsigned flags = extras | sound_flags;
+            unsigned flags = extras | sound_flags | (turning ? _performance_option_turn_with_aim : 0);
             build_game_variant_slayer(&variant);
             performance_variant_set_flags(&variant, flags);
             assert(performance_variant_get_flags(&variant) == flags);
             assert(performance_variant_flags_valid(flags));
-            if (!(flags & PERFORMANCE_SELF_SOUND_FLAGS)) continue;
+            if (turning) {
+                assert(variant.universal_variant.pad4 & 32);
+                assert(performance_variant_preset(flags) == performance_variant_preset(flags & ~_performance_option_turn_with_aim));
+            }
+            if (!(flags & (PERFORMANCE_SELF_SOUND_FLAGS | _performance_option_turn_with_aim))) continue;
             assert((variant.universal_variant.pad4 & 3) == 3);
             assert(variant.universal_variant.pad6 == (byte)(variant.universal_variant.pad5 ^ 0xA5 ^ variant.universal_variant.pad4));
             /* Previous readers reject the new format instead of confusing it
@@ -369,7 +374,7 @@ static void self_sound_modes(void) {
             assert(variant.human_readable_game_description[0] == 'S');
         }
     }
-    const unsigned malformed[] = {4096u|8u,8192u|16u,512u,1024u,2048u,16384u};
+    const unsigned malformed[] = {4096u|8u,8192u|16u,512u,1024u,2048u,32768u};
     for (unsigned i = 0; i < NUMBEROF(malformed); i++) {
         assert(!performance_variant_flags_valid(malformed[i]));
         performance_variant_set_flags(&variant, malformed[i]);

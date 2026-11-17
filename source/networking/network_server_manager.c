@@ -973,7 +973,7 @@ static boolean network_game_server_performance_peers_support(
 		NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY | NETWORK_PERFORMANCE_SELF_AUDIO_FLAGS))
 	{
 		platform_show_message("Halo: match rules unavailable",
-			"This build does not support Input Delay, Hardcore, Fiesta, Hardcore Camo, expanded weapon sets, or Just Me audio. Turn these options off, or use a compatible build.");
+			"This build does not support Input Delay, Hardcore, Fiesta, Hardcore Camo, expanded weapon sets, Just Me audio, or Follow Aim. Turn these options off, or use a compatible build.");
 		return FALSE;
 	}
 #endif
@@ -1003,6 +1003,13 @@ static boolean network_game_server_performance_peers_support(
 			!network_game_server_client_machine_is_local(server, machine) &&
 			!network_game_server_performance_supported(machine, flags))
 		{
+			if ((flags & _performance_option_turn_with_aim) &&
+				!network_game_server_performance_supported(machine, _performance_option_turn_with_aim))
+			{
+				platform_show_message("Halo: Follow Aim unavailable",
+					"A connected player needs an updated build for Follow Aim. Choose Stock under Player Turning to play with this build.");
+				return FALSE;
+			}
 			if ((flags & NETWORK_PERFORMANCE_SELF_AUDIO_FLAGS) &&
 				!network_game_server_performance_supported(machine, flags & NETWORK_PERFORMANCE_SELF_AUDIO_FLAGS))
 			{
@@ -1071,6 +1078,13 @@ static boolean network_game_server_input_delay_change_allowed(
 	struct network_game_server *server,
 	unsigned flags)
 {
+	if (((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_turn_with_aim) &&
+		(server->state != _network_game_server_state_pregame || server->sent_start_game_message))
+	{
+		platform_show_message("Halo: Player Turning locked",
+			"Choose Stock or Follow Aim in the game type before starting the next match.");
+		return FALSE;
+	}
 	if (((performance_variant_get_flags(&server->game.variant) ^ flags) & _performance_option_hardcore_camo) &&
 		(server->state != _network_game_server_state_pregame || server->sent_start_game_message))
 	{

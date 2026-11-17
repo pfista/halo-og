@@ -36,6 +36,8 @@ static void performance_console_status(void)
         (flags & _performance_option_hardcore) ? "ON" : "OFF");
 	console_printf(FALSE, "Camo: %s (selected before the match)",
         (flags & _performance_option_hardcore_camo) ? "STRONGER" : "NORMAL");
+	console_printf(FALSE, "Player Turning: %s (selected before the match)",
+		(flags & _performance_option_turn_with_aim) ? "FOLLOW AIM" : "STOCK");
 	console_printf(FALSE, "timer recordings: %s", halo_performance_audio_available() ? "installed" : "missing");
 	performance_options_timer_statistics(&timer_statistics);
 	console_printf(FALSE, "PB timer: prefs=%u countdown=%lu beeps=%lu minutes=%lu items=%lu last=%s",
@@ -156,7 +158,7 @@ boolean console_process_native_command(char const *command)
 	return TRUE;
 usage:
 	if (numeric)
-		console_printf(FALSE, "usage: performance_options [flags, mask=%d] (timer=1, markers=2, audio=4, silent movement=8, silent weapons=16, input delay=32, precision spread=64, Fiesta=128, stronger camo=256, self movement=4096, self weapons=8192; choose one sound mode per role)", PERFORMANCE_OPTIONS_MASK);
+		console_printf(FALSE, "usage: performance_options [flags, mask=%d] (timer=1, markers=2, audio=4, silent movement=8, silent weapons=16, input delay=32, precision spread=64, Fiesta=128, stronger camo=256, self movement=4096, self weapons=8192, Follow Aim=16384; choose one sound mode per role)", PERFORMANCE_OPTIONS_MASK);
 	else performance_console_help();
 	return TRUE;
 }

@@ -21,10 +21,11 @@ enum
 	/* Listener-specific audio remains outside the older network capabilities. */
 	_performance_option_self_movement = 4096,
 	_performance_option_self_weapon_ready = 8192,
+	_performance_option_turn_with_aim = 16384,
 	PERFORMANCE_SELF_SOUND_FLAGS = _performance_option_self_movement |
 		_performance_option_self_weapon_ready,
 	/* Match rules are selected before starting, independently of aid presets. */
-	PERFORMANCE_MATCH_RULE_FLAGS = 480,
+	PERFORMANCE_MATCH_RULE_FLAGS = 480 | _performance_option_turn_with_aim,
 	/* The existing Practice preset keeps the original movement/weapon audio. */
 	PERFORMANCE_PRACTICE_FLAGS = 7,
 	/* Pro keeps markers and input delay off, with precise opening shots,
@@ -33,7 +34,7 @@ enum
 		_performance_option_timer_audio | _performance_option_self_movement |
 		_performance_option_self_weapon_ready | _performance_option_hardcore |
 		_performance_option_hardcore_camo,
-	PERFORMANCE_OPTIONS_MASK = 511 | PERFORMANCE_SELF_SOUND_FLAGS,
+	PERFORMANCE_OPTIONS_MASK = 511 | PERFORMANCE_SELF_SOUND_FLAGS | _performance_option_turn_with_aim,
 	/* Nominal Xbox duration; one 30 Hz simulation update is 33.333 ms.
 	 * Preserve this duration if simulation frequency changes in the future. */
 	PERFORMANCE_INPUT_DELAY_MILLISECONDS = 33,
@@ -73,7 +74,7 @@ static inline boolean performance_variant_flags_valid(unsigned flags)
  * Default and Practice retain their existing independent match-rule behavior. */
 static inline short performance_variant_preset(unsigned flags)
 {
-	if ((flags & ~_performance_option_fiesta) == PERFORMANCE_PRO_FLAGS)
+	if ((flags & ~(_performance_option_fiesta | _performance_option_turn_with_aim)) == PERFORMANCE_PRO_FLAGS)
 		return 2;
 	flags &= ~PERFORMANCE_MATCH_RULE_FLAGS;
 	return flags == 0 ? 0 : flags == PERFORMANCE_PRACTICE_FLAGS ? 1 : 3;
@@ -86,9 +87,10 @@ static inline short performance_variant_preset(unsigned flags)
  * Camo implicitly and uses low flags XOR 0xA4. This distinct checksum prevents
  * a damaged version from silently changing the camo rule. Existing options
  * retain their exact version-1 bytes. Version 3 uses pad4's upper bits for
- * camo (4), Just Me movement (8) and Just Me weapons (16), with low bits 3.
- * Its check byte is the low flags XOR 0xA5 XOR pad4. It is used only when
- * Just Me is selected; previous Normal/Silent saves stay byte-identical.
+ * camo (4), Just Me movement (8), Just Me weapons (16) and Follow Aim (32),
+ * with low bits 3. Its check byte is the low flags XOR 0xA5 XOR pad4.
+ * Only Just Me and Follow Aim require this format. Earlier readers reject
+ * Follow Aim and existing saves retain their original encoding.
  * Stock/off is all zeros. Old padding,
  * unknown versions/flags and damaged extensions always mean all options off.
  * Never encode options in game_variant.flags: the editor excludes that field
@@ -113,12 +115,13 @@ static inline unsigned performance_variant_get_flags(
 		check = version == 2 ? 0xA4 : 0xA5;
 		if (version == 2) flags |= _performance_option_hardcore_camo;
 	}
-	else if ((version & ~28u) == 3 && (version & 24u))
+	else if ((version & ~60u) == 3 && (version & 56u))
 	{
 		check = 0xA5 ^ version;
 		if (version & 4) flags |= _performance_option_hardcore_camo;
 		if (version & 8) flags |= _performance_option_self_movement;
 		if (version & 16) flags |= _performance_option_self_weapon_ready;
+		if (version & 32) flags |= _performance_option_turn_with_aim;
 	}
 	else return 0;
 	if (settings->pad6 != (byte)(settings->pad5 ^ check) ||
@@ -143,11 +146,12 @@ static inline void performance_variant_set_flags(
 		flags = 0;
 	version = (flags & _performance_option_hardcore_camo) ? 2 : (flags ? 1 : 0);
 	check = version == 2 ? 0xA4 : 0xA5;
-	if (flags & PERFORMANCE_SELF_SOUND_FLAGS)
+	if (flags & (PERFORMANCE_SELF_SOUND_FLAGS | _performance_option_turn_with_aim))
 	{
 		version = 3 | ((flags & _performance_option_hardcore_camo) ? 4 : 0) |
 			((flags & _performance_option_self_movement) ? 8 : 0) |
-			((flags & _performance_option_self_weapon_ready) ? 16 : 0);
+			((flags & _performance_option_self_weapon_ready) ? 16 : 0) |
+			((flags & _performance_option_turn_with_aim) ? 32 : 0);
 		check = 0xA5 ^ version;
 	}
 

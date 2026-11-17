@@ -5,7 +5,8 @@
 
 #define NETWORK_PERFORMANCE_MESSAGE_TYPE 0xE0
 #define NETWORK_PERFORMANCE_MESSAGE_SIZE 16
-#define NETWORK_PERFORMANCE_VERSION 6
+#define NETWORK_PERFORMANCE_VERSION 7
+#define NETWORK_PERFORMANCE_SELF_AUDIO_VERSION 6
 #define NETWORK_PERFORMANCE_DOWNLOAD_WAIT_VERSION 5
 #define NETWORK_PERFORMANCE_GLOBAL_ARSENAL_VERSION 4
 #define NETWORK_PERFORMANCE_EXPANDED_WEAPONS_VERSION 3
@@ -13,14 +14,15 @@
 #define NETWORK_PERFORMANCE_LEGACY_VERSION 1
 #define NETWORK_PERFORMANCE_CAPABILITY 1
 #define NETWORK_PERFORMANCE_SETTINGS 2
-#define NETWORK_PERFORMANCE_SUPPORTED_FLAGS 12799
+#define NETWORK_PERFORMANCE_SUPPORTED_FLAGS (12799u | NETWORK_PERFORMANCE_TURN_WITH_AIM_FLAG)
 #define NETWORK_PERFORMANCE_EXPANDED_WEAPONS_CAPABILITY 512
 #define NETWORK_PERFORMANCE_GLOBAL_ARSENAL_CAPABILITY 1024
 #define NETWORK_PERFORMANCE_DOWNLOAD_WAIT_CAPABILITY 2048
 #define NETWORK_PERFORMANCE_SELF_MOVEMENT_FLAG 4096
 #define NETWORK_PERFORMANCE_SELF_WEAPON_READY_FLAG 8192
 #define NETWORK_PERFORMANCE_SELF_AUDIO_FLAGS 12288
-#define NETWORK_PERFORMANCE_SUPPORTED_CAPABILITIES 16383
+#define NETWORK_PERFORMANCE_SUPPORTED_CAPABILITIES 32767
+#define NETWORK_PERFORMANCE_TURN_WITH_AIM_FLAG 16384
 #define NETWORK_PERFORMANCE_SILENT_MOVEMENT_FLAG 8
 #define NETWORK_PERFORMANCE_SILENT_WEAPON_READY_FLAG 16
 #define NETWORK_PERFORMANCE_TIMER_AUDIO_FLAG 4
@@ -28,7 +30,7 @@
 #define NETWORK_PERFORMANCE_HARDCORE_FLAG 64
 #define NETWORK_PERFORMANCE_FIESTA_FLAG 128
 #define NETWORK_PERFORMANCE_HARDCORE_CAMO_FLAG 256
-#define NETWORK_PERFORMANCE_MATCH_RULE_FLAGS 480
+#define NETWORK_PERFORMANCE_MATCH_RULE_FLAGS (480u | NETWORK_PERFORMANCE_TURN_WITH_AIM_FLAG)
 #define NETWORK_PERFORMANCE_ADVERTISED_FLAG 4
 /* Outside upstream's sequential versions: stock clients show their existing
  * update-required dialog only while practice options are on. */
@@ -55,8 +57,9 @@ static inline unsigned network_performance_runtime_supported_flags(
 static inline unsigned network_performance_capability_for_peer(unsigned supported,
     int peer_hardcore_supported, int peer_fiesta_supported, int peer_camo_supported,
     int peer_expanded_weapons_supported, int peer_global_arsenal_supported,
-    int peer_download_wait_supported, int peer_self_audio_supported)
+    int peer_download_wait_supported, int peer_self_audio_supported, int peer_turn_with_aim_supported)
 {
+    if (peer_turn_with_aim_supported) return supported;
     return supported & (peer_self_audio_supported ? 16383u :
         (peer_download_wait_supported ? 4095u : (peer_global_arsenal_supported ? 2047u :
         (peer_expanded_weapons_supported ? 1023u :
@@ -118,9 +121,9 @@ static inline void network_performance_encode(unsigned char *message,
     message[2] = NETWORK_PERFORMANCE_MESSAGE_TYPE;
     message[3] = 1;
     message[8] = 'H'; message[9] = 'P'; message[10] = 'F'; message[11] = 'O';
-    /* Every previous frame remains byte-identical. Version 6 adds actor-only
-     * audio capabilities/settings; version 5 retains download wait. */
-    message[12] = flags > 4095 ? NETWORK_PERFORMANCE_VERSION :
+    /* Use the earliest generation able to represent the flags. */
+    message[12] = flags >= NETWORK_PERFORMANCE_TURN_WITH_AIM_FLAG ? NETWORK_PERFORMANCE_VERSION :
+        flags > 4095 ? NETWORK_PERFORMANCE_SELF_AUDIO_VERSION :
         (flags > 2047 ? NETWORK_PERFORMANCE_DOWNLOAD_WAIT_VERSION :
         (flags > 1023 ? NETWORK_PERFORMANCE_GLOBAL_ARSENAL_VERSION :
         (flags > 511 ? NETWORK_PERFORMANCE_EXPANDED_WEAPONS_VERSION :
@@ -149,8 +152,10 @@ static inline int network_performance_decode(unsigned char const *message,
            kind == NETWORK_PERFORMANCE_CAPABILITY && message[15] >= 4 && message[15] <= 7) ||
           (message[12] == NETWORK_PERFORMANCE_DOWNLOAD_WAIT_VERSION &&
            kind == NETWORK_PERFORMANCE_CAPABILITY && message[15] >= 8 && message[15] <= 15) ||
+          (message[12] == NETWORK_PERFORMANCE_SELF_AUDIO_VERSION &&
+           message[15] >= 16 && message[15] <= 63) ||
           (message[12] == NETWORK_PERFORMANCE_VERSION &&
-           message[15] >= 16 && message[15] <= 63)))
+           message[15] >= 64 && message[15] <= 127)))
         return 0;
     for (index = 4; index < 8; ++index)
         if (message[index] != 0) return 0;

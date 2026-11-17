@@ -61,7 +61,7 @@ see the host's current choices with the controls disabled. Session changes do
 not write the saved game type back to disk; use Edit Gametypes to save a
 preset for later.
 
-Input Delay, Precision Spread and Camo are available only in Edit Gametypes, before starting
+Input Delay, Precision Spread, Camo and Player Turning are available only in Edit Gametypes, before starting
 a match. The pause page omits their controls; Apply and every preset preserve
 the match's existing rules, including Fiesta starting equipment. Other
 practice aids remain adjustable during play.
@@ -92,6 +92,20 @@ and weapon/grenade/zoom choices. Direct Camera can still show current local aim
 while shots use delayed actions. Buffered actions are cleared for a new unit,
 pause, teleport, or clock resynchronization; a teleport retains the destination
 facing.
+
+## Player turning
+
+In **Multiplayer → Edit Gametypes**, choose an editable game type, then
+**Performance → Player Turning**. **Stock** uses the original Xbox turning
+rules and is the default. **Follow Aim** lets a player-controlled `cyborg` or
+`cyborg_mp` turn at the map’s moving turn speed during a grenade throw or the
+airborne animation. An extremely fast spin can still outrun the body.
+Choose **Accept**, save the game type, and host it. All machines must support
+Follow Aim to join an enabled match. Presets preserve the choice.
+
+Direct Camera follows current look input on foot in either mode. For an A/B
+test on System Link, keep Direct Camera enabled and compare the same fast turn
+on the ground, during a throw, and after a grenade knocks you into the air.
 
 ## Precision spread
 
@@ -304,9 +318,9 @@ existing game types need no conversion. Earlier builds reject version 2
 as all options off; host capability confirmation prevents newer clients
 from applying an unsupported saved camo rule.
 
-Version 3 is used only for Just Me sounds. In `pad4`, bit `4` implies camo flag
+Version 3 stores Just Me sounds and Follow Aim. In `pad4`, bit `4` implies camo flag
 `256`, bit `8` implies Just Me movement flag `4096`, and bit `16` implies Just Me
-weapon flag `8192`; its low two bits are `3`. The low sound flags retain their
+weapon flag `8192`. Bit `32` encodes Follow Aim (flag `16384`). The low two bits are `3`. The low sound flags retain their
 Silent meaning. Selecting both Silent and Just Me for the same category is
 invalid. Existing version-1/2 saves keep their exact bytes and choices. Earlier
 builds reject version 3 as all options off, so Just Me requires acknowledged
@@ -324,7 +338,7 @@ join request: the original timer/marker mask, the timer-audio generation, the
 sound-rule generation (mask 31), input-delay generation (mask 63), then the
 precision generation (mask 127), Fiesta generation (mask 255), and camo
 generation (mask 511), followed by expanded weapons, arsenal, download wait,
-and the Just Me sound generation (mask 16383). Earlier hosts retain the newest subset they
+the Just Me sound generation (mask 16383), and Follow Aim (mask 32767). Earlier hosts retain the newest subset they
 understand. An unextended v11 host ignores those unknown data messages.
 The updated host keeps capabilities per connection slot and clears them when
 the slot is removed or reused.
@@ -348,7 +362,7 @@ check the connected peers. An unsupported existing peer causes the host's
 change to be refused with an explanation. Joining clients cannot change the
 host's option state.
 
-Input Delay, Hardcore precision spread, Fiesta and Hardcore camo are locked at match start.
+Input Delay, Hardcore precision spread, Fiesta, Hardcore camo and Player Turning are locked at match start.
 The host refuses a request to change these flags during play, including a debug-console request. Clients
 retain the active rules while applying other live aid changes. Presets and edits
 to the other aids preserve the current match rules.
@@ -357,7 +371,7 @@ The host confirms its match-rule capability on the reliable connection before
 the settings record, using a mask the recipient can decode. A client enables
 the saved match rules only after this confirmation. If an older host loads a
 newer saved variant containing an unsupported delay, Hardcore precision,
-Fiesta or Hardcore camo
+Fiesta, Hardcore camo or Follow Aim
 flag, the client treats that extension as off, matching the older host.
 
 The normal reliable settings record carries the variant before begin-game,
@@ -373,7 +387,7 @@ Press **F2** for the existing developer console. `pb` shows settings and help;
 `pb default` disables the practice aids (`pb stock` remains an alias),
 `pb practice` enables the original three aids, and `pb pro` applies Pro's
 live timer/sound aids. All three preserve the fixed Input Delay, Precision
-Spread, Fiesta and Camo rules. Select the complete Pro rules before play. Use
+Spread, Fiesta, Camo and Player Turning rules. Select the complete Pro rules before play. Use
 `pb timer on`, `pb markers off`, or `pb audio toggle` for individual controls.
 Those accept `on`, `off` or `toggle`. Use `pb movement self` or
 `pb weapons normal` for sound rules; these accept `normal`, `self` (Just Me),
@@ -385,8 +399,8 @@ changes; save a game type in Edit Gametypes for future matches.
 The diagnostic `performance_options [flags]` is available, with flags timer `1`,
 markers `2`, audio `4`, silent movement `8`, silent weapons `16` and input delay
 `32`, precision spread `64`, Fiesta `128`, stronger camo `256`, Just Me movement
-`4096` and Just Me weapons `8192`. Unknown or conflicting sound-mode bits are
-refused; the complete valid-bit mask is `12799`.
+`4096`, Just Me weapons `8192`, and Follow Aim `16384`. Unknown or conflicting sound-mode bits are
+refused; the complete valid-bit mask is `29183`.
 A request to change a match rule during play is refused. Status also
 reports per-map sound provenance, muted dispatch counts, timer cue preferences
 and successful cue dispatch counts; these are diagnostic
