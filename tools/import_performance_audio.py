@@ -48,10 +48,14 @@ def decode_xbox_adpcm(data: bytes, channels: int) -> bytes:
             predictor, index, reserved = struct.unpack_from("<hBB", data, block_start + channel * 4)
             if index > 88 or reserved:
                 raise ValueError("Invalid Xbox ADPCM predictor header")
+            output[frame_start + channel] = predictor
             for group in range(8):
                 offset = block_start + 4 * channels + (group * channels + channel) * 4
                 for byte_index, value in enumerate(data[offset:offset + 4]):
                     for half, nibble in enumerate((value & 15, value >> 4)):
+                        sample = 1 + group * 8 + byte_index * 2 + half
+                        if sample == 64:  # Padding in the final high nibble.
+                            break
                         step = STEP_TABLE[index]
                         difference = step >> 3
                         if nibble & 1:
@@ -62,7 +66,6 @@ def decode_xbox_adpcm(data: bytes, channels: int) -> bytes:
                             difference += step
                         predictor = max(-32768, min(32767, predictor + (-difference if nibble & 8 else difference)))
                         index = max(0, min(88, index + INDEX_TABLE[nibble]))
-                        sample = group * 8 + byte_index * 2 + half
                         output[frame_start + sample * channels + channel] = predictor
     if sys.byteorder != "little":
         output.byteswap()

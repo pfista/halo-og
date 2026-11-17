@@ -154,8 +154,6 @@ class PerformanceAudioTest(unittest.TestCase):
             self.assertEqual(importer.write_pack({"2.wav": b"new", "1.wav": b"existing"}, directory), (1, 1))
 
     def test_decoder_matches_production_mixer(self):
-        source = (ROOT / "port/linux/src/dsound_sdl.c").read_text()
-        definitions = source[source.index("static const int ima_index_table"):source.index("static short *decode_pcm")]
         cases = []
         for channels in (1, 2):
             payload = bytearray()
@@ -164,10 +162,38 @@ class PerformanceAudioTest(unittest.TestCase):
                     payload.extend(struct.pack("<hBB", 2000 - channel * 6000, 20 + channel * 30, 0))
                 payload.extend(bytes((index * 17 + block_index) & 255 for index in range(32 * channels)))
             expected = importer.decode_xbox_adpcm(payload, channels)
-            cases.append("{ unsigned char input[]={%s}; unsigned char expected[]={%s}; unsigned long frames; short *result=decode_adpcm(input,sizeof(input),%d,&frames); assert(frames==192 && !memcmp(result,expected,sizeof(expected))); free(result); }" % (
-                ",".join(map(str, payload)), ",".join(map(str, expected)), channels))
+            cases.append((payload, channels, expected))
+        self.check_mixer_decoding(cases)
+
+    def test_adpcm_header_and_padding_for_each_channel(self):
+        cases = []
+        for channels in (1, 2):
+            payload = bytearray()
+            expected = bytearray()
+            for start in (1000, 3500):
+                # Index zero keeps step 7. Nibble 1 adds one, nibble 9 subtracts one.
+                for predictor in (start, -start)[:channels]:
+                    payload.extend(struct.pack("<hBB", predictor, 0, 0))
+                for group in range(8):
+                    for code in (0x11, 0x99)[:channels]:
+                        last = code if group < 7 else 0xF0 | (code & 15)
+                        payload.extend((code, code, code, last))
+                for frame in range(64):
+                    for sample in (start + frame, -start - frame)[:channels]:
+                        expected.extend(struct.pack("<h", sample))
+            self.assertEqual(importer.decode_xbox_adpcm(payload, channels), expected)
+            cases.append((payload, channels, expected))
+        self.check_mixer_decoding(cases)
+
+    def check_mixer_decoding(self, cases):
+        source = (ROOT / "port/linux/src/dsound_sdl.c").read_text()
+        definitions = source[source.index("static const int ima_index_table"):source.index("static short *decode_pcm")]
+        checks = []
+        for payload, channels, expected in cases:
+            checks.append("{ unsigned char input[]={%s}; unsigned char expected[]={%s}; unsigned long frames; short *result=decode_adpcm(input,sizeof(input),%d,&frames); assert(frames==%d && !memcmp(result,expected,sizeof(expected))); free(result); }" % (
+                ",".join(map(str, payload)), ",".join(map(str, expected)), channels, len(expected) // (2 * channels)))
         fixture = "#include <assert.h>\n#include <stdlib.h>\n#include <string.h>\n#define XBOX_ADPCM_BLOCK_BYTES 36\n#define XBOX_ADPCM_BLOCK_SAMPLES 64\n" + definitions
-        fixture += "int main(void){" + "".join(cases) + "return 0;}"
+        fixture += "int main(void){" + "".join(checks) + "return 0;}"
         self.compile_and_run(fixture)
 
     def test_strict_loader_and_existing_mixer_controls(self):
