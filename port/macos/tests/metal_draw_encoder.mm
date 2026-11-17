@@ -200,7 +200,7 @@ fragment float4 unsupportedTextureFragment(texture2d<float> t [[texture(4)]], sa
     const auto beforeQueryDepth = readPlane(device, queue, depth, true);
     const auto beforeQueryStencil = readPlane(device, queue, depth, false);
     const uint64_t canary = UINT64_C(0xa5c37e1902468bdf);
-    const uint64_t initialWords[5] = {canary, 0, 0, 0, canary};
+    const uint64_t initialWords[6] = {canary, 0, 0, 0, 0, canary};
     id<MTLBuffer> visibility = [device newBufferWithBytes:initialWords length:sizeof(initialWords)
         options:MTLResourceStorageModeShared];
     require(visibility != nil, @"Visibility buffer allocation failed");
@@ -214,6 +214,10 @@ fragment float4 unsupportedTextureFragment(texture2d<float> t [[texture(4)]], sa
     occludedQuery.vertexUniforms = farther.vertexUniforms; occludedQuery.visibilityOffset = 16;
     HaloMetalDraw booleanQuery = query;
     booleanQuery.visibilityMode = MTLVisibilityResultModeBoolean; booleanQuery.visibilityOffset = 24;
+    // The right half extends past the nearer 8x8 occluder.
+    HaloMetalDraw partialQuery = occludedQuery;
+    partialQuery.state.stencil_enabled = 0;
+    partialQuery.state.scissor[0] = 8; partialQuery.visibilityOffset = 32;
     HaloMetalDraw noQuery = query;
     noQuery.visibilityBuffer = nil; noQuery.visibilityOffset = 0; noQuery.visibilityMode = MTLVisibilityResultModeDisabled;
     command = [queue commandBuffer];
@@ -222,15 +226,16 @@ fragment float4 unsupportedTextureFragment(texture2d<float> t [[texture(4)]], sa
     require(encode(encoder,query,command,reuse,&error), error.localizedDescription ?: @"Counting query encoding failed");
     require(encode(encoder,occludedQuery,command,reuse,&error), error.localizedDescription ?: @"Occluded query encoding failed");
     require(encode(encoder,booleanQuery,command,reuse,&error), error.localizedDescription ?: @"Boolean query encoding failed");
+    require(encode(encoder,partialQuery,command,reuse,&error), error.localizedDescription ?: @"Partial query encoding failed");
     // A draw outside a query must leave all previous result words alone.
     require(encode(encoder,noQuery,command,reuse,&error), error.localizedDescription ?: @"Inactive-query draw encoding failed");
     require(encode(encoder,noQuery,command,reuse,&error), error.localizedDescription ?: @"Consecutive inactive-query draw encoding failed");
     [encoder endEncoding];
-    require(encoder.renderPassCount - queryPasses == (reuse ? 5u : 6u), @"Query draws did not retain isolated passes between ordinary draw runs");
+    require(encoder.renderPassCount - queryPasses == (reuse ? 6u : 7u), @"Query draws did not retain isolated passes between ordinary draw runs");
     complete(command);
     const uint64_t *words = (const uint64_t *)visibility.contents;
-    require(words[0] == canary && words[4] == canary, @"A query encoder reset an unrelated result word");
-    require(words[1] == 64 && words[2] == 0 && words[3] == 1,
+    require(words[0] == canary && words[5] == canary, @"A query encoder reset an unrelated result word");
+    require(words[1] == 64 && words[2] == 0 && words[3] == 1 && words[4] == 32,
         @"Fresh Counting/Boolean words did not preserve visible/occluded query results across encoders");
     [color getBytes:rgba.data() bytesPerRow:64 fromRegion:MTLRegionMake2D(0, 0, 16, 16) mipmapLevel:0];
     require(rgba == beforeQueryColor && readPlane(device, queue, depth, true) == beforeQueryDepth &&
@@ -796,7 +801,7 @@ fragment float4 unsupportedTextureFragment(texture2d<float> t [[texture(4)]], sa
                 @"Checkpoint output was incomplete");
     }
     printf("{\"complete\":true,\"color_depth_stencil_history\":true,\"state_and_resource_validation\":true,"
-        "\"visibility_readonly_count\":64,\"visibility_occluded_count\":0,\"visibility_boolean\":1,"
+        "\"visibility_readonly_count\":64,\"visibility_occluded_count\":0,\"visibility_partial_count\":32,\"visibility_boolean\":1,"
         "\"visibility_offset_validation\":true,\"cpu_query_timing_verified\":false,"
         "\"bgra8_replacement_history\":true,\"replacement_store_boundary\":true,"
         "\"replacement_blend_draws\":6,\"replacement_blend_passes\":%lu,\"replacement_boundary_cases\":2,\"replacement_boundary_passes\":%lu,"

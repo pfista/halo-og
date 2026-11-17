@@ -8,7 +8,8 @@ _Static_assert(sizeof(void *) == 4, "Native transport runs in the ILP32 guest");
     HALO_METAL_CAP_CLEAR_CHANNELS | HALO_METAL_CAP_BLACK_BORDER | HALO_METAL_CAP_ALPHA_BORDER | \
     HALO_METAL_CAP_COPY_SUBRESOURCE | HALO_METAL_CAP_VOLUME | HALO_METAL_CAP_VOLUME_BORDER | HALO_METAL_CAP_FXAA | \
     HALO_METAL_CAP_COMPACT_VERTICES | HALO_METAL_CAP_GEOMETRY_CACHE | \
-    HALO_METAL_CAP_ASYNC_SUBMIT | HALO_METAL_CAP_CACHE_BINDINGS | HALO_METAL_CAP_UNIFORM_SHARING)
+    HALO_METAL_CAP_ASYNC_SUBMIT | HALO_METAL_CAP_CACHE_BINDINGS | HALO_METAL_CAP_UNIFORM_SHARING | \
+    HALO_METAL_CAP_VISIBILITY_COUNTING)
 
 static void zero_bytes(void *pointer, uint32_t size) {
     unsigned char *p = pointer;
@@ -124,7 +125,7 @@ int halo_metal_guest_initialize(struct halo_metal_guest_transport *t, uint32_t w
     if (t->initialized) return fail(t, HALO_METAL_INVALID, "native transport already owns a host context");
     if ((flags & ~(HALO_METAL_OFFSCREEN | HALO_METAL_ENABLE_FXAA | HALO_METAL_ENABLE_COMPACT_VERTICES |
         HALO_METAL_ENABLE_GEOMETRY_CACHE | HALO_METAL_ENABLE_ASYNC_SUBMIT | HALO_METAL_ENABLE_CACHE_BINDINGS |
-        HALO_METAL_ENABLE_UNIFORM_SHARING)) ||
+        HALO_METAL_ENABLE_UNIFORM_SHARING | HALO_METAL_REQUEST_VISIBILITY_COUNTING)) ||
         ((flags & HALO_METAL_OFFSCREEN) ? window != 0 : window == 0))
         return fail(t, HALO_METAL_INVALID, "native window handle and offscreen flag disagree");
     if (required & ~ALL_CAPABILITIES) return fail(t, HALO_METAL_UNSUPPORTED, "unknown required native capability");

@@ -202,6 +202,7 @@ struct Context {
     bool geometry_cache_enabled = false;
     bool async_submit_enabled = false, cache_bindings_enabled = false;
     bool uniform_sharing_enabled = false;
+    bool visibility_counting_enabled = false;
     HaloMetalWarmupCache warmup;
     NSString *warmup_path = nil;
     bool warmup_dirty = false;
@@ -268,7 +269,8 @@ int reply(uint32_t offset, uint32_t size, int status, uint32_t failed = UINT32_M
             (context.geometry_cache_enabled ? HALO_METAL_CAP_GEOMETRY_CACHE : 0) |
             (context.async_submit_enabled ? HALO_METAL_CAP_ASYNC_SUBMIT : 0) |
             (context.cache_bindings_enabled ? HALO_METAL_CAP_CACHE_BINDINGS : 0) |
-            (context.uniform_sharing_enabled ? HALO_METAL_CAP_UNIFORM_SHARING : 0),
+            (context.uniform_sharing_enabled ? HALO_METAL_CAP_UNIFORM_SHARING : 0) |
+            (context.visibility_counting_enabled ? HALO_METAL_CAP_VISIBILITY_COUNTING : 0),
         context.submitted, context.completed,
         (uint32_t)(context.textures.size() + context.programs.size() + context.queries.size() + context.geometry.size()), version, bytes, 0};
     return size == sizeof(result) && write_guest(offset, &result, sizeof(result)) ? status : HALO_METAL_MEMORY;
@@ -1400,6 +1402,9 @@ void validate(const HaloMetalPacketView &packet, Prepared &prepared) {
                     auto c = record<halo_metal_create_visibility>(packet,position);
                     check(command.byte_size == sizeof(c) && !c.reserved && c.resource.id && c.resource.generation && queries.size() < 4096);
                     check(c.mode == HALO_METAL_VISIBILITY_BOOLEAN || c.mode == HALO_METAL_VISIBILITY_COUNTING,HALO_METAL_UNSUPPORTED);
+#if TARGET_OS_IOS
+                    check(c.mode != HALO_METAL_VISIBILITY_COUNTING || context.visibility_counting_enabled,HALO_METAL_UNSUPPORTED);
+#endif
                     check(!queries.count(c.resource.id) && c.resource.generation > query_generations[c.resource.id],HALO_METAL_STALE_RESOURCE);
                     queries.emplace(c.resource.id,Visibility{c.resource.generation,c.mode,0,false,false,0,{}});
                     query_generations[c.resource.id] = c.resource.generation; break;
@@ -2006,7 +2011,8 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
             validate_reply(output,size);
             check(!context.device && !(flags & ~(HALO_METAL_OFFSCREEN | HALO_METAL_ENABLE_FXAA |
                 HALO_METAL_ENABLE_COMPACT_VERTICES | HALO_METAL_ENABLE_ASYNC_SUBMIT |
-                HALO_METAL_ENABLE_GEOMETRY_CACHE | HALO_METAL_ENABLE_CACHE_BINDINGS | HALO_METAL_ENABLE_UNIFORM_SHARING)) &&
+                HALO_METAL_ENABLE_GEOMETRY_CACHE | HALO_METAL_ENABLE_CACHE_BINDINGS | HALO_METAL_ENABLE_UNIFORM_SHARING |
+                HALO_METAL_REQUEST_VISIBILITY_COUNTING)) &&
                 ((flags & HALO_METAL_OFFSCREEN) ? !window : window != 0));
             auto device = MTLCreateSystemDefaultDevice(); check(device != nil,HALO_METAL_GPU_ERROR);
             CAMetalLayer *layer = nil;
@@ -2039,6 +2045,10 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
             context.async_submit_enabled = (flags & HALO_METAL_ENABLE_ASYNC_SUBMIT) != 0;
             context.cache_bindings_enabled = (flags & HALO_METAL_ENABLE_CACHE_BINDINGS) != 0;
             context.uniform_sharing_enabled = (flags & HALO_METAL_ENABLE_UNIFORM_SHARING) != 0;
+#if TARGET_OS_IOS && !TARGET_OS_SIMULATOR
+            context.visibility_counting_enabled = (flags & HALO_METAL_REQUEST_VISIBILITY_COUNTING) &&
+                [device supportsFamily:MTLGPUFamilyApple3];
+#endif
             context.draw_encoder.cacheBindingsEnabled = context.cache_bindings_enabled;
             if (context.async_submit_enabled) context.pending.reserve(AsyncPacketLimit);
             context.fxaa_pipelines = std::move(fxaa_pipelines);
