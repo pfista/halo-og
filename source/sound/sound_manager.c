@@ -2592,6 +2592,19 @@ long sound_new_impulse(
 	return sound_index;
 }
 
+static void looping_sound_refresh_source(
+	struct looping_sound_datum *loop,
+	struct sound_source const *source,
+	boolean new_loop)
+{
+	/* Listener obstruction is measured by the sound manager, not by the emitter. */
+	real obstruction = new_loop ? 0.f : loop->source.obstruction;
+	real occlusion = new_loop ? 0.f : loop->source.occlusion;
+	loop->source = *source;
+	loop->source.obstruction = obstruction;
+	loop->source.occlusion = occlusion;
+}
+
 boolean sound_refresh_looping(
 	long definition_index,
 	long looping_sound_identifier,
@@ -2638,7 +2651,7 @@ boolean sound_refresh_looping(
 				0x30E,
 				loop->definition_index==definition_index);
 
-			loop->source = *source;
+			looping_sound_refresh_source(loop, source, new_looping_sound);
 			loop->flip_flop = sound_manager_globals.flip_flop;
 
 			if ((refresh_state == _looping_sound_refresh_stop ||
