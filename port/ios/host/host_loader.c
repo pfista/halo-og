@@ -36,7 +36,6 @@ int host_load_image(const void *unused, size_t unused_size) {
     for (uint32_t i = 0; i < count; i++) {
         if (name >= end || !memchr(name, 0, (size_t)(end - name))) return -1;
         void *fn = host_resolve_import(name);
-        if (!fn && !strncmp(name, "hostgl_", 7)) fn = host_gl_resolve(name + 7);
         if (!fn) {
             host_logf(HOST_LOG_ERROR, "Missing import: %s", name);
             return -1;

@@ -11,7 +11,7 @@ from tools.macos_metal_imports import native_imports
 
 
 class RendererBuildTests(unittest.TestCase):
-    def graph(self, renderer):
+    def graph(self, renderer, ios=False):
         stream = io.StringIO()
         with tempfile.TemporaryDirectory(prefix="halo-guest-build-graph-") as directory:
             tools = Path(directory)
@@ -19,10 +19,11 @@ class RendererBuildTests(unittest.TestCase):
                 path = tools / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.touch()
-            settings = SimpleNamespace(macos=True, ios=False, macos_renderer=renderer,
+            settings = SimpleNamespace(macos=not ios, ios=ios, macos_renderer=renderer,
                                        android_guest_only=True, android_guest_llvm_bin=tools,
-                                       android_guest_gl_include=tools if renderer == "angle" else None,
-                                       android_guest_cc="tools/macos_guest_cc.py", port_pgo="off")
+                                       android_guest_gl_include=tools if renderer == "angle" and not ios else None,
+                                       android_guest_cc="tools/ios_guest_cc.py" if ios else "tools/macos_guest_cc.py",
+                                       port_pgo="off")
             with patch.object(android_build, "fetch_third_party"):
                 android_build.generate_android_build(ninja_syntax.Writer(stream), settings)
         return stream.getvalue()
@@ -44,6 +45,16 @@ class RendererBuildTests(unittest.TestCase):
         self.assertNotIn("d3d8_metal.c", graph)
         self.assertNotIn("HALO_MACOS_NATIVE_METAL", graph)
         self.assertNotIn("build/macos-metal", graph)
+
+    def test_iphone_guest_links_only_native_metal_with_signed_image_imports(self):
+        graph = self.graph("angle", ios=True)
+        for required in ("d3d8_metal.c", "HALO_MACOS_NATIVE_METAL=1", "native_host_imports.list",
+                         "port/macos/metal_imports.list", "tools/android_imports.py --ios",
+                         "tools/ios_build.py --plugin-only", "build/ios/halo_guest.elf"):
+            self.assertIn(required, graph)
+        for absent in ("d3d8_gl.c", "gl_functions.c", "guest_gl.c", "gl_imports.list",
+                       "gl_include", "GLES2", "GLES3", "android_gl_stubs", "--renderer"):
+            self.assertNotIn(absent, graph)
 
     def test_filter_retains_input_audio_events_and_native_wire(self):
         original = Path("port/android/host_imports.list").read_text()

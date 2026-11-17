@@ -7,6 +7,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / 'build/ios'
@@ -24,6 +25,13 @@ def build_plugin():
 def build_app(platform, args):
     directory = BUILD / platform
     sdk = 'iphonesimulator' if platform == 'simulator' else 'iphoneos'
+    app = directory / f'Release-{sdk}' / 'Halo.app'
+    # Xcode can re-sign an incremental bundle with obsolete embedded frameworks.
+    # Keep the previous app and let Xcode assemble a fresh native Metal bundle.
+    if any((app / 'Frameworks' / name).exists() for name in ('libEGL.framework', 'libGLESv2.framework')):
+        previous = Path(tempfile.mkdtemp(prefix=f'previous-{platform}-angle-', dir=BUILD))
+        app.rename(previous / app.name)
+        print(f'Preserved previous app in {previous}', flush=True)
     cmake = shutil.which('cmake') or '/opt/homebrew/bin/cmake'
     run(cmake, '-S', 'port/ios', '-B', directory, '-G', 'Xcode',
         '-DCMAKE_SYSTEM_NAME=iOS', f'-DCMAKE_OSX_SYSROOT={sdk}',
@@ -37,7 +45,6 @@ def build_app(platform, args):
     else:
         settings += ['-allowProvisioningUpdates']
     run(cmake, '--build', directory, '--config', 'Release', '--target', 'Halo', '--', *settings)
-    app = directory / f'Release-{sdk}' / 'Halo.app'
     if platform == 'simulator':
         for framework in sorted((app / 'Frameworks').glob('*.framework')):
             run('codesign', '--force', '--sign', '-', framework)
@@ -68,7 +75,7 @@ def main():
         return
     if not args.host_only:
         run(sys.executable, 'configure.py', '--ios', '--android-guest-llvm-bin', 'build/macos/toolchain/bin',
-            '--android-guest-gl-include', 'build/macos/toolchain/gl', '--pgo', 'off')
+            '--pgo', 'off')
         ninja = shutil.which('ninja') or ROOT / 'build/macos/toolchain/venv/bin/ninja'
         if not Path(ninja).is_file():
             raise RuntimeError('Install Ninja and run tools/macos_setup.py first; see docs/apple-build.md')

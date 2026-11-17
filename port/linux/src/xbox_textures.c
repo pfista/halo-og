@@ -686,127 +686,15 @@ enum xgpu_texture_copy_status xgpu_texture_volume_mip_copy(DWORD format_word, DW
 /* ---------- GL texture upload/cache */
 #ifndef HALO_MACOS_NATIVE_METAL
 #ifdef HALO_ANDROID
-/* ---------- DXT decoding, for ES drivers without S3TC (Mali) */
-
-static unsigned long color565(unsigned long value)
-{
-	return argb(255, expand5(value >> 11), expand6((value >> 5) & 0x3f), expand5(value & 0x1f));
-}
-
-static unsigned long mix(unsigned long a, unsigned long b, unsigned long weight_a, unsigned long weight_b,
-	unsigned long divisor)
-{
-	unsigned long result = 0;
-	int shift;
-
-	for (shift = 0; shift < 24; shift += 8)
-	{
-		unsigned long channel = (((a >> shift) & 0xff) * weight_a + ((b >> shift) & 0xff) * weight_b) / divisor;
-
-		result |= channel << shift;
-	}
-	return result | 0xff000000UL;
-}
-
-/* one 4x4 block's colors; dxt1 selects the punch-through alpha mode */
-static void dxt_color_block(const unsigned char *block, BOOL dxt1, unsigned long colors[16])
-{
-	unsigned long c0 = block[0] | (block[1] << 8);
-	unsigned long c1 = block[2] | (block[3] << 8);
-	unsigned long palette[4];
-	unsigned long bits = block[4] | (block[5] << 8) | ((unsigned long)block[6] << 16) | ((unsigned long)block[7] << 24);
-	int index;
-
-	palette[0] = color565(c0);
-	palette[1] = color565(c1);
-	if (c0 > c1 || !dxt1)
-	{
-		palette[2] = mix(palette[0], palette[1], 2, 1, 3);
-		palette[3] = mix(palette[0], palette[1], 1, 2, 3);
-	}
-	else
-	{
-		palette[2] = mix(palette[0], palette[1], 1, 1, 2);
-		palette[3] = 0;
-	}
-	for (index = 0; index < 16; index++)
-		colors[index] = palette[(bits >> (index * 2)) & 3];
-}
-
+#include "xbox_dxt.h"
 static void dxt_decode_level(unsigned char kind, const unsigned char *source, unsigned long width, unsigned long height,
 	unsigned long depth, unsigned long *destination)
 {
-	unsigned long blocks_x = (width + 3) / 4, blocks_y = (height + 3) / 4;
-	unsigned long block_bytes = kind == _texel_dxt1 ? 8 : 16;
-	unsigned long z, bx, by, x, y;
-
-	for (z = 0; z < depth; z++)
-	{
-		for (by = 0; by < blocks_y; by++)
-		{
-			for (bx = 0; bx < blocks_x; bx++)
-			{
-				const unsigned char *block = source + ((z * blocks_y + by) * blocks_x + bx) * block_bytes;
-				unsigned long colors[16];
-				unsigned long alpha[16];
-				int index;
-
-				if (kind == _texel_dxt1)
-				{
-					dxt_color_block(block, TRUE, colors);
-					for (index = 0; index < 16; index++)
-						alpha[index] = colors[index] >> 24;
-				}
-				else
-				{
-					dxt_color_block(block + 8, FALSE, colors);
-					if (kind == _texel_dxt3)
-					{
-						for (index = 0; index < 16; index++)
-							alpha[index] = expand4((block[index / 2] >> ((index & 1) * 4)) & 0xf);
-					}
-					else
-					{
-						unsigned long a0 = block[0], a1 = block[1], values[8];
-						unsigned long long bits = 0;
-						int bit;
-
-						for (bit = 0; bit < 6; bit++)
-							bits |= (unsigned long long)block[2 + bit] << (bit * 8);
-						values[0] = a0;
-						values[1] = a1;
-						if (a0 > a1)
-						{
-							for (index = 2; index < 8; index++)
-								values[index] = ((8 - index) * a0 + (index - 1) * a1) / 7;
-						}
-						else
-						{
-							for (index = 2; index < 6; index++)
-								values[index] = ((6 - index) * a0 + (index - 1) * a1) / 5;
-							values[6] = 0;
-							values[7] = 255;
-						}
-						for (index = 0; index < 16; index++)
-							alpha[index] = values[(bits >> (index * 3)) & 7];
-					}
-				}
-				for (y = 0; y < 4; y++)
-				{
-					for (x = 0; x < 4; x++)
-					{
-						unsigned long px = bx * 4 + x, py = by * 4 + y;
-
-						if (px < width && py < height)
-						{
-							destination[(z * height + py) * width + px] =
-								(colors[y * 4 + x] & 0x00ffffffUL) | (alpha[y * 4 + x] << 24);
-						}
-					}
-				}
-			}
-		}
-	}
+	enum dxt_format format = kind == _texel_dxt1 ? DXT1 : kind == _texel_dxt3 ? DXT3 : DXT5;
+	unsigned long pitch = ((width + 3) / 4) * (format == DXT1 ? 8 : 16);
+	for (unsigned long z = 0; z < depth; z++)
+		dxt_decode_bgra_slice(format, source + z * pitch * ((height + 3) / 4), width, height, pitch,
+			(uint32_t *)(destination + z * width * height), width);
 }
 #endif
 

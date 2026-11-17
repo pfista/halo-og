@@ -1,4 +1,4 @@
-# Native Metal services, only in the macOS guest/host pair.
+# Native Metal services shared by the Apple guest and host.
 host_metal_initialize
 host_metal_submit
 host_metal_readback

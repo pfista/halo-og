@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Prepare public Mac build dependencies; never downloads game data or the XDK."""
+import argparse
 import hashlib
 import json
 import os
@@ -28,6 +29,9 @@ def download(entry, destination):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ios", action="store_true", help="Prepare the iPhone toolchain without the Mac ANGLE package")
+    args = parser.parse_args()
     manifest = json.loads((ROOT / "port/macos/dependencies.json").read_text())
     llvm = Path(os.environ.get("HALO_MACOS_LLVM_BIN", "/opt/homebrew/opt/llvm/bin"))
     version = subprocess.check_output([llvm / "llvm-config", "--version"], text=True).strip()
@@ -62,12 +66,13 @@ def main():
         raise RuntimeError("Install ninja (for example: brew install ninja)")
     for entry in manifest["headers"]:
         download(entry, toolchain / "gl" / entry["path"])
-    archive = BUILD / "angle/angle.zip"
-    download(manifest["angle"], archive)
-    if not (BUILD / "angle/dist/BUILD_INFO.txt").exists():
-        with zipfile.ZipFile(archive) as package:
-            package.extractall(BUILD / "angle")
-    print(f"Mac build dependencies ready (LLVM {version})")
+    if not args.ios:
+        archive = BUILD / "angle/angle.zip"
+        download(manifest["angle"], archive)
+        if not (BUILD / "angle/dist/BUILD_INFO.txt").exists():
+            with zipfile.ZipFile(archive) as package:
+                package.extractall(BUILD / "angle")
+    print(f"Apple build dependencies ready (LLVM {version})")
 
 
 if __name__ == "__main__":

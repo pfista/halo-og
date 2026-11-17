@@ -2568,6 +2568,14 @@ int halo_metal_apply_video_settings(void) {
     command.display_flags=config_boolean("display.vsync") ? HALO_METAL_DISPLAY_VSYNC:0;
     packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();packet_flush(NATIVE_FLUSH_SETTINGS);return 1;
 }
+#ifdef HALO_IOS
+/* The UIKit overlay sends gamepad events for both menu and gameplay controls. */
+int halo_ui_pointer_update(int menus_active, struct halo_ui_pointer *pointer) {
+    (void)menus_active;
+    (void)pointer;
+    return 0;
+}
+#else
 static void ui_point_from_window(float wx,float wy,short *x,short *y) {
     int ww,wh,pw,ph;
     *x=*y=-1;
@@ -2595,6 +2603,7 @@ int halo_ui_pointer_update(int menus_active,struct halo_ui_pointer *pointer) {
     pointer->wheel_steps=state.wheel_steps<-8 ? -8:state.wheel_steps>8 ? 8:state.wheel_steps;
     return 1;
 }
+#endif
 static void write_screenshot(struct native_resource *target) {
     const char *directory=config_string("debug.screenshot_directory");
     if (!*directory) return;

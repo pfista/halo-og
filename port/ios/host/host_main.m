@@ -53,16 +53,24 @@ int main(int argc, char **argv) {
     (void)argc; (void)argv;
     @autoreleasepool {
         NSFileManager *files = NSFileManager.defaultManager;
+#ifdef HALO_IOS_MAC_CHECK
+        NSDictionary<NSString *, NSString *> *environment = NSProcessInfo.processInfo.environment;
+        NSString *data = environment[@"HALO_DATA_ROOT"] ?: @"assets";
+        NSString *saves = environment[@"HALO_SAVE_ROOT"] ?: @"build/ios/mac-runtime-check/saves";
+#else
         NSString *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
         NSString *data = [documents stringByAppendingPathComponent:@"GameData"];
         [files createDirectoryAtPath:data withIntermediateDirectories:YES attributes:nil error:NULL];
         if (![files fileExistsAtPath:[data stringByAppendingPathComponent:@"maps/ui.map"]])
             data = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"GameData"];
         NSString *saves = [NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@"Halo"];
+#endif
         [files createDirectoryAtPath:saves withIntermediateDirectories:YES attributes:nil error:NULL];
         snprintf(data_root, sizeof(data_root), "%s", data.fileSystemRepresentation);
         snprintf(save_root, sizeof(save_root), "%s", saves.fileSystemRepresentation);
+#ifndef HALO_IOS_MAC_CHECK
         freopen([[saves stringByAppendingPathComponent:@"halo.log"] fileSystemRepresentation], "w", stderr);
+#endif
         setbuf(stderr, NULL);
         // A sandbox-relative shortcut for opt-in device frame profiling.
         const char *profile = getenv("HALO_PERF_LOG");

@@ -76,7 +76,7 @@ parser.add_argument(
 parser.add_argument("--macos", action="store_true", help="generate the rebased Apple Silicon guest target")
 parser.add_argument("--macos-renderer", choices=("angle", "metal"), default="angle",
                     help="Mac renderer selected at build time (default: angle)")
-parser.add_argument("--ios", action="store_true", help="generate the signed-image iPhone guest target")
+parser.add_argument("--ios", action="store_true", help="generate the signed-image native Metal iPhone guest target")
 parser.add_argument("--android-guest-only", action="store_true", help="build the portable ARM image without an Android host")
 parser.add_argument("--android-guest-llvm-bin", type=Path, help="directory containing llvm-ar and ld.lld")
 parser.add_argument("--android-guest-gl-include", type=Path, help="directory containing Khronos GLES headers")

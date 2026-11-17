@@ -1,8 +1,8 @@
 # Build on Apple Silicon
 
 Start here for both macOS and iPhone. All commands run on an Apple Silicon Mac
-from the repository root unless stated otherwise. The Mac game runs natively;
-the iPhone build also uses native ARM code and ANGLE's Metal renderer.
+from the repository root unless stated otherwise. Both games use native ARM code.
+The iPhone uses the Mac's native Metal renderer.
 
 To run Halo OG on Mac without compiling, download the
 [macOS DMG](../port/macos/README.md#download). Published testing prereleases have
@@ -32,7 +32,8 @@ export PATH="$(brew --prefix lld@22)/bin:$PATH"
 # For iPhone builds; adjust if Xcode is installed elsewhere:
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 
-python3 tools/macos_setup.py
+python3 tools/macos_setup.py       # Mac or combined setup
+# For iPhone only, use python3 tools/macos_setup.py --ios
 ```
 
 The compiler adapter requires **LLVM 22** (tested with 22.1.8), not Apple clang

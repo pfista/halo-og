@@ -90,6 +90,8 @@ static const struct config_setting config_settings[] =
 	{ "display.renderer", _config_string, "\"metal\"", NULL, _environment_value, _platform_all,
 		"Mac rendering: metal uses native Metal by default; angle selects\n"
 		"the alternate ANGLE renderer. Restart after changing this setting." },
+#endif
+#if defined(HALO_MACOS)
 	{ "display.frame_limit", _config_integer, "0", NULL, _environment_value, _platform_all,
 		"Native Metal render cap: 0 is uncapped, or choose 30, 60 or 120.\n"
 		"Higher rates require interpolation; VSync can limit the achieved rate.\n"
@@ -98,8 +100,6 @@ static const struct config_setting config_settings[] =
 		"Native Metal world smoothing: off preserves the original picture; fxaa\n"
 		"smooths world edges before drawing the original HUD. Original assets\n"
 		"and the game's 30 ticks a second stay unchanged. Restart to apply." },
-#endif
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
 	{ "display.render_height", _config_integer, "480", NULL, _environment_value, _platform_all,
 		"Native Metal render height: 0 for the native drawable, or 480, 720,\n"
 		"1080, 1440 or 2160 pixels. Native mode uses actual Retina pixels.\n"

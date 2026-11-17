@@ -88,7 +88,7 @@ class HudPlatformBuildTests(unittest.TestCase):
                 sources = (generated, "source/interface/ui_widget.c", "port/linux/game/device_settings.c",
                     "port/linux/game/hud_hires_tags.c", "port/linux/src/port_config.c", "port/linux/src/hud_hires.c",
                     "port/linux/src/text_hires.c",
-                    "port/linux/src/d3d8_metal.c" if target == "macos-metal" else "port/linux/src/d3d8_gl.c")
+                    "port/linux/src/d3d8_metal.c" if target in ("ios", "macos-metal") else "port/linux/src/d3d8_gl.c")
                 for source in sources:
                     self.assertIn(source, compiled)
                     self.assertIn(compiled[source], link["inputs"])

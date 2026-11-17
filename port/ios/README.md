@@ -1,15 +1,15 @@
 # iPhone development build
 
 This port targets iPhone 17 Pro Max, arm64, iOS 26.0 or later. It uses the
-existing game and Xbox SDK inputs from the local Mac setup. The renderer uses
-ANGLE's Metal backend and inherits the Mac vertex-upload and occlusion-query
-fixes. The first build uses the display's landscape aspect ratio at a 480-pixel
-internal height, scaled to the native drawable.
+same native Metal renderer as the Mac, with a landscape view and a 480-pixel
+default internal height. Metal scales the image to the iPhone drawable.
+The startup log identifies the active GPU with `Native Metal guest command interface`.
 
 ## Build
 
 First complete [Apple build setup](../../docs/apple-build.md), including full
-Xcode 26+, CMake, the public dependencies, your local game maps and XDK headers.
+Xcode 26+, CMake and your local game maps. For an iPhone-only setup, run
+`python3 tools/macos_setup.py --ios`.
 You do not need to build the Mac app or the simulator first.
 `DEVELOPER_DIR` defaults to `/Applications/Xcode.app/Contents/Developer`;
 the build does not change the system's selected developer directory.
@@ -132,10 +132,9 @@ before `xcrun simctl launch`; the simulator may advertise a system gamepad.
 ## Frame rate
 
 The app opts into ProMotion and SDL requests the display's maximum refresh
-rate: 120 Hz on supported iPhones, 60 Hz on other displays. ANGLE/Metal vsync
-paces presentation. The engine interpolates rendered frames between its
-unchanged 30 Hz simulation ticks, so higher frame rates do not speed up gameplay.
-Keep `display.interpolation` and `display.vsync` enabled in `config.toml`.
+rate. On ProMotion iPhones it can request 120 Hz. UIKit schedules Metal
+presentation at the available rate. Enable `display.interpolation` in
+`config.toml` to interpolate rendering between the original 30 Hz game ticks.
 
 For a 60 Hz comparison or lower-power session, set `HALO_IOS_REFRESH_RATE=60`
 in the Xcode scheme's environment or pass it through `devicectl`:
@@ -152,12 +151,11 @@ Rate setting, or thermal conditions. See Apple's
 [ProMotion guidance](https://developer.apple.com/documentation/quartzcore/optimizing-iphone-and-ipad-apps-to-support-promotion-displays).
 
 For device measurements, set `HALO_PERF_LOG=1` at launch. This writes per-frame
-timings to `Library/Application Support/Halo/frames.csv` in the app container;
-each profiled launch overwrites that file. `frame_ms` measures the interval
-between completed buffer swaps (about 8.33 ms at 120 FPS or 16.67 ms at 60 FPS),
-not GPU execution time or proof that every frame reached the screen. Use
-Instruments' Game Performance/Metal timeline to inspect GPU and presentation
-behavior. Profiling is off on ordinary launches.
+timings to `Library/Application Support/Halo/frames.csv` in the app container.
+Each profiled launch overwrites that file. The native renderer uses the Metal
+drawable's presentation timestamp. The interval between successive presentations
+is about 8.33 ms at 120 FPS or 16.67 ms at 60 FPS. Profiling is off on ordinary
+launches. The simulator does not expose drawable presentation timestamps.
 
 ## Runtime design
 
@@ -183,9 +181,8 @@ python3 -m unittest tools.test_mobile_invites
 python3 tools/ios_invite_smoke.py
 python3 tools/test_ios_runtime.py
 python3 tools/ios_mac_runtime_check.py
-python3 tools/macos_benchmark.py \
-  --host build/ios/mac-runtime-check/halo --guest build/ios/halo_guest.elf \
-  --output build/ios/mac-runtime-check/campaign --effects --seconds 45
+HALO_DATA_ROOT="$PWD/assets" HALO_GPU_STATS=1 HALO_EXIT_AFTER=8 \
+  build/ios/mac-runtime-check/halo
 ```
 
 The invite smoke creates and removes a separate simulator. It uses SDL's UIKit
@@ -201,7 +198,8 @@ unaligned accesses, atomics, varargs and Xbox memory addresses. The Mac diagnost
 host exercises the complete iPhone engine layout independently of UIKit and
 device signing. It is not an iPhone performance benchmark.
 
-On September 27, 2026, the 45-second Mac diagnostic campaign with repeated
+The following measurements used the earlier ANGLE renderer. On September 27,
+2026, the 45-second Mac diagnostic campaign with repeated
 explosions exited successfully: median frame time 16.66 ms, p95 17.11 ms,
 maximum measured footprint 465 MB. Mac allocator and audio regression probes
 also passed. The iPhone simulator rendered the menu at 2868×1320 with Metal and
