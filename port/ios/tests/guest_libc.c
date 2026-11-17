@@ -17,3 +17,7 @@ int memcmp(const void *left, const void *right, unsigned long size) {
     while (size--) { if (*a != *b) return *a - *b; a++; b++; }
     return 0;
 }
+int strcmp(const char *left, const char *right) {
+    while (*left && *left == *right) { ++left; ++right; }
+    return (unsigned char)*left - (unsigned char)*right;
+}

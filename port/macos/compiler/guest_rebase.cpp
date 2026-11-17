@@ -1,6 +1,6 @@
 /* Experimental LLVM 22 pass for the macOS ARM guest.
- * Keep ILP32 layouts; dereferences use 64-bit address space 272 and a 1-TB
- * virtual address bias. Run after IR optimization and before code generation.
+ * Keep ILP32 layouts; dereferences use 64-bit address space 272 and an arena
+ * base. Run after IR optimization and before code generation.
  * This is an ABI adapter, not a sandbox for untrusted code.
  */
 #include "llvm/IR/IRBuilder.h"
@@ -24,10 +24,8 @@ bool isHandle(StringRef name, unsigned argument) {
 }
 struct RebasePass : PassInfoMixin<RebasePass> {
     bool ios = false;
-    bool macCheck = false;
-    explicit RebasePass(bool ios = false, bool macCheck = false) : ios(ios), macCheck(macCheck) {}
+    explicit RebasePass(bool ios = false) : ios(ios) {}
     PreservedAnalyses run(Module &module, ModuleAnalysisManager &) {
-        const uint64_t bias = ios && !macCheck ? 0x400000000ULL : GuestBias;
         if (module.getDataLayout().getPointerSize(0) != 4 ||
             module.getDataLayout().getPointerSize(272) != 8)
             report_fatal_error("Halo rebase requires arm64_32 with 64-bit address space 272");
@@ -85,6 +83,22 @@ struct RebasePass : PassInfoMixin<RebasePass> {
             for (BasicBlock &block : function)
                 for (Instruction &instruction : block)
                     work.push_back(&instruction);
+            Value *arenaBase = nullptr;
+            auto getArenaBase = [&]() -> Value * {
+                if (!arenaBase) {
+                    IRBuilder<> entry(&*function.getEntryBlock().getFirstInsertionPt());
+                    if (ios) {
+                        // Every guest stack lives in the same 4 GiB-aligned arena.
+                        // Read the full native SP before arm64_32 can truncate it.
+                        auto *readBase = InlineAsm::get(FunctionType::get(entry.getInt64Ty(), false),
+                            "mov $0, sp\n\tand $0, $0, #0xffffffff00000000", "=r", false);
+                        arenaBase = entry.CreateCall(readBase, {}, "guest.arena");
+                    } else {
+                        arenaBase = entry.getInt64(GuestBias);
+                    }
+                }
+                return arenaBase;
+            };
             for (Instruction *instruction : work) {
                 IRBuilder<> builder(instruction);
                 if (ios) {
@@ -146,8 +160,7 @@ struct RebasePass : PassInfoMixin<RebasePass> {
                             "and $0, $1, #0xffffffff", "=r,r", false);
                         wide = builder.CreateCall(truncate, {wide});
                     }
-                    Value *address =
-                        builder.CreateOr(wide, builder.getInt64(bias));
+                    Value *address = builder.CreateOr(wide, getArenaBase());
                     if (nullable)
                         address =
                             builder.CreateSelect(builder.CreateICmpEQ(offset, builder.getInt32(0)),
@@ -248,7 +261,8 @@ struct RebasePass : PassInfoMixin<RebasePass> {
                         if (ios) {
                             // Written once by the host: native signed image base
                             // minus ELF image base. Code pages are never writable.
-                            Value *slot = builder.CreateIntToPtr(builder.getInt64(bias + 0xff0000),
+                            Value *slot = builder.CreateIntToPtr(
+                                builder.CreateOr(getArenaBase(), builder.getInt64(0xff0000)),
                                 PointerType::get(module.getContext(), 272));
                             Value *delta = builder.CreateLoad(builder.getInt64Ty(), slot);
                             Value *offset = builder.CreatePtrToInt(call->getCalledOperand(), builder.getInt32Ty());
@@ -286,10 +300,8 @@ extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
                                                            ArrayRef<PassBuilder::PipelineElement>) {
                     if (name != "halo-rebase" && name != "halo-rebase-ios" && name != "halo-rebase-ios-mac-check")
                         return false;
-                    // macOS reserves the iOS data arena on some OS versions.
-                    // Source-only CI uses identical signed-image lowering with
-                    // the Mac arena; the device pipeline retains its own bias.
-                    manager.addPass(RebasePass(name != "halo-rebase", name == "halo-rebase-ios-mac-check"));
+                    // The Mac diagnostic host runs the same stack-relative iOS code.
+                    manager.addPass(RebasePass(name != "halo-rebase"));
                     return true;
                 });
             }};

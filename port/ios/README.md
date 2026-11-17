@@ -167,9 +167,11 @@ The ELF is an intermediate build artifact, not runtime-loaded executable code.
 No JIT, writable executable mapping or runtime instruction patching is used.
 
 The LLVM adapter materializes original game addresses and translates data
-accesses into a separate non-executable arena at `0x400000000`. Only the span
-below guest address `0x90000000` is reserved (2.25 GB of virtual space); actual
-memory is committed as used. Indirect calls add an immutable code-image delta.
+accesses into a separate non-executable arena. iOS chooses a free 4 GiB-aligned
+base on each launch. Every game thread has its stack inside the arena, so the
+compiler can recover the base from the upper bits of the stack pointer. The
+host reserves 2.25 GiB of virtual space and commits memory as used.
+Indirect calls add an immutable code-image delta.
 Native callbacks use the same translation. Thread-local control blocks are
 lowered before rebasing. iOS has a distinct ABI version to prevent mixing its
 image with the Mac or Android loaders.

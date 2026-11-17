@@ -12,7 +12,8 @@
 #include "halo_android_abi.h"
 
 #ifdef HALO_IOS
-#define HALO_MACOS_BIAS UINT64_C(0x400000000)
+extern uintptr_t host_guest_arena_base;
+#define HALO_MACOS_BIAS host_guest_arena_base
 /* The allocator, Xbox window and linked image all fit below 0x90000000.
  * Reserve only that span so UIKit/Metal can use the rest of the address space. */
 #define HALO_ARENA_SIZE UINT64_C(0x90000000)

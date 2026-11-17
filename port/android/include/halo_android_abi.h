@@ -36,7 +36,8 @@ keeps its heaps low in the address space and fills it upwards */
 
 #define HALO_GUEST_MAGIC 0x4f4c4148u /* 'HALO' */
 #ifdef HALO_IOS
-#define HALO_GUEST_ABI_VERSION 0x20001
+/* The data arena can move independently of the signed code image. */
+#define HALO_GUEST_ABI_VERSION 0x20002
 #elif defined(HALO_MACOS)
 /* Rebased guest pointers; cannot be loaded by the Android host. */
 #define HALO_GUEST_ABI_VERSION 0x10001
