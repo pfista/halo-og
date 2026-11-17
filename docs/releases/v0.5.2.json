@@ -1,0 +1,11 @@
+{
+  "summary": "Direct Camera now follows fast first-person turns, including a full spin on a System Link host. Hosts can also choose how players turn during grenade throws and in midair. This patch corrects playback of original Xbox sounds and fixes fog tracking in split-screen.",
+  "highlights": [
+    "Direct Camera follows your aim through a fast turn on foot, including when your view crosses behind your character.",
+    "Player Turning defaults to Stock. Before hosting a match, choose Follow Aim under Edit Gametypes → Performance to let Spartans turn at the map’s normal moving turn speed during grenade throws and in midair. Every player joining an enabled match needs a compatible build.",
+    "Xbox audio playback now includes the first sample in each compressed block, correcting a source of periodic buzz. Looping sounds retain their muffling as you move out of range and release their audio channels when you leave a map.",
+    "Split-screen fog now tracks each player’s own camera as they look around.",
+    "The community assault rifle grenade launcher now centers its loaded ammo count and displays all six ammo indicators in one row.",
+    "On Mac, Native Metal reuses prepared drawing work. In a measured campaign scene at native resolution, the CPU spent about 11% less time preparing and encoding frames, with similar frame rates."
+  ]
+}
