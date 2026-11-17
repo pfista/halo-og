@@ -19,6 +19,7 @@ PREFIX = r'''
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include "metal_frame_timing.h"
 typedef int boolean;
 typedef float real;
 typedef unsigned short word;
@@ -128,6 +129,19 @@ static void render_ui_widgets_fullscreen(const rectangle2d *bounds) {
 }
 static void game_engine_nonplayer_post_rasterize(void) { ordinary_nonplayer[render.window_index]++; }
 static void render_sky(void) { world[render.window_index]++; }
+#if defined(HALO_MACOS_NATIVE_METAL) && HALO_MACOS_NATIVE_METAL
+static boolean visibility_tests_pending;
+static void rasterizer_lens_flares_submit_occlusion_tests(void) {
+    assert(!visibility_tests_pending); visibility_tests_pending=TRUE;
+}
+void halo_metal_visibility_checkpoint(void) {
+    assert(visibility_tests_pending); visibility_tests_pending=FALSE;
+}
+static void render_object_shadows(void) { assert(!visibility_tests_pending); }
+#else
+#define rasterizer_lens_flares_submit_occlusion_tests() ((void)0)
+#define render_object_shadows() ((void)0)
+#endif
 static void render_debug(void) { assert(render.local_player_index==0); debug[render.window_index]++; }
 static void halo_metal_antialias_before_hud(long x0,long y0,long x1,long y1) {
     assert(x0<x1 && y0<y1); aa[render.window_index]++;
@@ -166,7 +180,7 @@ static void process_rendered_objects(struct object_render_data *data) { assert(!
 NO_OPS = """
 profile_render_window_start profile_render_window_end structure_visibility_compute
 build_sprite_prepare_for_window lights_preprocess_scene structure_render_preprocess
-structure_render_lightmaps rasterizer_lens_flares_submit_occlusion_tests render_object_shadows
+structure_render_lightmaps
 lights_render_diffuse rasterizer_decals_begin rasterizer_decals_draw rasterizer_decals_end
 structure_render_diffuse_texture lights_render_specular structure_render_specular_lightmaps
 structure_render_reflection_lightmap_masks structure_render_reflection_mirrors
@@ -320,7 +334,8 @@ class TeammateViewRenderTests(unittest.TestCase):
             for name, defines in variants:
                 with self.subTest(renderer=name):
                     output = directory / (name + (".exe" if sys.platform == "win32" else ""))
-                    command = [compiler, "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+                    command = [compiler, "-I", str(ROOT / "port/linux/src"),
+                               "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
                                "-Wno-unused-function", "-Wno-unused-variable", "-Wno-unused-parameter"]
                     if sys.platform != "win32":
                         command += ["-fsanitize=address,undefined"]
