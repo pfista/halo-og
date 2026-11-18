@@ -178,8 +178,8 @@ directory permission and symlink target against the source and verifies the
 copied signature. It preserves the app's build information and does not rebuild
 the game or change user data. Existing output files are never replaced.
 
-The end user needs no Homebrew, XDK or build tools. SDL3, ANGLE, Sparkle and the
-compiled engine are bundled. First launch accepts the user's locally obtained
+The Mac app includes SDL3, Sparkle and the compiled engine and uses the system
+Metal framework. First launch accepts the user's locally obtained
 original Xbox Halo XISO/ISO, or extracted game folder (its `maps` subfolder also
 works). Original data is imported locally and is not uploaded. Selecting
 compatible original NTSC data enables background community downloads when the

@@ -49,7 +49,7 @@ class HudPlatformBuildTests(unittest.TestCase):
                 android_ndk=dependencies, android_guest_only=target != "android",
                 android_guest_llvm_bin=dependencies, android_guest_gl_include=dependencies,
                 android_guest_cc="clang", macos=target.startswith("macos"),
-                ios=target == "ios", macos_renderer="metal" if target == "macos-metal" else "angle")
+                ios=target == "ios", macos_renderer="metal" if target == "macos-metal" else None)
             try:
                 os.chdir(ROOT)
                 if target == "linux":
@@ -74,7 +74,7 @@ class HudPlatformBuildTests(unittest.TestCase):
             *("port/assets/hud/" + asset["name"] + ".png" for asset in assets),
             *("port/assets/titles/" + asset["name"] + ".png" for asset in titles),
             "port/assets/fonts/Overpass-750.ttf", "port/assets/fonts/Overpass-900.ttf"}
-        for target in ("linux", "windows", "android", "ios", "macos-angle", "macos-metal"):
+        for target in ("linux", "windows", "android", "ios", "macos", "macos-metal"):
             with self.subTest(target=target):
                 edges = self.graph(target)
                 embed = [edge for edge in edges if edge["rule"].endswith("_embed_assets")]
@@ -88,7 +88,7 @@ class HudPlatformBuildTests(unittest.TestCase):
                 sources = (generated, "source/interface/ui_widget.c", "port/linux/game/device_settings.c",
                     "port/linux/game/hud_hires_tags.c", "port/linux/src/port_config.c", "port/linux/src/hud_hires.c",
                     "port/linux/src/text_hires.c",
-                    "port/linux/src/d3d8_metal.c" if target in ("ios", "macos-metal") else "port/linux/src/d3d8_gl.c")
+                    "port/linux/src/d3d8_metal.c" if target in ("ios", "macos", "macos-metal") else "port/linux/src/d3d8_gl.c")
                 for source in sources:
                     self.assertIn(source, compiled)
                     self.assertIn(compiled[source], link["inputs"])

@@ -180,13 +180,16 @@ def build_one(out, revision, legacy, jobs):
                     created_utc=datetime.now(timezone.utc).isoformat(),
                     probe_files={p.name: digest(p) for p in sorted(PROBES.glob("probe.*"))})
     manifest["instrumented_files"] = instrument(tree, legacy)
-    # Dependencies are already installed by the normal Mac setup. ANGLE is copied
-    # because build_host refreshes a companion symlink inside its framework.
-    for name in ("build/macos/toolchain", "build/macos/angle/dist"):
-        source = ROOT / name
-        if not source.is_dir():
-            raise RuntimeError(f"Missing {source}; run the repository's normal Mac setup first")
-        shutil.copytree(source, tree / name, symlinks=True)
+    toolchain = Path("build/macos/toolchain")
+    if not (ROOT / toolchain).is_dir():
+        raise RuntimeError("Run tools/macos_setup.py before building the fidelity probes")
+    shutil.copytree(ROOT / toolchain, tree / toolchain, symlinks=True)
+    # Historical host builders link ANGLE and write a symlink inside its framework.
+    if "HALO_MACOS_ANGLE_DIR" in (tree / "tools/macos_build.py").read_text():
+        angle = Path("build/macos/angle/dist")
+        if not (ROOT / angle).is_dir():
+            raise RuntimeError("This historical revision requires tools/macos_setup.py --gl-reference")
+        shutil.copytree(ROOT / angle, tree / angle, symlinks=True)
     for name in ("build/android/third_party/musl-1.2.5", "build/android/third_party/SDL3", "build/macos/sparkle"):
         source = ROOT / name
         if source.is_dir():

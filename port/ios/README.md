@@ -194,7 +194,9 @@ Show the **Halo OG URI probe** device in Simulator or Xcode's Device Hub, then
 tap **Open** when iOS asks **Open in Halo OG?** for either URI.
 
 The standalone signed-image test covers globals, indirect calls, stack pointers,
-unaligned accesses, atomics, varargs and Xbox memory addresses. The Mac diagnostic
+unaligned accesses, atomics, varargs and Xbox memory addresses. On a Mac with a
+Metal device, it also clears a texture and reads the pixel back through the
+shipping iOS Metal imports at two different guest memory bases. The Mac diagnostic
 host exercises the complete iPhone engine layout independently of UIKit and
 device signing. It is not an iPhone performance benchmark.
 

@@ -244,10 +244,9 @@ int main(void) {
     assert(!strstr(help[_device_setting_render_height],"Relaunch"));
 #if defined(HALO_MACOS)
     const short choices[]={0,480,720,1080,1440,2160};
-    assert(device_settings_page_counts[_ds_video]==8 && device_settings_page_counts[_ds_timer]==7);
-    assert(strstr(captions[_ds_video_help],"Renderer, assets and AA:"));
+    assert(device_settings_page_counts[_ds_video]==7 && device_settings_page_counts[_ds_timer]==7);
+    assert(strstr(captions[_ds_video_help],"Relaunch for asset quality"));
     assert(!strstr(captions[_ds_video_help],"resolution"));
-    assert(strstr(help[_device_setting_renderer],"next launch"));
     assert(strstr(help[_device_setting_asset_quality],"Relaunch"));
     assert(strstr(help[_device_setting_anti_aliasing],"Relaunch"));
 #else
@@ -264,7 +263,7 @@ int main(void) {
             with self.subTest(platform=platform):
                 self.compile_run(source, defines=("-D"+platform+"=1",))
 
-    def test_mac_resolution_menu_stages_accepts_cancels_and_keeps_angle_rows_hidden(self):
+    def test_mac_resolution_menu_stages_accepts_cancels_and_exposes_all_metal_controls(self):
         menu = (ROOT / "source/interface/game_settings_menu.inc").read_text()
         definitions = menu[menu.index("#define DEVICE_SETTINGS_ENTRY"):menu.index("#define DEVICE_SETTINGS_STRING_COUNT")]
         storage = SETTINGS_HARNESS.split("int main(", 1)[0].replace(
@@ -310,27 +309,20 @@ static struct widget_instance *widget_instance_find_by_tag_index_recursive(struc
         if((found=widget_instance_find_by_tag_index_recursive(child,tag))) return found;
     return NULL;
 }
-static short widget_instance_get_child_index_from_parent(struct widget_instance *widget) {
-    short index=0;struct widget_instance *child;
-    for(child=widget->parent->child;child && child!=widget;child=child->next) index++;
-    return index;
-}
 ''' + "\n".join(function(menu, signature) for signature in (
             "static struct device_settings_draft *device_settings_draft_for(",
             "static boolean game_settings_is_native_spinner(",
-            "static void device_settings_video_visibility(",
-            "static boolean device_settings_video_tab(",
             "static double device_settings_cycle_choice(",
             "static boolean device_settings_is_stick_deadzone(")) + r'''
-static void device_settings_render_draft(struct device_settings_draft *draft) { device_settings_video_visibility(draft); }
+static void device_settings_render_draft(struct device_settings_draft *draft) { (void)draft; }
 ''' + function(menu, "static boolean game_settings_event(") + r'''
 int main(void) {
     double values[NUMBER_OF_DEVICE_SETTINGS];
     struct widget_instance root={0},column={0},rows[DEVICE_SETTINGS_MAX_PAGE_ROWS+1]={{0}},footer={0};
-    struct widget_instance *height=NULL,*renderer_row=NULL,*cap=NULL,*aa=NULL;
+    struct widget_instance *height=NULL,*cap=NULL,*aa=NULL;
     struct device_settings_draft *draft=&device_settings_drafts[0];
     const short choices[]={720,1080,1440,2160,0,480};unsigned i;
-    reset(values);renderer="metal";
+    reset(values);
     device_settings.ready=TRUE;device_settings.native_pages=TRUE;device_settings.about_tag=NONE;
     device_settings.accept_tag=200;device_settings.screen_tags[_ds_main][_ds_video]=100;
     device_settings.footer_tags[_ds_video]=300;
@@ -343,15 +335,14 @@ int main(void) {
     }
     for(i=0;i<=DEVICE_SETTINGS_MAX_PAGE_ROWS;i++) {
         short setting=i<DEVICE_SETTINGS_MAX_PAGE_ROWS ? device_settings_page_rows[_ds_video][i] : NONE;
-        rows[i].parent=&column;rows[i].previous=i ? &rows[i-1] : NULL;
+        rows[i].visible=TRUE;rows[i].parent=&column;rows[i].previous=i ? &rows[i-1] : NULL;
         rows[i].next=i<DEVICE_SETTINGS_MAX_PAGE_ROWS ? &rows[i+1] : NULL;
         rows[i].definition_tag_index=setting==NONE ? device_settings.accept_tag : device_settings.row_tags[setting];
         if(setting==_device_setting_render_height) height=&rows[i];
-        if(setting==_device_setting_renderer) renderer_row=&rows[i];
         if(setting==_device_setting_frame_limit) cap=&rows[i];
         if(setting==_device_setting_anti_aliasing) aa=&rows[i];
     }
-    assert(height && renderer_row && cap && aa);
+    assert(height && cap && aa);
     assert(game_settings_event(&root,_device_settings_initialize));
     assert(height->visible && !height->disabled && draft->values[_device_setting_render_height]==480);
     for(i=0;i<NUMBEROF(choices);i++) {
@@ -376,17 +367,11 @@ int main(void) {
     assert(footer.parameters.text_box.string_list_index==_ds_failure_help);
     write_ok=1;assert(game_settings_event(&root,_device_settings_accept));
     assert(render_height==1080 && writes==3 && !video_applies);
-    renderer="angle";column.focused_child=height;
     assert(game_settings_event(&root,_device_settings_initialize));
-    assert(!height->visible && height->disabled && !cap->visible && !aa->visible);
-    assert(column.focused_child==column.child);
-    assert(!game_settings_event(height,_device_settings_next));
-    assert(render_height==1080 && draft->values[_device_setting_render_height]==1080 && writes==3);
-    assert(game_settings_event(renderer_row,_device_settings_next));
-    assert(height->visible && cap->visible && aa->visible && !strcmp(renderer,"angle") && writes==3);
+    assert(height->visible && cap->visible && aa->visible);
     assert(game_settings_event(height,_device_settings_previous));
     assert(game_settings_event(&root,_device_settings_cancel));
-    assert(!strcmp(renderer,"angle") && render_height==1080 && writes==3);
+    assert(render_height==1080 && writes==3);
     return 0;
 }
 '''

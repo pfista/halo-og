@@ -724,9 +724,6 @@ static void settings_native_options(void) {
         L"MENU MUSIC:",L"FULLSCREEN:",L"VSYNC:",L"SMOOTH MOTION:",L"COUNTDOWN:",L"BEEPS:",
         L"MINUTE ANNOUNCEMENTS:",L"ITEM CUES:",L"TIMER POSITION:",L"TIMER SIZE:",
         L"OG MAPS:",L"COMMUNITY MAPS:",L"JOIN IN PROGRESS:",L"LEFT STICK DEADZONE:",L"RIGHT STICK DEADZONE:",L"LOOK ACCELERATION:",L"",L"ASSET QUALITY:"
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
-        ,L"RENDERER:"
-#endif
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
         ,L"RESOLUTION:"
 #endif
@@ -1229,9 +1226,6 @@ static void settings_hud_staging(void) {
         short local=layout==_ds_pause_4p ? 3:0;
         settings_setup(layout==_ds_main ? 0:layout<=_ds_pause_4p ? 1:2);
         assert(device_settings_build());
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
-        settings_values[_device_setting_renderer]=0; /* HUD also works with ANGLE. */
-#endif
         struct widget_instance *root=open_settings(layout,_ds_video,local);
         struct widget_instance *hud=setting_control(root,_device_setting_asset_quality);
         short index=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_asset_quality;
@@ -1491,36 +1485,20 @@ static unsigned mac_visible_rows(struct widget_instance *column) {
 }
 static void mac_settings_video(void) {
     settings_setup(0); assert(device_settings_build());
-    assert(NUMBER_OF_DEVICE_SETTINGS==28 && device_settings_page_counts[_ds_video]==8 && device_settings_page_counts[_ds_timer]==7);
-    for(unsigned i=0;i<8;i++) assert(device_settings.column_children[_ds_main][_ds_video][i].vertical_offset+28<321);
-    assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_renderer],L"experimental"));
-    assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_renderer],L"next launch"));
+    assert(NUMBER_OF_DEVICE_SETTINGS==27 && device_settings_page_counts[_ds_video]==7 && device_settings_page_counts[_ds_timer]==7);
+    for(unsigned i=0;i<7;i++) assert(device_settings.column_children[_ds_main][_ds_video][i].vertical_offset+28<321);
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_render_height],L"Accept applies"));
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_anti_aliasing],L"Relaunch"));
-    settings_values[_device_setting_renderer]=0;
     settings_values[_device_setting_render_height]=720;
     settings_values[_device_setting_frame_limit]=60;
     settings_values[_device_setting_anti_aliasing]=0;
     struct widget_instance *root=open_settings(_ds_main,_ds_video,0),*column=mac_video_column(root);
-    struct widget_instance *renderer=setting_control(root,_device_setting_renderer);
     struct widget_instance *resolution=setting_control(root,_device_setting_render_height);
     struct widget_instance *limit=setting_control(root,_device_setting_frame_limit);
     struct widget_instance *aa=setting_control(root,_device_setting_anti_aliasing);
-    assert(mac_visible_rows(column)==5 && !writes);
-    struct widget_instance *hud=setting_control(root,_device_setting_asset_quality);
-    assert(hud && hud->parent->visible && !hud->parent->disabled);
-    assert(!TEST_FLAG(device_settings.column[_ds_main][_ds_video].flags,_widget_dpad_updown_tabs_thru_list_items_bit));
-    assert(device_settings.column[_ds_main][_ds_video].event_handlers.count==4);
+    assert(mac_visible_rows(column)==7 && !writes);
+    assert(resolution->parent->visible && limit->parent->visible && aa->parent->visible);
     assert(column->focused_child==column->child);
-    assert(game_settings_event(column,_device_settings_previous));
-    assert(column->parameters.list.selected_index==4 && column->focused_child==hud->parent);
-    assert(game_settings_event(column,_device_settings_next));
-    assert(column->parameters.list.selected_index==0);
-    assert(!game_settings_event(resolution,_device_settings_next));
-    assert(!game_settings_event(limit,_device_settings_next));
-    assert(!game_settings_event(aa,_device_settings_next));
-    assert(game_settings_event(renderer,_device_settings_next));
-    assert(mac_visible_rows(column)==8 && !writes && settings_values[_device_setting_renderer]==0);
     assert(device_settings_drafts[0].values[_device_setting_render_height]==720);
     assert(!wcscmp(device_settings.text[resolution->parameters.list.selected_index],L"720p"));
     const short heights[]={1080,1440,2160,0,480,720};
@@ -1548,25 +1526,17 @@ static void mac_settings_video(void) {
     assert(game_settings_event(aa,_device_settings_next));
     assert(device_settings_drafts[0].values[_device_setting_anti_aliasing]==1);
     assert(!wcscmp(device_settings.text[aa->parameters.list.selected_index],L"FXAA"));
-    /* Moving the cursor cannot change settings; hiding a focused native row
-       resets focus and preserves all staged native values. */
-    column->focused_child=column->child;
-    for(unsigned i=0;i<7;i++) assert(game_settings_event(column,_device_settings_next));
-    assert(column->parameters.list.selected_index==7 && !writes);
-    assert(game_settings_event(renderer,_device_settings_next));
-    assert(mac_visible_rows(column)==5 && column->focused_child==column->child);
-    assert(game_settings_event(renderer,_device_settings_next));
     assert(device_settings_drafts[0].values[_device_setting_render_height]==1440);
     assert(device_settings_drafts[0].values[_device_setting_anti_aliasing]==1);
     assert(game_settings_event(root,_device_settings_cancel));
-    assert(!writes && settings_values[_device_setting_renderer]==0 && settings_values[_device_setting_render_height]==720);
+    assert(!writes && settings_values[_device_setting_anti_aliasing]==0 && settings_values[_device_setting_render_height]==720);
     dispose(root); root=open_settings(_ds_main,_ds_video,0);
-    renderer=setting_control(root,_device_setting_renderer);
+    aa=setting_control(root,_device_setting_anti_aliasing);
     assert(device_settings_drafts[0].values[_device_setting_frame_limit]==60);
-    assert(game_settings_event(renderer,_device_settings_next));
+    assert(game_settings_event(aa,_device_settings_next));
     assert(game_settings_event(root,_device_settings_accept));
-    assert(writes==1 && applied_mask==(1UL<<_device_setting_renderer));
-    assert(settings_values[_device_setting_renderer]==1 && settings_values[_device_setting_render_height]==720);
+    assert(writes==1 && applied_mask==(1UL<<_device_setting_anti_aliasing));
+    assert(settings_values[_device_setting_anti_aliasing]==1 && settings_values[_device_setting_render_height]==720);
     dispose(root);
     /* Legacy sizes stay untouched and format truthfully until edited. */
     const short legacy[]={480,720,1080};
@@ -1590,7 +1560,7 @@ static void mac_settings_pause_layouts(void) {
             struct ui_widget_definition *column=&device_settings.column[layout][page];
             assert(frame->bounds.y1==240 && frame->bounds.x0==-4 && frame->bounds.x1==222);
             assert(children[0].vertical_offset>=0 && children[0].vertical_offset+240<=screen->bounds.y1);
-            short count=page==_ds_video ? 8:7,pitch=page==_ds_video ? 20:22;
+            short count=7,pitch=page==_ds_video ? 20:22;
             short column_height=(count+1)*pitch+27-pitch;
             assert(column->child_widgets.count==count+1 && column->bounds.y1==column_height);
             assert(children[1].vertical_offset+column_height<children[3].vertical_offset);
@@ -1602,25 +1572,17 @@ static void mac_settings_pause_layouts(void) {
                 assert(device_settings.row[row].text_font.index==tag_loaded(FONT_GROUP_TAG,"ui\\small_ui"));
             }
         }
-        settings_values[_device_setting_renderer]=0;
+        settings_values[_device_setting_anti_aliasing]=0;
         struct widget_instance *one=open_settings(layout,_ds_video,0),*column=mac_video_column(one);
         struct widget_instance *accept=widget_instance_find_by_tag_index_recursive(one,device_settings.accept_tag);
-        assert(mac_visible_rows(column)==6 && accept->vertical_offset==column->vertical_offset+5*20);
-        assert(game_settings_event(column,_device_settings_previous));
-        assert(column->focused_child==accept && column->parameters.list.selected_index==8);
-        assert(game_settings_event(column,_device_settings_previous));
-        assert(column->parameters.list.selected_index==4 &&
-            column->focused_child==setting_control(one,_device_setting_asset_quality));
-        assert(game_settings_event(column,_device_settings_next));
-        assert(column->focused_child==accept);
-        assert(game_settings_event(column,_device_settings_next));
-        assert(column->parameters.list.selected_index==0);
-        struct widget_instance *two=open_settings(layout,_ds_video,3),*second_column=mac_video_column(two);
-        assert(game_settings_event(setting_control(two,_device_setting_renderer),_device_settings_next));
-        assert(mac_visible_rows(second_column)==9 && mac_visible_rows(column)==6);
-        struct widget_instance *second_accept=widget_instance_find_by_tag_index_recursive(two,device_settings.accept_tag);
-        assert(second_accept->vertical_offset==second_column->vertical_offset+8*20);
-        assert(device_settings_drafts[0].values[_device_setting_renderer]==0 && device_settings_drafts[3].values[_device_setting_renderer]==1);
+        assert(mac_visible_rows(column)==8 && accept->visible && !accept->disabled);
+        assert(device_settings.column_children[layout][_ds_video][7].vertical_offset==7*20);
+        assert(TEST_FLAG(device_settings.column[layout][_ds_video].flags,_widget_dpad_updown_tabs_thru_list_items_bit));
+        struct widget_instance *two=open_settings(layout,_ds_video,3);
+        assert(game_settings_event(setting_control(two,_device_setting_anti_aliasing),_device_settings_next));
+        assert(mac_visible_rows(mac_video_column(two))==8 && mac_visible_rows(column)==8);
+        assert(device_settings_drafts[0].values[_device_setting_anti_aliasing]==0 &&
+            device_settings_drafts[3].values[_device_setting_anti_aliasing]==1);
         assert(!writes && !memcmp(originals,originals_before,sizeof(originals)));
         dispose(one); dispose(two);
         /* Both original timer appearance controls remain available. */
@@ -1817,7 +1779,7 @@ class NativeGameSettingsTests(unittest.TestCase):
                 code, advance, width, _, origin_x = cache.unpack("<H4h", address + index * 0x14)
                 glyphs[chr(code)] = (advance, width, origin_x)
             widths = [(value, 276) for value in strings]
-            widths.extend((value, 202) for value in ("Renderer: < Native Metal >", "Resolution: < 2160p >",
+            widths.extend((value, 202) for value in ("Resolution: < 2160p >",
                 "Resolution: < Native >", "FPS Limit: < Uncapped >", "FPS Limit: < 120 FPS >", "AA: < FXAA >",
                 "Position: < Bottom Center >", "Timer Size: < 100% >", "Asset Quality: < Original >"))
             widths.append(("Original", 112))

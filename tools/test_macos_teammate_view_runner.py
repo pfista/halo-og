@@ -82,7 +82,7 @@ class InteractiveRunnerTests(unittest.TestCase):
         (self.assets / "maps/ui.map").write_bytes(b"fixture menu map, never executed")
         (self.assets / "sounds/readme.txt").write_text("fixture sounds")
 
-    def application(self, metal=True):
+    def application(self):
         contents = self.root / "Candidate Halo.app/Contents"
         (contents / "MacOS").mkdir(parents=True)
         (contents / "Resources").mkdir()
@@ -90,11 +90,6 @@ class InteractiveRunnerTests(unittest.TestCase):
         executable.write_bytes(b"fixture executable, never executed")
         executable.chmod(0o755)
         (contents / "Resources/halo_guest.elf").write_bytes(b"fixture guest, never executed")
-        if metal:
-            companion = contents / "MacOS/halo-metal"
-            companion.write_bytes(b"fixture executable, never executed")
-            companion.chmod(0o755)
-            (contents / "Resources/halo_guest-metal.elf").write_bytes(b"fixture guest, never executed")
         return executable
 
     def assert_interactive_config(self, config, role, team, address, hidden=False):
@@ -123,19 +118,20 @@ class InteractiveRunnerTests(unittest.TestCase):
         self.assertIs(parsed["audio"]["enabled"], role == "red_host")
         # Ordinary bindings remain active; the runner supplies no scripted input.
         self.assertNotIn("bindings", parsed)
+        self.assertNotIn("renderer", parsed["display"])
 
     def test_scratch_config_has_manual_controls_and_no_gameplay_automation(self):
         for role, team in ROLES:
             with self.subTest(role=role):
                 self.assert_interactive_config(
-                    runner.make_config(role, team, ADDRESSES[0], "bloodgulch", "metal", False, 35.0),
+                    runner.make_config(role, team, ADDRESSES[0], "bloodgulch", False, 35.0),
                     role, team, ADDRESSES[0])
 
     def test_hiding_clients_does_not_hide_the_controlled_host(self):
         for role, team in ROLES:
             with self.subTest(role=role):
                 self.assert_interactive_config(
-                    runner.make_config(role, team, ADDRESSES[0], "bloodgulch", "angle", True, 35.0),
+                    runner.make_config(role, team, ADDRESSES[0], "bloodgulch", True, 35.0),
                     role, team, ADDRESSES[0], hidden=role != "red_host")
 
     def test_preparation_is_isolated_and_cleans_inherited_overrides(self):
@@ -150,7 +146,7 @@ class InteractiveRunnerTests(unittest.TestCase):
             for index, (role, team) in enumerate(ROLES):
                 folder = self.root / "session" / role
                 environment = runner.prepare_instance(folder, role, team, ADDRESSES[index],
-                                                      "bloodgulch", "metal", data_root=self.assets)
+                                                      "bloodgulch", data_root=self.assets)
                 environments.append(environment)
                 self.assertEqual(environment["HALO_SAVE_ROOT"], str(folder / "saves"))
                 self.assertEqual(environment["HALO_DATA_ROOT"], str(folder / "data"))
@@ -192,31 +188,19 @@ class InteractiveRunnerTests(unittest.TestCase):
 
     def test_only_complete_executable_app_bundles_are_accepted(self):
         executable = self.application()
-        self.assertEqual(runner.validate_app(executable, "angle"), executable.resolve())
-        self.assertEqual(runner.validate_app(executable, "metal"), executable.resolve())
+        self.assertEqual(runner.validate_app(executable), executable.resolve())
         executable.chmod(0o644)
         with self.assertRaises(ValueError):
-            runner.validate_app(executable, "angle")
+            runner.validate_app(executable)
         executable.chmod(0o755)
         (executable.parent.parent / "Resources/halo_guest.elf").unlink()
         with self.assertRaises(ValueError):
-            runner.validate_app(executable, "angle")
+            runner.validate_app(executable)
         direct = self.root / "halo"
         direct.write_bytes(b"not an app bundle")
         direct.chmod(0o755)
         with self.assertRaises(ValueError):
-            runner.validate_app(direct, "angle")
-
-    def test_metal_requires_both_renderer_companions(self):
-        executable = self.application()
-        native = executable.parent / "halo-metal"
-        native.chmod(0o644)
-        with self.assertRaises(ValueError):
-            runner.validate_app(executable, "metal")
-        native.chmod(0o755)
-        (executable.parent.parent / "Resources/halo_guest-metal.elf").unlink()
-        with self.assertRaises(ValueError):
-            runner.validate_app(executable, "metal")
+            runner.validate_app(direct)
 
     def test_socket_preflight_checks_reserved_host_and_all_owned_peer_bindings(self):
         calls, sockets = [], []
@@ -260,7 +244,7 @@ class InteractiveRunnerTests(unittest.TestCase):
         executable = self.application()
         output = self.root / "new session"
         with patch.object(runner.subprocess, "Popen") as launch:
-            plan = runner.prepare_session(output, ADDRESSES, executable, "metal", "bloodgulch",
+            plan = runner.prepare_session(output, ADDRESSES, executable, "bloodgulch",
                                           data_root=self.assets)
         self.assertEqual(len(plan["instances"]), 4)
         for index, ((role, team), instance) in enumerate(zip(ROLES, plan["instances"])):
@@ -273,7 +257,7 @@ class InteractiveRunnerTests(unittest.TestCase):
         launch.assert_not_called()
         original = {path.relative_to(output): path.read_bytes() for path in output.rglob("*") if path.is_file()}
         with self.assertRaisesRegex(ValueError, "exists"):
-            runner.prepare_session(output, ADDRESSES, executable, "metal", "bloodgulch", data_root=self.assets)
+            runner.prepare_session(output, ADDRESSES, executable, "bloodgulch", data_root=self.assets)
         self.assertEqual(original, {path.relative_to(output): path.read_bytes()
                                     for path in output.rglob("*") if path.is_file()})
 
@@ -281,13 +265,13 @@ class InteractiveRunnerTests(unittest.TestCase):
         executable = self.application()
         output = self.root / "missing-map session"
         with self.assertRaises(ValueError):
-            runner.prepare_session(output, ADDRESSES, executable, "angle", "missing_map", data_root=self.assets)
+            runner.prepare_session(output, ADDRESSES, executable, "missing_map", data_root=self.assets)
         self.assertFalse(output.exists())
         folder = self.root / "existing role"
         folder.mkdir()
         (folder / "keep.txt").write_text("existing evidence")
         with self.assertRaises(FileExistsError):
-            runner.prepare_instance(folder, "red_host", 0, ADDRESSES[0], "bloodgulch", "angle",
+            runner.prepare_instance(folder, "red_host", 0, ADDRESSES[0], "bloodgulch",
                                     data_root=self.assets)
         self.assertEqual((folder / "keep.txt").read_text(), "existing evidence")
         self.assertFalse((folder / "saves").exists())
@@ -297,7 +281,7 @@ class InteractiveRunnerTests(unittest.TestCase):
         output, destination = self.root / "existing output link", self.root / "missing destination"
         output.symlink_to(destination, target_is_directory=True)
         with self.assertRaisesRegex(ValueError, "exists"):
-            runner.prepare_session(output, ADDRESSES, executable, "angle", "bloodgulch", data_root=self.assets)
+            runner.prepare_session(output, ADDRESSES, executable, "bloodgulch", data_root=self.assets)
         self.assertTrue(output.is_symlink())
         self.assertFalse(destination.exists())
 
@@ -317,7 +301,7 @@ class InteractiveRunnerTests(unittest.TestCase):
     def test_busy_port_failure_and_dry_run_never_create_files_or_launch(self):
         executable = self.application()
         output = self.root / "preflight session"
-        argv = ["--output", str(output), "--executable", str(executable), "--renderer", "angle",
+        argv = ["--output", str(output), "--executable", str(executable), "--renderer", "metal",
                 "--data-root", str(self.assets), "--addresses", ",".join(ADDRESSES)]
         with patch.object(runner, "configured_addresses", return_value=ADDRESSES), \
                 patch.object(runner, "check_ports", return_value=["host TCP 0.0.0.0:5150 is unavailable"]), \
@@ -334,7 +318,7 @@ class InteractiveRunnerTests(unittest.TestCase):
     def test_configuration_write_failure_is_reported_before_any_launch(self):
         executable = self.application()
         output = self.root / "configuration failure"
-        argv = ["--output", str(output), "--executable", str(executable), "--renderer", "angle",
+        argv = ["--output", str(output), "--executable", str(executable),
                 "--data-root", str(self.assets), "--addresses", ",".join(ADDRESSES)]
         with patch.object(runner, "configured_addresses", return_value=ADDRESSES), \
                 patch.object(runner, "check_ports", return_value=[]), \
@@ -352,7 +336,7 @@ class InteractiveRunnerTests(unittest.TestCase):
 
     def test_startup_failure_closes_logs_and_cleans_only_started_handles(self):
         executable = self.application()
-        plan = runner.prepare_session(self.root / "failed launch", ADDRESSES, executable, "angle",
+        plan = runner.prepare_session(self.root / "failed launch", ADDRESSES, executable,
                                       "bloodgulch", data_root=self.assets)
         host, unrelated = FakeProcess(101), FakeProcess(999)
         calls = []
@@ -381,7 +365,7 @@ class InteractiveRunnerTests(unittest.TestCase):
 
     def test_host_failure_before_invite_launches_no_client(self):
         executable = self.application()
-        plan = runner.prepare_session(self.root / "host failed", ADDRESSES, executable, "angle",
+        plan = runner.prepare_session(self.root / "host failed", ADDRESSES, executable,
                                       "bloodgulch", data_root=self.assets)
         host = FakeProcess(101, code=1)
         with patch.object(runner.subprocess, "Popen", return_value=host) as launch, \
@@ -399,7 +383,7 @@ class InteractiveRunnerTests(unittest.TestCase):
         executable = self.application()
         sentinel = "fixture-sensitive-value-never-persisted"
         with patch.dict(os.environ, {"EXAMPLE_SESSION_SECRET": sentinel}):
-            plan = runner.prepare_session(self.root / "manifest privacy", ADDRESSES, executable, "angle",
+            plan = runner.prepare_session(self.root / "manifest privacy", ADDRESSES, executable,
                                           "bloodgulch", data_root=self.assets)
         self.assertEqual(plan["instances"][0]["environment"]["EXAMPLE_SESSION_SECRET"], sentinel)
         runner.write_manifest(plan)
@@ -410,7 +394,7 @@ class InteractiveRunnerTests(unittest.TestCase):
     def test_successful_launch_leaves_controls_manual_until_owned_cleanup(self):
         from tools.test_macos_teammate_view_smoke import tick
         executable = self.application()
-        plan = runner.prepare_session(self.root / "interactive session", ADDRESSES, executable, "metal",
+        plan = runner.prepare_session(self.root / "interactive session", ADDRESSES, executable,
                                       "bloodgulch", data_root=self.assets)
         peers = [FakeProcess(100 + index) for index in range(4)]
         invite = "halo-og://join/" + "a1" * 32

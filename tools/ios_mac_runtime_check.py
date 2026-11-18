@@ -19,7 +19,7 @@ def main():
     BUILD.mkdir(parents=True, exist_ok=True)
     mac_host = ROOT / 'port/macos/host'
     ios_host = ROOT / 'port/ios/host'
-    excluded = {'host_main.c', 'host_loader.c', 'host_renderer.c', 'host_perf.c', 'host_gl.c', 'host_gl_bridge.c'}
+    excluded = {'host_main.c', 'host_loader.c', 'host_perf.c', 'host_gl.c', 'host_gl_bridge.c'}
     sources = [p for p in sorted(mac_host.glob('*.c')) if p.name not in excluded]
     sources += [ios_host / 'host_loader.c', ios_host / 'host_main.m',
                 mac_host / 'host_metal.mm', mac_host / 'metal_draw_encoder.mm', mac_host / 'entry.s',

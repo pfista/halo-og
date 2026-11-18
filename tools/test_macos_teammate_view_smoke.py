@@ -32,7 +32,7 @@ class TeammateViewSmokeTests(unittest.TestCase):
             self.folders[role] = folder
 
     def logs(self, enabled=True):
-        return {role: "Internet play: connected to test peer\n" +
+        return {role: "Renderer active: Native Metal\nInternet play: connected to test peer\n" +
                 "".join(tick(index, enabled, time=time) for time in range(30, 180, 30))
                 for index, (role, _) in enumerate(ROLES)}
 
@@ -117,12 +117,12 @@ class TeammateViewSmokeTests(unittest.TestCase):
         self.assertEqual(default_addresses(["192.168.0.4", "127.0.0.1"]), [])
 
     def test_requested_metal_must_be_reported_by_all_four_instances(self):
-        logs = {role: "Renderer active: Native Metal; hardware test\n" + log for role, log in self.logs().items()}
-        _, checks = validate_logs(logs, logs, {role: 0 for role, _ in ROLES}, True, self.folders, "metal")
+        logs = self.logs()
+        _, checks = self.validate(logs)
         self.assertTrue(all(checks.values()), checks)
         logs["red_client"] = logs["red_client"].replace("Renderer active: Native Metal", "Renderer active: ANGLE")
-        _, checks = validate_logs(logs, logs, {role: 0 for role, _ in ROLES}, True, self.folders, "metal")
-        self.assertFalse(checks["all_four_used_requested_renderer"])
+        _, checks = self.validate(logs)
+        self.assertFalse(checks["all_four_used_native_metal"])
 
 
 if __name__ == "__main__":

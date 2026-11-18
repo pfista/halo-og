@@ -4,7 +4,7 @@
 Example (use a fresh output directory for each run)::
 
   python3 tools/macos_renderer_benchmark.py --assets /path/to/assets \
-    --host /path/to/halo-metal --guest /path/to/halo_metal_guest.elf \
+    --host build/macos/halo --guest build/macos/halo_guest.elf \
     --renderer metal --level chillout --output build/benchmark-attempt1 \
     --seconds 40 --render-height 0 --fps-limit 0 --vsync off
 
@@ -595,7 +595,8 @@ def main():
     parser.add_argument("--assets", type=Path, required=True, help="Existing original Xbox assets root (never changed)")
     parser.add_argument("--host", type=Path, required=True)
     parser.add_argument("--guest", type=Path, required=True)
-    parser.add_argument("--renderer", choices=("angle", "metal"), required=True)
+    parser.add_argument("--renderer", choices=("angle", "metal"), default="metal",
+                        help="Use angle only to measure an archived ANGLE build")
     parser.add_argument("--level", choices=LEVELS, default="chillout")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seconds", type=int, default=40)

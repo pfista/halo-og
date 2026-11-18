@@ -143,8 +143,8 @@ the original 30 FPS presentation. Optional **Smooth Motion** interpolates frames
 between ticks so rendering can follow a higher display refresh rate. It keeps
 the simulation at 30 Hz and presents world motion roughly one tick behind the
 simulation (about 33 ms). **VSync** defaults on; turning it off removes display
-synchronization, with actual FPS depending on hardware and workload. There is
-no numeric FPS selector or guaranteed 120/240 FPS target. Smooth Motion and the
+synchronization, with actual FPS depending on hardware and workload. On Mac,
+the Video menu also offers a frame limit. Smooth Motion and the
 high-resolution HUD default off; existing saved choices are preserved.
 
 ### Performance
@@ -152,8 +152,8 @@ high-resolution HUD default off; existing saved choices are preserved.
 Native platform and renderer improvements should reduce frame time and memory
 use while preserving gameplay. We compare the same maps, settings, and player
 counts; changing game speed, collision, weapon timing, or movement to gain FPS
-does not meet that goal. Mac rendering uses ANGLE's Metal backend, while the
-Windows/Linux ports use OpenGL. Each platform still needs its own performance
+does not meet that goal. Mac and iPhone use native Metal. Windows and Linux
+use OpenGL. Each platform still needs its own performance
 and gameplay checks; a successful build is not evidence of equivalent feel.
 
 ### Simulation ticks and game modes

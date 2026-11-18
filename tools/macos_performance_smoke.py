@@ -39,7 +39,6 @@ def wait_for(predicate, description, timeout=40):
 
 
 def main():
-    global BUILD
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--map', required=True)
     parser.add_argument('--map-source', type=Path,
@@ -57,12 +56,10 @@ def main():
                         help='Show the isolated host window; the other peer stays hidden')
     parser.add_argument('--host-app', type=Path,
                         help='Run the host from this app bundle with native menus; guest must match build/macos')
-    parser.add_argument('--renderer', choices=('angle', 'metal'), default='angle',
-                        help='Use the matching native host/guest pair for this renderer')
+    parser.add_argument('--renderer', choices=('metal',), default='metal', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.flags < 0 or args.flags & ~(511 | FOLLOW_AIM):
         parser.error('Unsupported smoke-test flags')
-    BUILD = ROOT / ('build/macos-metal' if args.renderer == 'metal' else 'build/macos')
     if not re.fullmatch(r'[A-Za-z0-9_ -]{1,31}', args.map) or args.markers < 1:
         parser.error('Provide a safe map name and its expected positive marker count')
     if not 0 <= args.hold_seconds <= 3600:
@@ -83,11 +80,6 @@ def main():
         args.host_app = args.host_app.resolve(strict=True)
         host_executable = args.host_app / 'Contents/MacOS/halo'
         host_guest = args.host_app / 'Contents/Resources/halo_guest.elf'
-        if args.renderer == 'metal':
-            metal_executable = args.host_app / 'Contents/MacOS/halo-metal'
-            if metal_executable.is_file():
-                host_executable = metal_executable
-                host_guest = args.host_app / 'Contents/Resources/halo_guest-metal.elf'
         if not host_executable.is_file() or not host_guest.is_file():
             parser.error('--host-app must be a complete Halo app bundle')
         if hashlib.sha256(host_guest.read_bytes()).hexdigest() != guest_hash:

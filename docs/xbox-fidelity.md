@@ -120,7 +120,7 @@ MCC hosting. For v11, the earlier pregame keep-alive width correction
 
 ## Desktop OpenGL lens flare visibility
 
-Windows and Linux use the latest completed visibility test for each light and
+Since `42256112`, Windows and Linux use the latest completed visibility test for each light and
 split-screen view. Previously, reordering the lights or recycling a query slot
 could give a hidden flare the sample count from a different light. The OpenGL
 port now tracks which flare owns a slot and which GPU submission produced its
@@ -276,7 +276,7 @@ so exact split-screen alignment is not established by these fixtures.
 
 Camo: Normal / Hardcore is a separate requested gametype rule, default Normal.
 Hardcore neutralizes the interpolated active-camouflage RGB tint in the shared
-ANGLE/Native Metal draw path; refraction, visibility, duration, reveal and
+OpenGL and native Metal draw paths; refraction, visibility, duration, reveal and
 regrowth retain their existing behavior. Campaign remains unchanged. Saved
 variants use a version-2 extension only when Hardcore camo is selected, and
 enabled matches require camo capability confirmation from every player.
@@ -371,9 +371,8 @@ upstream reviewed-through and integrated baseline above remain separate.
 
 ### Native Metal in the normal Mac app
 
-The current Mac default is Native Metal with GPU vertex-input decoding. Explicit
-saved renderer choices remain in effect, and ANGLE remains available for recovery
-and comparison. See [current renderer setup](metal-native-build.md) and
+Mac and iPhone use native Metal. On Mac, old renderer preferences are ignored.
+See [current renderer setup](metal-native-build.md) and
 [GPU input validation and measurements](metal-performance.md#gpu-vertex-decoding).
 The integration notes below describe the earlier ANGLE-default checkpoint.
 
@@ -384,7 +383,7 @@ ANGLE as the default and Native Metal as an experimental option. The original
 resolution, FPS limit and anti-aliasing controls; VSync and Smooth Motion remain
 available for both renderers. Renderer, resolution and anti-aliasing choices
 apply on the next launch. Original assets, HUD and 30 Hz simulation remain
-intact. See [renderer settings and ANGLE recovery](metal-native-build.md).
+intact.
 
 Validation: 124 focused CPU tests pass (the final run is recorded in
 `build/macos/dual-renderer-tests-attempt1/execution.json`). Local dual build

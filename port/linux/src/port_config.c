@@ -86,11 +86,6 @@ static const struct config_setting config_settings[] =
 	{ "display.interpolation", _config_boolean, "false", "HALO_INTERPOLATION", _environment_value, _platform_all,
 		"Draw a frame for every display refresh, blending between the game's 30\n"
 		"ticks a second; false keeps the original 30 frames a second." },
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
-	{ "display.renderer", _config_string, "\"metal\"", NULL, _environment_value, _platform_all,
-		"Mac rendering: metal uses native Metal by default; angle selects\n"
-		"the alternate ANGLE renderer. Restart after changing this setting." },
-#endif
 #if defined(HALO_MACOS)
 	{ "display.frame_limit", _config_integer, "0", NULL, _environment_value, _platform_all,
 		"Native Metal render cap: 0 is uncapped, or choose 30, 60 or 120.\n"
@@ -824,6 +819,15 @@ static void config_report_unknown_keys(toml_datum_t table)
 			char name[128];
 
 			snprintf(name, sizeof(name), "%s.%s", table.u.tab.key[section_index], section.u.tab.key[key_index]);
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+			if (!strcmp(name, "display.renderer"))
+			{
+				toml_datum_t renderer = section.u.tab.value[key_index];
+				if (renderer.type == TOML_STRING && !strcmp(renderer.u.s, "angle"))
+					platform_log("config.toml: using native Metal for legacy display.renderer = \"angle\"");
+				continue;
+			}
+#endif
 			/* Older installations saved this retired preference. Navigation is
 			always fast now; accept the legacy key without exposing a setting. */
 			if (config_setting_index(name) < 0 && strcmp(name, "input.fast_menu_repeat"))
@@ -1194,49 +1198,6 @@ struct config_retired_string
 	char *string;
 };
 static struct config_retired_string *config_retired_strings;
-
-int config_refresh_string(const char *name)
-{
-	long index = name ? config_setting_index(name) : -1;
-	char path[1024], *text;
-	size_t size = 0;
-	int succeeded = 0;
-
-	if (index < 0 || config_settings[index].type != _config_string || config_settings[index].environment)
-		return 0;
-	pthread_mutex_lock(&config_lock);
-	if (!config_loaded) { config_load(0);config_loaded = 1; }
-	config_path(path, sizeof(path));
-	text = config_read_file(path, &size);
-	if (text && size <= INT_MAX)
-	{
-		toml_result_t parsed = toml_parse(text, (int)size);
-		if (parsed.ok)
-		{
-			toml_datum_t datum = toml_seek(parsed.toptab, name);
-			const char *fallback = config_settings[index].default_value;
-			char *value = datum.type == TOML_STRING ? strdup(datum.u.s) :
-				config_copy(fallback + 1, strlen(fallback) - 2);
-			if (value && config_values[index].string && !strcmp(value, config_values[index].string))
-				succeeded = 1;
-			else if (value)
-			{
-				struct config_retired_string *retired = malloc(sizeof(*retired));
-				if (retired)
-				{
-					retired->string = config_values[index].string;retired->next = config_retired_strings;
-					config_retired_strings = retired;config_values[index].string = value;value = NULL;
-					succeeded = 1;
-				}
-			}
-			free(value);
-		}
-		toml_free(parsed);
-	}
-	free(text);
-	pthread_mutex_unlock(&config_lock);
-	return succeeded;
-}
 
 int config_write_values(const struct config_update *updates, unsigned count)
 {

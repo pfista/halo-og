@@ -62,7 +62,7 @@ def teammate_target_valid(record):
                 and target["machine"] != local["machine"])
 
 
-def validate_logs(logs, diagnostics, codes, enabled, folders, renderer=None):
+def validate_logs(logs, diagnostics, codes, enabled, folders):
     records = {role: [record for line in re.findall(r"network test: tick[^\n]+", logs.get(role, ""))
                       if (record := parse_tick(line))] for role, _ in ROLES}
     checks = {
@@ -76,11 +76,9 @@ def validate_logs(logs, diagnostics, codes, enabled, folders, renderer=None):
         "all_frames_captured": all(role in folders and any((folders[role] / "frames").glob("*"))
                                    for role, _ in ROLES),
     }
-    if renderer:
-        expected = "Native Metal" if renderer == "metal" else "ANGLE"
-        checks["all_four_used_requested_renderer"] = all(
-            re.findall(r"Renderer active: ([^;\r\n]+)", logs.get(role, "")) == [expected]
-            for role, _ in ROLES)
+    checks["all_four_used_native_metal"] = all(
+        re.findall(r"Renderer active: ([^;\r\n]+)", logs.get(role, "")) == ["Native Metal"]
+        for role, _ in ROLES)
     for role, team in ROLES:
         lines = records[role]
         checks[role + "_two_red_two_blue"] = bool(lines) and all(
@@ -133,8 +131,6 @@ def run_case(args, addresses, enabled, out):
             config = config.replace("network_test_start = 20.0", "network_test_start = 35.0")
             config = config.replace("[debug]\n", f"[debug]\nnetwork_test_team = {team}\n"
                                     f"network_test_team_view = {str(enabled and index == 0).lower()}\n")
-            if args.renderer:
-                config = config.replace("[display]\n", f'[display]\nrenderer = "{args.renderer}"\n')
             config_path.write_text(config)
             command = [str(args.executable.resolve())]
             if not args.native_menu:
@@ -163,10 +159,10 @@ def run_case(args, addresses, enabled, out):
         diagnostics = {role: log + ((folders[role] / "data/debug.txt").read_text(errors="replace")
                                    if (folders[role] / "data/debug.txt").exists() else "")
                        for role, log in logs.items()}
-        records, checks = validate_logs(logs, diagnostics, codes, enabled, folders, args.renderer)
+        records, checks = validate_logs(logs, diagnostics, codes, enabled, folders)
         result = {"scope": "four real one-player instances on one Mac, 2v2",
                   "team_view": enabled, "map": args.map, "addresses": addresses,
-                  "requested_renderer": args.renderer,
+                  "requested_renderer": "metal",
                   "observed_renderers": {role: re.findall(r"Renderer active: ([^;\r\n]+)", log)
                                          for role, log in logs.items()},
                   "exit_codes": codes, "complete_roster_ticks": {role: len(lines) for role, lines in records.items()},
@@ -198,7 +194,7 @@ def main():
     parser.add_argument("--executable", type=Path, default=BUILD / "halo")
     parser.add_argument("--guest", type=Path, default=BUILD / "halo_guest.elf")
     parser.add_argument("--native-menu", action="store_true")
-    parser.add_argument("--renderer", choices=("angle", "metal"), help="Select and verify the renderer in every isolated config")
+    parser.add_argument("--renderer", choices=("metal",), help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.seconds < 60 or args.screenshot_every <= 0 or not re.fullmatch(r"[A-Za-z0-9_ -]{1,31}", args.map):
         parser.error("Use at least 60 seconds, a positive frame interval, and a safe map cache name")

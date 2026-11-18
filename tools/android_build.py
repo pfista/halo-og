@@ -203,8 +203,9 @@ def android_configure_inputs() -> List[Path]:
 def generate_android_build(n: Writer, sln: Any) -> None:
     macos = getattr(sln, "macos", False)
     ios = getattr(sln, "ios", False)
-    native_metal = ios or (macos and getattr(sln, "macos_renderer", "angle") == "metal")
-    build_root = Path("build/ios") if ios else Path("build/macos-metal") if native_metal else Path("build/macos") if macos else BUILD
+    native_metal = ios or macos
+    isolated_mac = macos and getattr(sln, "macos_renderer", None) == "metal"
+    build_root = Path("build/ios") if ios else Path("build/macos-metal") if isolated_mac else Path("build/macos") if macos else BUILD
     config_path = LINUX_DIR / "port.json"
     if not config_path.is_file() or not (PORT_DIR / "host").is_dir():
         return
@@ -265,7 +266,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     python = "$python"
 
     n.comment("Android build (ninja android); see port/android/README.md")
-    n.variable("android_guest_cc", guest_cc)
+    n.variable("android_guest_cc", f"{guest_cc} --isolated-metal" if isolated_mac else guest_cc)
     if host_cc:
         n.variable("android_host_cc", str(host_cc))
     n.variable("android_ndk_bin", str(ndk_bin))
@@ -384,7 +385,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     tool_implicit = [Path("tools/android_asm_convert.py"), *generated_headers]
     if macos or ios:
         platform = "ios" if ios else "macos"
-        renderer_argument = " --renderer metal" if macos and native_metal else ""
+        renderer_argument = " --renderer metal" if isolated_mac else ""
         n.rule(name="macos_rebase_plugin", command=f"{python} tools/{platform}_build.py{renderer_argument} --plugin-only",
                description="MACOS COMPILER PASS")
         plugin = build_root / "guest_rebase.dylib"

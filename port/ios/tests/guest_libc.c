@@ -5,6 +5,11 @@ void *memcpy(void *destination, const void *source, unsigned long size) {
     while (size--) *d++ = *s++;
     return destination;
 }
+void *memset(void *destination, int value, unsigned long size) {
+    unsigned char *d = destination;
+    while (size--) *d++ = (unsigned char)value;
+    return destination;
+}
 void *memmove(void *destination, const void *source, unsigned long size) {
     unsigned char *d = destination;
     const unsigned char *s = source;
@@ -16,8 +21,4 @@ int memcmp(const void *left, const void *right, unsigned long size) {
     const unsigned char *a = left, *b = right;
     while (size--) { if (*a != *b) return *a - *b; a++; b++; }
     return 0;
-}
-int strcmp(const char *left, const char *right) {
-    while (*left && *left == *right) { ++left; ++right; }
-    return (unsigned char)*left - (unsigned char)*right;
 }

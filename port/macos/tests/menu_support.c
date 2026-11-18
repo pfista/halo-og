@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-void host_perf_frame(double swap_ms) { (void)swap_ms; }
 void host_logf(int priority, const char *format, ...) {
     (void)priority;
     va_list arguments;

@@ -30,7 +30,10 @@ def download(entry, destination):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ios", action="store_true", help="Prepare the iPhone toolchain without the Mac ANGLE package")
+    targets = parser.add_mutually_exclusive_group()
+    targets.add_argument("--ios", action="store_true", help="Prepare the shared Apple toolchain for iPhone")
+    targets.add_argument("--gl-reference", action="store_true",
+                         help="Also install ANGLE for historical OpenGL reference tests")
     args = parser.parse_args()
     manifest = json.loads((ROOT / "port/macos/dependencies.json").read_text())
     llvm = Path(os.environ.get("HALO_MACOS_LLVM_BIN", "/opt/homebrew/opt/llvm/bin"))
@@ -64,9 +67,9 @@ def main():
             linker.chmod(0o755)
     if not shutil.which("ninja") and not (toolchain / "venv/bin/ninja").exists():
         raise RuntimeError("Install ninja (for example: brew install ninja)")
-    for entry in manifest["headers"]:
-        download(entry, toolchain / "gl" / entry["path"])
-    if not args.ios:
+    if args.gl_reference:
+        for entry in manifest["headers"]:
+            download(entry, toolchain / "gl" / entry["path"])
         archive = BUILD / "angle/angle.zip"
         download(manifest["angle"], archive)
         if not (BUILD / "angle/dist/BUILD_INFO.txt").exists():

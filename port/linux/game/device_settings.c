@@ -29,9 +29,6 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
     /* Keep the retired menu-speed slot so device-setting IDs stay stable.
      * Asset Quality retains the legacy key so enabled HUD choices become Upres. */
     NULL, "display.high_res_hud"
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
-    , "display.renderer"
-#endif
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
     , "display.render_height"
 #endif
@@ -54,11 +51,6 @@ double device_settings_get(short setting)
     if (setting < 0 || setting >= NUMBER_OF_DEVICE_SETTINGS) return 0.0;
     if (setting == _device_setting_fast_menu_repeat) return 1.0;
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-    if (setting == _device_setting_renderer)
-    {
-        config_refresh_string(setting_names[setting]);
-        return !strcmp(config_string(setting_names[setting]), "metal");
-    }
     if (setting == _device_setting_anti_aliasing) return !strcmp(config_string(setting_names[setting]), "fxaa");
     if (setting == _device_setting_frame_limit)
     {
@@ -178,12 +170,11 @@ int device_settings_apply(unsigned long changed_mask,
         updates[count].string = NULL;
         previous[count] = updates[count];previous[count].number = old;
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        if (setting == _device_setting_renderer || setting == _device_setting_anti_aliasing)
+        if (setting == _device_setting_anti_aliasing)
         {
             updates[count].type = previous[count].type = _config_update_string;
             previous[count].string = config_string(setting_names[setting]);
-            updates[count].string = setting == _device_setting_renderer ?
-                (values[setting] != 0.0 ? "metal" : "angle") : (values[setting] != 0.0 ? "fxaa" : "off");
+            updates[count].string = values[setting] != 0.0 ? "fxaa" : "off";
         }
         else if (setting == _device_setting_frame_limit)
             previous[count].number = config_integer(setting_names[setting]);

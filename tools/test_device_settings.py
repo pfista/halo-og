@@ -38,7 +38,7 @@ static const char *names[] = {"audio.volume", "audio.music_volume", "audio.effec
     "input.fast_menu_repeat", "display.high_res_hud", "game.show_default_game_types"};
 #define TEST_SETTING_COUNT (sizeof(names)/sizeof(names[0]))
 static double saved[TEST_SETTING_COUNT];
-static const char *renderer="angle",*antialiasing="off";
+static const char *antialiasing="off";
 static long render_height=480,frame_limit;
 static int fullscreen, native_fullscreen, write_ok, switch_ok, apply_ok, writes, audio_applies, video_applies, switches, starts, stops;
 static int write_fail_on, switch_fail_on, apply_fail_on;
@@ -58,17 +58,14 @@ long config_integer(const char *name) {
     return (long)saved[index_of(name)];
 }
 const char *config_string(const char *name) {
-    if(!strcmp(name,"display.renderer")) return renderer;
     assert(!strcmp(name,"display.anti_aliasing"));return antialiasing;
 }
-int config_refresh_string(const char *name) { assert(!strcmp(name,"display.renderer"));return 1; }
 int config_write_values(const struct config_update *updates,unsigned count) {
     writes++; if (!write_ok || writes==write_fail_on) return 0;
     for (unsigned i=0;i<count;i++) {
         const char *key=updates[i].name;
         if(updates[i].type==_config_update_string) {
-            if(!strcmp(key,"display.renderer")) renderer=updates[i].string;
-            else { assert(!strcmp(key,"display.anti_aliasing"));antialiasing=updates[i].string; }
+            assert(!strcmp(key,"display.anti_aliasing"));antialiasing=updates[i].string;
             continue;
         }
         if(!strcmp(key,"display.render_height")) { render_height=(long)updates[i].number;continue; }
@@ -96,7 +93,7 @@ static void reset(double values[NUMBER_OF_DEVICE_SETTINGS]) {
     saved[18]=saved[19]=9000;
     saved[21]=saved[22]=0;
     saved[0]=0.15; fullscreen=native_fullscreen=1; write_ok=switch_ok=apply_ok=1;
-    renderer="angle";antialiasing="off";render_height=480;frame_limit=0;
+    antialiasing="off";render_height=480;frame_limit=0;
     writes=audio_applies=video_applies=switches=starts=stops=0;
     write_fail_on=switch_fail_on=apply_fail_on=0;
     for(int i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) values[i]=device_settings_get(i);
@@ -378,37 +375,37 @@ int main(void) {
         (1UL<<_device_setting_join_in_progress),values));
     assert(writes==2 && saved[6]==1 && saved[15]==1 && saved[16]==1 && saved[17]==1);
 #if MAC_FULLSCREEN
-    assert(NUMBER_OF_DEVICE_SETTINGS==28);
-    reset(values);values[_device_setting_renderer]=1;values[_device_setting_render_height]=0;
+    assert(NUMBER_OF_DEVICE_SETTINGS==27);
+    reset(values);values[_device_setting_render_height]=0;
     values[_device_setting_frame_limit]=120;values[_device_setting_anti_aliasing]=1;
-    assert(device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_render_height)|
+    assert(device_settings_apply((1UL<<_device_setting_render_height)|
         (1UL<<_device_setting_frame_limit)|(1UL<<_device_setting_anti_aliasing),values));
-    assert(writes==1 && !video_applies && !switches && !strcmp(renderer,"metal") && !strcmp(antialiasing,"fxaa"));
-    assert(!render_height && frame_limit==120 && device_settings_get(_device_setting_renderer)==1);
+    assert(writes==1 && !video_applies && !switches && !strcmp(antialiasing,"fxaa"));
+    assert(!render_height && frame_limit==120 && device_settings_get(_device_setting_anti_aliasing)==1);
     /* A live backend refusal restores the entire mixed pending/live batch. */
-    reset(values);values[_device_setting_renderer]=1;values[_device_setting_render_height]=2160;
+    reset(values);values[_device_setting_render_height]=2160;
     values[_device_setting_anti_aliasing]=1;values[_device_setting_vsync]=0;apply_fail_on=1;
-    assert(!device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_render_height)|
+    assert(!device_settings_apply((1UL<<_device_setting_render_height)|
         (1UL<<_device_setting_anti_aliasing)|(1UL<<_device_setting_vsync),values));
-    assert(writes==2 && !strcmp(renderer,"angle") && !strcmp(antialiasing,"off") && render_height==480 && saved[6]==1);
+    assert(writes==2 && !strcmp(antialiasing,"off") && render_height==480 && saved[6]==1);
     assert(video_applies==2 && !switches);
     /* Controller/asset preferences and pending Metal choices share one draft.
      * A live video refusal must roll every changed type back together. */
-    reset(values);values[_device_setting_renderer]=1;values[_device_setting_frame_limit]=60;
+    reset(values);values[_device_setting_frame_limit]=60;
     values[_device_setting_left_stick_deadzone]=3277;values[_device_setting_asset_quality]=1;
     values[_device_setting_vsync]=0;apply_fail_on=1;
-    assert(!device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_frame_limit)|
+    assert(!device_settings_apply((1UL<<_device_setting_frame_limit)|
         (1UL<<_device_setting_left_stick_deadzone)|(1UL<<_device_setting_asset_quality)|
         (1UL<<_device_setting_vsync),values));
-    assert(writes==2 && !strcmp(renderer,"angle") && frame_limit==0 && saved[18]==9000 &&
+    assert(writes==2 && frame_limit==0 && saved[18]==9000 &&
         saved[22]==0 && saved[6]==1 && halo_menu_repeat_milliseconds()==100);
     assert(video_applies==2 && !audio_applies && !switches);
-    reset(values);values[_device_setting_renderer]=1;values[_device_setting_anti_aliasing]=1;write_ok=0;
-    assert(!device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_anti_aliasing),values));
-    assert(writes==1 && !video_applies && !strcmp(renderer,"angle") && !strcmp(antialiasing,"off"));
-    reset(values);values[_device_setting_renderer]=1;values[_device_setting_frame_limit]=45;
-    assert(!device_settings_apply((1UL<<_device_setting_renderer)|(1UL<<_device_setting_frame_limit),values));
-    assert(!writes && !strcmp(renderer,"angle"));
+    reset(values);values[_device_setting_anti_aliasing]=1;write_ok=0;
+    assert(!device_settings_apply((1UL<<_device_setting_anti_aliasing),values));
+    assert(writes==1 && !video_applies && !strcmp(antialiasing,"off"));
+    reset(values);values[_device_setting_frame_limit]=45;
+    assert(!device_settings_apply((1UL<<_device_setting_frame_limit),values));
+    assert(!writes);
     values[_device_setting_frame_limit]=60;values[_device_setting_render_height]=2880;
     assert(!device_settings_apply((1UL<<_device_setting_frame_limit)|(1UL<<_device_setting_render_height),values));
     assert(!writes);
@@ -468,10 +465,8 @@ class DeviceSettingsTests(unittest.TestCase):
                                              ["-D" + platform + "=1"])
 
     def test_mac_fullscreen_uses_native_preferences(self):
-        for renderer in ("0", "1"):
-            with self.subTest(native_metal=renderer):
-                self.run_save_apply_boundary(["-std=gnu89", "-D__STRICT_ANSI__", "-O2"],
-                    ["-DHALO_MACOS=1", "-DHALO_ANDROID=1", "-DHALO_MACOS_NATIVE_METAL=" + renderer])
+        self.run_save_apply_boundary(["-std=gnu89", "-D__STRICT_ANSI__", "-O2"],
+                                     ["-DHALO_MACOS=1", "-DHALO_ANDROID=1", "-DHALO_MACOS_NATIVE_METAL=1"])
 
     def test_mobile_fullscreen_stays_platform_owned(self):
         for platform_flags in (["-DHALO_ANDROID=1"],
