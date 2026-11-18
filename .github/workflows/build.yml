@@ -53,7 +53,7 @@ jobs:
         run: |
           printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
           pacman -Syu --noconfirm --needed git zstd python python-pytest python-pillow ninja ccache \
-            clang lld gcc glib2 mesa libglvnd lib32-glibc lib32-gcc-libs lib32-sdl3
+            clang compiler-rt lld gcc glib2 mesa libglvnd lib32-glibc lib32-gcc-libs lib32-sdl3
 
       - uses: actions/checkout@v4
 
@@ -70,7 +70,7 @@ jobs:
         run: python tools/ci_build.py linux release
 
       - name: Test
-        run: python -m pytest -q tools/test_linux_port.py
+        run: python -m pytest -q tools/test_linux_port.py tools/test_desktop_flare_visibility.py
 
       - name: Shared HUD assets, settings and GLES rendering
         run: |
@@ -290,6 +290,7 @@ jobs:
       - name: Native settings and shared interfaces
         run: >-
           python -m unittest tools.test_controller_settings tools.test_menu_repeat tools.test_menu_keyboard tools.test_windows_shared_headers
+          tools.test_desktop_flare_visibility
           tools.test_performance_mouse tools.test_save_migration
           tools.test_desktop_first_run tools.test_release_discovery
           tools.test_download_transport_limits tools.test_desktop_map_downloads tools.test_desktop_timer_audio tools.test_game_directory tools.test_game_directory_worker

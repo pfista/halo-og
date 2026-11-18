@@ -111,28 +111,25 @@ class DesktopVideoResolutionTests(unittest.TestCase):
 #include <float.h>
 #include <math.h>
 typedef unsigned GLuint;
-typedef unsigned DWORD;
-static struct { float query_area[1]; } device;
 ''' + function(gl, "static GLuint visibility_unscaled(") + r'''
 int main(void) {
     const float legacy_areas[]={1.01f,1.7f,4.0f,20.25f};
     const GLuint legacy_samples[]={0,1,100,16777217,(GLuint)-1};
     unsigned i,j;
     for(i=0;i<sizeof(legacy_areas)/sizeof(legacy_areas[0]);i++) {
-        device.query_area[0]=legacy_areas[i];
         for(j=0;j<sizeof(legacy_samples)/sizeof(legacy_samples[0]);j++)
-            assert(visibility_unscaled(legacy_samples[j],0)==(GLuint)(legacy_samples[j]/legacy_areas[i]+0.5f));
+            assert(visibility_unscaled(legacy_samples[j],legacy_areas[i])==(GLuint)(legacy_samples[j]/legacy_areas[i]+0.5f));
     }
-    device.query_area[0]=0.25f;assert(visibility_unscaled(25,0)==100);
-    device.query_area[0]=4;assert(visibility_unscaled(400,0)==100);
-    device.query_area[0]=1;assert(visibility_unscaled(100,0)==100);
-    device.query_area[0]=0;assert(visibility_unscaled(100,0)==100);
-    device.query_area[0]=-1;assert(visibility_unscaled(100,0)==100);
-    device.query_area[0]=INFINITY;assert(visibility_unscaled(100,0)==100);
-    device.query_area[0]=NAN;assert(visibility_unscaled(100,0)==100);
-    device.query_area[0]=FLT_MIN;assert(visibility_unscaled(100,0)==(GLuint)-1);
-    assert(visibility_unscaled(0,0)==0);
-    device.query_area[0]=0.25f;assert(visibility_unscaled((GLuint)-1,0)==(GLuint)-1);
+    assert(visibility_unscaled(25,0.25f)==100);
+    assert(visibility_unscaled(400,4)==100);
+    assert(visibility_unscaled(100,1)==100);
+    assert(visibility_unscaled(100,0)==100);
+    assert(visibility_unscaled(100,-1)==100);
+    assert(visibility_unscaled(100,INFINITY)==100);
+    assert(visibility_unscaled(100,NAN)==100);
+    assert(visibility_unscaled(100,FLT_MIN)==(GLuint)-1);
+    assert(visibility_unscaled(0,FLT_MIN)==0);
+    assert(visibility_unscaled((GLuint)-1,0.25f)==(GLuint)-1);
     return 0;
 }
 '''

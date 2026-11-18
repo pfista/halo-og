@@ -118,6 +118,22 @@ base v11. The 43-to-44 change covers automated MCC package offers and dedicated
 MCC hosting. For v11, the earlier pregame keep-alive width correction
 (`904fbbfc`) merits independent verification against existing lobby traffic.
 
+## Desktop OpenGL lens flare visibility
+
+Windows and Linux use the latest completed visibility test for each light and
+split-screen view. Previously, reordering the lights or recycling a query slot
+could give a hidden flare the sample count from a different light. The OpenGL
+port now tracks which flare owns a slot and which GPU submission produced its
+count. The original brightness and fade calculations still use that pixel count.
+This adapts OpenCE commits
+[`6f1a31d6`](https://github.com/cybersecurity/halo-ce-universal/commit/6f1a31d6f3ae15b0dbffa911839263b147ebb118)
+and [`cdd43c65`](https://github.com/cybersecurity/halo-ce-universal/commit/cdd43c65feae9f13a3204917e083cc807941cfaa).
+
+The regression fixtures exercise reordered lights, split-screen views, map
+changes, and delayed query completion. Mac and iPhone read their own native
+Metal visibility results. The iPhone's fractional occlusion correction
+(`77a6e9b3`) handles a light partly covered by foreground geometry.
+
 ## Grenade and airborne turning
 
 Halo OG selectively adapts the turn-during-throw condition from OpenCE
