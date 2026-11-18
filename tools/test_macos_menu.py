@@ -21,7 +21,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from tools.macos_build import update_configuration, minimum_macos_version, BUNDLE_ID, SDL
+from tools.macos_build import update_configuration, minimum_macos_version, host_sources, BUNDLE_ID, SDL
 from tools.macos_release import audit_adhoc_signing, audit_bundle, appcast, NAMESPACE
 from tools.macos_sparkle import setup_sparkle
 
@@ -95,7 +95,7 @@ def build_ui_test():
     original = ROOT / "build/macos/Halo OG.app/Contents"
     frameworks = original / "Frameworks"
     output.mkdir(parents=True, exist_ok=True)
-    flags = ["-arch", "arm64", "-mmacosx-version-min=14.0", "-O2", "-DHALO_MACOS=1", "-D_DARWIN_C_SOURCE",
+    flags = ["-arch", "arm64", "-mmacosx-version-min=14.0", "-O2", "-DHALO_MACOS=1", "-DHALO_MACOS_NATIVE_METAL=1", "-D_DARWIN_C_SOURCE",
              "-I.", "-Iport/macos/host", "-Iport/macos/native", "-Iport/android/include", f"-I{SDL / 'include'}"]
     for source, extra, obj in (("port/macos/tests/menu_ui.m", ["-fobjc-arc", "-fblocks"], "ui.o"),
                                ("port/macos/host/host_main.c", ["-Dmain=halo_game_main"], "main.o")):
@@ -104,10 +104,11 @@ def build_ui_test():
         shutil.rmtree(app)
     executable = app / "Contents/MacOS/menu-ui"
     executable.parent.mkdir(parents=True)
-    objects = [p for p in (ROOT / "build/macos/host-obj").glob("*.o") if p.name != "host_main.c.o"]
-    subprocess.run(["clang", "-mmacosx-version-min=14.0", output / "ui.o", output / "main.o", *objects,
-        *[frameworks / name for name in ("libSDL3.0.dylib", "libEGL.dylib", "libGLESv2.dylib")],
-        f"-F{frameworks}", "-framework", "Sparkle", "-framework", "Cocoa",
+    objects = [ROOT / "build/macos/host-obj" / (source.name + ".o")
+               for source in host_sources() if source.name != "host_main.c"]
+    subprocess.run(["clang++", "-mmacosx-version-min=14.0", output / "ui.o", output / "main.o", *objects,
+        frameworks / "libSDL3.0.dylib", f"-F{frameworks}", "-framework", "Sparkle", "-framework", "Cocoa",
+        "-framework", "Metal", "-framework", "QuartzCore",
         "-Wl,-rpath,@executable_path/../Frameworks", "-o", executable], check=True)
     shutil.copytree(frameworks, app / "Contents/Frameworks", symlinks=True)
     resources = app / "Contents/Resources"
@@ -132,15 +133,13 @@ def native_menu_loop():
     output = ROOT / "build/macos/tests/menu-loop"
     output.mkdir(parents=True, exist_ok=True)
     sparkle = setup_sparkle().parent
-    egl = ROOT / "build/macos/angle/dist/EGL.xcframework/macos-arm64"
     flags = ["-arch", "arm64", "-mmacosx-version-min=14.0", "-O2", "-Wall", "-Wextra",
-             "-DHALO_MACOS=1", "-D_DARWIN_C_SOURCE", "-I.", "-Iport/macos/host",
+             "-DHALO_MACOS=1", "-DHALO_MACOS_NATIVE_METAL=1", "-D_DARWIN_C_SOURCE", "-I.", "-Iport/macos/host",
              "-Iport/macos/native", "-Iport/linux/src", "-Iport/android/include",
-             "-Ibuild/macos/toolchain/gl", f"-I{SDL / 'include'}", f"-F{sparkle}"]
+             f"-I{SDL / 'include'}", f"-F{sparkle}"]
     sources = ("port/macos/tests/menu_ui.m", "port/macos/tests/menu_support.c",
                "port/macos/native/host_menu.m", "port/macos/native/HaloPreferences.m", "port/macos/native/HaloMapDownloads.m", "port/macos/native/HaloTimerAudio.m", "port/macos/native/HaloMapPackages.m", "port/macos/native/HaloReleaseUpdates.m",
                "port/macos/host/host_sdl.c", "port/macos/host/host_invite.c",
-               "port/macos/host/host_renderer.c", "port/third_party/tomlc17/tomlc17.c",
                "port/macos/host/posix_files.c", "port/linux/src/xiso.c", "port/linux/src/release_discovery.c")
     objects = []
     for source in sources:
@@ -155,9 +154,8 @@ def native_menu_loop():
         'CFBundleExecutable': 'menu-loop', 'CFBundleIdentifier': 'local.halo.ce.menu-loop-tests',
         'CFBundleName': 'Halo OG Menu Loop', 'CFBundlePackageType': 'APPL',
         'CFBundleVersion': '1', 'CFBundleShortVersionString': '1.0'}))
-    subprocess.run(["clang", *objects, f"-L{SDL / 'lib'}", "-lSDL3", f"-F{egl}",
-                    "-framework", "libEGL", f"-F{sparkle}", "-framework", "Sparkle", "-framework", "Cocoa",
-                    f"-Wl,-rpath,{egl}", f"-Wl,-rpath,{sparkle}", "-o", executable], check=True)
+    subprocess.run(["clang", *objects, f"-L{SDL / 'lib'}", "-lSDL3", f"-F{sparkle}", "-framework", "Sparkle", "-framework", "Cocoa",
+                    f"-Wl,-rpath,{sparkle}", "-o", executable], check=True)
     subprocess.run(['codesign', '--force', '--sign', '-', app], check=True)
     with tempfile.TemporaryDirectory(prefix="fixtures-", dir=output) as temporary:
         directory = Path(temporary)
@@ -303,7 +301,9 @@ class ReleaseBoundary(unittest.TestCase):
                 (contents / name).mkdir(parents=True)
             (contents / "Info.plist").touch()
             (contents / "MacOS/halo").touch()
-            for name in ("Sparkle.framework", "libSDL3.0.dylib", "libEGL.dylib", "libGLESv2.dylib"):
+            guest = contents / "Resources/halo_guest.elf"
+            guest.touch()
+            for name in ("Sparkle.framework", "libSDL3.0.dylib"):
                 (contents / "Frameworks" / name).touch()
             self.assertTrue(audit_bundle(app))
             for name in ("GameDataPath.txt", "game.iso", "GameData", "ui.map"):
@@ -312,7 +312,8 @@ class ReleaseBoundary(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     audit_bundle(app)
                 path.unlink()
-            (contents / "Resources/halo_guest.elf").symlink_to("/tmp")
+            guest.unlink()
+            guest.symlink_to("/tmp")
             with self.assertRaises(RuntimeError):
                 audit_bundle(app)
 

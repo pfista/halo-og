@@ -9,7 +9,10 @@ import sys
 def main():
     llvm = Path(os.environ.get("HALO_MACOS_LLVM_BIN", "/opt/homebrew/opt/llvm/bin"))
     args = sys.argv[1:]
-    build_root = "build/macos-metal" if "-DHALO_MACOS_NATIVE_METAL=1" in args else "build/macos"
+    build_root = "build/macos"
+    if "--isolated-metal" in args:
+        args.remove("--isolated-metal")
+        build_root = "build/macos-metal"
     if "-S" not in args:
         return subprocess.call([str(llvm / "clang"), *args])
     output_index = args.index("-o") + 1

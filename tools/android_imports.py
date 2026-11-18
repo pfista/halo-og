@@ -43,9 +43,11 @@ def main():
             f"{name}:",
         ]
         if ios:
-            out += [f"\tmovz w16, #:abs_g0_nc:__host_import_table+{offset}",
-                    f"\tmovk w16, #:abs_g1_nc:__host_import_table+{offset}",
-                    "\torr x16, x16, #0x400000000", "\tldr x16, [x16]"]
+            # Preserve the arena base in the high half of the native SP.
+            out += ["\tmov x16, sp",
+                    f"\tmovk x16, #:abs_g0_nc:__host_import_table+{offset}",
+                    f"\tmovk x16, #:abs_g1_nc:__host_import_table+{offset}",
+                    "\tldr x16, [x16]"]
         else:
             out += [f"\tadrp x16, __host_import_table+{offset}",
                     f"\tldr x16, [x16, :lo12:__host_import_table+{offset}]"]

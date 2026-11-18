@@ -119,9 +119,12 @@ static void check_main_loop(const char *image, const char *data) {
             assert(automaticRecordings.state == NSControlStateValueOff);
             HaloTimerAudio *timerAudio = [(id)target valueForKey:@"timerAudio"];
             assert(!timerAudio.downloading);
-            /* All settings remain reachable after adding the optional pack. */
-            for (NSView *view in window.contentView.subviews)
+            for (NSView *view in window.contentView.subviews) {
                 assert(NSContainsRect(window.contentView.bounds, view.frame));
+                if ([view isKindOfClass:NSPopUpButton.class])
+                    for (NSString *title in [(NSPopUpButton *)view itemTitles])
+                        assert(![title containsString:@"ANGLE"]);
+            }
             [target selectFolder:nil];
             assert(window.attachedSheet && !NSApp.modalWindow);
             step++;

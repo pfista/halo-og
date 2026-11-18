@@ -145,7 +145,7 @@ This choice is independent of Precision Spread and the
 Default/Practice presets; Pro enables it. Accept and Save Changes persist it with the game
 type. The host selects it before starting; every player must support it,
 including players joining a running match. It is locked for the match.
-The shared camo draw path applies it to both ANGLE and Native Metal.
+The shared camo draw path applies it on OpenGL and native Metal.
 
 ## Match timer
 

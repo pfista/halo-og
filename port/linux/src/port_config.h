@@ -39,9 +39,6 @@ struct config_update
  * the registration; strings must be non-NULL and valid TOML string contents.
  * Previously returned string pointers remain valid for this process lifetime. */
 int config_write_values(const struct config_update *updates, unsigned count);
-/* Refresh one registered, file-only string after another application surface
- * saves it. Does not write defaults or refresh any other cached setting. */
-int config_refresh_string(const char *name);
 /* saves a boolean token into config.toml, preserving other text, and applies
 it to this session only after a successful write; 1 on success */
 int config_write_boolean(const char *name, int value);

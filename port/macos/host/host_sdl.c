@@ -94,8 +94,8 @@ static int metal_swap_interval = 1;
 #endif
 #ifndef HALO_IOS
 static int command_held;
-static int native_metal_owned;
 #endif
+static int native_metal_owned;
 
 /* ---------- general */
 
@@ -129,7 +129,7 @@ int64_t host_sdl_thread_id(void) { return (int64_t)SDL_GetCurrentThreadID(); }
 #if defined(HALO_IOS) && !defined(HALO_IOS_MAC_CHECK)
 /* SDL already requests the display's maximum rate through CADisplayLink.
    Its public callback API replaces that link for the optional 60 Hz mode.
-   ANGLE's drawable/vsync wait still paces the game's main loop. */
+   UIKit controls the display refresh rate. */
 static void SDLCALL ios_refresh_hint(void *unused) { (void)unused; }
 #endif
 
@@ -274,7 +274,6 @@ int host_sdl_gl_set_attribute(int attribute, int value) {
     return 1;
 }
 #endif
-#ifndef HALO_IOS
 /* The direct renderer owns this SDL view only when no EGL context exists.
    Calling the native interface never silently steals ANGLE's drawable. */
 void *host_sdl_native_metal_layer(uint32_t window) {
@@ -285,8 +284,19 @@ void *host_sdl_native_metal_layer(uint32_t window) {
 #endif
     if (!metal_view) metal_view = SDL_Metal_CreateView(object);
     if (!metal_view) return NULL;
+    void *layer = SDL_Metal_GetLayer(metal_view);
+    if (!layer) {
+        SDL_Metal_DestroyView(metal_view);
+        metal_view = NULL;
+        return NULL;
+    }
     native_metal_owned = 1;
-    return SDL_Metal_GetLayer(metal_view);
+#if defined(HALO_IOS) && !defined(HALO_IOS_MAC_CHECK)
+    /* UIKit places the touch overlay above the newly created Metal view. */
+    extern void host_ios_controls_initialize(SDL_Window *);
+    host_ios_controls_initialize(object);
+#endif
+    return layer;
 }
 void host_sdl_native_metal_release(void) {
     if (!native_metal_owned) return;
@@ -294,7 +304,6 @@ void host_sdl_native_metal_release(void) {
     metal_view = NULL;
     native_metal_owned = 0;
 }
-#endif
 #if !defined(HALO_MACOS_NATIVE_METAL)
 uint32_t host_sdl_gl_create_context(uint32_t window) {
     SDL_Window *object = handle_get(window, _handle_window);
@@ -357,12 +366,6 @@ uint32_t host_sdl_gl_create_context(uint32_t window) {
         return 0;
     }
     eglMakeCurrent(metal_display, metal_surface, metal_surface, metal_context);
-#if defined(HALO_IOS) && !defined(HALO_IOS_MAC_CHECK)
-    // Attach controls after SDL has installed the Metal view, otherwise
-    // the drawable can cover the controller's UIKit overlay.
-    extern void host_ios_controls_initialize(SDL_Window *);
-    host_ios_controls_initialize(object);
-#endif
     return handle_new(_handle_context, metal_context);
 }
 int host_sdl_gl_make_current(uint32_t window, uint32_t context) {

@@ -43,12 +43,12 @@ jobs:
       - name: Verify runner and prepare dependencies
         run: |
           test "$(uname -m)" = arm64
-          python3 tools/macos_setup.py
+          python3 tools/macos_setup.py --gl-reference
           python3 tools/macos_build.py --plugin-only
           python3 tools/ios_build.py --plugin-only
       - name: HUD fixture dependencies
         run: python3 -m pip install Pillow
-      - name: Shared HUD assets, settings and ANGLE rendering
+      - name: Shared HUD assets, settings and desktop OpenGL references
         run: |
           python3 -m unittest tools.test_hud_platform_build tools.test_hud_hires_pixels tools.test_hud_hires_tags tools.test_device_settings tools.test_menu_assets tools.test_text_hires tools.test_metal_text_atlas
           python3 -m tools.test_game_settings
@@ -98,7 +98,9 @@ jobs:
       - name: Spawn inventory, teleports, trails and lifecycle safety
         run: python3 -m unittest tools.test_spawn_inventory tools.test_teleporter_network tools.test_sniper_trail tools.test_weapon_sound_events tools.test_overshield_hud tools.test_map_lifecycle tools.test_network_client_lifecycle tools.test_stale_player_references
       - name: Native data import and packaging rules
-        run: python3 tools/test_macos_menu.py
+        run: |
+          python3 tools/test_macos_menu.py
+          python3 -m unittest tools.test_macos_renderer_build tools.test_macos_native_package
       - name: App installation and desktop data migration
         run: python3 -m unittest tools.test_macos_installer tools.test_save_migration tools.test_desktop_first_run tools.test_release_discovery tools.test_download_transport_limits tools.test_desktop_map_downloads
       - name: Native Mac release discovery fixtures

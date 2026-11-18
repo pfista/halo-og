@@ -13,6 +13,11 @@ import subprocess
 import time
 import uuid
 
+if __package__:
+    from . import macos_renderer_benchmark as renderer_benchmark
+else:
+    import macos_renderer_benchmark as renderer_benchmark
+
 ROOT = Path(__file__).resolve().parents[1]
 LEVELS = ('a10', 'a30', 'b30', 'prisoner', 'chillout')
 MULTIPLAYER_LEVELS = ('prisoner', 'chillout')
@@ -119,7 +124,7 @@ exit_after = {seconds}.0
     # Unrelated launch overrides must not alter this controlled workload.
     environment = {k: v for k, v in os.environ.items() if not k.startswith('HALO_')}
     environment.update(HALO_DATA_ROOT=str(data), HALO_SAVE_ROOT=str(saves),
-                       HALO_PERF_LOG=str(output / 'frames.csv'), HALO_VOLUME='0',
+                       HALO_GPU_STATS='1', HALO_PERF_LOG=str(output / 'frames.csv'), HALO_VOLUME='0',
                        HALO_WINDOWED='0' if fullscreen else '1')
     if not fullscreen:
         environment['HALO_SCREEN_WIDTH'] = '640'
@@ -230,8 +235,19 @@ def main():
             process.wait(timeout=5)
         record['exit_code'] = process.returncode
         record['elapsed_seconds'] = time.monotonic() - started
-        record['metrics'] = summarize(output / 'frames.csv')
         diagnostics = (output / 'game.log').read_text(errors='replace')
+        if 'Renderer active: Native Metal' in diagnostics:
+            parsed = renderer_benchmark.parse_log(diagnostics)
+            intervals = parsed['host_metrics']
+            if parsed['faults'] or parsed['parse_errors'] or not any(row['draws'] for row in intervals):
+                raise RuntimeError('Native Metal reported a fault or no rendered frames')
+            record['metrics'] = {
+                'native_counter_intervals': len(intervals),
+                'reported_frames': sum(row['frames'] for row in intervals),
+                'reported_draws': sum(row['draws'] for row in intervals),
+            }
+        else:
+            record['metrics'] = summarize(output / 'frames.csv')
         if (output / 'data/debug.txt').exists():
             diagnostics += (output / 'data/debug.txt').read_text(errors='replace')
         if process.returncode or FAULT.search(diagnostics):

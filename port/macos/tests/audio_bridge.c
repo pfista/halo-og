@@ -16,7 +16,7 @@ extern int host_sdl_init(uint32_t);
 extern int host_sdl_poll_event(void *);
 extern uint64_t host_sdl_window_flags(uint32_t);
 static unsigned mixed_callbacks;
-void host_perf_frame(double swap_ms) { (void)swap_ms; }
+void host_menu_initialize_application(void) {}
 void host_menu_window_changed(void) {}
 void host_menu_style_window(void *window) { (void)window; }
 int host_menu_set_fullscreen(int enabled) { (void)enabled; return 0; }

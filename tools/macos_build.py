@@ -28,11 +28,8 @@ from tools.release_discovery import ci_source_identity
 from tools.halo_og_version import read_version, require_version
 DEFAULT_BUILD = ROOT / "build/macos"
 BUILD = DEFAULT_BUILD
-RENDERER = "angle"
 LLVM = Path(os.environ.get("HALO_MACOS_LLVM_BIN", "/opt/homebrew/opt/llvm/bin"))
 SDL = Path(os.environ.get("HALO_MACOS_SDL_PREFIX", "/opt/homebrew/opt/sdl3"))
-ANGLE = Path(os.environ.get("HALO_MACOS_ANGLE_DIR", str(BUILD / "angle/dist")))
-GL = DEFAULT_BUILD / "toolchain/gl"
 APP_ICON = "AppIcon.icns"
 APP_VERSION = read_version()
 APP_BUILD = "11"
@@ -61,51 +58,37 @@ def build_plugin():
         "-o", BUILD / "guest_rebase.dylib", *flags)
 
 
+def host_sources():
+    sources = [source for source in sorted((ROOT / "port/macos/host").glob("*.c"))
+               if source.name not in ("host_gl.c", "host_gl_bridge.c", "host_perf.c")]
+    sources += sorted((ROOT / "port/macos/host").glob("*.mm"))
+    sources += sorted((ROOT / "port/macos/native").glob("*.m"))
+    sources += [ROOT / "port/linux/src/xiso.c", ROOT / "port/linux/src/release_discovery.c"]
+    sources += miniupnpc_sources()
+    sources += [BUILD / "host/host_import_table.c", ROOT / "port/macos/host/entry.s"]
+    return sources
+
+
 def build_host():
     sparkle = setup_sparkle()
     obj_dir = BUILD / "host-obj"
     obj_dir.mkdir(parents=True, exist_ok=True)
-    native_metal = RENDERER == "metal"
-    frameworks = [] if native_metal else [ANGLE / f"{name}.xcframework/macos-arm64" for name in ("EGL", "GLESv2")]
-    for name, directory in zip(("libEGL", "libGLESv2"), frameworks):
-        require(directory / f"{name}.framework" / name)
-    # EGL's loader also uses this name beside the EGL binary.
-    if frameworks:
-        companion = frameworks[0] / "libEGL.framework/libGLESv2.dylib"
-        companion_target = frameworks[1] / "libGLESv2.framework/libGLESv2"
-        if companion.is_symlink() and companion.resolve() != companion_target.resolve():
-            companion.unlink()
-        if not companion.exists():
-            companion.symlink_to(companion_target)
     flags = ["-arch", "arm64", "-mmacosx-version-min=14.0", "-O2", "-g", "-DHALO_MACOS=1", "-D_DARWIN_C_SOURCE",
              "-Wall", "-Wextra", "-Wno-unused-function", "-Wno-unused-parameter",
              "-I.", "-Iport/macos/host", "-Iport/macos/native", "-Iport/android/include", "-Iport/linux/src",
-             "-Iport/third_party/tomlc17",
-             f"-I{SDL / 'include'}", *(["-DHALO_MACOS_NATIVE_METAL=1"] if native_metal else [f"-I{GL}"]),
+             f"-I{SDL / 'include'}", "-DHALO_MACOS_NATIVE_METAL=1",
              f"-I{MINIUPNPC_DIR / 'include'}", f"-I{MINIUPNPC_DIR / 'src'}", *MINIUPNPC_DEFINES]
-    sources = sorted((ROOT / "port/macos/host").glob("*.c"))
-    if native_metal:
-        sources = [source for source in sources if source.name not in
-                   ("host_gl.c", "host_gl_bridge.c", "host_perf.c")]
-    sources += sorted((ROOT / "port/macos/host").glob("*.mm"))
-    sources += sorted((ROOT / "port/macos/native").glob("*.m"))
-    sources += [ROOT / "port/linux/src/xiso.c", ROOT / "port/linux/src/release_discovery.c"]
-    sources += [ROOT / "port/third_party/tomlc17/tomlc17.c"]
-    sources += miniupnpc_sources()
-    sources += [BUILD / "host/host_import_table.c", ROOT / "port/macos/host/entry.s"]
     objects = []
-    for source in sources:
+    for source in host_sources():
         obj = obj_dir / (source.name + ".o")
         native_flags = ["-fobjc-arc", "-fblocks", f"-F{sparkle.parent}"] if source.suffix in (".m", ".mm") else []
         if source.suffix == ".mm": native_flags += ["-std=c++17"]
         run("clang++" if source.suffix == ".mm" else "clang", *flags, *native_flags, "-c", source, "-o", obj)
         objects.append(obj)
     run("clang++", "-arch", "arm64", "-mmacosx-version-min=14.0", *objects, f"-L{SDL / 'lib'}", "-lSDL3",
-        *(f"-F{directory}" for directory in frameworks),
-        *([] if native_metal else ["-framework", "libEGL", "-framework", "libGLESv2"]),
         f"-F{sparkle.parent}", "-framework", "Sparkle", "-framework", "Cocoa", "-framework", "Metal", "-framework", "QuartzCore",
         f"-Wl,-rpath,{sparkle.parent}",
-        *(f"-Wl,-rpath,{directory}" for directory in frameworks), "-o", BUILD / "halo")
+        "-o", BUILD / "halo")
 
 
 def package_icon(resources):
@@ -201,11 +184,6 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
         executable.unlink()
     shutil.copy2(BUILD / "halo", executable)
     shutil.copy2(BUILD / "halo_guest.elf", resources / "halo_guest.elf")
-    native_executable = None
-    if RENDERER == "dual":
-        native_executable = macos / "halo-metal"
-        shutil.copy2(ROOT / "build/macos-metal/halo", native_executable)
-        shutil.copy2(ROOT / "build/macos-metal/halo_guest.elf", resources / "halo_guest-metal.elf")
     shutil.copy2(ROOT / "port/macos/map-downloads.json", resources / "map-downloads.json")
     sdl = frameworks / "libSDL3.0.dylib"
     if sdl.exists():
@@ -213,36 +191,14 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
     shutil.copy2(require(SDL / "lib/libSDL3.0.dylib"), sdl)
     run("install_name_tool", "-change", str(SDL / "lib/libSDL3.0.dylib"),
         "@rpath/libSDL3.0.dylib", executable)
-    if native_executable:
-        run("install_name_tool", "-change", str(SDL / "lib/libSDL3.0.dylib"),
-            "@rpath/libSDL3.0.dylib", native_executable)
     run("install_name_tool", "-id", "@rpath/libSDL3.0.dylib", sdl)
-    for name in (() if RENDERER == "metal" else ("EGL", "GLESv2")):
-        directory = ANGLE / f"{name}.xcframework/macos-arm64"
-        source = directory / f"lib{name}.framework"
-        old_framework = frameworks / source.name
-        if old_framework.exists():
-            shutil.rmtree(old_framework)
-        target = frameworks / f"lib{name}.dylib"
-        if target.exists():
-            target.unlink()
-        shutil.copy2(source / f"lib{name}", target)
-        target.chmod(0o755)
-        run("install_name_tool", "-change", f"@rpath/lib{name}.framework/lib{name}",
-            f"@rpath/lib{name}.dylib", executable)
-        run("install_name_tool", "-id", f"@rpath/lib{name}.dylib", target)
-        run("install_name_tool", "-delete_rpath", str(directory), executable)
     run("install_name_tool", "-add_rpath", "@executable_path/../Frameworks", executable)
-    if native_executable:
-        run("install_name_tool", "-add_rpath", "@executable_path/../Frameworks", native_executable)
     sparkle_source = setup_sparkle()
     sparkle = frameworks / "Sparkle.framework"
     if sparkle.exists():
         shutil.rmtree(sparkle)
     shutil.copytree(sparkle_source, sparkle, symlinks=True)
     run("install_name_tool", "-delete_rpath", str(sparkle_source.parent), executable)
-    if native_executable:
-        run("install_name_tool", "-delete_rpath", str(sparkle_source.parent), native_executable)
     # Store the independently supplied data location as a configuration file;
     # external symlinks would invalidate a strictly signed app bundle.
     data_link = resources / "GameData"
@@ -256,15 +212,13 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
     render_menu_icon(ROOT / "port/macos/Helmet.svg", resources / "Helmet.pdf")
     package_icon(resources)
     content_binaries = stage_content_tools(app, content_tools, sign_identity=sign_identity, release=release) if content_tools else []
-    renderer_binaries = [] if RENDERER == "metal" else [frameworks / "libEGL.dylib", frameworks / "libGLESv2.dylib"]
     info = {
         "CFBundleExecutable": "halo", "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleName": APP_NAME, "CFBundleDisplayName": APP_NAME,
         "CFBundleIconFile": APP_ICON,
         "CFBundlePackageType": "APPL", "CFBundleShortVersionString": version,
         "CFBundleVersion": build, "LSMinimumSystemVersion": minimum_macos_version([
-            executable, *([native_executable] if native_executable else []),
-            sdl, *renderer_binaries, sparkle / "Sparkle", *content_binaries]),
+            executable, sdl, sparkle / "Sparkle", *content_binaries]),
         "CFBundleURLTypes": [{"CFBundleURLName": "Halo multiplayer invite",
                               # Match the shared discord.application_id default.
                               "CFBundleURLSchemes": ["halo-og", "discord-1556496882329460736"],
@@ -299,17 +253,12 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
     guest_hash = hashlib.sha256((resources / "halo_guest.elf").read_bytes()).hexdigest()
     (resources / "BuildInfo.txt").write_text(
         f"{APP_NAME} {version} (build {build})\n"
-        f"Source: {revision}\nGuest SHA-256: {guest_hash}\n"
-        + ("Renderer: native Metal\n" if RENDERER == "metal" else "")
-        + ("Renderers: Native Metal (default), ANGLE (fallback)\nNative Metal Guest SHA-256: "
-           + hashlib.sha256((resources / "halo_guest-metal.elf").read_bytes()).hexdigest() + "\n"
-           if native_executable else ""))
+        f"Source: {revision}\nGuest SHA-256: {guest_hash}\nRenderer: native Metal\n")
     licenses = resources / "Licenses"
     licenses.mkdir(exist_ok=True)
     for source, name in (
         (ROOT / "LICENSE.md", "Project.txt"),
         (ROOT / "libs/d3d8/LICENSE.GPL-3.0", "D3D8-GPL-3.0.txt"),
-        (ROOT / "port/macos/licenses/ANGLE.txt", "ANGLE.txt"),
         (SDL / "share/licenses/SDL3/LICENSE.txt", "SDL3.txt"),
         (ROOT / "build/android/third_party/musl-1.2.5/COPYRIGHT", "musl.txt"),
         (ROOT / "port/third_party/kcp/LICENSE", "KCP.txt"),
@@ -324,8 +273,6 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
         (ROOT / "port/third_party/stb/LICENSE", "stb-LICENSE.txt"),
         (SPARKLE_DIRECTORY / "LICENSE", "Sparkle.txt"),
     ):
-        if RENDERER == "metal" and name == "ANGLE.txt":
-            continue
         if source.exists():
             shutil.copy2(source, licenses / name)
     # Sign nested helpers before the framework and app. Development stays ad-hoc.
@@ -336,13 +283,10 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
     for helper in ("XPCServices/Installer.xpc", "XPCServices/Downloader.xpc", "Autoupdate", "Updater.app"):
         run("codesign", *signing, "--preserve-metadata=entitlements", sparkle_version / helper)
     run("codesign", *signing, sparkle)
-    for binary in (sdl, *renderer_binaries):
-        run("codesign", *signing, binary)
+    run("codesign", *signing, sdl)
     app_signing = [*signing]
     if release:
         app_signing += ["--entitlements", ROOT / "port/macos/host.entitlements"]
-    if native_executable:
-        run("codesign", *app_signing, native_executable)
     run("codesign", *app_signing, app)
     run("codesign", "--verify", "--deep", "--strict", app)
 
@@ -483,20 +427,14 @@ def install_app(app, applications):
     return destination
 
 
-def build_renderer(renderer, args):
-    """Keep each guest paired with its own host and import table."""
-    global BUILD, RENDERER
-    RENDERER = renderer
-    BUILD = ROOT / ("build/macos-metal" if renderer == "metal" else "build/macos")
+def build_game(args):
     if not args.host_only:
         llvm_bin = DEFAULT_BUILD / "toolchain/bin"
         require(llvm_bin / "llvm-ar")
         require(llvm_bin / "ld.lld")
-        configure_args = ["--macos", "--macos-renderer", renderer, "--android-guest-llvm-bin", llvm_bin,
-                          "--pgo", "off"]
-        if renderer == "angle":
-            require(GL / "GLES3/gl32.h")
-            configure_args += ["--android-guest-gl-include", GL]
+        configure_args = ["--macos", "--android-guest-llvm-bin", llvm_bin, "--pgo", "off"]
+        if args.renderer:
+            configure_args += ["--macos-renderer", args.renderer]
         run(sys.executable, "configure.py", *configure_args)
         ninja = shutil.which("ninja") or str(DEFAULT_BUILD / "toolchain/venv/bin/ninja")
         run(ninja, "-j", args.jobs, "macos_guest")
@@ -504,12 +442,12 @@ def build_renderer(renderer, args):
 
 
 def main():
-    global BUILD, RENDERER
+    global BUILD
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plugin-only", action="store_true")
     parser.add_argument("--host-only", action="store_true")
-    parser.add_argument("--renderer", choices=("dual", "angle", "metal"), default="dual",
-                        help="Bundle both Mac renderers (default), or build an isolated angle/metal pair")
+    parser.add_argument("--renderer", choices=("metal",),
+                        help="Use the isolated build/macos-metal diagnostic directory")
     parser.add_argument("--build-only", action="store_true", help="Compile without packaging or installing an app")
     parser.add_argument("--data-root", type=Path, default=ROOT / "assets")
     parser.add_argument("--no-data-path", action="store_true", help="First launch asks for independently supplied game data")
@@ -526,8 +464,7 @@ def main():
     args = parser.parse_args()
     if args.build_only and args.install:
         parser.error("--build-only cannot be combined with --install")
-    RENDERER = args.renderer
-    BUILD = ROOT / ("build/macos-metal" if RENDERER == "metal" else "build/macos")
+    BUILD = ROOT / "build/macos-metal" if args.renderer else DEFAULT_BUILD
     require_version(args.version)
     os.chdir(ROOT)
     if args.release:
@@ -538,10 +475,7 @@ def main():
     if args.plugin_only:
         build_plugin()
         return
-    for renderer in (("angle", "metal") if args.renderer == "dual" else (args.renderer,)):
-        build_renderer(renderer, args)
-    RENDERER = args.renderer
-    BUILD = ROOT / ("build/macos-metal" if RENDERER == "metal" else "build/macos")
+    build_game(args)
     if args.build_only:
         return
     package(None if args.no_data_path or args.release else args.data_root,

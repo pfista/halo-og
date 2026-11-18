@@ -22,6 +22,7 @@ Conventions carried over from the Xbox:
 */
 
 #include "xgpu.h"
+#include "../include/halo_flare_visibility.h"
 #include "sdl_platform.h"
 #include "halo_ui_pointer.h"
 #include "port_config.h"
@@ -337,6 +338,22 @@ vertices. */
 #define INDEX_BUFFER_SIZE (8 * 1024 * 1024)
 #endif
 #define VISIBILITY_TEST_SLOTS 4096
+#ifdef HALO_DESKTOP_GL_FLARE_QUERIES
+/* A bank belongs to one frame until its query-buffer writes complete. */
+enum { FLARE_BATCH_COUNT = 3, FLARE_BATCH_CAPACITY = LENS_FLARE_OCCLUSION_SLOT_COUNT };
+struct flare_query_record
+{
+	unsigned long long generation;
+	unsigned slot;
+	float area;
+};
+struct flare_query_batch
+{
+	GLsync fence;
+	unsigned count;
+	struct flare_query_record records[FLARE_BATCH_CAPACITY];
+};
+#endif
 #ifdef HALO_ANDROID
 #define VISIBILITY_QUERY GL_ANY_SAMPLES_PASSED
 #define VISIBILITY_ALL_SAMPLES 1000000
@@ -419,6 +436,13 @@ struct gl_device
 	had caught up */
 	GLuint visibility_results_buffer;
 	volatile GLuint *visibility_results;
+#ifdef HALO_DESKTOP_GL_FLARE_QUERIES
+	struct flare_query_batch flare_batches[FLARE_BATCH_COUNT];
+	unsigned flare_read_bank, flare_write_bank, flare_sealed_banks;
+	unsigned long long flare_tests_ended[LENS_FLARE_OCCLUSION_SLOT_COUNT];
+	unsigned long long flare_tests_counted[LENS_FLARE_OCCLUSION_SLOT_COUNT];
+	GLuint flare_pixels[LENS_FLARE_OCCLUSION_SLOT_COUNT];
+#endif
 #endif
 
 	unsigned long frame;
@@ -1045,12 +1069,17 @@ static void gl_initialize(void)
 	glGenSamplers(D3DTSS_MAXSTAGES, device.samplers);
 	glGenQueries(VISIBILITY_TEST_SLOTS + 1, device.queries);
 #ifndef HALO_ANDROID
+	size_t visibility_bytes = VISIBILITY_TEST_SLOTS * sizeof(GLuint);
+#ifdef HALO_DESKTOP_GL_FLARE_QUERIES
+	visibility_bytes += FLARE_BATCH_COUNT * FLARE_BATCH_CAPACITY * sizeof(GLuint);
+#endif
 	glGenBuffers(1, &device.visibility_results_buffer);
 	glBindBuffer(GL_QUERY_BUFFER, device.visibility_results_buffer);
-	glBufferStorage(GL_QUERY_BUFFER, VISIBILITY_TEST_SLOTS * sizeof(GLuint), NULL,
+	glBufferStorage(GL_QUERY_BUFFER, visibility_bytes, NULL,
 		GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
-	device.visibility_results = glMapBufferRange(GL_QUERY_BUFFER, 0, VISIBILITY_TEST_SLOTS * sizeof(GLuint),
+	device.visibility_results = glMapBufferRange(GL_QUERY_BUFFER, 0, visibility_bytes,
 		GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
+	glBindBuffer(GL_QUERY_BUFFER, 0);
 	if (!device.visibility_results)
 		platform_log("cannot map the visibility test results; tests wait for the GPU");
 #endif
@@ -1454,6 +1483,44 @@ void WINAPI D3DDevice_InsertCallback(D3DCALLBACKTYPE type, D3DCALLBACK callback,
 
 /* ---------- visibility (occlusion) tests */
 
+#ifdef HALO_DESKTOP_GL_FLARE_QUERIES
+unsigned long long xgpu_visibility_tests_ended(unsigned long index)
+{
+	return device.flare_tests_ended[index];
+}
+
+unsigned long long xgpu_visibility_test_counted(unsigned long index)
+{
+	return device.flare_tests_counted[index];
+}
+
+static void flare_query_buffer_submit(unsigned slot)
+{
+	struct flare_query_batch *batch = &device.flare_batches[device.flare_write_bank];
+	unsigned word;
+	if (device.flare_sealed_banks == FLARE_BATCH_COUNT || batch->count == FLARE_BATCH_CAPACITY)
+		return;
+	word = VISIBILITY_TEST_SLOTS + device.flare_write_bank * FLARE_BATCH_CAPACITY + batch->count;
+	batch->records[batch->count++] = (struct flare_query_record){
+		device.flare_tests_ended[slot], slot, device.query_area[slot]};
+	glBindBuffer(GL_QUERY_BUFFER, device.visibility_results_buffer);
+	glGetQueryObjectuiv(device.queries[slot], GL_QUERY_RESULT, (GLuint *)(size_t)(word * sizeof(GLuint)));
+	glBindBuffer(GL_QUERY_BUFFER, 0);
+}
+
+static void flare_query_buffer_seal(void)
+{
+	struct flare_query_batch *batch = &device.flare_batches[device.flare_write_bank];
+	if (device.flare_sealed_banks == FLARE_BATCH_COUNT || !batch->count)
+		return;
+	batch->fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+	if (!batch->fence)
+		glFinish(); /* A failed fence allocation must not expose an unfinished write. */
+	device.flare_write_bank = (device.flare_write_bank + 1) % FLARE_BATCH_COUNT;
+	device.flare_sealed_banks++;
+}
+#endif
+
 #ifdef HALO_MACOS
 /* Match the desktop query-buffer path: use the last completed result rather
 than spin on a Metal command buffer. Poll before recycling a slot too, since
@@ -1533,6 +1600,17 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	metal_frame_visibility("visibility_end", index, 0);
 #endif
 #ifndef HALO_ANDROID
+#ifdef HALO_DESKTOP_GL_FLARE_QUERIES
+	if (index < LENS_FLARE_OCCLUSION_SLOT_COUNT)
+	{
+		device.flare_tests_ended[index]++;
+		if (device.visibility_results)
+		{
+			flare_query_buffer_submit(index);
+			return S_OK;
+		}
+	}
+#endif
 	if (device.visibility_results)
 	{
 		/* the GPU writes the count into the slot once it is known */
@@ -1546,9 +1624,8 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 
 #ifndef HALO_ANDROID
 /* a count of pixels in the game's pixels */
-static GLuint visibility_unscaled(GLuint samples, DWORD index)
+static GLuint visibility_unscaled(GLuint samples, float area)
 {
-	float area = device.query_area[index];
 	double logical_samples;
 	const GLuint maximum = (GLuint)-1;
 
@@ -1562,6 +1639,36 @@ static GLuint visibility_unscaled(GLuint samples, DWORD index)
 	return logical_samples >= (double)maximum ? maximum : (GLuint)logical_samples;
 }
 
+#endif
+#ifdef HALO_DESKTOP_GL_FLARE_QUERIES
+static void flare_query_buffer_collect(void)
+{
+	while (device.flare_sealed_banks)
+	{
+		struct flare_query_batch *batch = &device.flare_batches[device.flare_read_bank];
+		unsigned first = VISIBILITY_TEST_SLOTS + device.flare_read_bank * FLARE_BATCH_CAPACITY;
+		unsigned i;
+		if (batch->fence)
+		{
+			GLenum status = glClientWaitSync(batch->fence, 0, 0);
+			if (status == GL_TIMEOUT_EXPIRED)
+				break;
+			if (status == GL_WAIT_FAILED)
+				glFinish();
+			glDeleteSync(batch->fence);
+			batch->fence = NULL;
+		}
+		for (i = 0; i < batch->count; i++)
+		{
+			const struct flare_query_record *test = &batch->records[i];
+			device.flare_pixels[test->slot] = visibility_unscaled(device.visibility_results[first + i], test->area);
+			device.flare_tests_counted[test->slot] = test->generation;
+		}
+		batch->count = 0;
+		device.flare_read_bank = (device.flare_read_bank + 1) % FLARE_BATCH_COUNT;
+		device.flare_sealed_banks--;
+	}
+}
 #endif
 HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULONGLONG *time_stamp)
 {
@@ -1606,10 +1713,18 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 #ifndef HALO_ANDROID
 	if (device.visibility_results)
 	{
+#ifdef HALO_DESKTOP_GL_FLARE_QUERIES
+		if (index < LENS_FLARE_OCCLUSION_SLOT_COUNT)
+		{
+			if (result)
+				*result = device.flare_pixels[index];
+			return S_OK;
+		}
+#endif
 		/* the latest count the GPU has written: from this test, or while
 		the GPU is still behind, from the slot's earlier ones */
 		if (result)
-			*result = visibility_unscaled(device.visibility_results[index], index);
+			*result = visibility_unscaled(device.visibility_results[index], device.query_area[index]);
 		return S_OK;
 	}
 #endif
@@ -1624,7 +1739,11 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 	if (samples)
 		samples = VISIBILITY_ALL_SAMPLES;
 #else
-	samples = visibility_unscaled(samples, index);
+	samples = visibility_unscaled(samples, device.query_area[index]);
+#ifdef HALO_DESKTOP_GL_FLARE_QUERIES
+	if (index < LENS_FLARE_OCCLUSION_SLOT_COUNT)
+		device.flare_tests_counted[index] = device.flare_tests_ended[index];
+#endif
 #endif
 	if (result)
 		*result = samples;
@@ -4337,7 +4456,13 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		/* row 0 of the render target is the top of the picture */
 		glBlitFramebuffer(0, 0, (GLint)back_buffer->target.gl_width, (GLint)back_buffer->target.gl_height,
 			x, y + height, x + width, y, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+#ifdef HALO_DESKTOP_GL_FLARE_QUERIES
+		flare_query_buffer_seal();
+#endif
 		platform_video_swap();
+#ifdef HALO_DESKTOP_GL_FLARE_QUERIES
+		flare_query_buffer_collect();
+#endif
 		gl_check_errors("present");
 		xgpu_gl_state_invalidate();
 		xgpu_texture_cache_begin_frame();

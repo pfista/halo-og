@@ -1,8 +1,8 @@
 # Build on Apple Silicon
 
 Start here for both macOS and iPhone. All commands run on an Apple Silicon Mac
-from the repository root unless stated otherwise. The Mac game runs natively;
-the iPhone build also uses native ARM code and ANGLE's Metal renderer.
+from the repository root unless stated otherwise. Both games use native ARM code.
+The iPhone uses the Mac's native Metal renderer.
 
 To run Halo OG on Mac without compiling, download the
 [macOS DMG](../port/macos/README.md#download). Published testing prereleases have
@@ -32,7 +32,7 @@ export PATH="$(brew --prefix lld@22)/bin:$PATH"
 # For iPhone builds; adjust if Xcode is installed elsewhere:
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 
-python3 tools/macos_setup.py
+python3 tools/macos_setup.py       # Shared Mac and iPhone toolchain
 ```
 
 The compiler adapter requires **LLVM 22** (tested with 22.1.8), not Apple clang
@@ -48,9 +48,10 @@ Already have LLVM 22 at `/opt/homebrew/opt/llvm`? Use that keg for
 if unavailable, installing `uv` enables its local Zig/LLD fallback. Ninja can
 come from Homebrew or that fallback environment.
 
-Setup downloads only public dependencies. ANGLE and Khronos headers have pinned
-URLs and SHA-256 checksums in [dependencies.json](../port/macos/dependencies.json).
-The build also fetches SDL3 3.4.16 and musl 1.2.5. No Android NDK is required.
+The build uses public dependencies including SDL3 3.4.16 and musl 1.2.5.
+Standalone OpenGL reference checks on an Apple Silicon development machine
+require `python3 tools/macos_setup.py --gl-reference`. That option adds the
+pinned ANGLE test dependency. [Dependency checksums](../port/macos/dependencies.json)
 
 ## 2. Supply game data to play
 

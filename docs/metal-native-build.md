@@ -1,44 +1,19 @@
-# Native Metal build selection
+# Native Metal on Mac and iPhone
 
-The normal Mac app bundles both renderers. `tools/macos_build.py` defaults to
-`--renderer dual`, builds the ANGLE and native Metal host/guest pairs separately,
-and packages them in `build/macos/Halo OG.app`. Native Metal is the default when
-`display.renderer` is absent. Existing saved ANGLE choices remain in effect.
-Mac users choose **ANGLE** or **Native Metal** in **Settings → Game Settings →
-Video**, or in **Halo OG → Settings…** in the macOS menu bar. Both save
-`display.renderer = "angle"` or `"metal"` in the same `config.toml` beside saves.
-Quit and reopen Halo to change engines; a current match is never restarted by
-Accept or by the macOS selector.
+Mac and iPhone render the game directly through Metal. The standard Mac build
+produces `build/macos/Halo OG.app`. Its executable is `Contents/MacOS/halo`
+and its native Metal game image is `Contents/Resources/halo_guest.elf`.
+Macs with an old `display.renderer = "angle"` preference start in Metal
+automatically. Players can keep their existing saves and configuration.
 
-Native Metal reveals resolution, frame limit and anti-aliasing controls in Video.
-Both renderers also offer **HUD: Original / High Resolution**, default Original.
-The HUD texture choice applies after relaunch; see
-[high-resolution HUD](high-resolution-hud.md) for redraw provenance and coverage.
-Resolution applies after Accept without restarting; anti-aliasing changes take
-effect on the next launch. VSync and Smooth Motion remain available for both
-engines. Mac timer position and size
-are on the Timer page. Other platforms retain their existing menus. Gameplay
-continues at 30 Hz; Original HUD remains the default.
+Use **Game Settings → Video** on Mac to change resolution, frame limit, VSync,
+Smooth Motion, HUD quality, and anti-aliasing. Resolution applies after Accept.
+HUD quality and anti-aliasing take effect on the next launch. Original HUD is
+the default. See the [HUD guide](high-resolution-hud.md).
 
-The app's primary `halo` executable starts the paired `halo-metal` process before
-AppKit/SDL initialization when Metal is selected. `halo_guest.elf` belongs to
-ANGLE; `halo_guest-metal.elf` belongs to native Metal. A missing native pair or a
-failed process launch falls back to ANGLE without changing the saved preference.
-Unreadable or invalid renderer settings also recover through ANGLE and leave the
-configuration file untouched.
-To recover from a native startup failure, launch the installed app once with:
-
-```sh
-"/Applications/Halo OG.app/Contents/MacOS/halo" --renderer-angle
-```
-
-Then save ANGLE in either settings menu. This override does not change the file.
-An actual native renderer crash is not automatically retried inside the match.
-
-`--renderer angle` and `--renderer metal` retain isolated builds for diagnostics;
-Metal selects `HALO_MACOS_NATIVE_METAL=1` and writes to `build/macos-metal`.
-There is no new application environment variable. The normal dual app includes
-ANGLE libraries; only the native host/guest pair has the GL-free link contract.
+Developers can pass `--renderer metal` to place an isolated Mac diagnostic build
+in `build/macos-metal`. The normal app and the diagnostic build use the same
+renderer.
 
 The native guest selects `d3d8_metal.c` and omits `d3d8_gl.c`, `gl_functions.c`,
 generated GL stubs, GL imports and Khronos headers. Its import table keeps SDL

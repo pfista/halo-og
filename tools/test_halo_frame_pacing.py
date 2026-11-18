@@ -267,7 +267,6 @@ void platform_log(const char *format, ...) { (void)format; }
 int main(void) {
     unsigned found = 0;
     unsigned aa_found = 0;
-    unsigned renderer_found = 0;
     unsigned gpu_input_found = 0;
     unsigned caches_found = 0;
     for (unsigned i = 0; i < NUMBER_OF_CONFIG_SETTINGS; i++) {
@@ -285,10 +284,6 @@ int main(void) {
             if(s->type!=_config_boolean || s->environment || strcmp(s->default_value,"true")) return 6;
             gpu_input_found++;continue;
         }
-        if (!strcmp(s->name,"display.renderer")) {
-            if(s->type!=_config_string || s->environment || strcmp(s->default_value,"\"metal\"")) return 5;
-            renderer_found++;continue;
-        }
         if (!strcmp(s->name, "display.anti_aliasing")) {
             if (s->type != _config_string || s->environment || s->platforms != _platform_all ||
                 strcmp(s->default_value, "\"off\"")) return 3;
@@ -300,16 +295,16 @@ int main(void) {
         if (strcmp(s->default_value, !strcmp(s->name, "display.frame_limit") ? "0" : "480")) return 2;
         found++;
     }
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
-    if (aa_found != 1 || renderer_found != 1) return 4;
+#if defined(HALO_MACOS)
+    if (aa_found != 1) return 4;
 #else
-    if (aa_found || renderer_found) return 4;
+    if (aa_found) return 4;
 #endif
     if (gpu_input_found != 1) return 7;
     if (caches_found != 5) return 9;
-    printf("%u %ld %ld %d %s %s\n", found, config_integer("display.frame_limit"), config_integer("display.render_height"),
+    printf("%u %ld %ld %d %s\n", found, config_integer("display.frame_limit"), config_integer("display.render_height"),
         config_boolean("debug.metal_gpu_vertex_decode"),
-        config_string("display.anti_aliasing"),config_string("display.renderer"));
+        config_string("display.anti_aliasing"));
     printf("%d %d %d\n", config_boolean("debug.metal_geometry_cache"),
         config_boolean("debug.metal_cache_bindings"),config_boolean("debug.metal_async_submit"));
     printf("%d %d\n",config_boolean("debug.metal_texture_cache"),config_boolean("debug.metal_uniform_cache"));
@@ -366,8 +361,7 @@ class NativeConfigTests(unittest.TestCase):
             raise unittest.SkipTest("SDL3 headers required for production config parser")
         cls.executables = {}
         for name, defines in (("native", ["HALO_MACOS=1", "HALO_MACOS_NATIVE_METAL=1"]),
-                              ("angle", ["HALO_MACOS=1"]), ("disabled", ["HALO_MACOS=1", "HALO_MACOS_NATIVE_METAL=0"]),
-                              ("android", []), ("ios", ["HALO_MACOS=1", "HALO_IOS=1"])):
+                              ("android", []), ("ios", ["HALO_MACOS=1", "HALO_IOS=1", "HALO_MACOS_NATIVE_METAL=1"])):
             executable = cls.folder / name
             run("clang", "-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror", "-pthread",
                 "-DHALO_ANDROID=1", *("-D" + define for define in defines), "-include", cls.folder / "prefix.h",
@@ -395,31 +389,27 @@ class NativeConfigTests(unittest.TestCase):
             self.metal_preparation_caches = tuple(bool(int(value)) for value in lines[2].split())
             self.gpu_vertex_decode = bool(int(values[3]))
             self.anti_aliasing = values[4] if len(values) >= 5 else ''
-            self.renderer = values[5] if len(values) == 6 else ''
             return tuple(map(int, values[:3])), path.read_text()
 
     def test_native_defaults_registered_as_integer_config_only(self):
-        for target in ('native','angle','disabled'):
+        for target in ("native", "ios"):
             with self.subTest(target=target):
                 values, text = self.config(target)
                 self.assertEqual(values, (2, 0, 480))
                 self.assertIn("frame_limit = 0", text)
                 self.assertIn("render_height = 480", text)
-                self.assertEqual(self.anti_aliasing, 'off')
-                self.assertEqual(self.renderer, 'metal')
+                self.assertEqual(self.anti_aliasing, "off")
                 self.assertIn('anti_aliasing = "off"', text)
-                self.assertIn('renderer = "metal"', text)
-
-    def test_other_renderers_do_not_register_or_write_native_options(self):
-        for target in ("android", "ios"):
-            with self.subTest(target=target):
-                values, text = self.config(target)
-                self.assertEqual(values, (0, 0, 0))
-                self.assertNotIn("frame_limit", text)
-                self.assertNotIn("render_height", text)
-                self.assertNotIn("anti_aliasing", text)
                 self.assertNotIn("\nrenderer =", text)
-                self.assertEqual(self.anti_aliasing, '')
+
+    def test_android_omits_native_metal_options(self):
+        values, text = self.config("android")
+        self.assertEqual(values, (0, 0, 0))
+        self.assertNotIn("frame_limit", text)
+        self.assertNotIn("render_height", text)
+        self.assertNotIn("anti_aliasing", text)
+        self.assertNotIn("\nrenderer =", text)
+        self.assertEqual(self.anti_aliasing, "")
 
     def test_gpu_input_defaults_on_and_preserves_cpu_comparison_setting(self):
         self.config('native')

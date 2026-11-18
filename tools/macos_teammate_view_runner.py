@@ -68,24 +68,17 @@ def check_ports(addresses):
     return errors
 
 
-def validate_app(executable, renderer):
-    if renderer not in ("metal", "angle"):
-        raise ValueError("Select renderer metal or angle.")
+def validate_app(executable):
     executable = Path(executable).expanduser().resolve()
-    if executable.parent.name != "MacOS" or not executable.is_file() or not os.access(executable, os.X_OK):
+    if executable.parts[-3:] != ("Contents", "MacOS", "halo") or not executable.is_file() or not os.access(executable, os.X_OK):
         raise ValueError("Use the native executable inside a built Halo OG app's Contents/MacOS directory.")
     resources = executable.parent.parent / "Resources"
     if not (resources / "halo_guest.elf").is_file():
         raise ValueError(f"The app is missing {resources / 'halo_guest.elf'}")
-    if renderer == "metal":
-        metal = executable.parent / "halo-metal"
-        if not metal.is_file() or not os.access(metal, os.X_OK) or not (resources / "halo_guest-metal.elf").is_file():
-            raise ValueError("Native Metal needs both Contents/MacOS/halo-metal and "
-                             "Contents/Resources/halo_guest-metal.elf; select --renderer angle for an ANGLE-only app.")
     return executable
 
 
-def make_config(role, team, address, map_name, renderer, hide_clients=False, start_delay=35.0):
+def make_config(role, team, address, map_name, hide_clients=False, start_delay=35.0):
     host = role == "red_host"
     return f'''[network]
 address = {json.dumps(address)}
@@ -100,7 +93,6 @@ join_from_clipboard = false
 application_id = ""
 
 [display]
-renderer = {json.dumps(renderer)}
 fullscreen = false
 window_scale = 1
 interpolation = false
@@ -137,7 +129,7 @@ exit_after = 0.0
 '''
 
 
-def prepare_instance(folder, role, team, address, map_name, renderer, hide_clients=False,
+def prepare_instance(folder, role, team, address, map_name, hide_clients=False,
                      start_delay=35.0, data_root=ROOT / "assets"):
     folder = Path(folder)
     maps = Path(data_root).expanduser().resolve() / "maps"
@@ -151,7 +143,7 @@ def prepare_instance(folder, role, team, address, map_name, renderer, hide_clien
     for source in maps.iterdir():
         if source.is_file():
             (data / "maps" / source.name).symlink_to(source.resolve())
-    (saves / "config.toml").write_text(make_config(role, team, address, map_name, renderer, hide_clients, start_delay))
+    (saves / "config.toml").write_text(make_config(role, team, address, map_name, hide_clients, start_delay))
     (saves / "macos-settings.json").write_text(json.dumps({
         "community_downloads": False, "timer_audio_downloads": False, "release_checks": False,
     }, indent=2) + "\n")
@@ -166,13 +158,13 @@ def prepare_instance(folder, role, team, address, map_name, renderer, hide_clien
     return environment
 
 
-def make_plan(output, addresses, executable, renderer, map_name, hide_clients=False,
+def make_plan(output, addresses, executable, map_name, hide_clients=False,
               start_delay=35.0, data_root=ROOT / "assets"):
     output = Path(output).expanduser()
     if output.exists() or output.is_symlink():
         raise ValueError(f"Output already exists; choose a fresh directory: {output}")
     output = output.resolve()
-    executable = validate_app(executable, renderer)
+    executable = validate_app(executable)
     if len(addresses) != 4 or len(set(addresses)) != 4:
         raise ValueError("Four distinct IPv4 addresses are required.")
     if not re.fullmatch(r"[A-Za-z0-9_ -]{1,31}", map_name):
@@ -180,22 +172,22 @@ def make_plan(output, addresses, executable, renderer, map_name, hide_clients=Fa
     maps = Path(data_root).expanduser().resolve() / "maps"
     if not maps.is_dir() or any(not (maps / name).is_file() for name in ("ui.map", map_name + ".map")):
         raise ValueError(f"Game data needs maps/ui.map and maps/{map_name}.map: {maps.parent}")
-    return {"output": str(output), "executable": str(executable), "renderer": renderer, "map": map_name,
+    return {"output": str(output), "executable": str(executable), "renderer": "metal", "map": map_name,
             "data_source": str(maps.parent), "start_delay": start_delay, "hide_clients": hide_clients,
             "addresses": addresses, "instances": [
                 {"role": role, "team": team, "address": address, "folder": str(output / role),
-                 "config": make_config(role, team, address, map_name, renderer, hide_clients, start_delay),
+                 "config": make_config(role, team, address, map_name, hide_clients, start_delay),
                  "command": [str(executable)], "pid": None}
                 for (role, team), address in zip(ROLES, addresses)]}
 
 
-def prepare_session(output, addresses, executable, renderer, map_name, hide_clients=False,
+def prepare_session(output, addresses, executable, map_name, hide_clients=False,
                     start_delay=35.0, data_root=ROOT / "assets"):
-    plan = make_plan(output, addresses, executable, renderer, map_name, hide_clients, start_delay, data_root)
+    plan = make_plan(output, addresses, executable, map_name, hide_clients, start_delay, data_root)
     Path(plan["output"]).mkdir(parents=True, mode=0o700, exist_ok=False)
     for instance in plan["instances"]:
         instance["environment"] = prepare_instance(Path(instance["folder"]), instance["role"], instance["team"],
-                                                   instance["address"], map_name, renderer, hide_clients,
+                                                   instance["address"], map_name, hide_clients,
                                                    start_delay, data_root)
     return plan
 
@@ -344,7 +336,7 @@ def main(argv=None):
     parser.add_argument("--data-root", type=Path, default=ROOT / "assets", help="Read-only map source; never uses its saves")
     parser.add_argument("--map", default="bloodgulch")
     parser.add_argument("--addresses", help="Four existing IPv4 addresses: host, red teammate, blue player, blue teammate")
-    parser.add_argument("--renderer", choices=("metal", "angle"), default="metal")
+    parser.add_argument("--renderer", choices=("metal",), help=argparse.SUPPRESS)
     parser.add_argument("--hide-clients", action="store_true", help="Show only the human Red host window")
     parser.add_argument("--seconds", type=float, default=0, help="Optional session limit; 0 runs until Ctrl-C")
     parser.add_argument("--start-delay", type=float, default=35, help="Lobby setup delay before automatic start")
@@ -359,7 +351,7 @@ def main(argv=None):
     output = args.output or ROOT / "build/macos" / ("teammate-view-local-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ"))
     try:
         addresses = resolve_addresses(args.addresses, configured_addresses())
-        plan = make_plan(output, addresses, args.executable, args.renderer, args.map,
+        plan = make_plan(output, addresses, args.executable, args.map,
                          args.hide_clients, args.start_delay, args.data_root)
         errors = check_ports(addresses)
         if args.dry_run:
@@ -369,7 +361,7 @@ def main(argv=None):
         if errors:
             raise ValueError("Existing game ports are busy; no apps were launched or stopped.\n" + "\n".join(errors) +
                              "\nClose an existing local Halo session yourself, or choose other available configured addresses.")
-        plan = prepare_session(output, addresses, args.executable, args.renderer, args.map,
+        plan = prepare_session(output, addresses, args.executable, args.map,
                                args.hide_clients, args.start_delay, args.data_root)
         previous_handler = signal.getsignal(signal.SIGTERM)
         def request_stop(signum, frame):

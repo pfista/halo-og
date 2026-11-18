@@ -1,7 +1,6 @@
 # Halo OG on Apple Silicon
 
-The native ARM64 port defaults to direct Metal rendering and the Xbox-derived engine.
-ANGLE remains available as a compatibility renderer.
+The native ARM64 port runs the Xbox-derived engine and renders directly through Metal.
 Original game data is supplied separately.
 
 ## Download
@@ -17,7 +16,7 @@ remain off. The older `test-v0.3.0-net11-dmg2` Mac build requires opt-in.
 ## Launch
 
 Open `build/macos/Halo OG.app` in Finder. There is no automatic timeout.
-The app includes SDL3, ANGLE, Sparkle, and the compiled game image. It remembers
+The app includes SDL3, Sparkle, and the compiled game image. It remembers
 your chosen local data location. Development builds can fall back to this
 checkout's `assets/` directory. The helmet menu icon opens Settings, changes
 fullscreen, and selects your own disc image or maps folder. See
@@ -177,19 +176,14 @@ copy. Quit an older running copy before launching its replacement.
 `--no-data-path` omits the development data path; first launch then asks for data.
 `--data-root /path/to/game` selects another local data root.
 
-The normal app bundles Native Metal (the default) and ANGLE for compatibility.
-Existing saved ANGLE choices remain in effect. Choose
-the engine in the game's Settings → Game Settings → Video or Halo OG → Settings…
-in the macOS menu bar, then quit and reopen Halo. Native Metal exposes its
-resolution, frame limit and anti-aliasing controls in Video. See
-[native renderer settings](../../docs/metal-native-build.md) for restart behavior
-and the one-launch ANGLE recovery command. `--renderer angle` or
-`--renderer metal` builds an isolated renderer pair for diagnostics.
+Halo OG uses native Metal, including on Macs with an old ANGLE preference.
+Resolution, frame limit and anti-aliasing are available in **Game Settings →
+Video**. See [native renderer settings](../../docs/metal-native-build.md).
 
 After configuration, `ninja macos_guest` rebuilds game code;
 `macos_build.py --host-only` rebuilds/packages the host. Compiler adapters and
-wrappers are tracked build dependencies. `HALO_MACOS_SDL_PREFIX` and
-`HALO_MACOS_ANGLE_DIR` can select dependency locations. Local builds are ad-hoc
+wrappers are tracked build dependencies. `HALO_MACOS_SDL_PREFIX` can select
+the SDL dependency location. Local builds are ad-hoc
 signed; packaging verifies the signature. See [release tooling](../../docs/macos-menu-and-releases.md)
 for distributable bundles and [validation](../../docs/apple-build.md#validation).
 
@@ -250,9 +244,6 @@ python3 tools/macos_benchmark.py --output build/macos/performance/retest --effec
 `--host` and `--guest` select comparison builds; `--levels` and `--cycle-seconds`
 select workloads. `--checkpoints` verifies safe save/revert (use a30, since the
 initial a10 scene can refuse saves). `--screenshot-every N` captures frames.
-The benchmark records CSV, console/game logs and `validation.json`; rejected
-commands, early exits and rendering failures fail the run.
-
-`HALO_PERF_LOG=/absolute/path/frames.csv` profiles an ordinary launch. Draw timing
-includes driver/VSync waits and is not a GPU timestamp measurement. Maximum FPS,
-memory growth and visual fidelity require comparable sustained workloads.
+The benchmark records console and game logs, checks the Metal draw counters,
+and writes `validation.json`. For warmed frame timing and GPU completion metrics,
+use `tools/macos_renderer_benchmark.py --help`.

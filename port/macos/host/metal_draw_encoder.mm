@@ -293,6 +293,13 @@ struct EncoderBindings {
         !range(draw.vertexUniforms, draw.vertexUniformOffset, 1, HaloMetalVertexUniformSize, 16, _device) ||
         !range(draw.pixelUniforms, draw.pixelUniformOffset, 1, HaloMetalPixelUniformSize, 16, _device))
         return fail(error, HaloMetalDrawInvalid, @"Original input/uniform buffer range, alignment or device is invalid");
+#if TARGET_OS_SIMULATOR
+    if (s.depth_clip_mode)
+        return fail(error, HaloMetalDrawUnsupported, @"Simulator supports default depth clipping only");
+    if ((draw.vertexUniformOffset % 256 && draw.vertexUniforms.storageMode == MTLStorageModePrivate) ||
+        (draw.pixelUniformOffset % 256 && draw.pixelUniforms.storageMode == MTLStorageModePrivate))
+        return fail(error, HaloMetalDrawInvalid, @"Private constant buffers need 256-byte alignment in Simulator");
+#endif
     if (!immutableGeometry && draw.indices.storageMode != MTLStorageModePrivate) {
         const uint8_t *bytes = (const uint8_t *)draw.indices.contents + draw.indexOffset;
         for (NSUInteger i = 0; i < draw.indexCount; i++) {
@@ -512,7 +519,8 @@ struct EncoderBindings {
     id<MTLTexture> target = draw.color ?: draw.depthStencil;
     if (draw.visibilityBuffer || pass.visibilityResultBuffer ||
         pass.renderTargetWidth != target.width || pass.renderTargetHeight != target.height ||
-        pass.renderTargetArrayLength != 1 || pass.defaultRasterSampleCount != 1 ||
+        pass.renderTargetArrayLength != (TARGET_OS_SIMULATOR ? 0u : 1u) ||
+        pass.defaultRasterSampleCount != (TARGET_OS_SIMULATOR ? 0u : 1u) ||
         pass.colorAttachments[0].texture != draw.color ||
         pass.depthAttachment.texture != draw.depthStencil || pass.stencilAttachment.texture != draw.depthStencil)
         return fail(error,HaloMetalDrawInvalid,@"Initial packet pass does not match the prepared draw attachments or footprint");
@@ -642,9 +650,11 @@ struct EncoderBindings {
         [encoder setFrontFacingWinding:s.front_winding ? MTLWindingCounterClockwise : MTLWindingClockwise];
     });
     bind(previous.cull_mode == s.cull_mode, [&] { [encoder setCullMode:(MTLCullMode)s.cull_mode]; });
+#if !TARGET_OS_SIMULATOR
     bind(previous.depth_clip_mode == s.depth_clip_mode, [&] {
         [encoder setDepthClipMode:s.depth_clip_mode ? MTLDepthClipModeClamp : MTLDepthClipModeClip];
     });
+#endif
     bind(previous.fill_mode == s.fill_mode, [&] {
         [encoder setTriangleFillMode:s.fill_mode ? MTLTriangleFillModeLines : MTLTriangleFillModeFill];
     });
@@ -661,9 +671,27 @@ struct EncoderBindings {
         [encoder setVertexBuffer:draw.vertices offset:draw.vertexOffset atIndex:1];
     });
     bind(_bindings.vertexUniforms == draw.vertexUniforms && _bindings.vertexUniformOffset == draw.vertexUniformOffset, [&] {
+#if TARGET_OS_SIMULATOR
+        // Simulator requires 256-byte constant-buffer offsets. The immutable
+        // guest packet aligns uniforms to 16 bytes; Metal copies these inline.
+        if (draw.vertexUniformOffset % 256) {
+            static_assert(HaloMetalVertexUniformSize <= 4096);
+            [encoder setVertexBytes:static_cast<const uint8_t *>(draw.vertexUniforms.contents) + draw.vertexUniformOffset
+                length:HaloMetalVertexUniformSize atIndex:0];
+            return;
+        }
+#endif
         [encoder setVertexBuffer:draw.vertexUniforms offset:draw.vertexUniformOffset atIndex:0];
     });
     bind(_bindings.pixelUniforms == draw.pixelUniforms && _bindings.pixelUniformOffset == draw.pixelUniformOffset, [&] {
+#if TARGET_OS_SIMULATOR
+        if (draw.pixelUniformOffset % 256) {
+            static_assert(HaloMetalPixelUniformSize <= 4096);
+            [encoder setFragmentBytes:static_cast<const uint8_t *>(draw.pixelUniforms.contents) + draw.pixelUniformOffset
+                length:HaloMetalPixelUniformSize atIndex:0];
+            return;
+        }
+#endif
         [encoder setFragmentBuffer:draw.pixelUniforms offset:draw.pixelUniformOffset atIndex:0];
     });
     for (unsigned i = 0; i < 4; i++) {

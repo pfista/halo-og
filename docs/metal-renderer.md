@@ -6,11 +6,10 @@ simulation remains the reference. Higher resolution and render frequency are
 separate performance experiments; they must preserve animation, input/camera
 timing, weapon behavior and network behavior.
 
-The current game path is Xbox D3D8/NV2A state → GLES → ANGLE → Metal. This branch
-adds direct NV2A vertex-program and pixel-combiner generation in Metal Shading
-Language. Both emitters share the existing instruction/state decoding with the
-GLES emitters. There is no OpenGL context or ANGLE linkage in the native shader
-validation executable. The game's renderer selection has not changed.
+Mac and iPhone translate Xbox D3D8/NV2A state directly to Metal. The native
+vertex-program and pixel-combiner emitters share instruction and state decoding
+with the GLES emitters. The experiments below document the transition from the
+earlier ANGLE renderer. See the [native game build](metal-native-build.md).
 
 ## Current experiment
 
@@ -139,7 +138,7 @@ differences begin at use25/program17; final color differs at 307 of 307,200
 pixels, so the strict attachment gate still fails. The live native game adapter
 has not yet replaced the game's frontend; see [the adapter requirements](metal-game-adapter.md).
 
-The game's D3D frontend still draws through ANGLE. Native completion remains
+At that replay checkpoint the game's D3D frontend still drew through ANGLE. Native completion was
 synchronous, presentation is unverified, and physical Xbox D24/F24 storage
 precision is not established by these float32 attachment tests. One imported
 draw and an executed diagnostic frame are not complete native gameplay.

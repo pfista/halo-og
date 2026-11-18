@@ -11,39 +11,46 @@ from tools.macos_metal_imports import native_imports
 
 
 class RendererBuildTests(unittest.TestCase):
-    def graph(self, renderer):
+    def graph(self, renderer=None, ios=False):
         stream = io.StringIO()
         with tempfile.TemporaryDirectory(prefix="halo-guest-build-graph-") as directory:
             tools = Path(directory)
-            for name in ("llvm-ar", "ld.lld", "GLES3/gl32.h", "GLES2/gl2ext.h", "KHR/khrplatform.h"):
+            for name in ("llvm-ar", "ld.lld"):
                 path = tools / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.touch()
-            settings = SimpleNamespace(macos=True, ios=False, macos_renderer=renderer,
+            settings = SimpleNamespace(macos=not ios, ios=ios, macos_renderer=renderer,
                                        android_guest_only=True, android_guest_llvm_bin=tools,
-                                       android_guest_gl_include=tools if renderer == "angle" else None,
-                                       android_guest_cc="tools/macos_guest_cc.py", port_pgo="off")
+                                       android_guest_gl_include=None,
+                                       android_guest_cc="tools/ios_guest_cc.py" if ios else "tools/macos_guest_cc.py",
+                                       port_pgo="off")
             with patch.object(android_build, "fetch_third_party"):
                 android_build.generate_android_build(ninja_syntax.Writer(stream), settings)
         return stream.getvalue()
 
-    def test_native_guest_omits_every_gl_bridge(self):
-        graph = self.graph("metal")
-        for absent in ("d3d8_gl.c", "gl_functions.c", "guest_gl.c", "gl_imports.list",
-                       "gl_include", "GLES2", "GLES3", "android_gl_stubs"):
-            self.assertNotIn(absent, graph)
-        for required in ("d3d8_metal.c", "HALO_MACOS_NATIVE_METAL=1", "build/macos-metal/halo_guest.elf",
-                         "native_host_imports.list", "metal_imports.list", "--renderer metal --plugin-only"):
-            self.assertIn(required, graph)
+    def test_standard_and_isolated_guests_use_only_native_metal(self):
+        for renderer, output in ((None, "macos"), ("metal", "macos-metal")):
+            with self.subTest(output=output):
+                graph = self.graph(renderer)
+                for absent in ("d3d8_gl.c", "gl_functions.c", "guest_gl.c", "gl_imports.list",
+                               "gl_include", "GLES2", "GLES3", "android_gl_stubs"):
+                    self.assertNotIn(absent, graph)
+                for required in ("d3d8_metal.c", "HALO_MACOS_NATIVE_METAL=1", f"build/{output}/halo_guest.elf",
+                                 "native_host_imports.list", "metal_imports.list"):
+                    self.assertIn(required, graph)
+                self.assertEqual("--renderer metal --plugin-only" in graph, bool(renderer))
+                self.assertEqual("--isolated-metal" in graph, bool(renderer))
+                self.assertEqual("build/macos-metal" in graph, bool(renderer))
 
-    def test_default_guest_keeps_angle_and_old_output(self):
-        graph = self.graph("angle")
-        for required in ("d3d8_gl.c", "gl_functions.c", "guest_gl.c", "gl_imports.list",
-                         "build/macos/halo_guest.elf"):
+    def test_iphone_guest_links_only_native_metal_with_signed_image_imports(self):
+        graph = self.graph(ios=True)
+        for required in ("d3d8_metal.c", "HALO_MACOS_NATIVE_METAL=1", "native_host_imports.list",
+                         "port/macos/metal_imports.list", "tools/android_imports.py --ios",
+                         "tools/ios_build.py --plugin-only", "build/ios/halo_guest.elf"):
             self.assertIn(required, graph)
-        self.assertNotIn("d3d8_metal.c", graph)
-        self.assertNotIn("HALO_MACOS_NATIVE_METAL", graph)
-        self.assertNotIn("build/macos-metal", graph)
+        for absent in ("d3d8_gl.c", "gl_functions.c", "guest_gl.c", "gl_imports.list",
+                       "gl_include", "GLES2", "GLES3", "android_gl_stubs", "--renderer"):
+            self.assertNotIn(absent, graph)
 
     def test_filter_retains_input_audio_events_and_native_wire(self):
         original = Path("port/android/host_imports.list").read_text()
@@ -55,14 +62,11 @@ class RendererBuildTests(unittest.TestCase):
             self.assertIn(name, names)
         self.assertEqual(native_imports(filtered), filtered)
 
-    def host_commands(self, renderer):
+    def host_commands(self):
         commands = []
         with tempfile.TemporaryDirectory(prefix="halo-host-build-graph-") as directory:
             root = Path(directory)
-            for name in ("EGL", "GLESv2"):
-                (root / f"angle/{name}.xcframework/macos-arm64/lib{name}.framework").mkdir(parents=True)
-            with patch.object(macos_build, "RENDERER", renderer), patch.object(macos_build, "BUILD", root / "output"), \
-                    patch.object(macos_build, "ANGLE", root / "angle"), \
+            with patch.object(macos_build, "BUILD", root / "output"), \
                     patch.object(macos_build, "setup_sparkle", return_value=root / "Sparkle.framework"), \
                     patch.object(macos_build, "require", side_effect=lambda path: path), \
                     patch.object(macos_build, "run", side_effect=lambda *args: commands.append([str(arg) for arg in args])):
@@ -70,20 +74,13 @@ class RendererBuildTests(unittest.TestCase):
         return commands
 
     def test_native_host_excludes_gl_sources_headers_libraries(self):
-        commands = self.host_commands("metal")
+        commands = self.host_commands()
         text = "\n".join(" ".join(command) for command in commands)
         for absent in ("host_gl.c", "host_gl_bridge.c", "host_perf.c", "libEGL", "libGLESv2", "toolchain/gl"):
             self.assertNotIn(absent, text)
         for required in ("host_sdl.c", "host_metal.mm", "metal_draw_encoder.mm", "HALO_MACOS_NATIVE_METAL=1",
                          "-lSDL3", "-framework Metal", "-framework Cocoa"):
             self.assertIn(required, text)
-
-    def test_default_host_keeps_gl_sources_and_libraries(self):
-        commands = self.host_commands("angle")
-        text = "\n".join(" ".join(command) for command in commands)
-        for required in ("host_gl.c", "host_gl_bridge.c", "host_perf.c", "libEGL", "libGLESv2", "toolchain/gl"):
-            self.assertIn(required, text)
-        self.assertNotIn("HALO_MACOS_NATIVE_METAL", text)
 
 
 if __name__ == "__main__":

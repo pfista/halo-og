@@ -1,4 +1,4 @@
-"""CPU checks for mixed menu persistence and a targeted host-menu refresh."""
+"""CPU checks for Metal settings persistence and legacy Mac renderer preferences."""
 import os
 from pathlib import Path
 import shutil
@@ -23,10 +23,6 @@ int config_test_fclose(FILE *);
 '''
 
 MAIN = r'''
-static void replace_file(const char *path,const char *text) {
-    FILE *file=fopen(path,"wb");assert(file);
-    assert(fwrite(text,1,strlen(text),file)==strlen(text));assert(!fclose(file));
-}
 int main(int argc,char **argv) {
     assert(argc>=2 && (argc-2)%3==0);
     struct config_update updates[32];
@@ -42,36 +38,26 @@ int main(int argc,char **argv) {
         assert(!config_write_values(updates,count));assert(access(path,F_OK));
         puts("0");return 0;
     }
+    if(!strcmp(argv[1],"defaults")) {
+        assert(config_integer("display.render_height")==480);
+        puts("1");return 0;
+    }
     /* Warm the cache through an identical registered boolean save without
        completing missing defaults or altering the test's original text. */
     const char *key="display.vsync";double same=1;
     assert(config_write_numbers(&key,&same,1));
-    const char *old_renderer=config_string("display.renderer"),*old_aa=config_string("display.anti_aliasing");
-    char *renderer_copy=strdup(old_renderer),*aa_copy=strdup(old_aa);assert(renderer_copy && aa_copy);
-    if(!strcmp(argv[1],"refresh")) {
-        assert(!strcmp(old_renderer,"angle") && !strcmp(old_aa,"off") && config_boolean("display.vsync"));
-        const char *external="# host Settings\n[display]\nrenderer=\"metal\" # keep\nvsync=false\nanti_aliasing=\"fxaa\"\n";
-        replace_file(path,external);
-        assert(config_refresh_string("display.renderer"));
-        const char *metal=config_string("display.renderer");assert(!strcmp(metal,"metal"));
-        assert(!strcmp(old_renderer,"angle") && !strcmp(config_string("display.anti_aliasing"),"off"));
-        assert(config_boolean("display.vsync"));
-        assert(!config_refresh_string("display.vsync") && !config_refresh_string("game.language") &&
-            !config_refresh_string("unknown") && !config_refresh_string(NULL));
-        replace_file(path,"[display]\nrenderer=1\nvsync=false\n");
-        assert(config_refresh_string("display.renderer") && !strcmp(config_string("display.renderer"),"angle"));
-        assert(!strcmp(metal,"metal"));
-        replace_file(path,"[display]\nvsync=false\n");
-        assert(config_refresh_string("display.renderer") && !strcmp(config_string("display.renderer"),"angle"));
-        replace_file(path,"[display\ninvalid");
-        assert(!config_refresh_string("display.renderer") && !strcmp(config_string("display.renderer"),"angle"));
-        assert(config_boolean("display.vsync") && !strcmp(old_renderer,"angle"));
-        free(renderer_copy);free(aa_copy);puts("1");return 0;
+    if(!strcmp(argv[1],"legacy")) {
+        assert(config_boolean("display.vsync") && config_integer("display.frame_limit")==120);
+        assert(config_integer("display.render_height")==1080 && !strcmp(config_string("display.anti_aliasing"),"fxaa"));
+        assert(!strcmp(config_string("game.language"),"fr"));
+        puts("1");return 0;
     }
+    const char *old_aa=config_string("display.anti_aliasing");
+    char *aa_copy=strdup(old_aa);assert(aa_copy);
     if(!strcmp(argv[1],"readonly"))assert(!chmod(path,0400));
     failure_mode=atoi(argv[1]);
     int result=config_write_values(updates,count);failure_mode=0;
-    assert(!strcmp(old_renderer,renderer_copy) && !strcmp(old_aa,aa_copy));
+    assert(!strcmp(old_aa,aa_copy));
     if(result) {
         for(unsigned i=0;i<count;i++) {
             if(updates[i].type==_config_update_string)assert(!strcmp(config_string(updates[i].name),updates[i].string));
@@ -79,28 +65,25 @@ int main(int argc,char **argv) {
             else assert(config_integer(updates[i].name)==updates[i].number);
         }
         if(!strcmp(argv[1],"twice")) {
-            const char *first_renderer=config_string("display.renderer"),*first_aa=config_string("display.anti_aliasing");
-            char *first_copy=strdup(first_renderer),*first_aa_copy=strdup(first_aa);
-            const struct config_update reset[]={{"display.renderer",_config_update_string,0,"angle"},
-                {"display.anti_aliasing",_config_update_string,0,"off"}};
-            assert(config_write_values(reset,2));
-            assert(!strcmp(first_renderer,first_copy) && !strcmp(first_aa,first_aa_copy));
-            assert(!strcmp(old_renderer,renderer_copy) && !strcmp(old_aa,aa_copy));
-            free(first_copy);free(first_aa_copy);
+            const char *first_aa=config_string("display.anti_aliasing");
+            char *first_aa_copy=strdup(first_aa);assert(first_aa_copy);
+            const struct config_update reset={"display.anti_aliasing",_config_update_string,0,"off"};
+            assert(config_write_values(&reset,1));
+            assert(!strcmp(first_aa,first_aa_copy) && !strcmp(old_aa,aa_copy));
+            free(first_aa_copy);
         }
     } else {
-        assert(!strcmp(config_string("display.renderer"),renderer_copy));
         assert(!strcmp(config_string("display.anti_aliasing"),aa_copy));
         assert(config_boolean("display.vsync"));
     }
-    assert(!chmod(path,0600));free(renderer_copy);free(aa_copy);printf("%d\n",result);return 0;
+    assert(!chmod(path,0600));free(aa_copy);printf("%d\n",result);return 0;
 }
 '''
 
 ORIGINAL = ('# player notes\n[display] # display\nrenderer = "angle" # engine\n'
             "anti_aliasing = 'off' # edges\nvsync = true\nframe_limit = 30\nrender_height = 480\n"
             'custom = "é, # []"\n')
-CHANGES = [('display.renderer', 'string', 'metal'), ('display.anti_aliasing', 'string', 'fxaa'),
+CHANGES = [('display.anti_aliasing', 'string', 'fxaa'),
            ('display.vsync', 'number', '0'), ('display.frame_limit', 'number', '120'),
            ('display.render_height', 'number', '0')]
 
@@ -115,7 +98,12 @@ class MacVideoConfigTests(unittest.TestCase):
         cls.directory = Path(cls.temp.name)
         prefix, probe = cls.directory / "prefix.h", cls.directory / "probe.c"
         prefix.write_text(PREFIX + FAULT_PREFIX)
-        probe.write_text(CONFIG_HARNESS.split("int main(", 1)[0] + MAIN)
+        logging = r"""void platform_log(const char *format,...) {
+            va_list args;va_start(args,format);vfprintf(stderr,format,args);va_end(args);fputc('\n',stderr);
+        }"""
+        prelude = CONFIG_HARNESS.split("int main(", 1)[0].replace(
+            "void platform_log(const char *format,...) { (void)format; }", logging)
+        probe.write_text("#include <stdarg.h>\n" + prelude + MAIN)
         cls.executable = cls.directory / "probe"
         result = subprocess.run(["clang", "-std=gnu11", "-O1", "-g", "-Wall", "-Wextra", "-Werror", "-pthread",
             "-fsanitize=address,undefined", "-DHALO_ANDROID=1", "-DHALO_MACOS=1",
@@ -125,7 +113,7 @@ class MacVideoConfigTests(unittest.TestCase):
         if result.returncode:
             raise AssertionError(result.stderr)
 
-    def save(self, content=ORIGINAL, updates=CHANGES, mode="0", success=True):
+    def save(self, content=ORIGINAL, updates=CHANGES, mode="0", success=True, legacy_notice=None):
         with tempfile.TemporaryDirectory(prefix="halo-video-config-save-") as folder:
             root = Path(folder)
             path = root / "config.toml"
@@ -137,11 +125,15 @@ class MacVideoConfigTests(unittest.TestCase):
                                     env=env, capture_output=True, text=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(result.stdout.strip(), str(int(success)))
-            self.assertEqual(sorted(p.name for p in root.iterdir()), [] if content is None else ["config.toml"])
+            if legacy_notice is not None:
+                self.assertEqual("using native Metal for legacy display.renderer" in result.stderr, legacy_notice)
+                self.assertNotIn("unknown setting display.renderer", result.stderr)
+            self.assertEqual(sorted(p.name for p in root.iterdir()),
+                             [] if mode == "cold_invalid" else ["config.toml"])
             saved = path.read_text() if path.exists() else None
             if not success:
                 self.assertEqual(saved, content)
-            elif mode not in ("twice", "refresh"):
+            elif mode != "twice":
                 parsed = tomllib.loads(saved)
                 for key, kind, value in updates:
                     section, name = key.split(".")
@@ -149,7 +141,7 @@ class MacVideoConfigTests(unittest.TestCase):
             return saved
 
     def test_mixed_batch_preserves_unrelated_text_and_comments(self):
-        expected = (ORIGINAL.replace('"angle"', '"metal"').replace("'off'", '"fxaa"')
+        expected = (ORIGINAL.replace("'off'", '"fxaa"')
                     .replace("vsync = true", "vsync = false").replace("frame_limit = 30", "frame_limit = 120")
                     .replace("render_height = 480", "render_height = 0"))
         self.assertEqual(self.save(), expected)
@@ -163,7 +155,7 @@ class MacVideoConfigTests(unittest.TestCase):
         ]
         for original in forms:
             with self.subTest(original=original):
-                self.save(original, CHANGES[:3])
+                self.save(original, CHANGES[:2], legacy_notice=True)
 
     def test_strings_round_trip_quotes_backslashes_control_characters_and_unicode(self):
         for value in ('français, # [] "quote" \\ path\n\tend', 'x' * 1024, ''):
@@ -180,6 +172,7 @@ class MacVideoConfigTests(unittest.TestCase):
 
     def test_whole_batch_rejects_unknown_duplicate_wrong_kind_null_and_nonfinite(self):
         invalid = [('unknown', 'number', '0'), ('display.renderer', 'number', '1'),
+                   ('display.renderer', 'string', 'angle'),
                    ('display.vsync', 'string', 'false'), ('display.anti_aliasing', 'null', ''),
                    ('display.frame_limit', 'number', 'nan'), ('display.frame_limit', 'number', '1.5'),
                    ('display.vsync', 'number', '2'), ('display.anti_aliasing', 'invalid', 'off')]
@@ -195,8 +188,20 @@ class MacVideoConfigTests(unittest.TestCase):
     def test_existing_wrong_type_rejects_entire_mixed_save(self):
         self.save(ORIGINAL.replace("'off'", "1"), success=False)
 
-    def test_single_renderer_refresh_sees_host_save_without_reloading_other_settings(self):
-        self.assertEqual(self.save(mode="refresh", updates=[]), "[display\ninvalid")
+    def test_legacy_renderer_accepts_old_files_and_preserves_mac_settings(self):
+        for previous in ("angle", "metal"):
+            with self.subTest(previous=previous):
+                original = (ORIGINAL.replace('"angle"', f'"{previous}"').replace("'off'", "'fxaa'")
+                            .replace("frame_limit = 30", "frame_limit = 120")
+                            .replace("render_height = 480", "render_height = 1080") + '[game]\nlanguage = "fr"\n')
+                self.assertEqual(self.save(original, [], mode="legacy", legacy_notice=previous == "angle"), original)
+
+    def test_fresh_metal_config_omits_retired_renderer(self):
+        config = tomllib.loads(self.save(None, [], mode="defaults", legacy_notice=False))
+        self.assertNotIn("renderer", config["display"])
+        self.assertEqual(config["display"]["anti_aliasing"], "off")
+        self.assertEqual(config["display"]["frame_limit"], 0)
+        self.assertEqual(config["display"]["render_height"], 480)
 
 
 if __name__ == "__main__":

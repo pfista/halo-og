@@ -7,12 +7,12 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #include <mach/mach.h>
-#include <mach/mach_vm.h>
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -24,6 +24,9 @@ extern "C" {
 #include "host.h"
 }
 #include "../include/halo_metal_abi.h"
+#ifdef HALO_IOS
+#include "../../linux/src/xbox_dxt.h"
+#endif
 #include "metal_function_cache.h"
 #include "metal_warmup_cache.h"
 #include "metal_packet_view.h"
@@ -35,8 +38,8 @@ namespace {
 constexpr uint32_t capabilities = HALO_METAL_CAP_TARGETS | HALO_METAL_CAP_UPLOAD |
     HALO_METAL_CAP_CLEAR | HALO_METAL_CAP_COPY | HALO_METAL_CAP_READBACK |
     HALO_METAL_CAP_DRAW | HALO_METAL_CAP_VISIBILITY | HALO_METAL_CAP_CLEAR_CHANNELS |
-    HALO_METAL_CAP_BLACK_BORDER | HALO_METAL_CAP_ALPHA_BORDER | HALO_METAL_CAP_COPY_SUBRESOURCE |
-    HALO_METAL_CAP_VOLUME | HALO_METAL_CAP_VOLUME_BORDER;
+    HALO_METAL_CAP_BLACK_BORDER | HALO_METAL_CAP_COPY_SUBRESOURCE | HALO_METAL_CAP_VOLUME |
+    (TARGET_OS_SIMULATOR ? 0u : HALO_METAL_CAP_ALPHA_BORDER | HALO_METAL_CAP_VOLUME_BORDER);
 struct Failure { int status; uint32_t index; };
 using SamplerKey = std::array<uint32_t,11>;
 constexpr size_t sampler_cache_capacity = 256;
@@ -128,6 +131,33 @@ struct Pending {
 };
 constexpr size_t AsyncPacketLimit = 4;
 constexpr size_t AsyncPresentLimit = 2;
+#if defined(HALO_IOS) && !TARGET_OS_SIMULATOR
+// The callbacks run independently of render submission and can arrive after
+// shutdown. Keep one log per process, including across renderer restarts.
+struct PresentationLog {
+    FILE *output;
+    std::mutex lock;
+    double previous = 0;
+    explicit PresentationLog(const char *path) : output(fopen(path, "w")) {
+        if (output) {
+            setvbuf(output, nullptr, _IOLBF, 0);
+            fputs("frame,frame_ms,presented_s\n", output);
+        } else {
+            host_logf(HOST_LOG_WARN, "Cannot open Metal frame log: %s", path);
+        }
+    }
+    ~PresentationLog() { if (output) fclose(output); }
+    void record(NSUInteger frame, double time) {
+        if (!std::isfinite(time) || time <= 0) return; // A skipped drawable has no presentation time.
+        std::lock_guard<std::mutex> guard(lock);
+        fprintf(output, "%lu,", (unsigned long)frame);
+        if (previous > 0 && time > previous)
+            fprintf(output, "%.3f", (time - previous) * 1000);
+        fprintf(output, ",%.9f\n", time);
+        previous = std::max(previous, time);
+    }
+};
+#endif
 struct Context {
     id<MTLDevice> device;
     HaloMetalFunctionCache<id<MTLFunction>> compiled_functions;
@@ -148,6 +178,9 @@ struct Context {
     id<MTLTexture> fxaa_scratch;
     std::map<uint32_t, id<MTLRenderPipelineState>> fxaa_pipelines;
     CAMetalLayer *layer;
+#if defined(HALO_IOS) && !TARGET_OS_SIMULATOR
+    std::shared_ptr<PresentationLog> presentation_log;
+#endif
     std::map<uint32_t, Texture> textures;
     std::map<uint32_t, uint32_t> generations;
     std::map<uint32_t, Program> programs;
@@ -169,6 +202,7 @@ struct Context {
     bool geometry_cache_enabled = false;
     bool async_submit_enabled = false, cache_bindings_enabled = false;
     bool uniform_sharing_enabled = false;
+    bool visibility_counting_enabled = false;
     HaloMetalWarmupCache warmup;
     NSString *warmup_path = nil;
     bool warmup_dirty = false;
@@ -216,14 +250,14 @@ bool guest_range(uint32_t offset, uint32_t size) {
 }
 bool copy_guest(uint32_t offset, void *destination, uint32_t size) {
     if (!guest_range(offset, size)) return false;
-    mach_vm_size_t copied = 0;
-    return mach_vm_read_overwrite(mach_task_self(), (mach_vm_address_t)guest_pointer(offset), size,
-        (mach_vm_address_t)destination, &copied) == KERN_SUCCESS && copied == size;
+    vm_size_t copied = 0;
+    return vm_read_overwrite(mach_task_self(), (vm_address_t)guest_pointer(offset), size,
+        (vm_address_t)destination, &copied) == KERN_SUCCESS && copied == size;
 }
 bool write_guest(uint32_t offset, const void *source, uint32_t size) {
     if (!guest_range(offset, size)) return false;
     host_memory_watch_prepare_write(offset, size);
-    return mach_vm_write(mach_task_self(), (mach_vm_address_t)guest_pointer(offset),
+    return vm_write(mach_task_self(), (vm_address_t)guest_pointer(offset),
         (vm_offset_t)source, size) == KERN_SUCCESS;
 }
 int reply(uint32_t offset, uint32_t size, int status, uint32_t failed = UINT32_MAX,
@@ -235,10 +269,24 @@ int reply(uint32_t offset, uint32_t size, int status, uint32_t failed = UINT32_M
             (context.geometry_cache_enabled ? HALO_METAL_CAP_GEOMETRY_CACHE : 0) |
             (context.async_submit_enabled ? HALO_METAL_CAP_ASYNC_SUBMIT : 0) |
             (context.cache_bindings_enabled ? HALO_METAL_CAP_CACHE_BINDINGS : 0) |
-            (context.uniform_sharing_enabled ? HALO_METAL_CAP_UNIFORM_SHARING : 0),
+            (context.uniform_sharing_enabled ? HALO_METAL_CAP_UNIFORM_SHARING : 0) |
+            (context.visibility_counting_enabled ? HALO_METAL_CAP_VISIBILITY_COUNTING : 0),
         context.submitted, context.completed,
         (uint32_t)(context.textures.size() + context.programs.size() + context.queries.size() + context.geometry.size()), version, bytes, 0};
     return size == sizeof(result) && write_guest(offset, &result, sizeof(result)) ? status : HALO_METAL_MEMORY;
+}
+// iOS presents with the display compositor and exposes no per-layer VSync switch.
+bool display_sync_changes(CAMetalLayer *layer, uint32_t flags) {
+#if TARGET_OS_OSX
+    return layer.displaySyncEnabled != ((flags & HALO_METAL_DISPLAY_VSYNC) != 0);
+#else
+    return false;
+#endif
+}
+void apply_display_sync(CAMetalLayer *layer, uint32_t flags) {
+#if TARGET_OS_OSX
+    layer.displaySyncEnabled = (flags & HALO_METAL_DISPLAY_VSYNC) != 0;
+#endif
 }
 void validate_reply(uint32_t offset, uint32_t size) {
     halo_metal_reply scratch;
@@ -335,7 +383,13 @@ Texture make_texture(halo_metal_create_ex c) {
     check(c.type != HALO_METAL_TEXTURE_CUBE || c.width == c.height);
     auto pixel_format = format(c.format);
     if (compressed(c.format)) {
-        check(context.device.supportsBCTextureCompression && !(c.width & 3) && !(c.height & 3) &&
+#ifdef HALO_IOS
+        if (!context.device.supportsBCTextureCompression)
+            pixel_format = MTLPixelFormatBGRA8Unorm;
+#else
+        check(context.device.supportsBCTextureCompression, HALO_METAL_UNSUPPORTED);
+#endif
+        check(!(c.width & 3) && !(c.height & 3) &&
             c.usage == HALO_METAL_SHADER_READ, HALO_METAL_UNSUPPORTED);
     }
     if ((c.usage & HALO_METAL_RENDER_TARGET) || c.format == HALO_METAL_DEPTH32_STENCIL8)
@@ -449,7 +503,7 @@ MTLCompileOptions *compile_options(const HaloMetalFunctionKey &key) {
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     options.fastMathEnabled = key.fastMath;
 #pragma clang diagnostic pop
-    if (@available(macOS 15.0, *)) {
+    if (@available(macOS 15.0, iOS 18.0, *)) {
         options.mathMode = key.fastMath ? MTLMathModeFast : MTLMathModeSafe;
         options.mathFloatingPointFunctions = key.fastMath ? MTLMathFloatingPointFunctionsFast : MTLMathFloatingPointFunctionsPrecise;
     }
@@ -707,11 +761,19 @@ id<MTLSamplerState> sampler(halo_metal_sampler c,
     descriptor.minFilter = c.min_filter ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
     descriptor.magFilter = c.mag_filter ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
     descriptor.mipFilter = (MTLSamplerMipFilter)c.mip_filter;
+    // Every guest sampleable color format has alpha, so ClampToZero supplies
+    // exactly the transparent-black border on the Simulator GPU.
+    const MTLSamplerAddressMode border_mode = TARGET_OS_SIMULATOR ?
+        MTLSamplerAddressModeClampToZero : MTLSamplerAddressModeClampToBorderColor;
     const MTLSamplerAddressMode addresses[] = {MTLSamplerAddressModeRepeat,MTLSamplerAddressModeMirrorRepeat,
-        MTLSamplerAddressModeClampToEdge,MTLSamplerAddressModeClampToBorderColor};
+        MTLSamplerAddressModeClampToEdge,border_mode};
     descriptor.sAddressMode = addresses[c.address_u]; descriptor.tAddressMode = addresses[c.address_v]; descriptor.rAddressMode = addresses[c.address_w];
     descriptor.normalizedCoordinates = YES; descriptor.maxAnisotropy = c.max_anisotropy;
+#if TARGET_OS_SIMULATOR
+    check(border == MTLSamplerBorderColorTransparentBlack, HALO_METAL_UNSUPPORTED);
+#else
     descriptor.borderColor = border;
+#endif
     descriptor.lodMinClamp = c.lod_min; descriptor.lodMaxClamp = c.lod_max;
     auto result = [context.device newSamplerStateWithDescriptor:descriptor]; check(result != nil,HALO_METAL_MEMORY);
     if (context.metrics.enabled) context.metrics.sampler_allocations++;
@@ -1195,8 +1257,7 @@ void validate(const HaloMetalPacketView &packet, Prepared &prepared) {
                         context.layer.drawableSize.width > 0 && context.layer.drawableSize.height > 0,
                         HALO_METAL_UNSUPPORTED);
                     prepared.presented = true;
-                    prepared.wait_prior |= context.layer.displaySyncEnabled !=
-                        ((c.display_flags & HALO_METAL_DISPLAY_VSYNC) != 0);
+                    prepared.wait_prior |= display_sync_changes(context.layer, c.display_flags);
                     break;
                 }
                 case HALO_METAL_FENCE: {
@@ -1341,6 +1402,9 @@ void validate(const HaloMetalPacketView &packet, Prepared &prepared) {
                     auto c = record<halo_metal_create_visibility>(packet,position);
                     check(command.byte_size == sizeof(c) && !c.reserved && c.resource.id && c.resource.generation && queries.size() < 4096);
                     check(c.mode == HALO_METAL_VISIBILITY_BOOLEAN || c.mode == HALO_METAL_VISIBILITY_COUNTING,HALO_METAL_UNSUPPORTED);
+#if TARGET_OS_IOS
+                    check(c.mode != HALO_METAL_VISIBILITY_COUNTING || context.visibility_counting_enabled,HALO_METAL_UNSUPPORTED);
+#endif
                     check(!queries.count(c.resource.id) && c.resource.generation > query_generations[c.resource.id],HALO_METAL_STALE_RESOURCE);
                     queries.emplace(c.resource.id,Visibility{c.resource.generation,c.mode,0,false,false,0,{}});
                     query_generations[c.resource.id] = c.resource.generation; break;
@@ -1563,15 +1627,27 @@ void drain_pending_shutdown() noexcept {
 }
 void upload(id<MTLCommandBuffer> buffer, const HaloMetalPacketView &packet, halo_metal_upload_ex c, Texture &texture) {
     NSUInteger tight = c.width * (c.plane == HALO_METAL_STENCIL ? 1u : 4u), rows = c.height;
-    if (compressed(texture.format)) { tight = ((c.width + 3) / 4) * block_bytes(texture.format); rows = (c.height + 3) / 4; }
+    bool block_upload = compressed(texture.format) && texture.object.pixelFormat != MTLPixelFormatBGRA8Unorm;
+    if (block_upload) { tight = ((c.width + 3) / 4) * block_bytes(texture.format); rows = (c.height + 3) / 4; }
     NSUInteger row = (tight + 255) & ~NSUInteger(255);
     NSUInteger image = row * rows;
     auto staging = [context.device newBufferWithLength:image * c.depth options:MTLResourceStorageModeShared];
     check(staging != nil,HALO_METAL_MEMORY);
     if (context.metrics.enabled) context.metrics.upload_buffers++;
-    for (NSUInteger z = 0; z < c.depth; z++) for (NSUInteger y = 0; y < rows; y++)
-        memcpy((uint8_t *)staging.contents + image * z + row * y,
-            packet.data() + c.data_offset + uint64_t(c.bytes_per_image) * z + uint64_t(c.bytes_per_row) * y,tight);
+    const uint8_t *source = packet.data() + c.data_offset;
+#ifdef HALO_IOS
+    if (compressed(texture.format) && !block_upload) {
+        // Compressed packets are always one 2D mip or cube face (validated above).
+        dxt_format kind = texture.format == HALO_METAL_BC1 ? DXT1 : texture.format == HALO_METAL_BC2 ? DXT3 : DXT5;
+        dxt_decode_bgra_slice(kind, source, c.width, c.height, c.bytes_per_row,
+            static_cast<uint32_t *>(staging.contents), uint32_t(row / 4));
+    } else
+#endif
+    {
+        for (NSUInteger z = 0; z < c.depth; z++) for (NSUInteger y = 0; y < rows; y++)
+            memcpy((uint8_t *)staging.contents + image * z + row * y,
+                source + uint64_t(c.bytes_per_image) * z + uint64_t(c.bytes_per_row) * y, tight);
+    }
     auto blit = [buffer blitCommandEncoder]; check(blit != nil,HALO_METAL_GPU_ERROR);
     MTLBlitOption option = c.plane == HALO_METAL_DEPTH ? MTLBlitOptionDepthFromDepthStencil :
         c.plane == HALO_METAL_STENCIL ? MTLBlitOptionStencilFromDepthStencil : MTLBlitOptionNone;
@@ -1595,8 +1671,19 @@ fragment float4 present_fragment(PresentVaryings v [[stage_in]],
     float4 value=source.sample(linear_sampler,v.uv,level(0)); value.a=1.0; return value;
 }
 )MSL";
+void present_drawable(id<MTLCommandBuffer> buffer, id<CAMetalDrawable> drawable) {
+#if defined(HALO_IOS) && !TARGET_OS_SIMULATOR
+    if (context.presentation_log) {
+        auto log = context.presentation_log;
+        [drawable addPresentedHandler:^(id<MTLDrawable> frame) {
+            log->record(frame.drawableID, frame.presentedTime);
+        }];
+    }
+#endif
+    [buffer presentDrawable:drawable];
+}
 void present_scaled(id<MTLCommandBuffer> buffer, const Texture &t,uint32_t flags,uint32_t index) {
-    context.layer.displaySyncEnabled = (flags & HALO_METAL_DISPLAY_VSYNC) != 0;
+    apply_display_sync(context.layer, flags);
     if (!context.present_pipeline) {
         NSError *error=nil;
         auto options=[MTLCompileOptions new];
@@ -1632,7 +1719,7 @@ void present_scaled(id<MTLCommandBuffer> buffer, const Texture &t,uint32_t flags
     [encoder setViewport:MTLViewport{double((pixel_width-width)/2),double((pixel_height-height)/2),double(width),double(height),0,1}];
     [encoder setFragmentTexture:t.object atIndex:0];[encoder setFragmentSamplerState:context.present_sampler atIndex:0];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];[encoder endEncoding];
-    [buffer presentDrawable:drawable];
+    present_drawable(buffer, drawable);
 }
 void fxaa(id<MTLCommandBuffer> buffer, Texture &source, const halo_metal_fxaa &c,
           const PreparedFxaa &prepared) {
@@ -1692,7 +1779,10 @@ MTLRenderPassDescriptor *clear_before_draw(const HaloMetalPacketView &packet, co
 
         auto pass = [MTLRenderPassDescriptor renderPassDescriptor];
         pass.renderTargetWidth = target.width; pass.renderTargetHeight = target.height;
-        pass.renderTargetArrayLength = 1; pass.defaultRasterSampleCount = 1;
+#if !TARGET_OS_SIMULATOR
+        pass.renderTargetArrayLength = 1;
+        pass.defaultRasterSampleCount = 1;
+#endif
         if (draw.color) {
             pass.colorAttachments[0].texture = draw.color;
             pass.colorAttachments[0].loadAction = color ? MTLLoadActionClear : MTLLoadActionLoad;
@@ -1770,7 +1860,7 @@ void execute(const HaloMetalPacketView &packet, Prepared &prepared) {
             }
             case HALO_METAL_DISPLAY_SETTINGS: {
                 auto c = record<halo_metal_display_settings>(packet,position);
-                context.layer.displaySyncEnabled = (c.display_flags & HALO_METAL_DISPLAY_VSYNC) != 0;
+                apply_display_sync(context.layer, c.display_flags);
                 break;
             }
             case HALO_METAL_PRESENT_SCALED: {
@@ -1815,7 +1905,7 @@ void execute(const HaloMetalPacketView &packet, Prepared &prepared) {
                 check(blit != nil,HALO_METAL_GPU_ERROR,i);
                 [blit copyFromTexture:t.object sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0)
                     sourceSize:MTLSizeMake(t.width,t.height,1) toTexture:drawable.texture destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0,0,0)];
-                [blit endEncoding]; [buffer presentDrawable:drawable];
+                [blit endEncoding]; present_drawable(buffer, drawable);
                 if (context.metrics.enabled) context.metrics.frames++;
                 break;
             }
@@ -1921,7 +2011,8 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
             validate_reply(output,size);
             check(!context.device && !(flags & ~(HALO_METAL_OFFSCREEN | HALO_METAL_ENABLE_FXAA |
                 HALO_METAL_ENABLE_COMPACT_VERTICES | HALO_METAL_ENABLE_ASYNC_SUBMIT |
-                HALO_METAL_ENABLE_GEOMETRY_CACHE | HALO_METAL_ENABLE_CACHE_BINDINGS | HALO_METAL_ENABLE_UNIFORM_SHARING)) &&
+                HALO_METAL_ENABLE_GEOMETRY_CACHE | HALO_METAL_ENABLE_CACHE_BINDINGS | HALO_METAL_ENABLE_UNIFORM_SHARING |
+                HALO_METAL_REQUEST_VISIBILITY_COUNTING)) &&
                 ((flags & HALO_METAL_OFFSCREEN) ? !window : window != 0));
             auto device = MTLCreateSystemDefaultDevice(); check(device != nil,HALO_METAL_GPU_ERROR);
             CAMetalLayer *layer = nil;
@@ -1931,7 +2022,7 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
             options.fastMathEnabled = NO;
 #pragma clang diagnostic pop
-            if (@available(macOS 15.0, *)) { options.mathMode = MTLMathModeSafe; options.mathFloatingPointFunctions = MTLMathFloatingPointFunctionsPrecise; }
+            if (@available(macOS 15.0, iOS 18.0, *)) { options.mathMode = MTLMathModeSafe; options.mathFloatingPointFunctions = MTLMathFloatingPointFunctionsPrecise; }
             NSError *error = nil; auto library = [device newLibraryWithSource:clear_source options:options error:&error];
             if (!library) host_logf(HOST_LOG_ERROR,"Native clear shader: %s",error.localizedDescription.UTF8String);
             check(library != nil,HALO_METAL_GPU_ERROR);
@@ -1954,6 +2045,10 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
             context.async_submit_enabled = (flags & HALO_METAL_ENABLE_ASYNC_SUBMIT) != 0;
             context.cache_bindings_enabled = (flags & HALO_METAL_ENABLE_CACHE_BINDINGS) != 0;
             context.uniform_sharing_enabled = (flags & HALO_METAL_ENABLE_UNIFORM_SHARING) != 0;
+#if TARGET_OS_IOS && !TARGET_OS_SIMULATOR
+            context.visibility_counting_enabled = (flags & HALO_METAL_REQUEST_VISIBILITY_COUNTING) &&
+                [device supportsFamily:MTLGPUFamilyApple3];
+#endif
             context.draw_encoder.cacheBindingsEnabled = context.cache_bindings_enabled;
             if (context.async_submit_enabled) context.pending.reserve(AsyncPacketLimit);
             context.fxaa_pipelines = std::move(fxaa_pipelines);
@@ -1964,7 +2059,20 @@ extern "C" int host_metal_initialize(uint32_t window,uint32_t flags,uint32_t out
             context.draw_encoder.diagnosticsEnabled = context.metrics.enabled;
             if (context.metrics.enabled) host_logf(HOST_LOG_INFO,"Native Metal submission mode: %s",
                 context.async_submit_enabled ? "async":"synchronous");
-            if (layer) { layer.device = device; layer.pixelFormat = MTLPixelFormatBGRA8Unorm; layer.framebufferOnly = NO; }
+            if (layer) {
+                layer.device = device; layer.pixelFormat = MTLPixelFormatBGRA8Unorm; layer.framebufferOnly = NO;
+#ifdef HALO_IOS
+                const char *perf_path = getenv("HALO_PERF_LOG");
+                if (perf_path && *perf_path) {
+#if TARGET_OS_SIMULATOR
+                    host_logf(HOST_LOG_INFO, "Metal drawable presentation timestamps are unavailable in Simulator");
+#else
+                    static const auto log = std::make_shared<PresentationLog>(perf_path);
+                    if (log->output) context.presentation_log = log;
+#endif
+                }
+#endif
+            }
             // host_main publishes this established, canonical per-app saves
             // root before guest startup. Headless fixtures skip persistence.
             const char *saves = getenv("HALO_SAVE_ROOT");

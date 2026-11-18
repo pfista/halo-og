@@ -16,6 +16,7 @@ SOURCE = ROOT / "port/linux/src/d3d8_metal.c"
 
 HARNESS = r'''
 #include <assert.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,19 +25,40 @@ HARNESS = r'''
 #include <setjmp.h>
 #include "port/linux/src/metal_guest_transport.h"
 #include "port/linux/src/metal_packet_room.h"
+#include "port/linux/src/metal_render_scale.h"
+#include "port/linux/src/metal_uniform_cache.h"
 #define WINAPI
+#define TRUE 1
 #define FALSE 0
+#define S_OK 0
+#define VISIBILITY_TEST_SLOTS 8
 #define VISIBILITY_ALL_SAMPLES 1000000
 /* SOFT BATCH LIMIT */
-typedef uint32_t DWORD;
+typedef uint32_t DWORD, UINT;
+typedef uint64_t ULONGLONG;
+typedef int HRESULT;
+static struct metal_uniform_cache uniform_cache;
+static int draw_diagnostics, async_submit, packet_group_active, visibility_checkpoint_pending;
+static struct { uint64_t visibility_reads, visibility_readback_ns; } draw_profile;
+static struct halo_metal_render_dimensions target;
+static unsigned target_reads, query_mode, next_query_id=1;
+static struct halo_metal_render_dimensions *target_get(void *surface) {
+    assert(surface==&target); target_reads++;return &target;
+}
+static struct halo_metal_render_dimensions resource_dimensions(const struct halo_metal_render_dimensions *dims) {
+    return *dims;
+}
 typedef unsigned D3DCALLBACKTYPE;
 typedef void (*D3DCALLBACK)(DWORD);
 static struct {
-    int ready;
+    int ready, visibility_test_active;
+    void *render_target;
     unsigned long frame;
     int query_pending[8];
     struct halo_metal_ref query_slots[8];
     unsigned query_results[8];
+    struct halo_metal_ref query_scratch;
+    double query_logical_pixels_per_sample[8];
 } device;
 static struct halo_metal_guest_transport transport;
 static uint64_t sequence;
@@ -72,9 +94,19 @@ int halo_metal_guest_begin(struct halo_metal_guest_transport *t,uint64_t next) {
 }
 int halo_metal_guest_readback(struct halo_metal_guest_transport *t,struct halo_metal_ref ref,
                              uint32_t plane,void *out,uint32_t bytes) {
-    assert(t==&transport && !t->recording && ref.id==9 && ref.generation==3);
+    assert(t==&transport && !t->recording && ref.id && ref.generation);
     assert(plane==HALO_METAL_VISIBILITY && bytes==sizeof(result_word));
     readbacks++;memcpy(out,&result_word,bytes);return 0;
+}
+static uint32_t command_append(const void *record,uint32_t size) {
+    struct halo_metal_command header;
+    memcpy(&header,record,sizeof(header));
+    if (header.opcode == HALO_METAL_CREATE_VISIBILITY)
+        query_mode=((const struct halo_metal_create_visibility *)record)->mode;
+    transport.command_count++;
+    transport.size+=size;
+    assert(transport.size==packet_expected_end);
+    return transport.size-size;
 }
 /* PRODUCTION */
 static void reset(void) {
@@ -120,10 +152,15 @@ int main(int argc,char **argv) {
         }
         queue(96,3);packet_flush(NATIVE_FLUSH_PRESENT);
         struct native_flush_statistics present=flush_statistics[NATIVE_FLUSH_PRESENT];
-        assert(present.packets==2 && present.commands==11 && present.bytes==224 && present.wall_ns==2000);
+        const unsigned present_bytes=80+NATIVE_FLUSH_PRESENT*8+96;
+        const unsigned present_commands=2+NATIVE_FLUSH_PRESENT+3;
+        assert(present.packets==2 && present.commands==present_commands && present.bytes==present_bytes && present.wall_ns==2000);
         native_flush_statistics_log(0,59);
         assert(logs==2*NATIVE_FLUSH_REASON_COUNT+1);
-        assert(strstr(log_lines[NATIVE_FLUSH_REASON_COUNT+1+NATIVE_FLUSH_PRESENT],"frames 0-59, reason Present, packets 2, commands 11, bytes 224, submit 2000 ns"));
+        char totals[256];
+        snprintf(totals,sizeof(totals),"frames 0-59, reason Present, packets 2, commands %u, bytes %u, submit 2000 ns",
+            present_commands,present_bytes);
+        assert(strstr(log_lines[NATIVE_FLUSH_REASON_COUNT+1+NATIVE_FLUSH_PRESENT],totals));
         for(unsigned i=0;i<NATIVE_FLUSH_REASON_COUNT;i++)assert(!memcmp(&flush_statistics[i],&(struct native_flush_statistics){0},sizeof(flush_statistics[i])));
         native_flush_statistics_log(60,119);assert(logs==2*NATIVE_FLUSH_REASON_COUNT+1);
     } else if(!strcmp(argv[1],"limits")) {
@@ -159,6 +196,35 @@ int main(int argc,char **argv) {
         assert(flush_statistics[NATIVE_FLUSH_VISIBILITY_COLLECT].packets==1);
         device.query_pending[3]=1;result_word=0;query_collect(3);
         assert(readbacks==2 && submits==4 && !device.query_results[3] && !device.query_pending[3]);
+    } else if(!strcmp(argv[1],"visibility")) {
+        device.render_target=&target;
+        transport.reply.capabilities=HALO_METAL_CAP_VISIBILITY | HALO_METAL_CAP_VISIBILITY_COUNTING;
+        target=(struct halo_metal_render_dimensions){16,16,48,32,HALO_METAL_RENDER_SCALE_NATIVE_AXES};
+        D3DDevice_BeginVisibilityTest();
+        assert(query_mode==HALO_METAL_VISIBILITY_COUNTING);
+        assert(D3DDevice_EndVisibilityTest(0)==S_OK);
+        /* The next target's scale must not leak into the pending result. */
+        target=(struct halo_metal_render_dimensions){16,16,8,8,HALO_METAL_RENDER_SCALE_UNIFORM};
+        D3DDevice_BeginVisibilityTest();
+        assert(D3DDevice_EndVisibilityTest(1)==S_OK);
+        UINT pixels=0;
+        result_word=32*6;
+        assert(D3DDevice_GetVisibilityTestResult(0,&pixels,NULL)==S_OK && pixels==32);
+        result_word=16;
+        assert(D3DDevice_GetVisibilityTestResult(1,&pixels,NULL)==S_OK && pixels==64);
+        for(unsigned slot=0;slot<2;slot++) {
+            D3DDevice_BeginVisibilityTest();
+            assert(D3DDevice_EndVisibilityTest(slot)==S_OK);
+            result_word=slot ? UINT64_MAX : 0;
+            assert(D3DDevice_GetVisibilityTestResult(slot,&pixels,NULL)==S_OK && pixels==(slot ? UINT_MAX:0));
+        }
+        reset();target_reads=0;
+        transport.reply.capabilities=HALO_METAL_CAP_VISIBILITY;
+        D3DDevice_BeginVisibilityTest();
+        assert(query_mode==HALO_METAL_VISIBILITY_BOOLEAN);
+        assert(D3DDevice_EndVisibilityTest(0)==S_OK && !target_reads);
+        result_word=1;
+        assert(D3DDevice_GetVisibilityTestResult(0,&pixels,NULL)==S_OK && pixels==VISIBILITY_ALL_SAMPLES);
     } else if(!strcmp(argv[1],"rejection")) {
         diagnostics=1;queue(80,2);submit_status=HALO_METAL_INVALID;
         if(!setjmp(failure)) { packet_flush(NATIVE_FLUSH_PRESENT);assert(0); }
@@ -186,8 +252,9 @@ class NativeFlushStatisticsTests(unittest.TestCase):
         end = production.index("static uint64_t monotonic_ns(void)", start)
         declarations = production[start:end]
         functions = "\n".join(function(production, name) for name in
-                              ("packet_flush", "packet_begin", "packet_finish", "halo_metal_flush_pending",
-                               "D3DDevice_KickPushBuffer", "D3DDevice_InsertCallback", "query_collect"))
+                              ("packet_flush", "packet_begin", "packet_finish", "native_synchronize", "halo_metal_flush_pending",
+                               "D3DDevice_KickPushBuffer", "D3DDevice_InsertCallback", "query_create", "query_collect",
+                               "D3DDevice_BeginVisibilityTest", "D3DDevice_EndVisibilityTest", "D3DDevice_GetVisibilityTestResult"))
         path = folder / "flush.c"
         path.write_text(HARNESS.replace("/* SOFT BATCH LIMIT */", soft_limit)
                         .replace("/* PRODUCTION */", declarations + functions))
@@ -218,6 +285,9 @@ class NativeFlushStatisticsTests(unittest.TestCase):
 
     def test_callbacks_exit_and_visibility_collection_preserve_order(self):
         self.run_case("boundaries")
+
+    def test_counted_visibility_uses_each_queried_target_scale_and_preserves_boolean_fallback(self):
+        self.run_case("visibility")
 
     def test_failed_or_incomplete_packets_never_increment_success_totals(self):
         self.run_case("rejection")

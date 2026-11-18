@@ -34,9 +34,6 @@ enum
     _device_setting_look_acceleration,
     _device_setting_fast_menu_repeat,
     _device_setting_asset_quality,
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
-    _device_setting_renderer,
-#endif
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
     _device_setting_render_height,
 #endif
@@ -50,9 +47,9 @@ enum
 
 /* Volumes are 0..1; switches are 0/1. Timer position is 0..2 and scale .5..1.
  * Stick deadzones are raw integer ranges 0..16000; Xbox is exactly 9000.
- * Mac renderer/AA choices are 0/1; height/cap are their config pixel/FPS values.
+ * Mac AA is 0/1; height/cap are their config pixel/FPS values.
  * Desktop GL height -1 keeps its existing fullscreen/windowed selection; 0 is Native.
- * Asset quality, Mac renderer and AA apply on the next launch.
+ * Asset quality and Mac AA apply on the next launch.
  * Desktop GL and Mac Native Metal render height apply between frames after Accept. */
 double device_settings_get(short setting);
 /* Save only changed rows, then apply to the current session. Returns 1 on

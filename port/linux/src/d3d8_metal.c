@@ -201,6 +201,7 @@ struct native_device {
     BOOL antialiasing_enabled;
     struct halo_metal_ref query_scratch, query_slots[VISIBILITY_TEST_SLOTS];
     UINT query_results[VISIBILITY_TEST_SLOTS];
+    double query_logical_pixels_per_sample[VISIBILITY_TEST_SLOTS];
     BOOL query_pending[VISIBILITY_TEST_SLOTS];
 };
 static struct native_device device;
@@ -740,7 +741,11 @@ static void native_initialize(void) {
     texture_cache_enabled=config_boolean("debug.metal_texture_cache");
     uniform_cache_enabled=config_boolean("debug.metal_uniform_cache");
     require_status("initialize native window",halo_metal_guest_initialize(&transport,
-        platform_video_native_window(),(fxaa ? HALO_METAL_ENABLE_FXAA:0) |
+        platform_video_native_window(),
+#ifdef HALO_IOS
+        HALO_METAL_REQUEST_VISIBILITY_COUNTING |
+#endif
+        (fxaa ? HALO_METAL_ENABLE_FXAA:0) |
         (gpu_vertex_decode ? HALO_METAL_ENABLE_COMPACT_VERTICES:0) |
         (geometry_cache_enabled ? HALO_METAL_ENABLE_GEOMETRY_CACHE:0) |
         (async_submit ? HALO_METAL_ENABLE_ASYNC_SUBMIT:0) |
@@ -753,6 +758,10 @@ static void native_initialize(void) {
         (async_submit ? HALO_METAL_CAP_ASYNC_SUBMIT:0) |
         (cache_bindings ? HALO_METAL_CAP_CACHE_BINDINGS:0) |
         (uniform_cache_enabled ? HALO_METAL_CAP_UNIFORM_SHARING:0)));
+#ifdef HALO_IOS
+    platform_log("Native Metal visibility queries: %s",
+        (transport.reply.capabilities & HALO_METAL_CAP_VISIBILITY_COUNTING) ? "counting" : "boolean");
+#endif
     /* platform_video_initialize has already synchronized the Retina window.
        Never resolve native pixels before that point or from display points. */
     native_storage_initialize();
@@ -2467,7 +2476,8 @@ static struct halo_metal_ref query_create(void) {
     struct halo_metal_create_visibility command={0};
     command.command.opcode=HALO_METAL_CREATE_VISIBILITY;
     command.resource=(struct halo_metal_ref){next_query_id++,1};
-    command.mode=HALO_METAL_VISIBILITY_BOOLEAN;
+    command.mode=(transport.reply.capabilities & HALO_METAL_CAP_VISIBILITY_COUNTING) ?
+        HALO_METAL_VISIBILITY_COUNTING : HALO_METAL_VISIBILITY_BOOLEAN;
     packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();
     return command.resource;
 }
@@ -2482,7 +2492,12 @@ static void query_collect(unsigned index) {
         draw_profile.visibility_reads++;
         draw_profile.visibility_readback_ns+=monotonic_ns()-started;
     }
-    device.query_results[index]=result ? VISIBILITY_ALL_SAMPLES:0;
+    if (transport.reply.capabilities & HALO_METAL_CAP_VISIBILITY_COUNTING) {
+        double pixels = result * device.query_logical_pixels_per_sample[index];
+        device.query_results[index] = pixels >= UINT_MAX ? UINT_MAX : (UINT)(pixels + 0.5);
+    } else {
+        device.query_results[index] = result ? VISIBILITY_ALL_SAMPLES : 0;
+    }
     device.query_pending[index]=FALSE;
 }
 void WINAPI D3DDevice_BeginVisibilityTest(void) {
@@ -2496,6 +2511,13 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index) {
     if (!device.ready || !device.visibility_test_active) return S_OK;
     index%=VISIBILITY_TEST_SLOTS;
     query_collect(index);
+    if (transport.reply.capabilities & HALO_METAL_CAP_VISIBILITY_COUNTING) {
+        /* Xbox reports game pixels. Our single-sample attachments count storage
+           pixels; the backing size can change before this slot is collected. */
+        struct halo_metal_render_dimensions dims = resource_dimensions(target_get(device.render_target));
+        device.query_logical_pixels_per_sample[index] = ((double)dims.logical_width * dims.logical_height) /
+            ((double)dims.storage_width * dims.storage_height);
+    }
     struct halo_metal_visibility command={{HALO_METAL_END_VISIBILITY,0},device.query_scratch};
     packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();
     struct halo_metal_ref previous=device.query_slots[index];
@@ -2568,6 +2590,14 @@ int halo_metal_apply_video_settings(void) {
     command.display_flags=config_boolean("display.vsync") ? HALO_METAL_DISPLAY_VSYNC:0;
     packet_begin(sizeof(command),NULL,0);command_append(&command,sizeof(command));packet_finish();packet_flush(NATIVE_FLUSH_SETTINGS);return 1;
 }
+#ifdef HALO_IOS
+/* The UIKit overlay sends gamepad events for both menu and gameplay controls. */
+int halo_ui_pointer_update(int menus_active, struct halo_ui_pointer *pointer) {
+    (void)menus_active;
+    (void)pointer;
+    return 0;
+}
+#else
 static void ui_point_from_window(float wx,float wy,short *x,short *y) {
     int ww,wh,pw,ph;
     *x=*y=-1;
@@ -2595,6 +2625,7 @@ int halo_ui_pointer_update(int menus_active,struct halo_ui_pointer *pointer) {
     pointer->wheel_steps=state.wheel_steps<-8 ? -8:state.wheel_steps>8 ? 8:state.wheel_steps;
     return 1;
 }
+#endif
 static void write_screenshot(struct native_resource *target) {
     const char *directory=config_string("debug.screenshot_directory");
     if (!*directory) return;

@@ -5,6 +5,11 @@ void *memcpy(void *destination, const void *source, unsigned long size) {
     while (size--) *d++ = *s++;
     return destination;
 }
+void *memset(void *destination, int value, unsigned long size) {
+    unsigned char *d = destination;
+    while (size--) *d++ = (unsigned char)value;
+    return destination;
+}
 void *memmove(void *destination, const void *source, unsigned long size) {
     unsigned char *d = destination;
     const unsigned char *s = source;

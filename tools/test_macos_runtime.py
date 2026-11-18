@@ -70,13 +70,10 @@ def main():
         "-o", OUT / "invite_bridge")
     run(OUT / "invite_bridge")
     sdl = Path(os.environ.get("HALO_MACOS_SDL_PREFIX", "/opt/homebrew/opt/sdl3"))
-    angle = Path(os.environ.get("HALO_MACOS_ANGLE_DIR", str(ROOT / "build/macos/angle/dist")))
-    egl = angle / "EGL.xcframework/macos-arm64"
-    run("clang", "-arch", "arm64", "-O2", "-Wall", "-DHALO_MACOS=1",
+    run("clang", "-arch", "arm64", "-O2", "-Wall", "-DHALO_MACOS=1", "-DHALO_MACOS_NATIVE_METAL=1",
         "-Iport/macos/host", "-Iport/android/include", f"-I{sdl / 'include'}",
-        "-Ibuild/macos/toolchain/gl", "port/macos/tests/audio_bridge.c",
-        "port/macos/host/host_sdl.c", "port/macos/host/host_invite.c", f"-L{sdl / 'lib'}", "-lSDL3",
-        f"-F{egl}", "-framework", "libEGL", f"-Wl,-rpath,{egl}", "-o", OUT / "audio_bridge")
+        "port/macos/tests/audio_bridge.c", "port/macos/host/host_sdl.c", "port/macos/host/host_invite.c",
+        f"-L{sdl / 'lib'}", "-lSDL3", "-o", OUT / "audio_bridge")
     run(OUT / "audio_bridge")
 
 

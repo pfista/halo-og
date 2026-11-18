@@ -203,8 +203,9 @@ def android_configure_inputs() -> List[Path]:
 def generate_android_build(n: Writer, sln: Any) -> None:
     macos = getattr(sln, "macos", False)
     ios = getattr(sln, "ios", False)
-    native_metal = macos and not ios and getattr(sln, "macos_renderer", "angle") == "metal"
-    build_root = Path("build/ios") if ios else Path("build/macos-metal") if native_metal else Path("build/macos") if macos else BUILD
+    native_metal = ios or macos
+    isolated_mac = macos and getattr(sln, "macos_renderer", None) == "metal"
+    build_root = Path("build/ios") if ios else Path("build/macos-metal") if isolated_mac else Path("build/macos") if macos else BUILD
     config_path = LINUX_DIR / "port.json"
     if not config_path.is_file() or not (PORT_DIR / "host").is_dir():
         return
@@ -213,8 +214,10 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     if guest_only:
         llvm_bin = getattr(sln, "android_guest_llvm_bin", None)
         gl_headers = getattr(sln, "android_guest_gl_include", None)
-        if not llvm_bin or (not native_metal and not gl_headers):
-            raise ValueError("--android-guest-only requires --android-guest-llvm-bin and --android-guest-gl-include")
+        if not llvm_bin:
+            raise ValueError("--android-guest-only requires --android-guest-llvm-bin")
+        if not native_metal and not gl_headers:
+            raise ValueError("An OpenGL guest requires --android-guest-gl-include")
         ndk_bin = Path(llvm_bin).resolve()
         sysroot_include = Path(gl_headers).resolve() if gl_headers else None
         required = [ndk_bin / "llvm-ar", ndk_bin / "ld.lld"]
@@ -263,7 +266,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     python = "$python"
 
     n.comment("Android build (ninja android); see port/android/README.md")
-    n.variable("android_guest_cc", guest_cc)
+    n.variable("android_guest_cc", f"{guest_cc} --isolated-metal" if isolated_mac else guest_cc)
     if host_cc:
         n.variable("android_host_cc", str(host_cc))
     n.variable("android_ndk_bin", str(ndk_bin))
@@ -338,9 +341,9 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         host_imports_list = filtered_imports
     # Both Apple hosts compile host_services.c. iOS supplies unavailable-service
     # stubs there, but the shared guest still needs their import ABI to link.
-    platform_imports = [Path("port/macos/host_imports.list")] if macos or ios else []
-    if macos and not ios:
-        platform_imports.append(Path("port/macos/metal_imports.list"))
+    platform_imports = []
+    if macos or ios:
+        platform_imports = [Path("port/macos/host_imports.list"), Path("port/macos/metal_imports.list")]
     n.rule(
         name="android_imports",
         command=f"{python} tools/android_imports.py {'--ios ' if ios else ''}--host-table {host_table_c} {imports_s} $in",
@@ -382,7 +385,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     tool_implicit = [Path("tools/android_asm_convert.py"), *generated_headers]
     if macos or ios:
         platform = "ios" if ios else "macos"
-        renderer_argument = " --renderer metal" if native_metal else ""
+        renderer_argument = " --renderer metal" if isolated_mac else ""
         n.rule(name="macos_rebase_plugin", command=f"{python} tools/{platform}_build.py{renderer_argument} --plugin-only",
                description="MACOS COMPILER PASS")
         plugin = build_root / "guest_rebase.dylib"

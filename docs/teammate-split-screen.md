@@ -64,8 +64,7 @@ python3 tools/macos_teammate_view_runner.py
 The runner opens four windowed 640×480 instances from the installed
 `/Applications/Halo OG.app`, automatically hosts a private Blood Gulch Team
 Slayer game with Team Split Screen On, and assigns two Red and two Blue players.
-Native Metal is the default; use `--renderer angle` for ANGLE. Click a game
-window to control that player. All players use normal controls; players whose
+Click a game window to control that player. All players use normal controls; players whose
 windows are inactive remain idle with keyboard/mouse input. Only the Red host
 plays audio. The setup script does not shoot, kill, teleport, gather players,
 pick up equipment or inject bot/controller input. Its large test score target

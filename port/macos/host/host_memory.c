@@ -20,6 +20,9 @@ static uint32_t generation[PAGES];
 static uint32_t serial = 1;
 static pthread_mutex_t memory_lock = PTHREAD_MUTEX_INITIALIZER;
 static int initialized;
+#ifdef HALO_IOS
+uintptr_t host_guest_arena_base;
+#endif
 /* Four Xbox 4 KB pages share one Darwin 16 KB page. Preserve the access
  * required by neighboring allocations when a single Xbox page changes. */
 static unsigned char xbox_protection[HALO_GUEST_WINDOW_SIZE / 4096];
@@ -63,6 +66,17 @@ static void occupy(uint32_t a, size_t n) { memset(used + a / PAGE, 1, rounded(n)
 int host_memory_initialize(uint32_t image_base, uint32_t image_size) {
     if (initialized)
         return 0;
+#ifdef HALO_IOS
+    /* Guest pointers and the guest stack keep their original low 32 bits.
+       Let the kernel select a free aligned range for this launch. */
+    vm_address_t address = 0;
+    kern_return_t error = vm_map(mach_task_self(), &address, HALO_ARENA_SIZE,
+        UINT32_MAX, VM_FLAGS_ANYWHERE, MEMORY_OBJECT_NULL, 0, FALSE,
+        VM_PROT_NONE, VM_PROT_READ | VM_PROT_WRITE, VM_INHERIT_NONE);
+    if (error != KERN_SUCCESS)
+        host_fatal("iOS could not reserve the game's address space (%s).", mach_error_string(error));
+    host_guest_arena_base = address;
+#else
     // Unlike MAP_FIXED, mach_vm_allocate with VM_FLAGS_FIXED never replaces
     // an existing mapping. Darwin may disregard mmap hints for a large arena.
     vm_address_t address = HALO_MACOS_BIAS;
@@ -85,6 +99,7 @@ int host_memory_initialize(uint32_t image_base, uint32_t image_size) {
     }
     if (mprotect((void *)address, HALO_ARENA_SIZE, PROT_NONE))
         return -1;
+#endif
     occupy(0, 0x1000000);
     occupy(HALO_GUEST_WINDOW_BASE, HALO_GUEST_WINDOW_SIZE);
     occupy(image_base, image_size);
@@ -161,13 +176,13 @@ long host_guest_mmap(uint64_t a, uint64_t n, int prot, int flags, int fd, int64_
     return p ? (long)(uint32_t)(uintptr_t)p : -12;
 }
 long host_guest_munmap(uint64_t a, uint64_t n) {
-    if ((a & (PAGE - 1)) || a + n > UINT64_C(0x100000000))
+    if ((a & (PAGE - 1)) || a + n > HALO_ARENA_SIZE)
         return -22;
     host_low_unmap(guest_pointer(a), n);
     return 0;
 }
 long host_guest_mprotect(uint64_t a, uint64_t n, int prot) {
-    if (!n || a + n > UINT64_C(0x100000000))
+    if (!n || a + n > HALO_ARENA_SIZE)
         return -22;
     if (a >= HALO_GUEST_WINDOW_BASE && a + n <= HALO_GUEST_WINDOW_BASE + HALO_GUEST_WINDOW_SIZE)
         return xbox_protect((uint32_t)a, n, prot, 0);
@@ -177,7 +192,7 @@ long host_guest_mprotect(uint64_t a, uint64_t n, int prot) {
 }
 void host_memory_watch_initialize(void) {}
 void host_memory_watch_protect(uint32_t a, uint32_t n) {
-    if (!n || (uint64_t)a + n > UINT64_C(0x100000000))
+    if (!n || (uint64_t)a + n > HALO_ARENA_SIZE)
         return;
     uint32_t first = a / PAGE, last = (a + n - 1) / PAGE;
     for (uint32_t i = first; i <= last; i++)
@@ -188,7 +203,7 @@ void host_memory_watch_protect(uint32_t a, uint32_t n) {
 }
 uint32_t host_memory_watch_generation(uint32_t a, uint32_t n) {
     uint32_t result = 0;
-    if (!n || (uint64_t)a + n > UINT64_C(0x100000000))
+    if (!n || (uint64_t)a + n > HALO_ARENA_SIZE)
         return 0;
     for (uint32_t i = a / PAGE; i <= (a + n - 1) / PAGE; i++) {
         uint32_t g = __atomic_load_n(generation + i, __ATOMIC_ACQUIRE);
@@ -199,7 +214,7 @@ uint32_t host_memory_watch_generation(uint32_t a, uint32_t n) {
 }
 uint32_t host_memory_watch_serial(void) { return __atomic_load_n(&serial, __ATOMIC_ACQUIRE); }
 void host_memory_watch_prepare_write(uint32_t a, uint32_t n) {
-    if (!n || (uint64_t)a + n > UINT64_C(0x100000000))
+    if (!n || (uint64_t)a + n > HALO_ARENA_SIZE)
         return;
     for (uint32_t i = a / PAGE; i <= (a + n - 1) / PAGE; i++)
         if (__atomic_exchange_n(watched + i, 0, __ATOMIC_ACQ_REL)) {
@@ -209,7 +224,7 @@ void host_memory_watch_prepare_write(uint32_t a, uint32_t n) {
         }
 }
 void host_memory_watch_forget(uint32_t a, uint32_t n) {
-    if (!n || (uint64_t)a + n > UINT64_C(0x100000000))
+    if (!n || (uint64_t)a + n > HALO_ARENA_SIZE)
         return;
     /* Remapping invalidates cached data even if a previous write already
        removed the watch. Match the shared allocator's forget contract. */
@@ -222,7 +237,7 @@ void host_memory_watch_forget(uint32_t a, uint32_t n) {
 }
 static void fault(int signal, siginfo_t *info, void *context) {
     uintptr_t address = (uintptr_t)info->si_addr;
-    if (address >= HALO_MACOS_BIAS && address < HALO_MACOS_BIAS + UINT64_C(0x100000000)) {
+    if (host_low_owns(address, 1)) {
         uint32_t a = (uint32_t)address, index = a / PAGE;
         if (__atomic_exchange_n(watched + index, 0, __ATOMIC_ACQ_REL)) {
             mprotect(guest_pointer(index * PAGE), PAGE, PROT_READ | PROT_WRITE);

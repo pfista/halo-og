@@ -35,8 +35,8 @@ toolchain. Without an explicit target, Ninja builds the default configured
 platform. `tools/ci_build.py` follows the CI platform build; for example,
 `python tools/ci_build.py linux release`.
 
-The Mac renderer uses ANGLE's Metal backend. Apple guest compilation has its
-own pinned toolchain; follow [Apple setup](apple-build.md).
+Mac and iPhone render directly through Metal. Both use the pinned
+compiler toolchain described in [Apple setup](apple-build.md).
 
 ## Build options
 

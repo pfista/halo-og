@@ -84,11 +84,19 @@ class TextureCopyTests(unittest.TestCase):
         cls.directory = Path(cls.temp.name)
         cls.prefix = harness_prefix()
         source = cls.directory/'copy.c'
-        source.write_text(cls.prefix + '#include "' + str(ROOT/'port/linux/src/xbox_textures.c') + '"\n')
+        source.write_text(cls.prefix + f'#include "{ROOT}/port/linux/src/xbox_textures.c"\n'
+                          + f'#include "{ROOT}/port/linux/src/xbox_dxt.h"\n'
+                          + """void decode_dxt(int kind, const uint8_t *source, uint32_t width, uint32_t height,
+                               uint32_t pitch, uint32_t *dest, uint32_t stride) {
+                               dxt_decode_bgra_slice(kind, source, width, height, pitch, dest, stride);
+                           }""")
         cls.library_path = cls.directory/'copy.dylib'
         subprocess.run(['clang', '-std=c11', '-O2', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror',
                         source, '-o', cls.library_path], check=True, capture_output=True)
         cls.lib = C.CDLL(str(cls.library_path))
+        cls.lib.decode_dxt.argtypes = [C.c_int, C.c_void_p, C.c_uint32, C.c_uint32, C.c_uint32,
+                                      C.POINTER(C.c_uint32), C.c_uint32]
+        cls.lib.decode_dxt.restype = None
         cls.lib.xgpu_texture_mip_layout.argtypes = [C.c_uint32, C.c_uint32, C.c_ulong, C.c_ulong,
                                                    C.c_int, C.POINTER(Layout)]
         cls.lib.xgpu_texture_mip_layout.restype = C.c_int
@@ -124,6 +132,27 @@ class TextureCopyTests(unittest.TestCase):
             self.assertEqual(destination.raw, bytes([0xa7])*(length+32))
             self.assertEqual(bytes(layout), bytes(C.sizeof(Layout)))
         return written, destination.raw[16:16+length], layout
+
+    def test_dxt_fallback_preserves_bgra_alpha_and_row_padding(self):
+        # One full block and a one-pixel edge on each axis. Sentinels cover
+        # padded rows on both sides of the decode.
+        for kind, alpha in ((0, 255), (1, 170), (2, 123)):
+            with self.subTest(kind=kind):
+                alpha_block = (b'', bytes([0xaa]) * 8, bytes([123]) + bytes(7))[kind]
+                red = alpha_block + struct.pack('<HHI', 0xf800, 0, 0)
+                blue = alpha_block + struct.pack('<HHI', 31, 0, 0)
+                source = red + blue + bytes([0xee]) * 16 + blue + red
+                destination = (C.c_uint32 * 40)(*([0xdeadbeef] * 40))
+                self.lib.decode_dxt(kind, source, 5, 5, 2 * len(red) + 16, destination, 8)
+                for y in range(5):
+                    for x in range(8):
+                        color = 0x0000ff if (x // 4 + y // 4) % 2 else 0xff0000
+                        expected = (alpha << 24) | color if x < 5 else 0xdeadbeef
+                        self.assertEqual(destination[y * 8 + x], expected)
+        # BC1 palette entry three is transparent when endpoint zero <= endpoint one.
+        destination = C.c_uint32(1)
+        self.lib.decode_dxt(0, struct.pack('<HHI', 0, 0xffff, 3), 1, 1, 8, C.byref(destination), 1)
+        self.assertEqual(destination.value, 0)
 
     def test_native_library_has_no_gl_imports(self):
         names = subprocess.check_output(['nm', '-u', self.library_path], text=True)

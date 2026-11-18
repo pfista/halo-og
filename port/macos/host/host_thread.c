@@ -44,9 +44,7 @@ static void *stack_allocate(size_t size, void **mapping, size_t *mapping_size) {
 }
 
 static int on_guest_stack(void) {
-    uint64_t sp = (uint64_t)__builtin_frame_address(0);
-
-    return (sp & ~UINT64_C(0xffffffff)) == HALO_MACOS_BIAS;
+    return host_low_owns((uintptr_t)__builtin_frame_address(0), 1);
 }
 
 /* ---------- calling into the guest */
@@ -155,10 +153,13 @@ int host_native_thread_create(void *(*function)(void *), void *argument, size_t 
     }
     start->function = function;
     start->argument = argument;
-    pthread_attr_init(&attributes);
-    pthread_attr_setstack(&attributes, stack, stack_size);
-    error = pthread_create(&thread, &attributes, thread_main, start);
-    pthread_attr_destroy(&attributes);
+    error = pthread_attr_init(&attributes);
+    if (!error) {
+        error = pthread_attr_setstack(&attributes, stack, stack_size);
+        if (!error)
+            error = pthread_create(&thread, &attributes, thread_main, start);
+        pthread_attr_destroy(&attributes);
+    }
     if (error) {
         host_low_unmap(start->mapping, start->mapping_size);
         free(start);
