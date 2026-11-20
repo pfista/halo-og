@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Build/notarize an asset-free Mac DMG and publish through S3-compatible storage.
+"""Build/notarize an asset-free Mac DMG and publish it with its update feed.
 
 Hosting and the public update key are non-secret checked-in configuration.
-Signing/notary secrets remain in the login Keychain; storage authentication uses
-an existing AWS CLI profile. This tool never creates or reads an env file.
+Signing/notary secrets remain in the login Keychain. Publishing uses the map
+publisher's R2 account, bucket and credential route: a Cloudflare token from the
+environment, a 1Password-mounted credential file, or a hidden prompt. The token
+stays in memory and is never written or logged.
 """
 import argparse
 import hashlib
@@ -25,6 +27,7 @@ from tools.macos_sparkle import setup_sparkle, DIRECTORY as SPARKLE
 from tools.macos_dmg import create_dmg
 from tools.macos_content_tools import audit_content_tools
 from tools.halo_og_version import require_version
+from tools import publish_map_catalog as hosting
 
 CONFIG = ROOT / "port/macos/release-config.json"
 APP = ROOT / "build/macos" / (APP_NAME + ".app")
@@ -207,26 +210,72 @@ def build_release(args):
     print("Prepared release: " + str(destination))
 
 
+def object_key(url, origin):
+    """The bucket key of a public update URL: its path beneath the storage origin."""
+    key = url[len(origin):] if url.startswith(origin) else ""
+    if not re.fullmatch(r"updates/mac/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+", key) or ".." in key:
+        raise RuntimeError("Update objects must be public URLs beneath " + origin + "updates/mac/")
+    return key
+
+
+def fetch_public(url):
+    """The public bytes at an HTTPS URL, or None when nothing is published there."""
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response:
+            return response.read()
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+        return None
+
+
+def upload(record, dmg, feed, origin, r2, fetch=fetch_public):
+    """Create the immutable disk image, verify its public bytes, then advance the feed."""
+    key, feed_key = object_key(record["url"], origin), object_key(record["feed_url"], origin)
+    # A versioned archive is immutable. The conditional create never replaces an
+    # existing object; an archive already there must be this exact release.
+    created = r2.request("PUT", key, body=dmg, headers={
+        "If-None-Match": "*", "Content-Type": "application/x-apple-diskimage"})
+    if created.status not in (200, 201, 412):
+        raise RuntimeError(f"Disk image upload failed (HTTP {created.status}); feed was not changed")
+    public = fetch(record["url"])
+    if public is None or hashlib.sha256(public).hexdigest() != record["sha256"]:
+        if created.status == 412:
+            raise RuntimeError("A different disk image already exists at this versioned URL; feed was not changed")
+        raise RuntimeError("Public download verification failed; feed was not changed")
+    # The feed is the only mutable object, and it moves last.
+    advanced = r2.request("PUT", feed_key, body=feed, headers={
+        "Content-Type": "application/xml", "Cache-Control": "no-cache"})
+    if advanced.status not in (200, 201):
+        raise RuntimeError(f"Feed upload failed (HTTP {advanced.status}); the disk image is published")
+    if fetch(record["feed_url"]) != feed:
+        raise RuntimeError("The live feed does not yet match this release")
+
+
 def publish(args):
     settings = config()
+    storage = hosting.load_config()
+    origin = storage["public_base_url"]
     release = args.directory.resolve()
     record = json.loads((release / "release.json").read_text())
     if not record.get("distributable") or not record.get("notarization", {}).get("dmg"):
         raise RuntimeError("Only verified notarized releases can be published")
     base = https_url(settings.get("download_base_url"))
     feed = https_url(settings.get("feed_url"))
-    feed_prefix = base + "/"
-    if not feed.startswith(feed_prefix):
+    if not feed.startswith(base + "/"):
         raise RuntimeError("The configured feed must live beneath the download base URL")
-    key = "mac/" + record["build"] + "/" + record["filename"]
-    if record["url"] != base + "/" + key or record["feed_url"] != settings["feed_url"]:
+    if (record["url"] != base + "/mac/" + record["build"] + "/" + record["filename"]
+            or record["feed_url"] != settings["feed_url"]):
         raise RuntimeError("Release hosting changed; prepare a matching release")
     if record["public_update_key"] != settings["public_update_key"]:
         raise RuntimeError("Release update key no longer matches the app configuration")
+    object_key(record["url"], origin)
+    object_key(record["feed_url"], origin)
     dmg = release / record["filename"]
-    if dmg.parent != release or hashlib.sha256(dmg.read_bytes()).hexdigest() != record["sha256"]:
+    data = dmg.read_bytes() if dmg.parent == release else b""
+    if hashlib.sha256(data).hexdigest() != record["sha256"]:
         raise RuntimeError("The release disk image has changed")
-    if dmg.stat().st_size != record["size"]:
+    if len(data) != record["size"]:
         raise RuntimeError("The release disk image length has changed")
     setup_sparkle()
     key_in_keychain = run(SPARKLE / "bin/generate_keys", "--account", ACCOUNT, "-p", capture=True).strip()
@@ -235,36 +284,13 @@ def publish(args):
     run("codesign", "--verify", "--strict", dmg)
     run("xcrun", "stapler", "validate", dmg)
     run(SPARKLE / "bin/sign_update", "--account", ACCOUNT, "--verify", dmg, record["signature"])
-    bucket = settings.get("s3_bucket")
-    if not bucket or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket):
-        raise RuntimeError("Configure an S3 or R2 bucket first")
-    aws = ["aws"]
-    if settings.get("s3_profile"):
-        aws += ["--profile", settings["s3_profile"]]
-    if settings.get("s3_endpoint_url"):
-        aws += ["--endpoint-url", https_url(settings["s3_endpoint_url"])]
-    # A versioned archive is immutable. After an ambiguous write, inspect the
-    # public object before retrying; never overwrite a different archive.
-    try:
-        with urllib.request.urlopen(record["url"], timeout=60) as response:
-            existing = response.read()
-    except urllib.error.HTTPError as error:
-        if error.code != 404:
-            raise
-        run(*aws, "s3api", "put-object", "--bucket", bucket, "--key", key, "--body", dmg,
-            "--content-type", "application/x-apple-diskimage", "--if-none-match", "*")
-    else:
-        if hashlib.sha256(existing).hexdigest() != record["sha256"]:
-            raise RuntimeError("A different disk image already exists at this versioned URL")
-    with urllib.request.urlopen(record["url"], timeout=60) as response:
-        if hashlib.sha256(response.read()).hexdigest() != record["sha256"]:
-            raise RuntimeError("Public download verification failed; feed was not changed")
-    (release / "appcast.xml").write_bytes(appcast(record))
-    run(*aws, "s3api", "put-object", "--bucket", bucket, "--key", feed[len(feed_prefix):],
-        "--body", release / "appcast.xml", "--content-type", "application/xml", "--cache-control", "no-cache")
-    with urllib.request.urlopen(feed, timeout=60) as response:
-        if response.read() != appcast(record):
-            raise RuntimeError("The live feed does not yet match this release")
+    feed_bytes = appcast(record)
+    (release / "appcast.xml").write_bytes(feed_bytes)
+    token = hosting.load_token(args.credential_file)
+    http = hosting.HTTPS()
+    access, secret = hosting.derive_s3_credentials(token, storage, http)
+    del token
+    upload(record, data, feed_bytes, origin, hosting.R2(storage, access, secret, http))
     print("Published and verified " + record["url"])
 
 
@@ -281,8 +307,10 @@ def main():
     build.add_argument("--build-number", required=True)
     build.add_argument("--sign-identity", required=True)
     build.add_argument("--notary-profile", required=True)
-    upload = commands.add_parser("publish")
-    upload.add_argument("directory", type=Path)
+    publisher = commands.add_parser("publish")
+    publisher.add_argument("directory", type=Path)
+    publisher.add_argument("--credential-file", type=Path,
+                           help="Existing 1Password-mounted file containing a literal CLOUDFLARE_API_TOKEN assignment")
     args = parser.parse_args()
     if args.command == "setup-updates":
         setup_sparkle()
@@ -299,6 +327,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
+    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError, hosting.PublishError) as error:
         print("Release failed: " + str(error), file=sys.stderr)
         sys.exit(1)

@@ -223,7 +223,8 @@ chooser and preserves the command-line test runner behavior.
 ## Sparkle configuration
 
 Sparkle 2.10.0 is pinned by checksum in `port/macos/dependencies.json`. It starts
-only with a valid HTTPS feed and 32-byte public Ed25519 key. Standard Sparkle
+only with a valid HTTPS feed and 32-byte public Ed25519 key, which only
+`--release` builds embed; ad-hoc CI and local builds keep the GitHub notice below. Standard Sparkle
 UI handles update consent and downloads. Scheduled reminders wait in the menu
 while playing; installations requiring a relaunch wait for clean game exit.
 When no Sparkle feed/key is configured, **Check for Updates…** opens Settings
@@ -234,34 +235,27 @@ record source SHA/date for comparisons; local builds can open the releases page
 manually. See [client updates](client-updates.md) for current notice behavior and
 the planned signed GitHub Actions pipeline.
 
-Sparkle app-update hosting is intentionally unconfigured; community-map
-hosting above is configured independently. The non-secret checked-in file
-`port/macos/release-config.json` currently has null values for:
+Update hosting is set in the non-secret checked-in file
+`port/macos/release-config.json`:
 
-| Field | Purpose |
+| Field | Value |
 | --- | --- |
-| `feed_url` | Public HTTPS appcast XML |
+| `feed_url` | `https://dl.oghalo.com/updates/mac/testing/appcast.xml`, the testing channel's appcast |
 | `public_update_key` | Halo's public Sparkle Ed25519 key |
-| `download_base_url` | Public HTTPS base for versioned DMGs |
-| `s3_bucket` | S3 or Cloudflare R2 bucket |
-| `s3_endpoint_url` | S3-compatible HTTPS API endpoint, if needed |
-| `s3_profile` | Existing AWS CLI profile name, if needed |
+| `download_base_url` | `https://dl.oghalo.com/updates`; a release's DMG is `mac/<build>/Halo-OG-<version>.dmg` beneath it |
 
-The S3-compatible publisher requires the feed beneath the download base.
-Another service can host the same DMG/XML over public HTTPS. No new application
-environment variables or committed credentials are needed.
+Updates share the community maps' R2 account, bucket and public origin from
+`tools/map-publisher.json`; an object's key is its public URL path. No release
+has been published to this feed yet. No new application environment variables
+or committed credentials are needed.
 
-After choosing hosting and reviewing distribution rights, create Halo's separate
-Sparkle key in the login Keychain:
-
-```sh
-python3 tools/macos_release.py setup-updates
-```
-
-Commit only its public key. Keep the private key in Keychain and back it up via
-the established 1Password workflow. Use the 1Password MCP server when preparing
-developer environments. Signing/notary use existing Keychain identities and
-profiles; storage uses an existing AWS profile.
+Halo's Sparkle key was created on November 19, 2026 with
+`python3 tools/macos_release.py setup-updates`. Its private half is in the
+release Mac's login Keychain. Installed apps refuse an update signed with any
+other key, so back it up via the established 1Password workflow (Sparkle's
+`generate_keys -x` exports it), and on another Mac import that key with
+`generate_keys -f` instead of creating a new one. Signing and notarization use
+existing Keychain identities and profiles.
 
 From a clean, committed tree, prepare a release with an explicit identity.
 For this `v0.3.1` example, first update the canonical version header as described
@@ -293,15 +287,19 @@ not redistribution rights for compiled code or artwork. Public dependency
 licenses are included. This product includes software developed by in
 <in@fishtank.com>.
 
-For an approved release and configured hosting:
+For an approved release:
 
 ```sh
-python3 tools/macos_release.py publish build/macos/releases/8
+python3 tools/macos_release.py publish build/macos/releases/8 \
+  --credential-file /path/to/approved/1password-mount.env
 ```
 
-The publisher re-verifies checksum, certificate signature, stapled ticket and
-Sparkle signature, uploads an immutable versioned DMG, reads the public download
-back and checks its hash, then updates the feed last and verifies the live XML.
+The credential route is the map publisher's: a Cloudflare token from the
+environment, that mounted file, or a hidden prompt. The publisher re-verifies
+checksum, certificate signature, stapled ticket and Sparkle signature. It then
+creates the versioned DMG only if nothing exists at its URL, reads the public
+download back and checks its hash, and updates the feed last and verifies the
+live XML. A different DMG already at that URL stops the publication.
 `release.json` records source revision, signatures, hashes, URLs and notarization
 submissions.
 

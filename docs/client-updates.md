@@ -6,9 +6,11 @@ is required. Cloudflare R2 can host that feed and immutable downloads, while
 GitHub releases provide the familiar public download page.
 
 **Current work provides update notices and manual installation on Mac, Windows,
-and Linux.** Signed automatic installation is the next stage. Its identities,
-keys, feeds, Windows installer, and production workflow are not configured or
-validated yet. Community-map downloads remain independent of client updates.
+and Linux.** Signed automatic installation is the next stage. Mac's update key,
+testing feed and R2 publication route are configured, but no signed Mac release
+has been published or update-tested yet. The Windows installer, its keys and
+feed, and the production workflow are not configured. Community-map downloads
+remain independent of client updates.
 
 ## Current behavior
 
@@ -79,23 +81,25 @@ Mac's existing [release tool](../tools/macos_release.py) already implements the
 local build/sign/notarize/staple/archive-sign sequence and the R2/S3 publication
 order. Its publisher uploads a versioned DMG without replacing an existing
 different archive, verifies the public download, then publishes and verifies
-the appcast. It currently uses Keychain identities and an AWS CLI profile.
+the appcast. It uses Keychain identities and the map publisher's R2 credential
+route.
 A CI wrapper still needs to prepare these temporary credentials and keychain;
 the current ad-hoc DMG workflow does not do this.
 
 Keep non-secret feed URLs, public verification keys, bucket names, and platform
 requirements in checked-in configuration. Mac's
-[`release-config.json`](../port/macos/release-config.json) already contains these
-fields, currently null. Private update keys, certificate passwords, notarization
+[`release-config.json`](../port/macos/release-config.json) holds its feed,
+download base and public key. Private update keys, certificate passwords, notarization
 credentials, and upload credentials belong in approved secret storage and
 Actions secrets, never in public feeds or app bundles. Release-job variables
 are temporary CI plumbing; no new application environment variables are needed.
 
 Use separate testing/stable feeds and publish to the intended channel explicitly.
 Current notices include testing prereleases; a future stable installer feed
-must not silently enroll players in testing updates. For R2, choose public
-HTTPS paths beneath the download base; the current Mac publisher requires its
-feed there too. Existing `dl.oghalo.com` map hosting can remain independent.
+must not silently enroll players in testing updates. Mac updates live under
+`updates/mac/` on `dl.oghalo.com`, beside the maps; the testing feed is
+`updates/mac/testing/appcast.xml`. Keep other platforms under their own
+`updates/<platform>/` prefix.
 
 ## Mac: Sparkle and Apple distribution
 
