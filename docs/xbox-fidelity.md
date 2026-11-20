@@ -189,13 +189,16 @@ establish gameplay listening results or retail parity.
 
 ## Protocol compatibility
 
-Interoperability with cybersecurity clients and discovery services is a goal,
-alongside Halo OG's original presentation and local feel. Review network and
-discovery protocols separately from upstream menus and gameplay additions.
-Shared sessions must respect the host's authoritative rules; a local client
-cannot impose different movement or weapon rules while claiming a consistent
-match. Keep Halo OG hosting defaults original and validate received host options
-individually. See [the current interoperability review](network-interoperability.md).
+Halo OG is its own multiplayer network: Halo OG builds play with Halo OG
+builds. Interoperability with OpenCE (formerly cybersecurity) clients and
+discovery services was a goal until November 19, 2026 and no longer is. By
+upstream `307a42ee` (November 16, 2026) OpenCE had moved from protocol 11 to 44,
+adding co-op, new modes, dedicated-server and admission changes that Halo OG
+does not adopt, and it now checks the version explicitly when a client joins.
+Halo OG does not follow those versions. Review upstream networking fixes individually and
+port one when it improves Halo OG's own protocol. Keep Halo OG hosting defaults
+original. [The interoperability review](network-interoperability.md) is
+retained as the historical protocol-11 audit.
 Game-discovery UI requires a user check-in before implementation and should map
 to original Xbox-style Multiplayer/System Link menus; upstream's PC-style
 server browser UI is not adopted.
@@ -208,7 +211,8 @@ including options with unimplemented local behavior. The diagnostic helper
 still classifies unsupported options, but no longer controls admission. Host
 time limits and other authoritative state can be replicated, while radar,
 initial vehicle placement, custom loadouts and weapon rules may still differ.
-This is not a claim of supported mixed-host gameplay. See
+This is not a claim of supported mixed-host gameplay. That relaxation served
+mixed-host testing; whether to restore the option gate is undecided. See
 [host settings compatibility](host-time-limit-compatibility.md).
 
 Protocol/version and PB capability checks, packet reassembly, machine/player

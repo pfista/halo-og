@@ -9,8 +9,10 @@ content imports; competitive features are optional and default off.
 - Preserve the 30 Hz simulation. Assess high-refresh rendering, interpolation
   and camera/input latency separately; a 30 FPS reference preset does not impose
   a normal-play cap.
-- Review useful cybersecurity upstream changes individually. Inspect actual
-  diffs, defaults and dependencies; split mixed commits and never merge wholesale.
+- Halo OG does not track upstream. OpenCE (formerly cybersecurity) has taken its
+  app in a different direction, and falling behind it is expected. Review useful
+  upstream changes individually. Inspect actual diffs, defaults and
+  dependencies; split mixed commits and never merge wholesale.
 - Prioritize matching accuracy, correctness, stability, performance and platform
   fixes that preserve Xbox behavior. Review netcode timing, authority, fairness,
   compatibility and service dependencies before adoption.
@@ -20,14 +22,13 @@ content imports; competitive features are optional and default off.
 - Intentional departures from original behavior should generally be explicit
   configuration options that default to the original behavior. Keep uncertain
   netcode changes selectable while comparing their timing and feel with OG.
-- Maintain interoperability with cybersecurity games as a goal. Keep Halo OG's
-  original presentation and local feel while respecting shared host-authoritative
-  rules. A shared protocol number alone does not establish gameplay compatibility.
-- Reference upstream discovery, invite and connection protocols independently of
-  its PC-style menus. Check in with the user before implementing game-discovery
-  UI, then map it to original Xbox-style Multiplayer/System Link menus rather
-  than importing upstream UI. OS-native settings windows are not the intended
-  game-discovery UI.
+- Halo OG is its own multiplayer network: Halo OG builds play with Halo OG
+  builds. Interoperability with OpenCE games is not a goal, and Halo OG does not
+  follow OpenCE's network protocol versions. Port an upstream networking fix
+  when it improves Halo OG's own protocol, never to stay wire-compatible.
+- Check in with the user before implementing game-discovery UI, then map it to
+  original Xbox-style Multiplayer/System Link menus rather than importing
+  upstream UI. OS-native settings windows are not the intended game-discovery UI.
 - Keep original fonts, artwork, HUD, scoreboard, sounds and game rules. Rebranding,
   overhead labels, balance changes and other modifications require explicit scope.
 - Identify community additions and compatibility changes in code comments and

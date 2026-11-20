@@ -277,7 +277,8 @@ def build_ilp32(output):
     sys.path.insert(0,str(ROOT))
     from tools.android_build import GUEST_ABI_FLAGS
     llvm=Path('/opt/homebrew/opt/llvm@22/bin');linker=Path('/opt/homebrew/opt/lld@22/bin/ld.lld')
-    plugin=ROOT.parent/'pfista-halo-macos/build/macos/guest_rebase.dylib'
+    from tools.primary_checkout import PRIMARY
+    plugin=PRIMARY/'build/macos/guest_rebase.dylib'
     executor=ROOT/'build/metal-poc/host-opaque-mad-corrected-validation/host_metal_probe'
     output=output.resolve();output.mkdir(parents=True,exist_ok=False)
     def sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()

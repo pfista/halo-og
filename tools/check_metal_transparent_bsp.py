@@ -10,13 +10,14 @@ import tempfile
 import types
 import unittest
 
+from primary_checkout import PRIMARY
 from metal_poc_export import Cache, decode_bitmap_mipmaps
 from metal_poc_transparent_bsp import append_transparent_bsp, bsp_transparent_material
 from check_metal_teleporters import generic_reference
 
 ROOT = Path(__file__).resolve().parents[1]
-MAP = ROOT.parent/'pfista-halo-macos/assets/maps/bloodgulch.map'
-HANGEMHIGH_MAP = ROOT.parent/'pfista-halo-macos/assets/maps/hangemhigh.map'
+MAP = PRIMARY/'assets/maps/bloodgulch.map'
+HANGEMHIGH_MAP = PRIMARY/'assets/maps/hangemhigh.map'
 UPPER_COLORS = [[0., 0., 1., 1.], [1., 1., 1., 0.]]
 # Independent tag-selector interpreter already tested for scenery. Rebind its
 # source constants to the BSP's ONE-function upper colors, without duplicating

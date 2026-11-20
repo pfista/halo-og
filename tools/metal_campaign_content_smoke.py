@@ -13,7 +13,7 @@ from metal_poc_export import Cache
 
 ROOT=mp.ROOT
 CAMPAIGN=('a10','a30','a50','b30','b40','c10','c20','c40','d20','d40')
-MP_SHA='12d006eef3868e253d0f00332c5e860d63a0fa25acdb723e6d4d91ea0d65fe61'
+MP_SHA='00c8bdd7467d48043ea5060514231ce8720e611cddefbf79127663743318d454'
 MAX_CACHE_BYTES=512*1024*1024
 require,sha,desc,read,new_json=mp.require,mp.sha,mp.desc,mp.read,mp.new_json
 

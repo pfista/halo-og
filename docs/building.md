@@ -87,6 +87,11 @@ to run for every edit. From the repository root:
 | Directory server | In `services/game-directory`, run `npm ci`, then `npm test`; the real lease-expiry case takes about 91 seconds. |
 | Metal CPU/transport behavior | `PYTHONPATH=tools python3 -m unittest tools.test_metal_guest_transport` |
 
+Extracted game data (`assets/`) and Mac build products (`build/macos/`) are
+ignored by git and exist only in the main checkout. Tools run from a git
+worktree find them there through `tools/primary_checkout.py`; use its `PRIMARY`
+instead of naming a checkout directory.
+
 Select individual cases when a module covers unrelated behavior. Broader platform
 regression runs in CI; the service workflow runs for directory changes. Release
 preparation and publication require successful build/package and Apple regression

@@ -12,6 +12,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+from primary_checkout import PRIMARY
 COLOR = [1., 230 / 255, 196 / 255]
 
 
@@ -213,7 +214,7 @@ class AtmosphericFogTests(unittest.TestCase):
 
     def test_stock_cache_lookup_and_outdoor_parameters(self):
         from metal_poc_export import Cache, export
-        path=ROOT.parent/'pfista-halo-macos/assets/maps/bloodgulch.map'
+        path=PRIMARY/'assets/maps/bloodgulch.map'
         if not path.exists():self.skipTest('User-owned stock Blood Gulch cache is not available')
         cache=Cache(path)
         if cache.sha256!='50fe52406f075d975e24100a65b26ff696458023dd3509878953052ab0ef858f':

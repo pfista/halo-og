@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import metal_copy_subresource_validate as copy
 import metal_host_draw_validate as wire
 import metal_host_frame_validate as frame
+from primary_checkout import PRIMARY
 
 sha, require = wire.sha, wire.require
 REQUIRED = 1 | 2 | 4 | 16 | 64 | 128 | 32768
@@ -315,7 +316,7 @@ def main():
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--llvm', type=Path, default=Path('/opt/homebrew/opt/llvm@22/bin'))
     parser.add_argument('--linker', type=Path, default=Path('/opt/homebrew/opt/lld@22/bin/ld.lld'))
-    parser.add_argument('--plugin', type=Path, default=Path('/Users/pfista/src/halo/pfista-halo-macos/build/macos/guest_rebase.dylib'))
+    parser.add_argument('--plugin', type=Path, default=PRIMARY/'build/macos/guest_rebase.dylib')
     arguments = parser.parse_args(); out = arguments.out.resolve()
     if arguments.mode == 'prepare':
         prepare(out, arguments.llvm, arguments.linker.absolute(), arguments.plugin); return 0

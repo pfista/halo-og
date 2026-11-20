@@ -14,11 +14,12 @@ import struct
 import subprocess
 
 import metal_host_draw_validate as host
+from primary_checkout import PRIMARY
 
 ROOT=host.ROOT
 WIDTH,HEIGHT=80,32
 SPEC='https://learn.microsoft.com/en-us/windows/uwp/graphics-concepts/textures-with-alpha-channels'
-DEPENDENCIES=ROOT if (ROOT/'build/macos/angle/dist').exists() else ROOT.parent/'pfista-halo-macos'
+DEPENDENCIES=ROOT if (ROOT/'build/macos/angle/dist').exists() else PRIMARY
 FRAMEWORKS=[DEPENDENCIES/'build/macos/angle/dist/EGL.xcframework/macos-arm64',
             DEPENDENCIES/'build/macos/angle/dist/GLESv2.xcframework/macos-arm64']
 

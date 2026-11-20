@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 from tools.metal_shader_validate import PixelKey
 from tools.metal_draw_replay import split_uniforms, texture_description
 from tools.metal_host_draw_validate import state_bytes, sampler_bytes
+from tools.primary_checkout import PRIMARY
 
 FRAME = ROOT/'build/metal-reference-20261004/ordered-frame-runtime/run/saves/metal-frames/frame420/captured_frame.json'
 PREPARED = ROOT/'build/metal-poc/frame-replay-420-sample-mask/frame-replay.json'
@@ -1019,7 +1020,7 @@ if __name__=='__main__':
         parser.add_argument('--consume-ilp32',type=Path)
         parser.add_argument('--consume-returncode',type=int)
         parser.add_argument('--output',type=Path,required=True)
-        parser.add_argument('--plugin',type=Path,default=ROOT.parent/'pfista-halo-macos/build/macos/guest_rebase.dylib')
+        parser.add_argument('--plugin',type=Path,default=PRIMARY/'build/macos/guest_rebase.dylib')
         parser.add_argument('--executor',type=Path,default=ROOT/'build/metal-poc/host-opaque-mad-corrected-validation/host_metal_probe')
         args=parser.parse_args()
         if args.consume_ilp32:

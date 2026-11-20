@@ -1,6 +1,6 @@
 # Halo OG console reference
 
-This guide describes the Halo OG console source in `pfista-halo-macos`, reviewed
+This guide describes the Halo OG console source in this repository, reviewed
 October 8, 2026 at revision **a1367ec5**. It includes
 all 418 registered HaloScript functions, all **442 distinct built-in variable
 names** (443 registry slots because `decals` appears twice), the native PB commands,

@@ -20,6 +20,7 @@ sys.path.insert(0,str(ROOT/'tools'))
 import metal_copy_subresource_validate as copy
 import metal_host_frame_validate as frame
 import metal_host_draw_validate as wire
+from primary_checkout import PRIMARY
 sha,require=copy.sha,copy.require
 SOURCE_SHA='0f23edd4a08b58514e0df7e67691da723b0095f74c0d94643747da7491454196'
 ASSETS=ROOT/'build/metal-poc/volume-authored-oracle-assets'
@@ -373,7 +374,7 @@ def execute(out):
 def main():
     p=argparse.ArgumentParser();p.add_argument('mode',choices=['prepare','execute']);p.add_argument('--out',type=Path,required=True)
     p.add_argument('--llvm',type=Path,default=Path('/opt/homebrew/opt/llvm@22/bin'));p.add_argument('--linker',type=Path,default=Path('/opt/homebrew/opt/lld@22/bin/ld.lld'))
-    p.add_argument('--plugin',type=Path,default=Path('/Users/pfista/src/halo/pfista-halo-macos/build/macos/guest_rebase.dylib'))
+    p.add_argument('--plugin',type=Path,default=PRIMARY/'build/macos/guest_rebase.dylib')
     a=p.parse_args()
     if a.mode=='prepare':prepare(a.out.resolve(),a.llvm,a.linker,a.plugin);return 0
     return execute(a.out.resolve())

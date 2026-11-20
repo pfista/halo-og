@@ -23,6 +23,7 @@ import metal_copy_subresource_validate as copy
 import metal_host_draw_validate as wire
 import metal_host_frame_coalesce as parse
 import metal_host_frame_validate as frame
+from primary_checkout import PRIMARY
 
 sha, require = wire.sha, wire.require
 FAILED = ROOT / 'build/macos-metal/map-transition-125-attempt2'
@@ -276,7 +277,7 @@ def execute(out):
 def main():
     p=argparse.ArgumentParser();p.add_argument('mode',choices=['prepare','execute']);p.add_argument('--out',type=Path,required=True)
     p.add_argument('--llvm',type=Path,default=Path('/opt/homebrew/opt/llvm@22/bin'));p.add_argument('--linker',type=Path,default=Path('/opt/homebrew/opt/lld@22/bin/ld.lld'))
-    p.add_argument('--plugin',type=Path,default=Path('/Users/pfista/src/halo/pfista-halo-macos/build/macos/guest_rebase.dylib'))
+    p.add_argument('--plugin',type=Path,default=PRIMARY/'build/macos/guest_rebase.dylib')
     a=p.parse_args();out=a.out.resolve()
     if a.mode=='prepare': prepare(out,a.llvm,a.linker.absolute(),a.plugin); return 0
     return execute(out)

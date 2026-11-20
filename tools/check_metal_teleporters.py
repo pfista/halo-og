@@ -11,13 +11,14 @@ import sys
 import tempfile
 import unittest
 
+from primary_checkout import PRIMARY
 from metal_poc_export import Cache, decode_bitmap_mipmaps
 from metal_poc_teleporters import (append_teleporters, PLASMA_STAGES, PLASMA_SHADER,
                                   rotation_basis, transform_vector, original_bump_palette,
                                   decode_p8_bump_mipmaps)
 
 ROOT = Path(__file__).resolve().parents[1]
-RETAIL_MAP = ROOT.parent / 'pfista-halo-macos/assets/maps/bloodgulch.map'
+RETAIL_MAP = PRIMARY / 'assets/maps/bloodgulch.map'
 CONSTANTS = [[0.,0.,89/255,102/255], [0.,84/255,108/255,0.]]
 
 

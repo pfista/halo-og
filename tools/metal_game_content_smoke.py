@@ -20,9 +20,10 @@ import time
 import tomllib
 from PIL import Image
 from metal_poc_export import Cache
+from primary_checkout import PRIMARY
 
 ROOT=Path(__file__).resolve().parents[1]
-MAPS=ROOT.parent/'pfista-halo-macos/assets/maps'
+MAPS=PRIMARY/'assets/maps'
 STOCK=('beavercreek','sidewinder','damnation','ratrace','prisoner','hangemhigh','chillout',
        'carousel','boardingaction','bloodgulch','wizard','putput','longest')
 SOURCE_LIST=ROOT/'source/interface/ui_widget_event_handler_functions.c'

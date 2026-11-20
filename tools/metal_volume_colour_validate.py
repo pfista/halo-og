@@ -23,6 +23,7 @@ import metal_volume_validate as volume
 import metal_copy_subresource_validate as copy
 import metal_host_frame_validate as frame
 import metal_host_draw_validate as wire
+from primary_checkout import PRIMARY
 sha,require=wire.sha,wire.require
 GENERATED=ROOT/'build/metal-poc/volume-border-generated-project3d-component'
 SHADER='''#include <metal_stdlib>
@@ -332,7 +333,7 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('mode',choices=['prepare','execute']);p.add_argument('--out',type=Path,required=True)
     p.add_argument('--strict-edge-ties',action='store_true');p.add_argument('--llvm',type=Path,default=Path('/opt/homebrew/opt/llvm@22/bin'))
     p.add_argument('--linker',type=Path,default=Path('/opt/homebrew/opt/lld@22/bin/ld.lld'))
-    p.add_argument('--plugin',type=Path,default=Path('/Users/pfista/src/halo/pfista-halo-macos/build/macos/guest_rebase.dylib'))
+    p.add_argument('--plugin',type=Path,default=PRIMARY/'build/macos/guest_rebase.dylib')
     a=p.parse_args()
     if a.mode=='prepare':prepare(a.out.resolve(),a.llvm,a.linker,a.plugin,a.strict_edge_ties);return 0
     return execute(a.out.resolve())

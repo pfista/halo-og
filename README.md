@@ -41,10 +41,9 @@ practice play. The project's priorities are:
 - **Selective upstream integration.** Review correctness, performance, platform,
   and networking improvements individually, preserving the Xbox baseline and
   keeping optional modifications explicit.
-- **A shared multiplayer ecosystem.** Aim to find and join cybersecurity games
-  through compatible network and discovery protocols while retaining Halo OG's
-  original presentation and local experience. Shared match rules remain the
-  host's responsibility; mixed-client support needs explicit testing.
+- **Its own multiplayer network.** Halo OG builds play with Halo OG builds,
+  found through LAN, private invites and the public games list in System Link.
+  Interoperability with OpenCE games is not a goal.
 
 The decompilation foundation and protocol-11 networking are shared with our
 upstream projects; they are not exclusive Halo OG features. Our distinction is
@@ -190,18 +189,17 @@ algorithm. Use matching Halo OG builds for playtests. See the
 [protocol review](docs/xbox-fidelity.md#protocol-compatibility), and
 [fidelity policy](docs/xbox-fidelity.md) for details and current evidence.
 
-Interoperability with cybersecurity clients is a goal. We can share connection
-and discovery protocols while keeping original Xbox graphics and our own menus.
-The host's rules still govern a shared game: changing the HUD or rendering is
-different from changing movement, weapons, damage, or match timing independently.
-Some upstream game options need further compatibility work, and Internet play
-needs mixed-client testing. Desktop source builds on macOS, Windows, and Linux
+Halo OG builds play with other Halo OG builds. Interoperability with OpenCE
+(formerly cybersecurity) clients is no longer a goal: OpenCE's protocol has
+moved on from protocol 11 and carries features Halo OG does not adopt. Desktop
+source builds on macOS, Windows, and Linux
 now discover public games from **games.oghalo.com** in the original
 **Multiplayer → System Link** menu, alongside LAN games. Hosting is public by
 default; a config option keeps it private. Gameplay uses the existing direct
 P2P connection. Older published builds need an update to gain this discovery.
 See [public games and private hosting](docs/system-link-directory.md).
-See the [interoperability review](docs/network-interoperability.md).
+The [interoperability review](docs/network-interoperability.md) records the
+earlier protocol-11 comparison.
 
 ## Community maps and original assets
 
