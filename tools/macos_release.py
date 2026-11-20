@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Publish a Mac release to Halo's update feed, and package Mac DMGs.
+"""Publish a release to Halo's updaters, and package Mac DMGs.
 
-`publish-release` takes the ad-hoc signed DMG that CI built for a GitHub
-release, signs it with Halo's update key and advances the feed. `build` and
-`publish` are the separate Developer ID and notarization route.
+`publish-release` takes what CI built for a GitHub release. It signs the
+ad-hoc signed Mac DMG with Halo's update key and advances the Mac feed, and
+signs the install records that let Windows and Linux builds install their
+packages (tools/desktop_update_records.py). `build` and `publish` are the
+separate Developer ID and notarization route.
 
 Hosting and the public update key are non-secret checked-in configuration. The
 private update key stays in 1Password, which hands it straight to Sparkle's
@@ -35,6 +37,7 @@ from tools.macos_dmg import create_dmg
 from tools.macos_content_tools import audit_content_tools
 from tools.halo_og_version import require_version
 from tools.ed25519_verify import verify
+from tools import desktop_update_records as desktop
 from tools import publish_map_catalog as hosting
 
 CONFIG = ROOT / "port/macos/release-config.json"
@@ -255,7 +258,7 @@ def release_app(dmg, settings, version):
 
 
 def sign(dmg, keychain=False):
-    """Sparkle's Ed25519 signature of a DMG, made with Halo's private update key."""
+    """Sparkle's Ed25519 signature of a file, made with Halo's private update key."""
     signer = [str(SPARKLE / "bin/sign_update"), "-p"]
     if keychain:
         return subprocess.run([*signer, "--account", ACCOUNT, str(dmg)], check=True, text=True,
@@ -387,8 +390,31 @@ def publish(args):
     print("Published and verified " + record["url"])
 
 
+def desktop_records(release, tag, settings, keychain):
+    """Sign an install record for each desktop package of a downloaded release."""
+    provenance = json.loads((release / "provenance.json").read_text())
+    published = json.loads(run("gh", "api", f"repos/{REPOSITORY}/releases/tags/{tag}", capture=True))
+    sums = (release / "SHA256SUMS").read_text().splitlines()
+    prepared = {}
+    for platform, name in desktop.PLATFORMS.items():
+        data = (release / name).read_bytes()
+        checksum = desktop.sha256(data)
+        if f"{checksum}  {name}" not in sums:
+            raise RuntimeError(f"The downloaded {name} does not match the release's SHA256SUMS")
+        desktop.audit_package(platform, data)
+        # The game compares the release's GitHub creation time, so that is the date signed.
+        record = desktop.record(platform, tag, provenance["sha"], published["created_at"], len(data), checksum)
+        path = release / (platform + "-install-record.txt")
+        path.write_bytes(record)
+        signature = sign(path, keychain)
+        require_signature(record, signature, settings["public_update_key"])
+        prepared[platform] = (record, base64.b64decode(signature))
+        (release / (platform + "-install-record.sig")).write_bytes(prepared[platform][1])
+    return prepared
+
+
 def publish_release(args):
-    """Sign the DMG that CI built for a GitHub release and advance the feed to it."""
+    """Sign what CI built for a GitHub release and publish it to Halo's updaters."""
     if not re.fullmatch(r"v\d+\.\d+\.\d+", args.tag):
         raise RuntimeError("Use a vMAJOR.MINOR.PATCH release tag")
     settings = config()
@@ -403,7 +429,8 @@ def publish_release(args):
     release = ROOT / "build/macos/releases" / args.tag
     release.mkdir(parents=True, exist_ok=True)
     run("gh", "release", "download", args.tag, "--repo", REPOSITORY, "--dir", release, "--clobber",
-        "--pattern", RELEASE_DMG, "--pattern", "SHA256SUMS")
+        "--pattern", RELEASE_DMG, "--pattern", "SHA256SUMS", "--pattern", "provenance.json",
+        *(part for name in desktop.PLATFORMS.values() for part in ("--pattern", name)))
     dmg = release / RELEASE_DMG
     data = dmg.read_bytes()
     checksum = hashlib.sha256(data).hexdigest()
@@ -424,14 +451,20 @@ def publish_release(args):
     feed_bytes = appcast(record)
     (release / "release.json").write_text(json.dumps(record, indent=2) + "\n")
     (release / "appcast.xml").write_bytes(feed_bytes)
+    # Everything is signed and verified before anything is uploaded.
+    records = desktop_records(release, args.tag, settings, args.keychain_key)
     if args.dry_run:
-        print("Signed and verified; nothing was uploaded. Prepared feed: " + str(release / "appcast.xml"))
+        print("Signed and verified; nothing was uploaded. Prepared in " + str(release))
         return
     token = hosting.load_token(args.credential_file)
     http = hosting.HTTPS()
     access, secret = hosting.derive_s3_credentials(token, storage, http)
     del token
-    upload(record, data, feed_bytes, origin, hosting.R2(storage, access, secret, http))
+    r2 = hosting.R2(storage, access, secret, http)
+    for platform, (body, signature) in records.items():
+        desktop.upload(platform, args.tag, body, signature, origin, r2, fetch_public)
+        print(f"Published the {platform} install record for {args.tag}")
+    upload(record, data, feed_bytes, origin, r2)
     print(f"Published Halo OG {record['version']} (build {record['build']}) to {record['feed_url']}")
 
 
@@ -451,7 +484,7 @@ def main():
     publisher = commands.add_parser("publish", help="Upload a notarized release prepared by build")
     publisher.add_argument("directory", type=Path)
     released = commands.add_parser("publish-release",
-                                   help="Sign a GitHub release's CI-built DMG and publish it to the update feed")
+                                   help="Sign a GitHub release's CI-built packages and publish them to the updaters")
     released.add_argument("tag", help="Published release tag, such as v0.6.0")
     released.add_argument("--keychain-key", action="store_true",
                           help="Sign with the login Keychain's copy of the update key instead of 1Password's")

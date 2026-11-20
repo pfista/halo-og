@@ -1,10 +1,13 @@
-"""Authored release metadata and native tests; no installed application updates."""
+"""Authored release metadata, signed install records and native tests of the desktop notice."""
+import base64
 import copy
 import contextlib
+import hashlib
 import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -12,7 +15,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from tools import ci_build, release_discovery as identity
+from tools import ci_build, ed25519_verify as ed25519, release_discovery as identity
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA = "a" * 40
@@ -31,6 +34,34 @@ def release(tag="test-v0.3.0-net11-next", sha=OTHER, date="2026-10-04T12:00:00Z"
             "author": {"login": "pfista", "description": "Unicode \u2764 and escaped \"strings\""}}
 
 
+def sign(seed, message):
+    """A test key's public half and its Ed25519 signature (RFC 8032), for fixture records."""
+    def encode(point):
+        inverse = pow(point[2], ed25519.P - 2, ed25519.P)
+        x, y = point[0] * inverse % ed25519.P, point[1] * inverse % ed25519.P
+        return (y | (x & 1) << 255).to_bytes(32, "little")
+    digest = hashlib.sha512(seed).digest()
+    scalar = int.from_bytes(digest[:32], "little") & ((1 << 254) - 8) | 1 << 254
+    public = encode(ed25519._multiply(scalar, ed25519.BASE))
+    nonce = int.from_bytes(hashlib.sha512(digest[32:] + message).digest(), "little") % ed25519.ORDER
+    commitment = encode(ed25519._multiply(nonce, ed25519.BASE))
+    challenge = int.from_bytes(hashlib.sha512(commitment + public + message).digest(), "little") % ed25519.ORDER
+    return public, commitment + ((nonce + challenge * scalar) % ed25519.ORDER).to_bytes(32, "little")
+
+
+SEED = bytes(range(32))
+PLATFORM = "windows" if sys.platform == "win32" else "linux"
+TAG = "test-v0.3.0-net11-next"
+NEWER = "2026-10-04T12:00:00Z"
+DIGEST = hashlib.sha256(b"release zip").hexdigest()
+
+
+def record(**changes):
+    fields = {"platform": PLATFORM, "tag": TAG, "source": OTHER, "date": NEWER, "file": ASSET,
+              "size": "13609682", "sha256": DIGEST} | changes
+    return ("Halo OG update 1\n" + "".join(f"{name}: {value}\n" for name, value in fields.items())).encode()
+
+
 SDL = r'''
 #ifndef TEST_SDL_H
 #define TEST_SDL_H
@@ -45,6 +76,7 @@ typedef struct SDL_AtomicInt { int value; } SDL_AtomicInt;
 #define SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT 1
 #define SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT 2
 #define SDL_MESSAGEBOX_INFORMATION 4
+#define SDL_MESSAGEBOX_ERROR 16
 typedef struct SDL_MessageBoxButtonData { unsigned flags; int buttonID; const char *text; } SDL_MessageBoxButtonData;
 typedef struct SDL_MessageBoxData { unsigned flags; SDL_Window *window; const char *title,*message; int numbuttons; const SDL_MessageBoxButtonData *buttons; void *colorScheme; } SDL_MessageBoxData;
 static int SDL_SetAtomicInt(SDL_AtomicInt *a,int value) { int old=a->value; a->value=value; return old; }
@@ -57,6 +89,7 @@ static void SDL_free(void *p) { free(p); }
 unsigned SDL_GetWindowFlags(SDL_Window*);
 bool SDL_SetWindowFullscreen(SDL_Window*,bool);
 bool SDL_ShowMessageBox(const SDL_MessageBoxData*,int*);
+bool SDL_ShowSimpleMessageBox(unsigned,const char*,const char*,SDL_Window*);
 bool SDL_OpenURL(const char*);
 const char *SDL_GetError(void);
 #endif
@@ -72,32 +105,78 @@ HARNESS = r'''
 #define HALO_OG_RELEASE_DISCOVERY 1
 #define HALO_OG_SOURCE_REVISION "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 #define HALO_OG_SOURCE_DATE "2026-10-03T12:00:00Z"
+/* The fixture's own key stands in for Halo OG's, whose private half is not here. */
+#define HALO_UPDATE_KEY_H
+static unsigned char halo_update_public_key[32];
 #include "release_discovery.c"
-static char fixture_path[1024], opened[256];
+#define FIXTURE_TAG "test-v0.3.0-net11-next"
+#define FIXTURE_RECORD_URL "https://dl.oghalo.com/updates/" RELEASE_PLATFORM "/" FIXTURE_TAG ".txt"
+static char fixture_path[1024], record_path[1024], signature_path[1024], opened[256], shown[800];
 static int checks, dialogs, answer, writes, auto_check=1, hidden, fullscreen=1;
+static int expect_install, installs, install_result, relaunches, errors;
+static struct update_install_request installed;
+static void unhex(const char *text,unsigned char *out,size_t count) {
+    assert(strlen(text)==count*2);
+    for(size_t i=0;i<count;i++) { unsigned value; assert(sscanf(text+i*2,"%2x",&value)==1); out[i]=(unsigned char)value; }
+}
+static char *load(const char *path,size_t *size) {
+    FILE *f; char *data;
+    f=fopen(path,"rb"); assert(f); fseek(f,0,SEEK_END); *size=(size_t)ftell(f); rewind(f);
+    data=malloc(*size+1); assert(data); assert(fread(data,1,*size,f)==*size); data[*size]=0; fclose(f); return data;
+}
+int update_install_prepare(void) { return 1; }
+int update_install(const struct update_install_request *request,char *error,size_t size) {
+    installs++; installed=*request; assert(!strcmp(request->label,FIXTURE_TAG));
+    if(!install_result) snprintf(error,size,"fixture failure");
+    return install_result;
+}
+int update_install_relaunch(void) { relaunches++; return 0; }
+bool SDL_ShowSimpleMessageBox(unsigned flags,const char *title,const char *message,SDL_Window *window) {
+    assert(flags==SDL_MESSAGEBOX_ERROR && window); assert(!strcmp(title,"Halo OG update"));
+    errors++; snprintf(shown,sizeof(shown),"%s",message); return true;
+}
 void platform_log(const char *fmt, ...) { (void)fmt; }
 int config_boolean(const char *name) { return !strcmp(name,"update.auto") ? auto_check : hidden; }
 double config_real(const char *name) { (void)name; return 0; }
 const char *config_string(const char *name) { (void)name; return ""; }
 int config_write_boolean(const char *name,int value) { assert(!strcmp(name,"update.auto")); writes++; auto_check=value; return 1; }
 int update_make_private_temporary_directory(char *path,int capacity) { assert(capacity>32); strcpy(path,"fixture-temporary"); return 1; }
-void update_delete_file(const char *path) { assert(!strcmp(path,"fixture-temporary/release-check.json") || !strcmp(path,"fixture-temporary")); }
+void update_delete_file(const char *path) {
+    assert(!strcmp(path,"fixture-temporary/release-check.json") || !strcmp(path,"fixture-temporary") ||
+        !strcmp(path,"fixture-temporary/install-record.txt") || !strcmp(path,"fixture-temporary/install-record.sig"));
+}
 int update_download_limited(const char *url,const char *path,unsigned long long bytes, update_progress_proc progress,void *context,char *error,int size) {
+    assert(!progress && !context && error && size>0);
+    /* The record and its signature are small, bounded, and fetched from the update host alone. */
+    if(!strcmp(url,FIXTURE_RECORD_URL)) {
+        assert(!strcmp(path,"fixture-temporary/install-record.txt") && bytes==HALO_RELEASE_INSTALL_RECORD_BYTES);
+        return record_path[0]!=0;
+    }
+    if(!strcmp(url,FIXTURE_RECORD_URL ".sig")) {
+        assert(!strcmp(path,"fixture-temporary/install-record.sig") && bytes==64);
+        return signature_path[0]!=0;
+    }
     assert(!strcmp(url,HALO_RELEASE_DISCOVERY_URL)); assert(!strcmp(path,"fixture-temporary/release-check.json"));
-    assert(bytes==HALO_RELEASE_DISCOVERY_BYTES && !progress && !context && error && size>0); checks++; return 1;
+    assert(bytes==HALO_RELEASE_DISCOVERY_BYTES); checks++; return 1;
 }
 void *SDL_LoadFile(const char *path,size_t *size) {
-    FILE *f; char *data; (void)path;
-    f=fopen(fixture_path,"rb"); assert(f); fseek(f,0,SEEK_END); *size=(size_t)ftell(f); rewind(f);
-    data=malloc(*size+1); assert(data); assert(fread(data,1,*size,f)==*size); data[*size]=0; fclose(f); return data;
+    return load(strstr(path,"install-record.txt") ? record_path : strstr(path,"install-record.sig") ? signature_path : fixture_path,size);
 }
 SDL_Thread *SDL_CreateThread(int (*fn)(void*),const char *name,void *context) { static SDL_Thread thread; (void)name; fn(context); return &thread; }
 void SDL_DetachThread(SDL_Thread *thread) { assert(thread); }
 unsigned SDL_GetWindowFlags(SDL_Window *window) { assert(window); return fullscreen ? SDL_WINDOW_FULLSCREEN : 0; }
 bool SDL_SetWindowFullscreen(SDL_Window *window,bool on) { assert(window); fullscreen=on; return true; }
 bool SDL_ShowMessageBox(const SDL_MessageBoxData *box,int *chosen) {
-    assert(!strcmp(box->title,"Halo OG update available")); assert(strstr(box->message,"GitHub"));
-    assert(box->numbuttons==3); assert(!strcmp(box->buttons[0].text,"Open download")); dialogs++; *chosen=answer; return true;
+    assert(!strcmp(box->title,"Halo OG update available"));
+    if(expect_install) {
+        assert(strstr(box->message,"Install it now") && box->numbuttons==4);
+        assert(!strcmp(box->buttons[0].text,"Install update") && box->buttons[0].buttonID==3);
+        assert(!strcmp(box->buttons[1].text,"Open download") && box->buttons[1].buttonID==1);
+    } else {
+        assert(strstr(box->message,"GitHub") && box->numbuttons==3);
+        assert(!strcmp(box->buttons[0].text,"Open download"));
+    }
+    dialogs++; *chosen=answer; return true;
 }
 bool SDL_OpenURL(const char *url) { snprintf(opened,sizeof(opened),"%s",url); return true; }
 const char *SDL_GetError(void) { return "fixture"; }
@@ -111,6 +190,40 @@ int main(int argc,char **argv) {
         if(halo_release_discovery_parse(data,size,argv[3],argv[4],argv[5],&notice))
             printf("%s\n%s\n%s\n%s\n",notice.tag,notice.source_sha,notice.source_date,notice.download_url);
         free(data); return 0;
+    }
+    if(!strcmp(argv[1],"record")) {
+        /* record signature key asset tag source date */
+        struct halo_release_install install; size_t record_size, signature_size; char *signature;
+        assert(argc==10); unhex(argv[5],halo_update_public_key,32);
+        data=load(argv[3],&record_size); signature=load(argv[4],&signature_size);
+        memset(&notice,0,sizeof(notice));
+        snprintf(notice.tag,sizeof(notice.tag),"%s",argv[7]); snprintf(notice.source_sha,sizeof(notice.source_sha),"%s",argv[8]);
+        snprintf(notice.source_date,sizeof(notice.source_date),"%s",argv[9]);
+        snprintf(notice.download_url,sizeof(notice.download_url),"https://github.com/pfista/halo-og/releases/download/%s/%s",argv[7],argv[6]);
+        if(halo_release_install_parse(data,record_size,signature,signature_size,halo_update_public_key,argv[6],&notice,&install)) {
+            printf("%s\n%llu\n",install.url,install.size);
+            for(unsigned i=0;i<32;i++)printf("%02x",install.sha256[i]);
+            printf("\n");
+        }
+        free(data); free(signature); return 0;
+    }
+    if(!strcmp(argv[1],"install") || !strcmp(argv[1],"install-fails") || !strcmp(argv[1],"unsigned")) {
+        /* record signature key: a record the update host serves for the discovered release */
+        assert(argc==6); snprintf(record_path,sizeof(record_path),"%s",argv[3]);
+        snprintf(signature_path,sizeof(signature_path),"%s",argv[4]); unhex(argv[5],halo_update_public_key,32);
+        expect_install=strcmp(argv[1],"unsigned")!=0; install_result=!strcmp(argv[1],"install");
+        halo_release_discovery_start(); halo_release_discovery_set_main_menu(1);
+        assert(release_state.value==release_available && release_installable==expect_install);
+        answer=expect_install ? 3 : 1;
+        halo_release_discovery_poll(&window); assert(dialogs==1 && fullscreen && installs==expect_install);
+        if(!expect_install) { assert(opened[0] && !errors); return 0; }
+        /* Only the file the signed record names is installed. */
+        printf("%s\n%llu\n",installed.url,installed.size);
+        assert(!memcmp(installed.sha256,release_install.sha256,32) && !opened[0] && errors==1);
+        assert(relaunches==install_result);
+        assert(strstr(shown,install_result ? "is installed, but could not be started" : "Your current version is unchanged"));
+        if(!install_result) assert(strstr(shown,"fixture failure"));
+        halo_release_discovery_poll(&window); assert(dialogs==1 && installs==1); return 0;
     }
     if(!strcmp(argv[1],"hidden"))hidden=1;
     if(!strcmp(argv[1],"disabled"))auto_check=0;
@@ -160,6 +273,85 @@ class ReleaseDiscoveryTests(unittest.TestCase):
         command = [str(self.binary), mode, str(path)]
         if mode == "parse": command += [asset, sha, date]
         return subprocess.check_output(command, text=True).splitlines()
+
+    def signed(self, data, signature=None):
+        public, made = sign(SEED, data)
+        (self.work / "record.txt").write_bytes(data)
+        (self.work / "record.sig").write_bytes(made if signature is None else signature)
+        return [str(self.work / "record.txt"), str(self.work / "record.sig"), public.hex()]
+
+    def read_record(self, data, signature=None, key=None, asset=ASSET, tag=TAG, source=OTHER, date=NEWER):
+        files = self.signed(data, signature)
+        command = [str(self.binary), "record", "unused", files[0], files[1], key or files[2], asset, tag, source, date]
+        return subprocess.check_output(command, text=True).splitlines()
+
+    def test_signed_record_authorizes_exactly_the_discovered_release_file(self):
+        url = f"https://github.com/pfista/halo-og/releases/download/{TAG}/{ASSET}"
+        self.assertEqual(self.read_record(record()), [url, "13609682", DIGEST])
+        # The release tool's verifier and the game's agree on the same signature.
+        public, signature = sign(SEED, record())
+        self.assertTrue(ed25519.verify(public, record(), signature))
+
+    def test_the_game_reads_the_record_the_release_tool_writes(self):
+        from tools import desktop_update_records as desktop
+        data = desktop.record(PLATFORM, "v0.6.1", OTHER, NEWER, 13609682, DIGEST)
+        url = f"https://github.com/pfista/halo-og/releases/download/v0.6.1/{ASSET}"
+        self.assertEqual(self.read_record(data, tag="v0.6.1"), [url, "13609682", DIGEST])
+        self.assertEqual(desktop.PLATFORMS[PLATFORM], ASSET)
+
+    def test_a_record_not_signed_by_the_update_key_installs_nothing(self):
+        _, signature = sign(SEED, record())
+        other_key = sign(bytes(32), b"")[0].hex()
+        for case in ({"signature": signature[:5] + bytes([signature[5] ^ 1]) + signature[6:]},
+                     {"signature": signature[:-1]}, {"signature": bytes(64)}, {"key": other_key}):
+            with self.subTest(case=list(case)): self.assertEqual(self.read_record(record(), **case), [])
+        # A valid signature of other bytes: the record itself was changed after signing.
+        self.assertEqual(self.read_record(record(sha256="0" * 64), signature=signature), [])
+
+    def test_a_validly_signed_record_for_anything_else_installs_nothing(self):
+        other_platform = "linux" if PLATFORM == "windows" else "windows"
+        # Each record is properly signed, so only its contents are being judged.
+        for changes in ({"tag": "v0.6.0"}, {"source": "c" * 40}, {"platform": other_platform},
+                        {"file": f"halo-{other_platform}-release.zip"}, {"file": "halo.exe"},
+                        # An older signed release cannot be replayed as the newer one.
+                        {"date": "2026-10-01T12:00:00Z"},
+                        {"size": "0"}, {"size": "013609682"}, {"size": "-1"}, {"size": "1e6"},
+                        {"size": str(256 * 1024 * 1024 + 1)}, {"size": "9" * 15},
+                        {"sha256": DIGEST.upper()}, {"sha256": DIGEST[:-1]}, {"sha256": DIGEST + "0"},
+                        {"sha256": "g" * 64}, {"tag": TAG + " extra"}):
+            with self.subTest(changes=changes): self.assertEqual(self.read_record(record(**changes)), [])
+        valid = record()
+        for data in (valid[:-1], valid + b"\n", valid + b"url: https://example.com/halo.zip\n",
+                     valid.replace(b"\n", b"\r\n"), valid.replace(b"update 1", b"update 2"),
+                     valid.replace(b"platform: ", b"Platform: "), b"\n".join(valid.split(b"\n")[1:]),
+                     valid.replace(b"tag: " + TAG.encode() + b"\n", b""), valid + b" " * 512):
+            with self.subTest(data=data[:60]): self.assertEqual(self.read_record(data), [])
+        # The same record is refused for a release discovery did not select.
+        for notice in ({"tag": "v0.6.0"}, {"source": "c" * 40}, {"date": "2026-10-05T12:00:00Z"},
+                       {"asset": f"halo-{other_platform}-release.zip"}, {"asset": "Halo-OG-macos-arm64.dmg"}):
+            with self.subTest(notice=notice): self.assertEqual(self.read_record(valid, **notice), [])
+
+    def test_install_is_offered_only_for_a_signed_release_and_failure_keeps_playing(self):
+        url = f"https://github.com/pfista/halo-og/releases/download/{TAG}/{ASSET}"
+        metadata = self.work / "metadata.json"
+        metadata.write_text(json.dumps([release()]))
+        for mode in ("install", "install-fails"):
+            with self.subTest(mode=mode):
+                output = subprocess.check_output([str(self.binary), mode, str(metadata), *self.signed(record())], text=True)
+                self.assertEqual(output.splitlines(), [url, "13609682"])
+        _, signature = sign(SEED, record())
+        for name, data, made in (("changed record", record(sha256="0" * 64), signature),
+                                 ("another release", record(tag="v0.6.0"), None),
+                                 ("older build", record(date="2026-10-01T12:00:00Z"), None)):
+            with self.subTest(name=name):
+                # Without a valid record the notice only opens the browser download.
+                subprocess.run([str(self.binary), "unsigned", str(metadata), *self.signed(data, made)], check=True)
+
+    def test_desktop_builds_carry_the_same_update_key_as_the_mac_app(self):
+        header = (ROOT / "port/linux/src/halo_update_key.h").read_text()
+        key = bytes(int(value, 16) for value in re.findall(r"0x([0-9a-f]{2})", header))
+        settings = json.loads((ROOT / "port/macos/release-config.json").read_text())
+        self.assertEqual(key, base64.b64decode(settings["public_update_key"]))
 
     def test_selects_newest_source_independent_of_tags_and_api_order(self):
         old = release(tag="test-z99", sha="c" * 40, date="2026-10-04T01:00:00Z")
@@ -250,7 +442,7 @@ class ReleaseDiscoveryTests(unittest.TestCase):
         headers = {
             "stddef.h": "#ifndef FIXTURE_STDDEF\n#define FIXTURE_STDDEF\ntypedef __SIZE_TYPE__ size_t;\n#define NULL ((void*)0)\n#endif\n",
             "stdbool.h": "#define bool _Bool\n#define true 1\n#define false 0\n",
-            "stdlib.h": "void free(void*);\n",
+            "stdlib.h": "void free(void*);\n_Noreturn void exit(int);\n#define EXIT_SUCCESS 0\n",
             "stdio.h": "#include <stddef.h>\nint snprintf(char*,size_t,const char*,...);\n",
             "string.h": "#include <stddef.h>\nsize_t strlen(const char*);\nint strcmp(const char*,const char*);\nint memcmp(const void*,const void*,size_t);\nvoid *memcpy(void*,const void*,size_t);\nvoid *memset(void*,int,size_t);\nchar *strstr(const char*,const char*);\n",
         }
@@ -344,7 +536,7 @@ class ReleaseArtifactIdentityTests(unittest.TestCase):
     @staticmethod
     def markers(platform):
         return [SHA, DATE, identity.DISCOVERY_URL, "Halo OG update available", "Open download",
-                "Stop checking", identity.DESKTOP_ASSETS[platform]]
+                "Stop checking", "Install update", identity.DESKTOP_ASSETS[platform]]
 
     def test_collected_binary_requires_every_discovery_marker(self):
         with tempfile.TemporaryDirectory(prefix="halo-binary-markers-") as directory:

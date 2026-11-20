@@ -5,12 +5,13 @@ feed; no running update server or push notification is required. Cloudflare R2
 hosts that feed and immutable downloads, while GitHub releases provide the
 familiar public download page.
 
-**Mac installs updates in the app; Windows and Linux show a notice and install
-manually.** Mac builds embed Halo's Sparkle feed and public key, and one local
-command signs a published release's DMG and advances the feed. No release has
-been published to that feed or update-tested yet, and Mac builds from `v0.5.2`
-and earlier need one manual installation first. Windows and Linux installation
-is the next stage. Community-map downloads remain independent of client updates.
+**Mac, Windows and Linux install updates in the app.** Mac builds embed Halo's
+Sparkle feed and public key. Windows and Linux builds install the release they
+discover when the update host serves a record for it signed by the same key.
+One local command signs a published release for all three and publishes the
+result. No release has been published this way or update-tested yet, and builds
+from `v0.5.2` and earlier need one manual installation first. Android installs
+manually. Community-map downloads remain independent of client updates.
 
 ## Current behavior
 
@@ -18,8 +19,10 @@ The new desktop setup source checks public releases in **pfista/halo-og**,
 including published prereleases. It requires a source-commit link in the release
 description, the exact platform download, and attached `SHA256SUMS` and
 `provenance.json`. Drafts, incomplete uploads, and malformed metadata are ignored.
-The notice opens the platform download in a browser; installation remains manual.
-It does not fetch those checksum/provenance files to authenticate or install code.
+Discovery alone never installs anything: GitHub's metadata is not signed by
+Halo OG. A desktop build installs a discovered release only with the signed
+record described [below](#windows-and-linux-in-place-installation); otherwise
+the notice opens the platform download in a browser.
 
 Build identity comes from a clean, matching `main` CI checkout: repository,
 ref, `GITHUB_SHA`, actual Git HEAD, and a clean source checkout must match.
@@ -32,7 +35,7 @@ will use explicit increasing platform build numbers.
 | Platform | Notice and download |
 | --- | --- |
 | Mac | With the embedded Sparkle feed, **Check for Updates…** downloads a verified update and installs it after the game quits; **Automatically check for updates** controls daily background checks. A build without the feed falls back to the GitHub notice: **Check for Updates…** opens Settings and **Download Update…** opens the DMG. |
-| Windows/Linux | A background check waits for the local main menu, then offers **Open download**, **Later**, or **Stop checking**. Existing `[update] auto` controls checks. No prompt interrupts a match or pregame lobby. |
+| Windows/Linux | A background check waits for the local main menu. For a release with a valid signed record it offers **Install update**, **Open download**, **Later**, or **Stop checking**; otherwise the same without **Install update**. Existing `[update] auto` controls checks. No prompt interrupts a match or pregame lobby. |
 | Android | Halo OG fork builds keep the upstream automatic installer disabled. Install the matching APK manually. |
 
 Local/development desktop builds do not advertise automatic upgrade ordering;
@@ -46,15 +49,17 @@ manual upgrade to setup2.
 
 Source entry points: [build identity](../tools/release_discovery.py),
 [shared metadata parser](../port/linux/src/release_discovery.c),
-[Mac notice controller](../port/macos/native/HaloReleaseUpdates.m), and
+[Mac notice controller](../port/macos/native/HaloReleaseUpdates.m),
+[desktop installer](../port/linux/src/update_install.c), and
 [testing-release publisher](../tools/testing_release.py).
 
 The cybersecurity updater was reviewed at `193cbf59`. Its desktop path uses
 GitHub releases and a numeric build comparator, downloads a ZIP over HTTPS,
 then replaces individual files. It does not provide signed desktop archives
-or a transactional package rollback. That is useful reference code for
-background checks, but the signed installation stage will use each platform's
-updater and package format below. See the reviewed
+or a transactional package rollback. Halo OG's desktop installer reuses its
+download, unpacking and file replacement, and adds the signed record and the
+rollback. Its release check, which follows cybersecurity's build numbers, stays
+compiled out of Halo OG builds. See the reviewed
 [desktop updater](https://github.com/cybersecurity/halo-ce-universal/blob/193cbf59c7e483386538fa34e28fb2503ab79a4b/port/linux/src/updater.c)
 and [build workflow](https://github.com/cybersecurity/halo-ce-universal/blob/193cbf59c7e483386538fa34e28fb2503ab79a4b/.github/workflows/build.yml).
 
@@ -77,13 +82,16 @@ and direct platform links. The proposed publication sequence is:
    Clients poll that feed and offer the verified update. Installation waits for
    a clean game exit and respects the player's update choice.
 
-Mac already follows this order, with the signing step run locally instead of
-in Actions. CI builds the DMG, and the [release tool](../tools/macos_release.py)'s
-`publish-release` signs that exact file with the update key from 1Password. It
-uploads a versioned DMG without replacing an existing different archive,
-verifies the public download, then publishes and verifies the appcast through
-the map publisher's R2 credential route. Moving that step into Actions would
-mean storing the private update key and the Cloudflare token as Actions secrets.
+Releases already follow this order, with the signing step run locally instead
+of in Actions. CI builds every package, and the [release tool](../tools/macos_release.py)'s
+`publish-release` signs them with the update key from 1Password: the Mac DMG
+for Sparkle, and an install record for each of the Windows and Linux packages.
+Everything is signed and verified before anything is uploaded. It publishes the
+immutable records and the versioned DMG without replacing anything that
+differs, verifies the public downloads, then publishes and verifies the Mac
+appcast last, through the map publisher's R2 credential route. Moving that step
+into Actions would mean storing the private update key and the Cloudflare token
+as Actions secrets.
 
 Keep non-secret feed URLs, public verification keys, bucket names, and platform
 requirements in checked-in configuration. Mac's
@@ -97,8 +105,8 @@ Use separate testing/stable feeds and publish to the intended channel explicitly
 Current notices include testing prereleases; a future stable installer feed
 must not silently enroll players in testing updates. Mac updates live under
 `updates/mac/` on `dl.oghalo.com`, beside the maps; the testing feed is
-`updates/mac/testing/appcast.xml`. Keep other platforms under their own
-`updates/<platform>/` prefix.
+`updates/mac/testing/appcast.xml`. Windows and Linux records live under
+`updates/windows/` and `updates/linux/`.
 
 ## Mac: Sparkle
 
@@ -128,47 +136,68 @@ unused; see [Developer ID and notarization](macos-menu-and-releases.md#developer
 The native guest loader's unsigned-executable-memory entitlement for that route
 is declared in [host.entitlements](../port/macos/host.entitlements).
 
-## Windows: WinSparkle and an installer
+## Windows and Linux: in-place installation
 
-The portable ZIP is useful for testing. For installation updates, add a pinned
-**32-bit WinSparkle** library to match the current x86 executable, and build a
-real installer that upgrades the installation consistently. Embed the public
-Ed25519 key, appcast URL, and increasing app/build versions. WinSparkle verifies
-the update signature before installation.
-[Integration](https://winsparkle.org/guides/integrating-winsparkle/) and
-[EdDSA signing](https://winsparkle.org/guides/getting-started/).
+The Windows and Linux packages are portable ZIPs: the game, its libraries and
+licenses in one folder, with the player's `maps` and `config.toml` beside them.
+The game updates that folder in place.
 
-Choose and validate an x86 installer, such as an EXE installer or MSI. Sign the
-game and installer with an **Authenticode** identity usable by the CI runner,
-and add an RFC 3161 timestamp with SHA-256. Then Ed25519-sign the final installer
-for WinSparkle. Authenticode and updater signatures serve separate verification
-steps; retain both. Provider-held keys may require a signing service instead of
-an exported key file. Verify the result with SignTool before publication.
-[Microsoft signing/timestamps](https://learn.microsoft.com/en-us/windows/win32/seccrypto/time-stamping-authenticode-signatures) and
-[SignTool verification](https://learn.microsoft.com/en-us/windows/win32/seccrypto/signtool).
+**What authorizes an installation.** For each release, `publish-release`
+publishes `updates/<platform>/<tag>.txt` and a 64-byte Ed25519 signature of it
+at the same name with `.sig`. The record is fixed text:
 
-Publish an appcast targeting `windows-x86`, not `windows-x64` merely because the
-player runs 64-bit Windows. Keep installation progress/errors visible and use
-WinSparkle's shutdown callbacks to coordinate a saved, clean game exit before
-files are replaced. Preserve `%APPDATA%\Halo OG`, imported maps, and existing
-configuration when moving from portable ZIPs to the installer.
-[Platform/installer feed options](https://winsparkle.org/guides/publishing-updates/) and
-[shutdown callbacks](https://winsparkle.org/c-api/callbacks/).
+```text
+Halo OG update 1
+platform: windows
+tag: v0.6.1
+source: <release source commit, 40 hex digits>
+date: <the GitHub release's created_at>
+file: halo-windows-release.zip
+size: <bytes>
+sha256: <64 hex digits>
+```
 
-WinSparkle integration, installer migration, signing, permissions, and end-to-end
-update installation remain unimplemented and untested.
+After discovery finds a newer release, the game fetches that release's record
+and signature, each bounded and without redirects, and checks the signature
+with the public key in [`halo_update_key.h`](../port/linux/src/halo_update_key.h)
+before reading anything in it. That is the Mac app's `SUPublicEDKey`; a test
+keeps the two copies equal. The record must name the tag, source commit,
+creation date and platform file that discovery selected. A record for another
+release or platform is refused, and so is an older signed release offered as
+a newer one, because its signed date is the one compared with the running
+build's. Without a valid record the notice only opens the browser download.
 
-## Linux and Android
+**What is installed.** The ZIP is downloaded from the GitHub release into
+`update.partial/` beside the executable and must match the record's size and
+SHA-256 exactly. The signature check is
+[TweetNaCl](https://tweetnacl.cr.yp.to)'s public-domain verification code in
+[`halo_ed25519.h`](../port/linux/src/halo_ed25519.h).
 
-Linux has no Sparkle installation path in Halo OG. Choose the supported package
-format first. A future portable-build updater needs signed release metadata and
-archives verified by a public key embedded in the client. It should stage a
-complete new version, validate it, wait for clean exit, switch versions without
-partially overwriting the running build, and retain a recoverable previous
-version if launch fails. This is a proposed design, not a working installer.
-Keep `maps`, `config.toml`, and the XDG save folder separate from replacement
-binaries. Distribution/package-manager installations need their own upgrade
-ownership and runtime compatibility checks.
+**How files are replaced.** Each file at the ZIP's top level is moved over the
+game's file of the same name, whose previous version is first renamed
+`<name>.old` (a running executable can be renamed, not overwritten). Entries in
+folders and `config.toml` are never written. If any file cannot be replaced,
+the files already replaced are moved back, so the folder holds one whole
+version or the other. The game then starts the new version and exits.
+
+**Going back.** The `.old` files stay until the new version next starts, which
+removes them. If the new version cannot start, they are the previous version;
+the [Windows](setup-windows.md#update-halo-og) and
+[Linux](setup-linux.md#update-halo-og) guides give the steps. There is no
+automatic rollback of a version that starts and then fails.
+
+`publish-release` refuses a package the installer would only partly install:
+more than 32 files, a file in a folder, `config.toml`, or a missing executable.
+The testing-release publisher refuses desktop binaries without the install
+option. An installer package and WinSparkle are not used; Authenticode signing
+is still absent, so Windows SmartScreen may warn on a first manual download.
+
+The record check, the notice and the installer are tested natively on real
+files (`tools/test_release_discovery.py`, `tools/test_update_install.py`). The
+Windows and Linux system side of an update, a running executable replacing
+itself and restarting, has not been run on those platforms.
+
+## Android
 
 Android must retain the same approved APK signing identity for upgrades and
 uses Android's package installer. Its inactive upstream updater does not supply

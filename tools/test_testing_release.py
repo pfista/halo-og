@@ -27,7 +27,7 @@ OVERVIEW = {"summary": "This release improves combat feedback and player control
                            "Improve control settings."]}
 DESKTOP_BINARY = ("synthetic executable\0" + SHA + "\0" + DATE + "\0"
                   "https://api.github.com/repos/pfista/halo-og/releases?per_page=5\0"
-                  "Halo OG update available\0Open download\0Stop checking\0").encode()
+                  "Halo OG update available\0Open download\0Stop checking\0Install update\0").encode()
 
 
 class FixtureAPI:
@@ -422,7 +422,7 @@ class TestingReleaseTests(unittest.TestCase):
 
     def test_desktop_binaries_without_matching_notice_identity_cannot_be_published(self):
         for platform, executable in (("windows", "halo.exe"), ("linux", "halo")):
-            for missing in (SHA, DATE, "Open download", "Stop checking",
+            for missing in (SHA, DATE, "Open download", "Stop checking", "Install update",
                             "https://api.github.com/repos/pfista/halo-og/releases?per_page=5",
                             f"halo-{platform}-release.zip"):
                 with self.subTest(platform=platform, missing=missing):

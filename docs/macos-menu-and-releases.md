@@ -287,6 +287,8 @@ recovery once both copies are gone.
 
 ### Publishing a Mac update
 
+The same command signs and publishes the
+[Windows and Linux install records](client-updates.md#windows-and-linux-in-place-installation).
 The feed offers the same DMG as the GitHub release. After the
 [testing prerelease](#manual-testing-prerelease) for a tag is published, and
 with the user's explicit instruction to release it:
@@ -299,17 +301,20 @@ python3 tools/macos_release.py publish-release v0.6.0 \
 
 `publish-release` needs the authenticated GitHub CLI and `op`. It:
 
-1. Downloads `Halo-OG-macos-arm64.dmg` and `SHA256SUMS` from the published
-   release and checks the DMG against its listed hash.
+1. Downloads the Mac DMG, the Windows and Linux ZIPs, `SHA256SUMS` and
+   `provenance.json` from the published release and checks each package against
+   its listed hash.
 2. Mounts the DMG and audits the app: package contents, ad-hoc signing with no
    certificate or team, the tag's version, and the embedded feed and public key.
    A build without them is refused, because its installed copies could never
    update again.
 3. Refuses a build number lower than the one the live feed already offers.
-4. Signs the DMG with the key from 1Password and verifies that signature with
-   the committed public key, which is the check installed apps make.
-5. Uploads the DMG to its versioned URL only if nothing exists there, reads the
-   public download back and checks its hash, then replaces the feed last and
+4. Signs the DMG and one install record for each desktop package with the key
+   from 1Password, and verifies each signature with the committed public key,
+   which is the check installed copies make.
+5. Uploads the desktop records, which are never replaced once published. It
+   then uploads the DMG to its versioned URL only if nothing exists there, reads
+   the public download back and checks its hash, replaces the Mac feed last and
    verifies the live XML. A different DMG already at that URL stops publication.
 
 `--dry-run` stops after step 4 and uploads nothing. The record and feed are

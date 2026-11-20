@@ -102,7 +102,7 @@ jobs:
           python3 tools/test_macos_menu.py
           python3 -m unittest tools.test_macos_renderer_build tools.test_macos_native_package tools.test_macos_release_publish
       - name: App installation and desktop data migration
-        run: python3 -m unittest tools.test_macos_installer tools.test_save_migration tools.test_desktop_first_run tools.test_release_discovery tools.test_download_transport_limits tools.test_desktop_map_downloads
+        run: python3 -m unittest tools.test_macos_installer tools.test_save_migration tools.test_desktop_first_run tools.test_release_discovery tools.test_update_install tools.test_desktop_update_records tools.test_download_transport_limits tools.test_desktop_map_downloads
       - name: Native Mac release discovery fixtures
         run: python3 tools/test_macos_release_updates.py
       - name: Versioned releases and complete commit changelogs

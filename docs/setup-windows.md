@@ -92,13 +92,21 @@ Slayer, and **Performance Options → Stock**, with Input Delay and Hardcore Off
 
 ## Update Halo OG
 
-New setup builds check for updates in the background and show **Halo OG update
-available** in the main menu. Choose **Open download** for the Windows ZIP, or
-**Later** to keep playing. **Stop checking** turns off future checks; to re-enable
-them, close the game and set `auto = true` in the existing `[update]` section
-of **config.toml**.
+Halo OG checks for updates in the background and shows **Halo OG update
+available** in the main menu. Choose **Install update** and the game downloads
+the release, replaces its own files and restarts. Your **maps** folder,
+**config.toml**, profiles and saves are not touched. Choose **Later** to keep
+playing. **Stop checking** turns off future checks; to re-enable them, close the
+game and set `auto = true` in the existing `[update]` section of **config.toml**.
 
-After downloading, close Halo and extract the new build into a separate folder.
+**Install update** appears from v0.6.0 on, for releases published with a signed
+install record. If it is missing or the installation fails, your current
+version keeps working: choose **Open download** for the Windows ZIP and update
+by hand. If a new version will not start after an update, delete **halo.exe**
+and **SDL3.dll** and rename **halo.exe.old** and **SDL3.dll.old** back to those
+names to return to the previous version.
+
+To update by hand, close Halo and extract the new build into a separate folder.
 Copy your **maps** folder and **config.toml** into it. Profiles/saves stay in
 **%APPDATA%\Halo OG**. Keep the old folder until the new build works.
 Install the downloaded build manually using these steps.

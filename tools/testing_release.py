@@ -226,7 +226,8 @@ def check_platform_archive(path, name, *, source_sha=None, source_stamp=None):
             raise RuntimeError("Desktop release verification requires its commit date")
         markers = (source_sha, source_stamp,
                    "https://api.github.com/repos/pfista/halo-og/releases?per_page=5",
-                   "Halo OG update available", "Open download", "Stop checking", name + ".zip")
+                   "Halo OG update available", "Open download", "Stop checking", "Install update",
+                   name + ".zip")
         with zipfile.ZipFile(path) as archive:
             data = archive.read(executable)
         if any(marker.encode("ascii") not in data for marker in markers):
