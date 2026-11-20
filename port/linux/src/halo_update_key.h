@@ -1,0 +1,15 @@
+/* Halo OG's public update key (Ed25519), the same key the Mac app carries as
+   SUPublicEDKey in port/macos/release-config.json. A release is installed only
+   when its record is signed by the private half, which is kept in 1Password.
+   tools/test_release_discovery.py checks the two copies agree. */
+#ifndef HALO_UPDATE_KEY_H
+#define HALO_UPDATE_KEY_H
+
+static const unsigned char halo_update_public_key[32] = {
+    0x60, 0xbf, 0x7b, 0x0c, 0x07, 0x58, 0xa9, 0x39,
+    0xf6, 0x4a, 0x27, 0xef, 0xa9, 0x39, 0x20, 0x96,
+    0xf4, 0x4d, 0x48, 0xcc, 0x0d, 0x17, 0x9f, 0xad,
+    0x64, 0x1f, 0xe2, 0x23, 0xb1, 0x94, 0x4d, 0x04
+};
+
+#endif

@@ -1,5 +1,6 @@
-/* Halo OG release discovery. This deliberately opens the platform download
-   in the player's browser rather than running the old upstream self-installer. */
+/* Halo OG release discovery. A desktop build installs the release it finds
+   only from a record signed by Halo OG's update key; otherwise it opens the
+   platform download in the player's browser. */
 #include "release_discovery.h"
 #include <stdio.h>
 #include <string.h>
@@ -284,20 +285,120 @@ int halo_release_discovery_parse(const void *data, size_t size, const char *asse
 }
 
 #if HALO_OG_RELEASE_DISCOVERY && !defined(HALO_MACOS) && !defined(HALO_ANDROID) && !defined(HALO_IOS)
+#include "halo_ed25519.h"
+
+/* One "name: value" line of an install record: printable ASCII without spaces. */
+static int install_line(const char **cursor, const char *end, const char *name, char *value, size_t capacity)
+{
+    size_t name_length = strlen(name), length = 0;
+    const char *p = *cursor;
+    if ((size_t)(end - p) < name_length || memcmp(p, name, name_length)) return 0;
+    p += name_length;
+    while (p < end && *p != '\n') {
+        if (length + 1 >= capacity || *p < 33 || *p > 126) return 0;
+        value[length++] = *p++;
+    }
+    if (p == end || !length) return 0;
+    value[length] = 0;
+    *cursor = p + 1;
+    return 1;
+}
+int halo_release_install_parse(const void *record, size_t record_size,
+    const void *signature, size_t signature_size, const unsigned char public_key[32],
+    const char *asset, const struct halo_release_notice *notice, struct halo_release_install *install)
+{
+    static const char header[] = "Halo OG update 1\n";
+    char platform[16], tag[96], source[41], date[21], file[64], size_text[16], sha_text[65];
+    const char *p = record, *end, *expected;
+    unsigned long long size = 0;
+    if (!install) return 0;
+    memset(install, 0, sizeof(*install));
+    if (!record || !signature || !public_key || !asset || !notice || signature_size != 64 ||
+        record_size < sizeof(header) - 1 || record_size > HALO_RELEASE_INSTALL_RECORD_BYTES) return 0;
+    expected = !strcmp(asset, "halo-windows-release.zip") ? "windows" :
+        !strcmp(asset, "halo-linux-release.zip") ? "linux" : NULL;
+    if (!expected || !halo_ed25519_verify(public_key, record, record_size, signature)) return 0;
+    end = p + record_size;
+    if (memcmp(p, header, sizeof(header) - 1)) return 0;
+    p += sizeof(header) - 1;
+    if (!install_line(&p, end, "platform: ", platform, sizeof(platform)) ||
+        !install_line(&p, end, "tag: ", tag, sizeof(tag)) ||
+        !install_line(&p, end, "source: ", source, sizeof(source)) ||
+        !install_line(&p, end, "date: ", date, sizeof(date)) ||
+        !install_line(&p, end, "file: ", file, sizeof(file)) ||
+        !install_line(&p, end, "size: ", size_text, sizeof(size_text)) ||
+        !install_line(&p, end, "sha256: ", sha_text, sizeof(sha_text)) || p != end) return 0;
+    /* The record must be for the very release discovery chose. Its signed
+       date is the one discovery compared with this build's, so an older
+       signed release cannot be offered as a newer one. */
+    if (strcmp(platform, expected) || strcmp(tag, notice->tag) || strcmp(source, notice->source_sha) ||
+        strcmp(date, notice->source_date) || strcmp(file, asset) || !notice->download_url[0]) return 0;
+    if (size_text[0] == '0') return 0;
+    for (const char *digit = size_text; *digit; digit++) {
+        if (*digit < '0' || *digit > '9') return 0;
+        size = size * 10 + (unsigned long long)(*digit - '0');
+    }
+    if (!size || size > HALO_RELEASE_INSTALL_MAXIMUM_BYTES || strlen(sha_text) != 64) return 0;
+    for (unsigned i = 0; i < 32; i++) {
+        int high = release_hex((unsigned char)sha_text[i * 2]), low = release_hex((unsigned char)sha_text[i * 2 + 1]);
+        if (high < 0 || low < 0 || (sha_text[i * 2] >= 'A' && sha_text[i * 2] <= 'F') ||
+            (sha_text[i * 2 + 1] >= 'A' && sha_text[i * 2 + 1] <= 'F')) return 0;
+        install->sha256[i] = (unsigned char)(high << 4 | low);
+    }
+    snprintf(install->url, sizeof(install->url), "%s", notice->download_url);
+    install->size = size;
+    return 1;
+}
+
+#include "halo_update_key.h"
 #include "port_config.h"
 #include "update.h"
+#include "update_install.h"
 #include <SDL3/SDL.h>
+#include <stdlib.h>
 
 #ifdef _WIN32
 #define RELEASE_ASSET "halo-windows-release.zip"
+#define RELEASE_PLATFORM "windows"
 #else
 #define RELEASE_ASSET "halo-linux-release.zip"
+#define RELEASE_PLATFORM "linux"
 #endif
 
 extern void platform_log(const char *format, ...);
 enum { release_off, release_checking, release_available, release_handled };
 static SDL_AtomicInt release_state, release_main_menu;
 static struct halo_release_notice release_notice;
+/* Set by the check thread before release_state becomes available. */
+static struct halo_release_install release_install;
+static int release_installable, release_folder_ready;
+
+/* Whether the discovered release has a record signed by Halo OG's update key. */
+static int release_fetch_install(const char *directory)
+{
+    char url[320], record_path[1200], signature_path[1200], error[256] = "";
+    size_t record_size = 0, signature_size = 0;
+    void *record = NULL, *signature = NULL;
+    int installable = 0;
+    int length = snprintf(url, sizeof(url), HALO_RELEASE_INSTALL_URL RELEASE_PLATFORM "/%s.txt", release_notice.tag);
+    if (length <= 0 || (size_t)length + 4 >= sizeof(url)) return 0;
+    snprintf(record_path, sizeof(record_path), "%s/install-record.txt", directory);
+    snprintf(signature_path, sizeof(signature_path), "%s/install-record.sig", directory);
+    if (update_download_limited(url, record_path, HALO_RELEASE_INSTALL_RECORD_BYTES, NULL, NULL, error, sizeof(error))) {
+        memcpy(url + length, ".sig", 5);
+        if (update_download_limited(url, signature_path, 64, NULL, NULL, error, sizeof(error))) {
+            record = SDL_LoadFile(record_path, &record_size);
+            signature = SDL_LoadFile(signature_path, &signature_size);
+            if (record && signature) installable = halo_release_install_parse(record, record_size,
+                signature, signature_size, halo_update_public_key, RELEASE_ASSET, &release_notice, &release_install);
+        }
+    }
+    SDL_free(record);
+    SDL_free(signature);
+    update_delete_file(record_path);
+    update_delete_file(signature_path);
+    return installable;
+}
 
 static int SDLCALL release_check_thread(void *context)
 {
@@ -322,8 +423,10 @@ static int SDLCALL release_check_thread(void *context)
     else if (error[0]) platform_log("Halo OG updates: check unavailable: %s", error);
     SDL_free(data);
     update_delete_file(path);
+    release_installable = available && release_folder_ready && release_fetch_install(directory);
     update_delete_file(directory);
-    if (available) platform_log("Halo OG updates: %s available: %s", release_notice.tag, release_notice.download_url);
+    if (available) platform_log("Halo OG updates: %s available%s: %s", release_notice.tag,
+        release_installable ? " to install" : "", release_notice.download_url);
     SDL_SetAtomicInt(&release_state, available ? release_available : release_handled);
     return 0;
 }
@@ -331,6 +434,8 @@ static int SDLCALL release_check_thread(void *context)
 void halo_release_discovery_start(void)
 {
     SDL_Thread *thread;
+    /* Every start removes what the update before it left behind. */
+    release_folder_ready = update_install_prepare();
     if (!config_boolean("update.auto") || config_boolean("debug.hidden_window") ||
         config_boolean("debug.null_renderer") || config_real("debug.exit_after") > 0.0 ||
         config_string("debug.network_test")[0]) return;
@@ -345,10 +450,39 @@ void halo_release_discovery_set_main_menu(int safe)
     SDL_SetAtomicInt(&release_main_menu, safe != 0);
 }
 
+/* Puts the signed release in place and starts it. Returns only when that
+   failed, with the previous version still in place. */
+static void release_install_now(struct SDL_Window *window)
+{
+    struct update_install_request request = { release_install.url, release_notice.tag,
+        release_install.size, release_install.sha256 };
+    char error[512] = "", message[800];
+    platform_log("Halo OG updates: installing %s", release_notice.tag);
+    if (update_install(&request, error, sizeof(error))) {
+        platform_log("Halo OG updates: starting %s", release_notice.tag);
+        if (update_install_relaunch()) exit(EXIT_SUCCESS);
+        snprintf(message, sizeof(message), "Halo OG %s is installed, but could not be started.\n\n"
+            "Quit and start Halo OG again.", release_notice.tag);
+    }
+    else {
+        platform_log("Halo OG updates: install failed: %s", error);
+        snprintf(message, sizeof(message), "Halo OG %s could not be installed:\n\n%s\n\n"
+            "Your current version is unchanged. You can still download the update and install it yourself.",
+            release_notice.tag, error);
+    }
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Halo OG update", message, window);
+}
+
 void halo_release_discovery_poll(struct SDL_Window *window)
 {
-    static const SDL_MessageBoxButtonData buttons[] = {
+    static const SDL_MessageBoxButtonData download_buttons[] = {
         { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Open download" },
+        { SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Later" },
+        { 0, 2, "Stop checking" },
+    };
+    static const SDL_MessageBoxButtonData install_buttons[] = {
+        { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 3, "Install update" },
+        { 0, 1, "Open download" },
         { SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Later" },
         { 0, 2, "Stop checking" },
     };
@@ -363,21 +497,27 @@ void halo_release_discovery_poll(struct SDL_Window *window)
     SDL_SetAtomicInt(&release_state, release_handled);
     fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
     if (fullscreen) SDL_SetWindowFullscreen(window, false);
-    snprintf(message, sizeof(message), "Halo OG %s is available.\n\n"
-        "Open the download for this platform on GitHub? Install it after quitting the game.\n\n"
-        "Your maps and settings stay in their current data folders.", release_notice.tag);
+    if (release_installable)
+        snprintf(message, sizeof(message), "Halo OG %s is available.\n\n"
+            "Install it now? The game will close and start the new version.\n\n"
+            "Your maps and settings stay in their current data folders.", release_notice.tag);
+    else
+        snprintf(message, sizeof(message), "Halo OG %s is available.\n\n"
+            "Open the download for this platform on GitHub? Install it after quitting the game.\n\n"
+            "Your maps and settings stay in their current data folders.", release_notice.tag);
     memset(&box, 0, sizeof(box));
     box.flags = SDL_MESSAGEBOX_INFORMATION;
     box.window = window;
     box.title = "Halo OG update available";
     box.message = message;
-    box.numbuttons = 3;
-    box.buttons = buttons;
+    box.numbuttons = release_installable ? 4 : 3;
+    box.buttons = release_installable ? install_buttons : download_buttons;
     if (!SDL_ShowMessageBox(&box, &answer)) answer = 0;
     if (answer == 2) {
         if (!config_write_boolean("update.auto", 0))
             platform_log("Halo OG updates: could not save update.auto=false");
     }
+    if (answer == 3 && release_installable) release_install_now(window);
     if (fullscreen) SDL_SetWindowFullscreen(window, true);
     if (answer == 1 && !SDL_OpenURL(release_notice.download_url))
         platform_log("Halo OG updates: could not open download: %s", SDL_GetError());

@@ -99,13 +99,20 @@ Slayer, and **Performance Options → Stock**, with Input Delay and Hardcore Off
 
 ## Update Halo OG
 
-New setup builds check in the background and show **Halo OG update available**
-in the main menu. **Open download** opens the Linux ZIP in your browser;
-**Later** keeps playing. **Stop checking** disables future checks. To re-enable
-them, close Halo and set `auto = true` in the existing `[update]` section of
-**config.toml**.
+Halo OG checks in the background and shows **Halo OG update available** in the
+main menu. **Install update** downloads the release, replaces the game's own
+files and restarts it. Your **maps** folder, **config.toml**, profiles and
+saves are not touched. **Later** keeps playing. **Stop checking** disables
+future checks. To re-enable them, close Halo and set `auto = true` in the
+existing `[update]` section of **config.toml**.
 
-After downloading, close Halo, extract the new build into a separate folder,
+**Install update** appears from v0.6.0 on, for releases published with a signed
+install record, and needs the game's folder to be writable. If it is missing or
+the installation fails, your current version keeps working: **Open download**
+opens the Linux ZIP in your browser. If a new version will not start after an
+update, rename **halo.old** over **halo** to return to the previous version.
+
+To update by hand, close Halo, extract the new build into a separate folder,
 and copy **maps** and **config.toml** from the previous folder. Keep backups
 until it works. Profiles/saves stay in **~/.local/share/halo-og** by default
 (or **$XDG_DATA_HOME/halo-og** if configured). Install the downloaded build

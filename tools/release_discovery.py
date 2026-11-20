@@ -67,7 +67,7 @@ def verify_desktop_discovery_artifact(path, platform, identity):
     markers = {"source SHA": identity["source_sha"], "source date": identity["source_date"],
                "release API": DISCOVERY_URL, "update notice": "Halo OG update available",
                "download button": "Open download", "opt-out button": "Stop checking",
-               "platform asset": DESKTOP_ASSETS[platform]}
+               "install button": "Install update", "platform asset": DESKTOP_ASSETS[platform]}
     data = Path(path).read_bytes()
     missing = [name for name, value in markers.items() if value.encode("ascii") not in data]
     if missing:
