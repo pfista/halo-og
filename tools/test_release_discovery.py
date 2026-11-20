@@ -292,6 +292,13 @@ class ReleaseDiscoveryTests(unittest.TestCase):
         public, signature = sign(SEED, record())
         self.assertTrue(ed25519.verify(public, record(), signature))
 
+    def test_the_game_reads_the_record_the_release_tool_writes(self):
+        from tools import desktop_update_records as desktop
+        data = desktop.record(PLATFORM, "v0.6.1", OTHER, NEWER, 13609682, DIGEST)
+        url = f"https://github.com/pfista/halo-og/releases/download/v0.6.1/{ASSET}"
+        self.assertEqual(self.read_record(data, tag="v0.6.1"), [url, "13609682", DIGEST])
+        self.assertEqual(desktop.PLATFORMS[PLATFORM], ASSET)
+
     def test_a_record_not_signed_by_the_update_key_installs_nothing(self):
         _, signature = sign(SEED, record())
         other_key = sign(bytes(32), b"")[0].hex()
