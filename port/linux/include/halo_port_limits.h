@@ -65,8 +65,21 @@ client does not join a host of another version, but tells the player which
 is newer (network_client_manager.c). A host advertises it, with its netcode,
 in its game's advertisement's reserved bytes (network_server_message_handler.c),
 which hosts built before there was a version send as zeros: version 0.
-Raise it with any change to what the machines send each other. */
-#define HALO_PORT_NETWORK_VERSION 11
+Raise it with any change to what the machines send each other.
+
+Versions 1 to 11 were shared with OpenCE. Halo OG's own versions are
+HALO_OG_NETWORK_VERSION_BASE plus a revision that continues from 12, outside
+OpenCE's sequential numbers, so neither joins the other's games and a build
+from before the split is told to update. Keep the version a plain decimal
+number on its line: tools/testing_release.py reads it. */
+#define HALO_OG_NETWORK_VERSION_BASE 20000
+#define HALO_PORT_NETWORK_VERSION 20012
+/* A Halo OG version's revision (12 for 20012), with the practice-options bit
+(network_performance_protocol.h) ignored; 0 for any other build's version. */
+#define HALO_OG_NETWORK_REVISION(version) \
+	((((version) & 0x7FFFu) > HALO_OG_NETWORK_VERSION_BASE && \
+	  ((version) & 0x7FFFu) < HALO_OG_NETWORK_VERSION_BASE + 10000u) \
+		? ((version) & 0x7FFFu) - HALO_OG_NETWORK_VERSION_BASE : 0u)
 /* ... the advertisement's reserved bytes: the version (a little-endian word),
 then flags */
 #define HALO_PORT_ADVERTISED_VERSION_OFFSET 0

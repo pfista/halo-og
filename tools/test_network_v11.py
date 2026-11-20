@@ -295,7 +295,13 @@ static void reset(void) {
     network_game_client_settings_staging_size=0;
 }
 static void wire(void) {
-    assert(HALO_PORT_NETWORK_VERSION==11);
+    assert(HALO_PORT_NETWORK_VERSION==20012);
+    assert(NETWORK_PERFORMANCE_ADVERTISED_VERSION==(0x8000u|HALO_PORT_NETWORK_VERSION));
+    assert(HALO_OG_NETWORK_REVISION(HALO_PORT_NETWORK_VERSION)==12);
+    assert(HALO_OG_NETWORK_REVISION(NETWORK_PERFORMANCE_ADVERTISED_VERSION)==12);
+    /* Builds from before Halo OG had its own versions, and OpenCE's, are another family. */
+    assert(!HALO_OG_NETWORK_REVISION(0) && !HALO_OG_NETWORK_REVISION(11) && !HALO_OG_NETWORK_REVISION(0x800B));
+    assert(!HALO_OG_NETWORK_REVISION(12) && !HALO_OG_NETWORK_REVISION(44) && !HALO_OG_NETWORK_REVISION(20000));
     assert(sizeof(struct network_game)==13120);
     assert(offsetof(struct network_game,variant_options)==HALO_PORT_NETWORK_GAME_VARIANT_OPTIONS_OFFSET);
     assert(offsetof(struct network_game,local_data)==HALO_PORT_NETWORK_GAME_LOCAL_DATA_OFFSET);
@@ -303,12 +309,16 @@ static void wire(void) {
     assert(offsetof(struct game_variant_options,radar_players)==9);
     assert(offsetof(struct game_variant_options,loadout)==24);
     assert((NETWORK_PERFORMANCE_ADVERTISED_FLAG & HALO_PORT_ADVERTISED_IN_PROGRESS_FLAG)==0);
-    assert(network_performance_advertised_version(0,11)==11);
-    assert(network_performance_advertised_version(1,11)==0x800B);
-    assert(network_performance_version_compatible(0x800B,4,11));
-    assert(!network_performance_version_compatible(0x800B,2,11));
-    assert(!network_performance_version_compatible(0x800A,4,11));
-    assert(!network_performance_version_compatible(10,4,11));
+    const unsigned stock=HALO_PORT_NETWORK_VERSION, practice=NETWORK_PERFORMANCE_ADVERTISED_VERSION;
+    assert(network_performance_advertised_version(0,stock)==stock);
+    assert(network_performance_advertised_version(1,stock)==practice);
+    assert(network_performance_version_compatible(stock,0,stock));
+    assert(network_performance_version_compatible(practice,4,stock));
+    assert(!network_performance_version_compatible(practice,2,stock));
+    /* The versions shared with OpenCE, and its later ones, are never compatible. */
+    assert(!network_performance_version_compatible(11,4,stock));
+    assert(!network_performance_version_compatible(0x800B,4,stock));
+    assert(!network_performance_version_compatible(44,4,stock));
     byte encoded[16]; unsigned flags;
     network_performance_encode(encoded,NETWORK_PERFORMANCE_SETTINGS,31);
     assert(network_performance_decode(encoded,16,NETWORK_PERFORMANCE_SETTINGS,&flags) && flags==31);
@@ -603,7 +613,7 @@ static void expanded_weapon_acknowledgement(void) {
             assert(!network_performance_can_join(required,511));
             assert(network_performance_can_join(required,supported));
             assert(!flags || !network_performance_can_join(required,1023));
-            assert(network_performance_advertised_version(required,11)==0x800B);
+            assert(network_performance_advertised_version(required,HALO_PORT_NETWORK_VERSION)==NETWORK_PERFORMANCE_ADVERTISED_VERSION);
             reset();client.state=_network_game_client_state_pregame;
             assert(!network_game_client_game_settings_updated(&client,&host.game));
             assert(!precaches && !applied && errors==1 && dialogs==1);

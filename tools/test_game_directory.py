@@ -230,8 +230,8 @@ typedef int boolean;
 #define TRUE 1
 #define FALSE 0
 #define NONE -1
-#define HALO_PORT_NETWORK_VERSION 11
-#define NETWORK_PERFORMANCE_ADVERTISED_VERSION 0x800B
+#define HALO_PORT_NETWORK_VERSION 20012
+#define NETWORK_PERFORMANCE_ADVERTISED_VERSION 0xCE2C
 #define MAXIMUM_NETWORK_ADVERTISED_GAMES 9
 #define NETWORK_GAME_NAME_LENGTH 16
 #define NETWORK_GAME_MAP_NAME_LENGTH 32
@@ -275,7 +275,7 @@ int main(void) {
  client.state=2; cached_count=1;
  strcpy(cached[0].name,"Host"); strcpy(cached[0].map,"downrush"); strcpy(cached[0].gametype,"Slayer");
  strcpy(cached[0].invite,"halo-og://join/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
- cached[0].network_version=11;cached[0].open=1;cached[0].player_count=1;cached[0].max_players=16;
+ cached[0].network_version=20012;cached[0].open=1;cached[0].player_count=1;cached[0].max_players=16;
  cached[0].score_limit=50;
  assert(p2p_invite_identity(cached[0].invite,identity));
  struct network_advertised_game *games=network_game_client_get_directory_games(&client,&count);
@@ -330,8 +330,9 @@ int main(void) {
  assert(!browsing && !network_game_client_directory_take_join(&client)); /* stale queued event */
  network_game_client_get_directory_games(&client,&count); network_game_client_directory_begin_join(games);
  milliseconds+=30001; assert(!network_game_client_directory_should_post_join(&client) && errors==1);
- cached[0].network_version=12; network_game_client_get_directory_games(&client,&count); assert(count==0);
- cached[0].network_version=0x800B; network_game_client_get_directory_games(&client,&count); assert(count==1);
+ cached[0].network_version=11; network_game_client_get_directory_games(&client,&count); assert(count==0);
+ cached[0].network_version=0x800B; network_game_client_get_directory_games(&client,&count); assert(count==0);
+ cached[0].network_version=0xCE2C; network_game_client_get_directory_games(&client,&count); assert(count==1);
  strcpy(cached[0].gametype,"Unknown"); network_game_client_get_directory_games(&client,&count); assert(count==0);
  puts("PASS directory System Link display, dedup, peer identity, real-ad join, timeout, cancellation");
 }

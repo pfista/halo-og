@@ -195,7 +195,11 @@ discovery services was a goal until November 19, 2026 and no longer is. By
 upstream `307a42ee` (November 16, 2026) OpenCE had moved from protocol 11 to 44,
 adding co-op, new modes, dedicated-server and admission changes that Halo OG
 does not adopt, and it now checks the version explicitly when a client joins.
-Halo OG does not follow those versions. Review upstream networking fixes individually and
+Halo OG does not follow those versions. Its network version is its own:
+20000 plus a revision that continues from the shared history, currently
+**20012**. Versions 1 to 11 were shared with OpenCE, so Halo OG v0.5.2 and
+earlier, and every OpenCE build, are a different version; a client names the
+mismatch and does not join. Review upstream networking fixes individually and
 port one when it improves Halo OG's own protocol. Keep Halo OG hosting defaults
 original. [The interoperability review](network-interoperability.md) is
 retained as the historical protocol-11 audit.
@@ -221,13 +225,10 @@ before the received settings can change state or start precaching. Use matching
 Halo OG builds and map revisions for the baseline playtest.
 
 PB capability flag `0x04` is separate from the in-progress flag `0x02`.
-Options-off games advertise stock v11; enabled PB games advertise `0x800B` and
-require supporting peers. Input Delay: 33ms also requires peers that confirm
+Options-off games advertise the stock version, 20012; enabled PB games advertise
+it with bit 15 set (`0xCE2C`) and require supporting peers. Input Delay: 33ms also requires peers that confirm
 the delay capability; older PB builds cannot join an enabled-delay match.
-v10/PB-v10 builds must update. For mixed cybersecurity tests, leave Performance
-Options Stock, Input Delay Off and Hardcore Off. Games with five or more players should leave
-Infinite Grenades off because the native Xbox rule still differs even though
-the best-effort gate admits that setting.
+Builds on version 11 or earlier must update.
 See [networking](../port/linux/NETCODE.md), [Performance Options](performance-options.md)
 and [playtesting](playtesting.md) for implementation and player guidance.
 

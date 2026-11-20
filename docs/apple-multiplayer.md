@@ -1,8 +1,8 @@
 # Apple multiplayer and Mac invite links
 
-Build both devices from the same revision with the same map set. Native builds
-use protocol version 11 and changed player capacities, so original Xbox games
-and older native builds cannot join. See the [shared System Link notes](../port/linux/README.md#system-link)
+Build both devices from the same revision with the same map set. Halo OG uses
+its own network version and changed player capacities, so original Xbox games,
+OpenCE builds, and Halo OG v0.5.2 and earlier cannot join. See the [shared System Link notes](../port/linux/README.md#system-link)
 for protocol details and limits.
 
 Play with other Halo OG builds; games with OpenCE builds are not supported.

@@ -3451,13 +3451,21 @@ boolean network_game_client_advertised_game_compatible(
 			"The host is using the lockstep network code, which this version no longer has.\n\n"
 			"Ask the host to update the game.");
 	}
+	else if (!HALO_OG_NETWORK_REVISION(theirs))
+	{
+		/* a build from before Halo OG had its own versions, or another port */
+		csprintf(message,
+			"The host is not running a current Halo OG build. It is an older Halo OG "
+			"release or another port of the game.\n\n"
+			"Ask the host to update to the current Halo OG.");
+	}
 	else if (theirs > ours)
 	{
 		csprintf(message,
 			"The host is using a newer version of the network code than you.\n\n"
 			"You are on version %u. The host is on version %u.\n\n"
 			"Update the game to join this host.",
-			ours, theirs);
+			HALO_OG_NETWORK_REVISION(ours), HALO_OG_NETWORK_REVISION(theirs));
 	}
 	else
 	{
@@ -3465,7 +3473,7 @@ boolean network_game_client_advertised_game_compatible(
 			"The host is using an older version of the network code than you.\n\n"
 			"You are on version %u. The host is on version %u.\n\n"
 			"Ask the host to update the game.",
-			ours, theirs);
+			HALO_OG_NETWORK_REVISION(ours), HALO_OG_NETWORK_REVISION(theirs));
 	}
 	if (tell)
 	{
