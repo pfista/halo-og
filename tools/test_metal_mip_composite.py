@@ -332,7 +332,8 @@ uint32_t guest_test(uint32_t unused) {
 ''')
     llvm = Path('/opt/homebrew/opt/llvm@22/bin')
     linker = Path('/opt/homebrew/opt/lld@22/bin/ld.lld')  # Keep basename dispatch; never resolve.
-    plugin = ROOT.parent/'pfista-halo-macos/build/macos/guest_rebase.dylib'
+    from tools.primary_checkout import PRIMARY
+    plugin = PRIMARY/'build/macos/guest_rebase.dylib'
     previous = json.loads((ROOT/'build/metal-poc/native-draw-state-ilp32-final/prepared.json').read_text())
     executor = Path(previous['execution_command'][0])
     assert sha(executor) == previous['executor_sha256'], 'Retained CPU executor changed'

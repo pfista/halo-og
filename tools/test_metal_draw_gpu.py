@@ -12,8 +12,11 @@ import json
 from pathlib import Path
 import struct
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'tools'))
+from primary_checkout import PRIMARY
 RUNNER_SOURCE = ROOT / 'port/macos/metal-poc/draw_replay.mm'
 WIDTH, HEIGHT = 32, 24
 
@@ -341,7 +344,7 @@ def prepare_bc1_cube(folder):
 
 def build_cube_angle(folder):
     """Pin an independent ANGLE compressed-cube test executable and libraries."""
-    dependencies = ROOT if (ROOT/'build/macos/angle/dist').exists() else ROOT.parent/'pfista-halo-macos'
+    dependencies = ROOT if (ROOT/'build/macos/angle/dist').exists() else PRIMARY
     base = dependencies/'build/macos'
     frameworks = [base/'angle/dist/EGL.xcframework/macos-arm64',
                   base/'angle/dist/GLESv2.xcframework/macos-arm64']

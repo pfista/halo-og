@@ -12,10 +12,11 @@ import tempfile
 import unittest
 
 from metal_poc_export import Cache, export
+from primary_checkout import PRIMARY
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RETAIL_MAP = ROOT.parent / 'pfista-halo-macos/assets/maps/bloodgulch.map'
+RETAIL_MAP = PRIMARY / 'assets/maps/bloodgulch.map'
 
 
 def sky_cases():

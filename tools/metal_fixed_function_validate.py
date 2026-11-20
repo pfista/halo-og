@@ -30,6 +30,7 @@ import metal_host_frame_coalesce as parse
 import metal_host_frame_validate as frame
 import metal_shader_validate as shaders
 import test_metal_fixed_function as cpu
+from primary_checkout import PRIMARY
 sha,require=wire.sha,wire.require
 W,H=640,480
 PACKET=history.PACKET
@@ -439,7 +440,7 @@ def execute(out):
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('mode',choices=['prepare','execute']);parser.add_argument('--out',type=Path,required=True)
     parser.add_argument('--llvm',type=Path,default=Path('/opt/homebrew/opt/llvm@22/bin'));parser.add_argument('--linker',type=Path,default=Path('/opt/homebrew/opt/lld@22/bin/ld.lld'))
-    parser.add_argument('--plugin',type=Path,default=Path('/Users/pfista/src/halo/pfista-halo-macos/build/macos/guest_rebase.dylib'))
+    parser.add_argument('--plugin',type=Path,default=PRIMARY/'build/macos/guest_rebase.dylib')
     a=parser.parse_args();out=a.out.resolve()
     if a.mode=='prepare':prepare(out,a.llvm,a.linker.absolute(),a.plugin);return 0
     return execute(out)

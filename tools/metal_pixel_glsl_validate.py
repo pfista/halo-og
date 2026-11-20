@@ -13,11 +13,12 @@ import subprocess
 
 import metal_shader_validate as v
 from metal_pixel_fixtures import texture_stage_fixtures
+from primary_checkout import PRIMARY
 
 ROOT = v.ROOT
 # Reuse the already built local port dependency checkout when this recovered
 # worktree has no dependency build. No installation or environment mutation.
-DEPENDENCIES = ROOT if (ROOT / 'build/macos/angle/dist').exists() else ROOT.parent / 'pfista-halo-macos'
+DEPENDENCIES = ROOT if (ROOT / 'build/macos/angle/dist').exists() else PRIMARY
 ANGLE = DEPENDENCIES / 'build/macos/angle/dist'
 
 

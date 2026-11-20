@@ -10,6 +10,7 @@ import tempfile
 import unittest
 
 from tools.test_input_bindings import PREFIX, PORT, ROOT, SDL
+from tools.primary_checkout import PRIMARY
 from tools.test_performance_ui import fixture_source
 
 
@@ -1680,7 +1681,7 @@ class NativeGameSettingsTests(unittest.TestCase):
     def verify_controller_font_metrics(self, binary):
         """Measure deadzones and Controller choices with owned Xbox fonts."""
         from tools.verify_performance_sound_samples import Cache
-        paths = [next((root / f"assets/maps/{name}.map" for root in (ROOT, ROOT.parent / "pfista-halo-macos")
+        paths = [next((root / f"assets/maps/{name}.map" for root in (ROOT, PRIMARY)
                        if (root / f"assets/maps/{name}.map").exists()), None) for name in ("ui", "bloodgulch")]
         paths = [path for path in paths if path is not None]
         if not paths:
@@ -1721,7 +1722,7 @@ class NativeGameSettingsTests(unittest.TestCase):
     def verify_about_font_metrics(self, binary):
         """Measure every production page with the owned UI font, including long names/counts."""
         from tools.verify_performance_sound_samples import Cache
-        path = next((root / "assets/maps/ui.map" for root in (ROOT, ROOT.parent / "pfista-halo-macos")
+        path = next((root / "assets/maps/ui.map" for root in (ROOT, PRIMARY)
                      if (root / "assets/maps/ui.map").exists()), None)
         if path is None:
             return
@@ -1758,7 +1759,7 @@ class NativeGameSettingsTests(unittest.TestCase):
     def test_resident_help_widths(self):
         """Use the shipped font advances to catch clipping that C layout mocks cannot."""
         from tools.verify_performance_sound_samples import Cache
-        paths = [next((root / f"assets/maps/{name}.map" for root in (ROOT, ROOT.parent / "pfista-halo-macos")
+        paths = [next((root / f"assets/maps/{name}.map" for root in (ROOT, PRIMARY)
                        if (root / f"assets/maps/{name}.map").exists()), None) for name in ("bloodgulch", "ui")]
         paths = [path for path in paths if path is not None]
         if not paths:

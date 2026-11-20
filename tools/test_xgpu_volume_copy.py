@@ -19,9 +19,10 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'tools'))
 from test_xgpu_texture_copy import Layout, harness_prefix, linear_size
+from primary_checkout import PRIMARY
 SOURCE = ROOT/'port/linux/src/xbox_textures.c'
 HEADER = ROOT/'port/linux/src/xgpu.h'
-MAP = ROOT.parent/'pfista-halo-macos/assets/maps/bloodgulch.map'
+MAP = PRIMARY/'assets/maps/bloodgulch.map'
 MAP_SHA = '50fe52406f075d975e24100a65b26ff696458023dd3509878953052ab0ef858f'
 RAW_SHA = 'de3f46809dd6dc460e877e2901bef644eed02452262bc1c3d47d54a7b21a3c5e'
 RUNTIME = ROOT/'build/macos-metal/live-volume-diagnostic/dumps/native-volume-0726c000-55560139.bin'
@@ -401,7 +402,7 @@ for(uint32_t j=0;j<16;j++)if(destination[j]!=0xa7||destination[16+h[11]+j]!=0xa7
 }return 0;}
 ''')
     llvm=Path('/opt/homebrew/opt/llvm@22/bin');linker=Path('/opt/homebrew/opt/lld@22/bin/ld.lld')
-    plugin=ROOT.parent/'pfista-halo-macos/build/macos/guest_rebase.dylib'
+    plugin=PRIMARY/'build/macos/guest_rebase.dylib'
     previous=json.loads((ROOT/'build/metal-poc/native-draw-state-ilp32-final/prepared.json').read_text())
     executor=Path(previous['execution_command'][0]);assert sha(executor)==previous['executor_sha256']
     def run(*args):

@@ -185,7 +185,8 @@ def prepare_ilp32(output):
         raise ValueError('Preserve previous proof; choose a new output folder')
     llvm = Path('/opt/homebrew/opt/llvm@22/bin')
     linker = Path('/opt/homebrew/opt/lld@22/bin/ld.lld')  # do not resolve basename-dispatched symlink
-    plugin = ROOT.parent/'pfista-halo-macos/build/macos/guest_rebase.dylib'
+    from tools.primary_checkout import PRIMARY
+    plugin = PRIMARY/'build/macos/guest_rebase.dylib'
     historical = json.loads((ROOT/'build/metal-poc/native-draw-state-ilp32-final/prepared.json').read_text())
     executor = Path(historical['execution_command'][0])
     assert sha(executor)==historical['executor_sha256'], 'Historical CPU executor changed'
