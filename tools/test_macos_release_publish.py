@@ -1,11 +1,14 @@
 """Publishing a Mac update must never replace an archive or advance the feed early."""
+import base64
 import hashlib
 import json
 from pathlib import Path
 import unittest
 
-from tools.macos_build import update_configuration
-from tools.macos_release import CONFIG, object_key, upload
+from tools.ed25519_verify import verify
+from tools.macos_build import BUNDLE_ID, update_configuration
+from tools.macos_release import (CONFIG, appcast, feed_entry, object_key, require_newer_than_feed,
+                                 require_signature, upload)
 from tools import publish_map_catalog as hosting
 
 ORIGIN = "https://dl.oghalo.com/"
@@ -92,6 +95,68 @@ class PublishTests(unittest.TestCase):
                     ORIGIN + "updates/windows/1/setup.exe", "https://example.com/updates/mac/1/a.dmg"):
             with self.assertRaises(RuntimeError):
                 object_key(url, ORIGIN)
+
+
+class ReleaseAppTests(unittest.TestCase):
+    settings = {"feed_url": ORIGIN + "updates/mac/testing/appcast.xml",
+                "public_update_key": base64.b64encode(bytes(32)).decode(),
+                "download_base_url": ORIGIN + "updates"}
+
+    def info(self, **changes):
+        return {"CFBundleIdentifier": BUNDLE_ID, "CFBundleShortVersionString": "0.6.0", "CFBundleVersion": "512.1",
+                "LSMinimumSystemVersion": "26.0", "HaloSourceSHA": "a" * 40,
+                **update_configuration(self.settings), **changes}
+
+    def test_feed_entry_comes_from_the_release_app(self):
+        self.assertEqual(feed_entry(self.info(), self.settings, "0.6.0"), {
+            "version": "0.6.0", "build": "512.1", "minimum_macos": "26.0", "source_revision": "a" * 40})
+
+    def test_a_build_that_could_not_update_again_is_not_published(self):
+        # Installed copies read the feed and key from their own Info.plist.
+        for changes in ({"SUFeedURL": None}, {"SUFeedURL": "https://example.com/appcast.xml"},
+                        {"SUPublicEDKey": base64.b64encode(bytes([1]) * 32).decode()}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(RuntimeError, "update feed"):
+                feed_entry(self.info(**changes), self.settings, "0.6.0")
+
+    def test_the_app_must_be_the_tagged_version(self):
+        with self.assertRaisesRegex(RuntimeError, "version 0.6.0, not 0.6.1"):
+            feed_entry(self.info(), self.settings, "0.6.1")
+
+    def test_the_feed_never_moves_back_to_an_older_build(self):
+        live = appcast({"version": "0.6.0", "build": "512.1", "minimum_macos": "26.0", "size": 1,
+                        "signature": "", "url": RECORD["url"]})
+        for build in ("512.1", "512.2", "600.1"):
+            require_newer_than_feed(build, live)
+        require_newer_than_feed("1.1", None)
+        for build in ("511.3", "99.1"):
+            with self.subTest(build=build), self.assertRaisesRegex(RuntimeError, "is older"):
+                require_newer_than_feed(build, live)
+
+
+class SignatureTests(unittest.TestCase):
+    # RFC 8032 section 7.1, test 3.
+    key = bytes.fromhex("fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025")
+    message = bytes.fromhex("af82")
+    signature = bytes.fromhex(
+        "6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac"
+        "18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a")
+
+    def test_only_the_public_keys_signature_of_these_bytes_is_accepted(self):
+        self.assertTrue(verify(self.key, self.message, self.signature))
+        changed = bytes([self.signature[0] ^ 1]) + self.signature[1:]
+        other_key = bytes.fromhex("3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c")
+        for key, message, signature in ((self.key, self.message + b"\0", self.signature),
+                                        (self.key, self.message, changed),
+                                        (other_key, self.message, self.signature),
+                                        (self.key, self.message, self.signature[:63])):
+            self.assertFalse(verify(key, message, signature))
+
+    def test_a_release_whose_signature_installed_apps_would_refuse_is_stopped(self):
+        public = base64.b64encode(self.key).decode()
+        require_signature(self.message, base64.b64encode(self.signature).decode(), public)
+        for signature in (base64.b64encode(bytes(64)).decode(), "not base64", ""):
+            with self.subTest(signature=signature), self.assertRaisesRegex(RuntimeError, "does not verify"):
+                require_signature(self.message, signature, public)
 
 
 class CheckedInConfigurationTests(unittest.TestCase):
