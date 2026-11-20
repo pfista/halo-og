@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-"""Build/notarize an asset-free Mac DMG and publish through S3-compatible storage.
+"""Publish a Mac release to Halo's update feed, and package Mac DMGs.
 
-Hosting and the public update key are non-secret checked-in configuration.
-Signing/notary secrets remain in the login Keychain; storage authentication uses
-an existing AWS CLI profile. This tool never creates or reads an env file.
+`publish-release` takes the ad-hoc signed DMG that CI built for a GitHub
+release, signs it with Halo's update key and advances the feed. `build` and
+`publish` are the separate Developer ID and notarization route.
+
+Hosting and the public update key are non-secret checked-in configuration. The
+private update key stays in 1Password, which hands it straight to Sparkle's
+signer. Publishing uses the map publisher's R2 account, bucket and credential
+route: a Cloudflare token from the environment, a 1Password-mounted credential
+file, or a hidden prompt. The token stays in memory and is never written or
+logged.
 """
 import argparse
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -13,6 +21,7 @@ import plistlib
 import re
 import subprocess
 import sys
+import tempfile
 from urllib.parse import urlparse
 import urllib.error
 import urllib.request
@@ -25,9 +34,15 @@ from tools.macos_sparkle import setup_sparkle, DIRECTORY as SPARKLE
 from tools.macos_dmg import create_dmg
 from tools.macos_content_tools import audit_content_tools
 from tools.halo_og_version import require_version
+from tools.ed25519_verify import verify
+from tools import publish_map_catalog as hosting
 
 CONFIG = ROOT / "port/macos/release-config.json"
 APP = ROOT / "build/macos" / (APP_NAME + ".app")
+REPOSITORY = "pfista/halo-og"
+RELEASE_DMG = "Halo-OG-macos-arm64.dmg"
+# The 1Password document holding the private update key, found by its title.
+KEY_DOCUMENT = "Halo OG Sparkle update signing key (private)"
 ACCOUNT = "local.halo.ce-universal"
 # Keep the established Sparkle signing-key account when the app's bundle ID
 # changes, so existing feed signatures and public update keys remain valid.
@@ -129,7 +144,7 @@ def appcast(record):
     channel = ET.SubElement(rss, "channel")
     ET.SubElement(channel, "title").text = APP_NAME + " Updates"
     entry = ET.SubElement(channel, "item")
-    ET.SubElement(entry, "title").text = "Halo " + record["version"]
+    ET.SubElement(entry, "title").text = APP_NAME + " " + record["version"]
     ET.SubElement(entry, "{" + NAMESPACE + "}minimumSystemVersion").text = record["minimum_macos"]
     ET.SubElement(entry, "enclosure", {"url": record["url"], "length": str(record["size"]),
         "type": "application/octet-stream", "{" + NAMESPACE + "}version": record["build"],
@@ -207,26 +222,153 @@ def build_release(args):
     print("Prepared release: " + str(destination))
 
 
+def feed_entry(info, settings, version):
+    """What the feed needs from a release app's Info.plist."""
+    if info.get("CFBundleIdentifier") != BUNDLE_ID:
+        raise RuntimeError("Unexpected app bundle identifier")
+    if info.get("CFBundleShortVersionString") != version:
+        raise RuntimeError(f"The release app is version {info.get('CFBundleShortVersionString')}, not {version}")
+    # Installed copies of this build read the feed and key from their own
+    # Info.plist. Without the configured values they could never update again.
+    if any(info.get(key) != value for key, value in update_configuration(settings).items()):
+        raise RuntimeError("This release was built without Halo's update feed and public key")
+    build = info.get("CFBundleVersion", "")
+    if not re.fullmatch(r"\d+(?:\.\d+)*", build):
+        raise RuntimeError("The release app needs a numeric build number")
+    return {"version": version, "build": build, "minimum_macos": info["LSMinimumSystemVersion"],
+            "source_revision": info.get("HaloSourceSHA")}
+
+
+def release_app(dmg, settings, version):
+    """Audit the app inside a release DMG and return its feed entry."""
+    with tempfile.TemporaryDirectory(prefix="halo-release-") as mount:
+        run("hdiutil", "attach", dmg, "-mountpoint", mount, "-nobrowse", "-readonly", capture=True)
+        try:
+            app = Path(mount) / (APP_NAME + ".app")
+            audit_bundle(app)
+            run("codesign", "--verify", "--deep", "--strict", app)
+            audit_adhoc_signing(app)
+            with (app / "Contents/Info.plist").open("rb") as stream:
+                return feed_entry(plistlib.load(stream), settings, version)
+        finally:
+            run("hdiutil", "detach", mount, capture=True)
+
+
+def sign(dmg, keychain=False):
+    """Sparkle's Ed25519 signature of a DMG, made with Halo's private update key."""
+    signer = [str(SPARKLE / "bin/sign_update"), "-p"]
+    if keychain:
+        return subprocess.run([*signer, "--account", ACCOUNT, str(dmg)], check=True, text=True,
+                              stdout=subprocess.PIPE).stdout.strip()
+    # 1Password writes the key to the signer's standard input. This tool never
+    # holds it, and nothing writes it to disk.
+    key = subprocess.Popen(["op", "document", "get", KEY_DOCUMENT], stdout=subprocess.PIPE)
+    try:
+        signed = subprocess.run([*signer, "--ed-key-file", "-", str(dmg)], stdin=key.stdout, text=True,
+                                stdout=subprocess.PIPE)
+    finally:
+        key.stdout.close()
+        unavailable = key.wait()
+    if unavailable:
+        raise RuntimeError("1Password did not provide the document \"" + KEY_DOCUMENT + "\". Sign in to its "
+                           "command-line tool, and set OP_ACCOUNT when more than one account is signed in")
+    if signed.returncode:
+        raise RuntimeError("Sparkle could not sign with the key from 1Password")
+    return signed.stdout.strip()
+
+
+def require_signature(data, signature, public_key):
+    """Installed apps accept an update only when this check passes."""
+    try:
+        raw = base64.b64decode(signature, validate=True)
+    except ValueError:
+        raw = b""
+    if not verify(base64.b64decode(public_key), data, raw):
+        raise RuntimeError("The update signature does not verify with Halo's committed public key")
+
+
+def build_order(build):
+    return tuple(int(part) for part in build.split("."))
+
+
+def require_newer_than_feed(build, live_feed):
+    """Sparkle offers only a higher build number, so the feed never moves back."""
+    if live_feed is None:
+        return
+    enclosure = ET.fromstring(live_feed).find("./channel/item/enclosure")
+    offered = enclosure.get("{" + NAMESPACE + "}version") if enclosure is not None else None
+    if offered and build_order(build) < build_order(offered):
+        raise RuntimeError(f"The feed already offers build {offered}; build {build} is older")
+
+
+def object_key(url, origin):
+    """The bucket key of a public update URL: its path beneath the storage origin."""
+    key = url[len(origin):] if url.startswith(origin) else ""
+    if not re.fullmatch(r"updates/mac/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+", key) or ".." in key:
+        raise RuntimeError("Update objects must be public URLs beneath " + origin + "updates/mac/")
+    return key
+
+
+def fetch_public(url):
+    """The public bytes at an HTTPS URL, or None when nothing is published there."""
+    # The download host answers Python's default client name with HTTP 403.
+    request = urllib.request.Request(url, headers={"User-Agent": "Halo-OG-release-publisher/1"})
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return response.read()
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+        return None
+
+
+def upload(record, dmg, feed, origin, r2, fetch=fetch_public):
+    """Create the immutable disk image, verify its public bytes, then advance the feed."""
+    key, feed_key = object_key(record["url"], origin), object_key(record["feed_url"], origin)
+    # A versioned archive is immutable. The conditional create never replaces an
+    # existing object; an archive already there must be this exact release.
+    created = r2.request("PUT", key, body=dmg, headers={
+        "If-None-Match": "*", "Content-Type": "application/x-apple-diskimage"})
+    if created.status not in (200, 201, 412):
+        raise RuntimeError(f"Disk image upload failed (HTTP {created.status}); feed was not changed")
+    public = fetch(record["url"])
+    if public is None or hashlib.sha256(public).hexdigest() != record["sha256"]:
+        if created.status == 412:
+            raise RuntimeError("A different disk image already exists at this versioned URL; feed was not changed")
+        raise RuntimeError("Public download verification failed; feed was not changed")
+    # The feed is the only mutable object, and it moves last.
+    advanced = r2.request("PUT", feed_key, body=feed, headers={
+        "Content-Type": "application/xml", "Cache-Control": "no-cache"})
+    if advanced.status not in (200, 201):
+        raise RuntimeError(f"Feed upload failed (HTTP {advanced.status}); the disk image is published")
+    if fetch(record["feed_url"]) != feed:
+        raise RuntimeError("The live feed does not yet match this release")
+
+
 def publish(args):
     settings = config()
+    storage = hosting.load_config()
+    origin = storage["public_base_url"]
     release = args.directory.resolve()
     record = json.loads((release / "release.json").read_text())
     if not record.get("distributable") or not record.get("notarization", {}).get("dmg"):
         raise RuntimeError("Only verified notarized releases can be published")
     base = https_url(settings.get("download_base_url"))
     feed = https_url(settings.get("feed_url"))
-    feed_prefix = base + "/"
-    if not feed.startswith(feed_prefix):
+    if not feed.startswith(base + "/"):
         raise RuntimeError("The configured feed must live beneath the download base URL")
-    key = "mac/" + record["build"] + "/" + record["filename"]
-    if record["url"] != base + "/" + key or record["feed_url"] != settings["feed_url"]:
+    if (record["url"] != base + "/mac/" + record["build"] + "/" + record["filename"]
+            or record["feed_url"] != settings["feed_url"]):
         raise RuntimeError("Release hosting changed; prepare a matching release")
     if record["public_update_key"] != settings["public_update_key"]:
         raise RuntimeError("Release update key no longer matches the app configuration")
+    object_key(record["url"], origin)
+    object_key(record["feed_url"], origin)
     dmg = release / record["filename"]
-    if dmg.parent != release or hashlib.sha256(dmg.read_bytes()).hexdigest() != record["sha256"]:
+    data = dmg.read_bytes() if dmg.parent == release else b""
+    if hashlib.sha256(data).hexdigest() != record["sha256"]:
         raise RuntimeError("The release disk image has changed")
-    if dmg.stat().st_size != record["size"]:
+    if len(data) != record["size"]:
         raise RuntimeError("The release disk image length has changed")
     setup_sparkle()
     key_in_keychain = run(SPARKLE / "bin/generate_keys", "--account", ACCOUNT, "-p", capture=True).strip()
@@ -235,37 +377,62 @@ def publish(args):
     run("codesign", "--verify", "--strict", dmg)
     run("xcrun", "stapler", "validate", dmg)
     run(SPARKLE / "bin/sign_update", "--account", ACCOUNT, "--verify", dmg, record["signature"])
-    bucket = settings.get("s3_bucket")
-    if not bucket or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket):
-        raise RuntimeError("Configure an S3 or R2 bucket first")
-    aws = ["aws"]
-    if settings.get("s3_profile"):
-        aws += ["--profile", settings["s3_profile"]]
-    if settings.get("s3_endpoint_url"):
-        aws += ["--endpoint-url", https_url(settings["s3_endpoint_url"])]
-    # A versioned archive is immutable. After an ambiguous write, inspect the
-    # public object before retrying; never overwrite a different archive.
-    try:
-        with urllib.request.urlopen(record["url"], timeout=60) as response:
-            existing = response.read()
-    except urllib.error.HTTPError as error:
-        if error.code != 404:
-            raise
-        run(*aws, "s3api", "put-object", "--bucket", bucket, "--key", key, "--body", dmg,
-            "--content-type", "application/x-apple-diskimage", "--if-none-match", "*")
-    else:
-        if hashlib.sha256(existing).hexdigest() != record["sha256"]:
-            raise RuntimeError("A different disk image already exists at this versioned URL")
-    with urllib.request.urlopen(record["url"], timeout=60) as response:
-        if hashlib.sha256(response.read()).hexdigest() != record["sha256"]:
-            raise RuntimeError("Public download verification failed; feed was not changed")
-    (release / "appcast.xml").write_bytes(appcast(record))
-    run(*aws, "s3api", "put-object", "--bucket", bucket, "--key", feed[len(feed_prefix):],
-        "--body", release / "appcast.xml", "--content-type", "application/xml", "--cache-control", "no-cache")
-    with urllib.request.urlopen(feed, timeout=60) as response:
-        if response.read() != appcast(record):
-            raise RuntimeError("The live feed does not yet match this release")
+    feed_bytes = appcast(record)
+    (release / "appcast.xml").write_bytes(feed_bytes)
+    token = hosting.load_token(args.credential_file)
+    http = hosting.HTTPS()
+    access, secret = hosting.derive_s3_credentials(token, storage, http)
+    del token
+    upload(record, data, feed_bytes, origin, hosting.R2(storage, access, secret, http))
     print("Published and verified " + record["url"])
+
+
+def publish_release(args):
+    """Sign the DMG that CI built for a GitHub release and advance the feed to it."""
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", args.tag):
+        raise RuntimeError("Use a vMAJOR.MINOR.PATCH release tag")
+    settings = config()
+    storage = hosting.load_config()
+    origin = storage["public_base_url"]
+    base = https_url(settings.get("download_base_url"))
+    if not update_configuration(settings) or not https_url(settings.get("feed_url")).startswith(base + "/"):
+        raise RuntimeError("Configure the update feed beneath the download base URL first")
+    if json.loads(run("gh", "release", "view", args.tag, "--repo", REPOSITORY, "--json", "isDraft",
+                      capture=True))["isDraft"]:
+        raise RuntimeError("Publish the GitHub release before its update feed")
+    release = ROOT / "build/macos/releases" / args.tag
+    release.mkdir(parents=True, exist_ok=True)
+    run("gh", "release", "download", args.tag, "--repo", REPOSITORY, "--dir", release, "--clobber",
+        "--pattern", RELEASE_DMG, "--pattern", "SHA256SUMS")
+    dmg = release / RELEASE_DMG
+    data = dmg.read_bytes()
+    checksum = hashlib.sha256(data).hexdigest()
+    if f"{checksum}  {RELEASE_DMG}" not in (release / "SHA256SUMS").read_text().splitlines():
+        raise RuntimeError("The downloaded DMG does not match the release's SHA256SUMS")
+    entry = release_app(dmg, settings, args.tag[1:])
+    require_newer_than_feed(entry["build"], fetch_public(settings["feed_url"]))
+    setup_sparkle()
+    signature = sign(dmg, args.keychain_key)
+    require_signature(data, signature, settings["public_update_key"])
+    filename = "Halo-OG-" + entry["version"] + ".dmg"
+    record = {**entry, "tag": args.tag, "filename": filename, "size": len(data), "sha256": checksum,
+              "signature": signature, "public_update_key": settings["public_update_key"],
+              "url": base + "/mac/" + entry["build"] + "/" + filename, "feed_url": settings["feed_url"],
+              "signing": "ad-hoc", "distributable": True}
+    object_key(record["url"], origin)
+    object_key(record["feed_url"], origin)
+    feed_bytes = appcast(record)
+    (release / "release.json").write_text(json.dumps(record, indent=2) + "\n")
+    (release / "appcast.xml").write_bytes(feed_bytes)
+    if args.dry_run:
+        print("Signed and verified; nothing was uploaded. Prepared feed: " + str(release / "appcast.xml"))
+        return
+    token = hosting.load_token(args.credential_file)
+    http = hosting.HTTPS()
+    access, secret = hosting.derive_s3_credentials(token, storage, http)
+    del token
+    upload(record, data, feed_bytes, origin, hosting.R2(storage, access, secret, http))
+    print(f"Published Halo OG {record['version']} (build {record['build']}) to {record['feed_url']}")
 
 
 def main():
@@ -281,17 +448,29 @@ def main():
     build.add_argument("--build-number", required=True)
     build.add_argument("--sign-identity", required=True)
     build.add_argument("--notary-profile", required=True)
-    upload = commands.add_parser("publish")
-    upload.add_argument("directory", type=Path)
+    publisher = commands.add_parser("publish", help="Upload a notarized release prepared by build")
+    publisher.add_argument("directory", type=Path)
+    released = commands.add_parser("publish-release",
+                                   help="Sign a GitHub release's CI-built DMG and publish it to the update feed")
+    released.add_argument("tag", help="Published release tag, such as v0.6.0")
+    released.add_argument("--keychain-key", action="store_true",
+                          help="Sign with the login Keychain's copy of the update key instead of 1Password's")
+    released.add_argument("--dry-run", action="store_true", help="Sign and verify without uploading anything")
+    for command in (publisher, released):
+        command.add_argument("--credential-file", type=Path,
+                             help="Existing 1Password-mounted file containing a literal CLOUDFLARE_API_TOKEN assignment")
     args = parser.parse_args()
     if args.command == "setup-updates":
         setup_sparkle()
         run(SPARKLE / "bin/generate_keys", "--account", ACCOUNT)
-        print("Commit only the public key to port/macos/release-config.json. Back up the private key in 1Password.")
+        print("Commit only the public key to port/macos/release-config.json. Store the private key in 1Password "
+              "as the document \"" + KEY_DOCUMENT + "\".")
     elif args.command == "local-dmg":
         local_dmg(args)
     elif args.command == "build":
         build_release(args)
+    elif args.command == "publish-release":
+        publish_release(args)
     else:
         publish(args)
 
@@ -299,6 +478,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
+    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError, hosting.PublishError) as error:
         print("Release failed: " + str(error), file=sys.stderr)
         sys.exit(1)

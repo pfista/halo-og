@@ -1,6 +1,8 @@
 """Check the native Mac package's payload, dependency boundary, and signing order."""
+import base64
 from contextlib import ExitStack
 import hashlib
+import json
 from pathlib import Path
 import plistlib
 import tempfile
@@ -22,7 +24,7 @@ class NativePackageTests(unittest.TestCase):
                 build.main()
                 self.assertEqual(paths, [expected])
 
-    def package(self, root):
+    def package(self, root, release_config="{}", **options):
         inputs = root / "build/macos"
         sdl = root / "sdl"
         sparkle = root / "sparkle/Sparkle.framework"
@@ -33,7 +35,7 @@ class NativePackageTests(unittest.TestCase):
         (sdl / "lib/libSDL3.0.dylib").write_bytes(b"synthetic SDL")
         (sparkle / "Sparkle").write_bytes(b"synthetic Sparkle")
         (root / "port/macos/map-downloads.json").write_text("{}")
-        (root / "port/macos/release-config.json").write_text("{}")
+        (root / "port/macos/release-config.json").write_text(release_config)
         app = root / "Halo OG.app"
         commands = []
         with ExitStack() as stack:
@@ -47,8 +49,22 @@ class NativePackageTests(unittest.TestCase):
             stack.enter_context(patch.object(build.subprocess, "check_output", return_value=""))
             stack.enter_context(patch.object(build, "run", side_effect=lambda *args: commands.append(tuple(map(str, args)))))
             build.package_into(app, None, sign_identity="-", release=False,
-                               version=build.APP_VERSION, build="11")
+                               version=build.APP_VERSION, build="11", **options)
         return app, commands
+
+    def test_ad_hoc_build_embeds_the_update_feed_only_when_asked(self):
+        settings = {"feed_url": "https://example.com/appcast.xml",
+                    "public_update_key": base64.b64encode(bytes(32)).decode()}
+        for update_feed in (False, True):
+            with self.subTest(update_feed=update_feed), tempfile.TemporaryDirectory() as temporary:
+                app, commands = self.package(Path(temporary), json.dumps(settings), update_feed=update_feed)
+                plist = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+                self.assertEqual(plist.get("SUFeedURL"), settings["feed_url"] if update_feed else None)
+                self.assertEqual(plist.get("SUPublicEDKey"), settings["public_update_key"] if update_feed else None)
+                # Embedding the feed leaves the signing that players already run unchanged.
+                signing = [command for command in commands if command[0] == "codesign" and "--sign" in command]
+                self.assertTrue(all(command[command.index("--sign") + 1] == "-" for command in signing))
+                self.assertFalse(any("runtime" in command or "--timestamp" in command for command in signing))
 
     def test_package_records_one_guest_and_signs_dependencies_before_app(self):
         with tempfile.TemporaryDirectory() as temporary:

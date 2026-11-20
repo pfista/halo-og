@@ -37,9 +37,11 @@ jobs:
       - name: Prepare installer tools
         run: python3 -m pip install -r tools/macos-dmg-requirements.txt
       - name: Build app without bundled game data
-        # The default build is optimized and ad-hoc signed. --release is the
-        # separate Developer ID / Sparkle path and requires signing credentials.
-        run: python3 tools/macos_build.py --no-data-path --sign-identity - --build-number "$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT"
+        # Optimized and ad-hoc signed, with Halo's public update feed and key
+        # embedded so a published build installs later releases. Run numbers
+        # only increase, which is the order Sparkle compares. --release is the
+        # separate Developer ID path and requires signing credentials.
+        run: python3 tools/macos_build.py --no-data-path --sign-identity - --update-feed --build-number "$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT"
       - name: Check packaging rules
         run: python3 -m unittest tools.test_macos_menu.ReleaseBoundary tools.test_macos_native_package tools.test_macos_dmg tools.test_community_packages tools.test_macos_content_tools
       - name: Create DMG
@@ -55,11 +57,13 @@ jobs:
           lipo "$bundle/Contents/MacOS/halo" -verify_arch arm64
           python3 - "$bundle" <<'PY'
           import hashlib
+          import json
           import os
           from pathlib import Path
           import plistlib
           import subprocess
           import sys
+          from tools.macos_build import update_configuration
           from tools.macos_release import audit_bundle, audit_adhoc_signing
           from tools.macos_dmg import audit_dmg_layout
           from tools.release_discovery import ci_source_identity
@@ -74,6 +78,8 @@ jobs:
           identity = ci_source_identity()
           assert identity and info["HaloSourceSHA"] == identity["source_sha"], info
           assert info["HaloSourceDate"] == identity["source_date"], info
+          updates = update_configuration(json.loads(Path("port/macos/release-config.json").read_text()))
+          assert updates and all(info[key] == value for key, value in updates.items()), info
           build_info = (contents / "Resources/BuildInfo.txt").read_text()
           assert f"Source: {os.environ['GITHUB_SHA']}\n" in build_info, build_info
           guest = (contents / "Resources/halo_guest.elf").read_bytes()
@@ -95,8 +101,8 @@ jobs:
               "This build is ad-hoc signed and not notarized; macOS may block first launch.\n"
               "Signing uses no personal developer certificate or Apple Team ID.\n"
               "See https://support.apple.com/en-us/102445 for Apple's opening instructions.\n"
-              "Check for Updates opens availability in Settings; Download Update opens GitHub.\n"
-              "Install updates manually after quitting. Signed automatic installation is not configured.\n"
+              "Check for Updates downloads published Halo OG releases and installs them after the game quits.\n"
+              "Updates keep your maps, saves and settings.\n"
               f"Setup, controls and joining games: https://github.com/pfista/halo-og/blob/{os.environ['GITHUB_SHA']}/docs/setup-macos.md\n\n"
               + build_info
           )

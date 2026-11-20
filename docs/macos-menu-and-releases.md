@@ -21,11 +21,12 @@ instructions. Artifacts expire after 14 days.
 CI uses public dependencies and checked-in SDK declarations. It excludes game
 data, private inputs and checkout paths, and verifies every Mach-O architecture
 is ad-hoc signed without developer certificates. The displayed name is Halo OG;
-the stable bundle ID remains `local.halo.ce-universal`. CI testing builds leave
-Sparkle installation unconfigured. New setup builds instead check Halo OG's
-GitHub releases and offer a browser download in Settings. Developer ID signing,
-notarization, and automatic installation still need a configured release pipeline;
-see [client updates](client-updates.md).
+the bundle ID is `local.halo.og`. CI builds embed Halo's
+update feed and public key (`--update-feed`), so a published build installs
+later releases through Sparkle. Neither value is a secret, and no developer
+identity is involved. Builds are not notarized, so macOS still asks the player
+to approve the first launch of a new installation; see
+[client updates](client-updates.md).
 
 ## Manual testing prerelease
 
@@ -133,8 +134,12 @@ OpenGL/SDL/audio runtime dependencies. Android signing depends on the existing
 CI signing configuration. Build success does not establish cross-platform play.
 Fork CI builds disable the upstream installer that targets cybersecurity's
 different build. New setup builds add Halo OG notices with manual downloads;
-the published `test-v0.3.0-net11-gameplay1` predates those notices. Sparkle
-installation remains unconfigured in current Mac testing builds.
+the published `test-v0.3.0-net11-gameplay1` predates those notices. Mac builds
+from `v0.5.2` and earlier have no update feed and need one manual installation
+of a later release.
+
+After the prerelease is published, [advance the Mac update feed](#publishing-a-mac-update)
+so installed copies are offered it.
 
 Read-only local preparation and verification are available without publication:
 
@@ -225,64 +230,116 @@ chooser and preserves the command-line test runner behavior.
 ## Sparkle configuration
 
 Sparkle 2.10.0 is pinned by checksum in `port/macos/dependencies.json`. It starts
-only with a valid HTTPS feed and 32-byte public Ed25519 key. Standard Sparkle
-UI handles update consent and downloads. Scheduled reminders wait in the menu
-while playing; installations requiring a relaunch wait for clean game exit.
-When no Sparkle feed/key is configured, **Check for Updates…** opens Settings
+only with a valid HTTPS feed and 32-byte public Ed25519 key in the app's
+`Info.plist`. CI builds embed both with `--update-feed`; a plain local build
+omits them and keeps the GitHub notice below. Standard Sparkle UI handles update
+consent and downloads. Scheduled reminders wait in the menu while playing;
+installations requiring a relaunch wait for clean game exit. Sparkle replaces
+the app only. Maps, saves, profiles and settings live outside the app and are
+untouched.
+
+When no Sparkle feed/key is embedded, **Check for Updates…** opens Settings
 with Halo OG's GitHub release status, and **Download Update…** opens the Mac
 download in the browser. The checkbox **Automatically check for updates** checks
 metadata only; it does not install the download. Clean matching-main CI builds
 record source SHA/date for comparisons; local builds can open the releases page
-manually. See [client updates](client-updates.md) for current notice behavior and
-the planned signed GitHub Actions pipeline.
+manually. See [client updates](client-updates.md) for the other platforms.
 
-Sparkle app-update hosting is intentionally unconfigured; community-map
-hosting above is configured independently. The non-secret checked-in file
-`port/macos/release-config.json` currently has null values for:
+Update hosting is set in the non-secret checked-in file
+`port/macos/release-config.json`:
 
-| Field | Purpose |
+| Field | Value |
 | --- | --- |
-| `feed_url` | Public HTTPS appcast XML |
+| `feed_url` | `https://dl.oghalo.com/updates/mac/testing/appcast.xml`, the testing channel's appcast |
 | `public_update_key` | Halo's public Sparkle Ed25519 key |
-| `download_base_url` | Public HTTPS base for versioned DMGs |
-| `s3_bucket` | S3 or Cloudflare R2 bucket |
-| `s3_endpoint_url` | S3-compatible HTTPS API endpoint, if needed |
-| `s3_profile` | Existing AWS CLI profile name, if needed |
+| `download_base_url` | `https://dl.oghalo.com/updates`; a release's DMG is `mac/<build>/Halo-OG-<version>.dmg` beneath it |
 
-The S3-compatible publisher requires the feed beneath the download base.
-Another service can host the same DMG/XML over public HTTPS. No new application
-environment variables or committed credentials are needed.
+Updates share the community maps' R2 account, bucket and public origin from
+`tools/map-publisher.json`; an object's key is its public URL path. No release
+has been published to this feed yet. No new application environment variables
+or committed credentials are needed.
 
-After choosing hosting and reviewing distribution rights, create Halo's separate
-Sparkle key in the login Keychain:
+Sparkle orders updates by build number (`CFBundleVersion`). CI uses the macOS
+DMG workflow's run number and attempt, such as `512.1`, which only increases.
+Renaming or recreating that workflow restarts the count, so keep it.
+
+### The update key
+
+Halo's Sparkle key was created on November 19, 2026 with
+`python3 tools/macos_release.py setup-updates`. Installed apps refuse an update
+signed with any other key, so losing it strands every installed copy.
+
+The private half is the 1Password document
+**Halo OG Sparkle update signing key (private)**. `publish-release` asks the
+1Password command-line tool (`op`) for that document by title and pipes it
+straight into Sparkle's signer, so the key is never written to disk or held by
+the release tool. 1Password asks for approval each time. When more than one
+1Password account is signed in, name the one holding the document:
 
 ```sh
-python3 tools/macos_release.py setup-updates
+export OP_ACCOUNT=my.1password.com
 ```
 
-Commit only its public key. Keep the private key in Keychain and back it up via
-the established 1Password workflow. Use the 1Password MCP server when preparing
-developer environments. Signing/notary use existing Keychain identities and
-profiles; storage uses an existing AWS profile.
+The Mac that created the key also has a copy in its login Keychain;
+`--keychain-key` signs with that copy instead. To replace a lost key you must
+ship a build with a new public key through the old key first, so there is no
+recovery once both copies are gone.
 
-From a clean, committed tree, prepare a release with an explicit identity.
-For this `v0.3.1` example, first update the canonical version header as described
-above; `--version` must match it.
-Use the packaging virtual environment prepared above so the Finder metadata
-dependencies are available.
+### Publishing a Mac update
+
+The feed offers the same DMG as the GitHub release. After the
+[testing prerelease](#manual-testing-prerelease) for a tag is published, and
+with the user's explicit instruction to release it:
+
+```sh
+python3 tools/macos_release.py publish-release v0.6.0 --dry-run
+python3 tools/macos_release.py publish-release v0.6.0 \
+  --credential-file /path/to/approved/1password-mount.env
+```
+
+`publish-release` needs the authenticated GitHub CLI and `op`. It:
+
+1. Downloads `Halo-OG-macos-arm64.dmg` and `SHA256SUMS` from the published
+   release and checks the DMG against its listed hash.
+2. Mounts the DMG and audits the app: package contents, ad-hoc signing with no
+   certificate or team, the tag's version, and the embedded feed and public key.
+   A build without them is refused, because its installed copies could never
+   update again.
+3. Refuses a build number lower than the one the live feed already offers.
+4. Signs the DMG with the key from 1Password and verifies that signature with
+   the committed public key, which is the check installed apps make.
+5. Uploads the DMG to its versioned URL only if nothing exists there, reads the
+   public download back and checks its hash, then replaces the feed last and
+   verifies the live XML. A different DMG already at that URL stops publication.
+
+`--dry-run` stops after step 4 and uploads nothing. The record and feed are
+written to `build/macos/releases/<tag>/`. The Cloudflare token comes through
+the map publisher's route: `CLOUDFLARE_API_TOKEN` in the environment, that
+mounted file, or a hidden prompt. Rerunning after a failed upload is safe.
+
+### Developer ID and notarization
+
+Halo OG releases are ad-hoc signed and not notarized. The older route for a
+Developer ID signed, notarized DMG remains in the tool and has never produced a
+release. From a clean, committed tree, with the packaging virtual environment
+prepared above and the update key in the login Keychain:
 
 ```sh
 build/macos/dmg-packaging-venv/bin/python tools/macos_release.py build --version 0.3.1 --build-number 8 \
   --sign-identity 'Developer ID Application: YOUR NAME (TEAMID)' \
   --notary-profile YOUR_EXISTING_KEYCHAIN_PROFILE
+python3 tools/macos_release.py publish build/macos/releases/8 \
+  --credential-file /path/to/approved/1password-mount.env
 ```
 
-The tool rebuilds a fresh app, signs nested helpers/libraries and the app with
+`build` rebuilds a fresh app, signs nested helpers/libraries and the app with
 hardened runtime, audits resources, notarizes/staples the app, creates an
 Applications-link DMG, notarizes/staples it, and Sparkle-signs it. The custom
 guest loader needs unsigned executable-memory permission, declared in
-`port/macos/host.entitlements`. Developer ID launch/notarization remain untested
-until a real release is prepared.
+`port/macos/host.entitlements`. Developer ID launch, notarization, and an update
+from an installed ad-hoc copy to a Developer ID build are untested. `publish`
+re-verifies checksum, certificate signature, stapled ticket and Sparkle
+signature, then uploads in the same order as above.
 
 The app and feed report the minimum OS required by their bundled Mach-O code.
 The current Homebrew SDL3 requires macOS 26.0; this build is Apple Silicon.
@@ -294,18 +351,6 @@ external symlinks and unexpected resources. It establishes a packaging boundary,
 not redistribution rights for compiled code or artwork. Public dependency
 licenses are included. This product includes software developed by in
 <in@fishtank.com>.
-
-For an approved release and configured hosting:
-
-```sh
-python3 tools/macos_release.py publish build/macos/releases/8
-```
-
-The publisher re-verifies checksum, certificate signature, stapled ticket and
-Sparkle signature, uploads an immutable versioned DMG, reads the public download
-back and checks its hash, then updates the feed last and verifies the live XML.
-`release.json` records source revision, signatures, hashes, URLs and notarization
-submissions.
 
 The packaging audit verifies resource and signature boundaries, not third-party
 redistribution rights. Dependency licenses are included; notarization is separate

@@ -1,8 +1,5 @@
 {
-  "feed_url": null,
-  "public_update_key": null,
-  "download_base_url": null,
-  "s3_bucket": null,
-  "s3_endpoint_url": null,
-  "s3_profile": null
+  "feed_url": "https://dl.oghalo.com/updates/mac/testing/appcast.xml",
+  "public_update_key": "YL97DAdYqTn2SifvqTkglvRNSMwNF5+tZB/iI7GUTQQ=",
+  "download_base_url": "https://dl.oghalo.com/updates"
 }
