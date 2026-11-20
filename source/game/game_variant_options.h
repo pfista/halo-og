@@ -1,7 +1,7 @@
-/* Version 11's PC gametype-options wire record. Included after game_variant.
- * Keep its complete layout for interoperability while this fork continues to
- * host its existing Xbox rules. The helper below classifies unsupported options
- * for review; best-effort v11 client admission does not call it. Protocol,
+/* The PC gametype-options wire record added in version 11. Included after
+ * game_variant. Halo OG keeps its layout and hosts its existing Xbox rules. A
+ * client refuses a settings record with an option the helper below reports,
+ * before the record can precache a map or change client state. Protocol,
  * capability, packet and map checks remain separate admission requirements.
  */
 #ifndef __GAME_VARIANT_OPTIONS_H

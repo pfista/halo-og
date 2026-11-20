@@ -207,16 +207,15 @@ Game-discovery UI requires a user check-in before implementation and should map
 to original Xbox-style Multiplayer/System Link menus; upstream's PC-style
 server browser UI is not adopted.
 
-Protocol 11 retains host authority and 30 Hz simulation. Its 28-byte PC options
-record does not introduce a new prediction or transport algorithm. Halo OG
-hosts original-rule defaults. At the user's request, the October 4 compatibility
-changes admit differing v11 gametype options for best-effort live testing,
-including options with unimplemented local behavior. The diagnostic helper
-still classifies unsupported options, but no longer controls admission. Host
-time limits and other authoritative state can be replicated, while radar,
-initial vehicle placement, custom loadouts and weapon rules may still differ.
-This is not a claim of supported mixed-host gameplay. That relaxation served
-mixed-host testing; whether to restore the option gate is undecided. See
+Version 20012 sends what protocol 11 sent: host authority, 30 Hz simulation
+and the 28-byte PC options record, with no new prediction or transport
+algorithm. Halo OG hosts original-rule defaults. A client refuses a settings
+record carrying an option it does not implement (radar players, per-team
+vehicle sets, custom loadouts, unknown weapon sets, or an invalid value) before
+the record can precache a map or change state. Valid host-authoritative values,
+such as a time limit or friendly-fire mode, are accepted. From October 4 to
+November 19, 2026 that check was switched off for mixed-host testing with
+upstream builds; it is enforced again. See
 [host settings compatibility](host-time-limit-compatibility.md).
 
 Protocol/version and PB capability checks, packet reassembly, machine/player

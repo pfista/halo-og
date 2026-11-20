@@ -367,10 +367,12 @@ static void host_time_limit(void) {
         assert(network_game_client_game_settings_updated(&client,&game));
         assert(client.game.variant_options.time_limit==limits[i]);
         assert(precaches==1 && applied==1 && !dialogs && !errors);
-        /* Differing rules no longer block admission during live testing. */
+        /* A rule this build does not implement blocks admission and leaves
+         * the accepted settings in place. */
         game.variant_options.loadout=1;
-        assert(network_game_client_game_settings_updated(&client,&game));
-        assert(!dialogs && !errors);
+        assert(!network_game_client_game_settings_updated(&client,&game));
+        assert(dialogs==1 && errors==1 && precaches==1 && applied==1);
+        assert(client.game.variant_options.time_limit==limits[i] && !client.game.variant_options.loadout);
     }
     struct network_game game=defaults();
     assert(game.variant_options.time_limit==0);
@@ -425,10 +427,10 @@ static void host_delay_acknowledgement(void) {
     for(unsigned i=0;i<sizeof(unknown_flags)/sizeof(unknown_flags[0]);i++) {
         struct network_game game=defaults(); reset();
         client.state=_network_game_client_state_pregame;
-        game.variant.flags=unknown_flags[i];game.variant_options.time_limit=15;game.variant_options.loadout=1;
+        game.variant.flags=unknown_flags[i];game.variant_options.time_limit=15;
         assert(network_game_client_game_settings_updated(&client,&game));
         assert(client.game.variant.flags==0 && applied_flags==0);
-        assert(client.game.variant_options.time_limit==15 && client.game.variant_options.loadout==1);
+        assert(client.game.variant_options.time_limit==15);
     }
     /* A new host's acknowledgement remains decodable by the mask-63
      * generation. It cannot advertise Hardcore to that older peer. */
@@ -847,9 +849,12 @@ static void host_authority_options(void) {
     game.variant_options.secondary_weapon=8;
     game.variant.universal_variant.weapon_set=11;
     network_game_client_performance_host_capabilities=1023;
-    assert(network_game_client_game_settings_updated(&client,&game));
-    assert(!memcmp(&client.game.variant_options,&game.variant_options,sizeof(game.variant_options)));
-    assert(client.game.variant.universal_variant.weapon_set==11 && !dialogs);
+    /* Options this build does not implement are refused with an explanation,
+     * before the record can precache a map or change the client's game. */
+    before=client.game;
+    assert(!network_game_client_game_settings_updated(&client,&game));
+    assert(!memcmp(&client.game,&before,sizeof(before)));
+    assert(precaches==1 && applied==1 && dialogs==1 && errors==1);
     const short valid_seconds[]={0,1,30,32767};
     for(unsigned i=0;i<sizeof(valid_seconds)/sizeof(valid_seconds[0]);i++) {
         game=defaults();
@@ -919,8 +924,8 @@ static void fragments(void) {
     assert(!memcmp(&client.game.variant_options,&game.variant_options,sizeof(game.variant_options)));
     reset(); game.variant_options.loadout=1;
     game.variant_options.vehicle_set[0]=255; game.variant_options.vehicle_set[1]=3;
-    assert(send_record(&game) && applied==1 && precaches==1 && !dialogs);
-    assert(!memcmp(&client.game.variant_options,&game.variant_options,sizeof(game.variant_options)));
+    /* A reassembled record with unimplemented rules is refused whole. */
+    assert(!send_record(&game) && !applied && !precaches && dialogs==1);
     reset(); struct message_server_game_settings_update piece={0};
     piece.total_size=13092; piece.length=1;
     assert(!network_game_client_receive_game_settings_piece(&client,&piece));
