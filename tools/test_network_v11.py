@@ -23,6 +23,7 @@ PREFIX = r'''
 #include <stdio.h>
 #include <string.h>
 #include "halo_port_limits.h"
+#include "halo_og_version.h"
 #include "networking/network_performance_protocol.h"
 #include "networking/network_expanded_cache_protocol.h"
 typedef unsigned char byte, boolean;
@@ -295,13 +296,19 @@ static void reset(void) {
     network_game_client_settings_staging_size=0;
 }
 static void wire(void) {
-    assert(HALO_PORT_NETWORK_VERSION==20012);
+    /* The network version follows the product version's release line, so the
+       builds that play together are the ones the version says do: every 0.6.x,
+       then every 1.x. A bump of one without the other fails here. */
+    unsigned major=0,minor=0;
+    assert(sscanf(HALO_OG_VERSION,"%u.%u",&major,&minor)==2 && major<100 && minor<100);
+    assert(HALO_PORT_NETWORK_VERSION==HALO_OG_NETWORK_VERSION_BASE+(major?major*100:minor));
+    assert(HALO_OG_NETWORK_LINE(HALO_PORT_NETWORK_VERSION)==(major?major*100:minor));
     assert(NETWORK_PERFORMANCE_ADVERTISED_VERSION==(0x8000u|HALO_PORT_NETWORK_VERSION));
-    assert(HALO_OG_NETWORK_REVISION(HALO_PORT_NETWORK_VERSION)==12);
-    assert(HALO_OG_NETWORK_REVISION(NETWORK_PERFORMANCE_ADVERTISED_VERSION)==12);
+    assert(HALO_OG_NETWORK_LINE(NETWORK_PERFORMANCE_ADVERTISED_VERSION)==HALO_OG_NETWORK_LINE(HALO_PORT_NETWORK_VERSION));
+    assert(HALO_OG_NETWORK_LINE(20006)==6 && HALO_OG_NETWORK_LINE(0xCE26)==6 && HALO_OG_NETWORK_LINE(20100)==100);
     /* Builds from before Halo OG had its own versions, and OpenCE's, are another family. */
-    assert(!HALO_OG_NETWORK_REVISION(0) && !HALO_OG_NETWORK_REVISION(11) && !HALO_OG_NETWORK_REVISION(0x800B));
-    assert(!HALO_OG_NETWORK_REVISION(12) && !HALO_OG_NETWORK_REVISION(44) && !HALO_OG_NETWORK_REVISION(20000));
+    assert(!HALO_OG_NETWORK_LINE(0) && !HALO_OG_NETWORK_LINE(11) && !HALO_OG_NETWORK_LINE(0x800B));
+    assert(!HALO_OG_NETWORK_LINE(12) && !HALO_OG_NETWORK_LINE(44) && !HALO_OG_NETWORK_LINE(20000));
     assert(sizeof(struct network_game)==13120);
     assert(offsetof(struct network_game,variant_options)==HALO_PORT_NETWORK_GAME_VARIANT_OPTIONS_OFFSET);
     assert(offsetof(struct network_game,local_data)==HALO_PORT_NETWORK_GAME_LOCAL_DATA_OFFSET);

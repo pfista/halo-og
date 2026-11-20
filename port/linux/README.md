@@ -301,7 +301,8 @@ have up to 4 players (split screen).
 Obey these rules:
 
 - All the machines in a game must use a build with the same limits.
-- The port uses Halo OG's own netcode version, 20012. It does not see the Xbox
+- The port uses Halo OG's own netcode version, 20006 for every 0.6.x build.
+  Builds with the same minor version play together. It does not see the Xbox
   game, and it does not join OpenCE builds or Halo OG v0.5.2 and earlier, which
   are on other versions.
 

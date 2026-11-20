@@ -65,18 +65,24 @@ client does not join a host of another version, but tells the player which
 is newer (network_client_manager.c). A host advertises it, with its netcode,
 in its game's advertisement's reserved bytes (network_server_message_handler.c),
 which hosts built before there was a version send as zeros: version 0.
-Raise it with any change to what the machines send each other.
 
 Versions 1 to 11 were shared with OpenCE. Halo OG's own versions are
-HALO_OG_NETWORK_VERSION_BASE plus a revision that continues from 12, outside
-OpenCE's sequential numbers, so neither joins the other's games and a build
-from before the split is told to update. Keep the version a plain decimal
-number on its line: tools/testing_release.py reads it. */
+HALO_OG_NETWORK_VERSION_BASE plus the release line of HALO_OG_VERSION
+(halo_og_version.h), outside OpenCE's sequential numbers, so neither joins the
+other's games and a build from before the split is told to update.
+
+The release line is what makes two builds able to play together. It is the
+minor version while the major version is 0, and 100 times the major version
+after that: 6 for every 0.6.x, 100 for every 1.x. A change that machines must
+agree on therefore needs a new minor version before 1.0 and a new major
+version after it; this number then follows the product version and is never
+raised on its own. tools/test_network_v11.py checks the two agree. Keep the
+version a plain decimal number on its line: tools/testing_release.py reads it. */
 #define HALO_OG_NETWORK_VERSION_BASE 20000
-#define HALO_PORT_NETWORK_VERSION 20012
-/* A Halo OG version's revision (12 for 20012), with the practice-options bit
+#define HALO_PORT_NETWORK_VERSION 20006
+/* A Halo OG version's release line (6 for 20006), with the practice-options bit
 (network_performance_protocol.h) ignored; 0 for any other build's version. */
-#define HALO_OG_NETWORK_REVISION(version) \
+#define HALO_OG_NETWORK_LINE(version) \
 	((((version) & 0x7FFFu) > HALO_OG_NETWORK_VERSION_BASE && \
 	  ((version) & 0x7FFFu) < HALO_OG_NETWORK_VERSION_BASE + 10000u) \
 		? ((version) & 0x7FFFu) - HALO_OG_NETWORK_VERSION_BASE : 0u)

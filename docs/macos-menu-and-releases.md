@@ -122,9 +122,11 @@ of `releases/latest/download`. Tags and assets are not overwritten. A failed
 publication can leave a new tag or incomplete release; inspect that state and
 use a fresh tag for a retry instead of overwriting it.
 
-Testers should use the same tag across platforms. Current source uses protocol
-**11**, which cannot join protocol 10 sessions; metadata extracts the actual
-protocol from the selected source instead of assuming it from the tag name.
+Testers should use releases of the same line across platforms: the same minor
+version before 1.0, such as any 0.6.x. Releases of different lines cannot join
+each other; see [protocol compatibility](xbox-fidelity.md#protocol-compatibility).
+Metadata extracts the actual network version from the selected source instead of
+assuming it from the tag name.
 The DMG is Apple Silicon/macOS 26+, ad-hoc signed and unnotarized. Windows builds
 are portable x86 executables; Linux builds still need the documented 32-bit
 OpenGL/SDL/audio runtime dependencies. Android signing depends on the existing

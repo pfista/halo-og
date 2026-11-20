@@ -3432,6 +3432,24 @@ the system link list does (network_game_join_game_from_server_list) */
 /* the platform layer's (sdl_platform.c) */
 void platform_show_message(char const *title, char const *message);
 
+/* a Halo OG network version's release line as players know it: "0.6" while
+the major version is 0, then "1.x" (halo_port_limits.h) */
+static void network_version_release_line(unsigned int version, char *line)
+{
+	unsigned int number = HALO_OG_NETWORK_LINE(version);
+
+	if (number < 100)
+	{
+		csprintf(line, "0.%u", number);
+	}
+	else
+	{
+		csprintf(line, "%u.x", number / 100);
+	}
+
+	return;
+}
+
 /* whether this client can join the advertised game: its host's network
 version is this machine's (HALO_PORT_NETWORK_VERSION), and it plays the
 distributed netcode (a host of this version built before the lockstep
@@ -3447,6 +3465,8 @@ boolean network_game_client_advertised_game_compatible(
 	unsigned int theirs;
 	boolean distributed;
 	char message[400];
+	char our_line[16];
+	char their_line[16];
 
 	if (game_index < 0 || game_index >= MAXIMUM_NETWORK_ADVERTISED_GAMES)
 		return FALSE;
@@ -3465,7 +3485,7 @@ boolean network_game_client_advertised_game_compatible(
 			"The host is using the lockstep network code, which this version no longer has.\n\n"
 			"Ask the host to update the game.");
 	}
-	else if (!HALO_OG_NETWORK_REVISION(theirs))
+	else if (!HALO_OG_NETWORK_LINE(theirs))
 	{
 		/* a build from before Halo OG had its own versions, or another port */
 		csprintf(message,
@@ -3473,21 +3493,32 @@ boolean network_game_client_advertised_game_compatible(
 			"release or another port of the game.\n\n"
 			"Ask the host to update to the current Halo OG.");
 	}
-	else if (theirs > ours)
+	else if (HALO_OG_NETWORK_LINE(theirs) == HALO_OG_NETWORK_LINE(ours))
 	{
+		/* the same release line, advertised in a way this build does not accept */
 		csprintf(message,
-			"The host is using a newer version of the network code than you.\n\n"
-			"You are on version %u. The host is on version %u.\n\n"
-			"Update the game to join this host.",
-			HALO_OG_NETWORK_REVISION(ours), HALO_OG_NETWORK_REVISION(theirs));
+			"The host's game cannot be joined from this build.\n\n"
+			"Update both machines to the latest Halo OG.");
 	}
 	else
 	{
-		csprintf(message,
-			"The host is using an older version of the network code than you.\n\n"
-			"You are on version %u. The host is on version %u.\n\n"
-			"Ask the host to update the game.",
-			HALO_OG_NETWORK_REVISION(ours), HALO_OG_NETWORK_REVISION(theirs));
+		/* releases of different lines cannot play together; name both */
+		network_version_release_line(ours, our_line);
+		network_version_release_line(theirs, their_line);
+		if (HALO_OG_NETWORK_LINE(theirs) > HALO_OG_NETWORK_LINE(ours))
+		{
+			csprintf(message,
+				"The host is on a newer Halo OG release than you.\n\n"
+				"You have Halo OG %s. The host has Halo OG %s.\n\n"
+				"Update the game to join this host.", our_line, their_line);
+		}
+		else
+		{
+			csprintf(message,
+				"The host is on an older Halo OG release than you.\n\n"
+				"You have Halo OG %s. The host has Halo OG %s.\n\n"
+				"Ask the host to update the game.", our_line, their_line);
+		}
 	}
 	if (tell)
 	{

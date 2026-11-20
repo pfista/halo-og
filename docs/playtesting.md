@@ -91,8 +91,10 @@ app data. See [Android installation/data](../port/android/README.md#game-data).
 
 ## Play together
 
-1. Confirm everyone uses the **same Halo OG release tag/commit**, protocol 11,
-   and matching map data. Old protocol-10 builds cannot join. For this first
+1. Confirm everyone uses a Halo OG release with the **same first two numbers**,
+   such as any 0.6.x, and matching map data. Releases with a different minor
+   version cannot join each other, and v0.5.2 and earlier cannot join 0.6. The
+   game names both releases when it refuses a join. For this first
    test, use a stock map and select **Performance Options → Stock**, with
    **Input Delay Off** and **Hardcore Off**.
 2. The host opens **Multiplayer → System Link** and creates a game. Select a
