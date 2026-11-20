@@ -108,7 +108,6 @@ static void reset(void) {
 static void wire_layout(void) {
     struct distributed_player_ping ping = {7, 0, 0x1234};
     const byte expected[] = {7, 0, 0x34, 0x12};
-    assert(HALO_PORT_NETWORK_VERSION == 11);
     assert(_distributed_message_client_identity == 18 && _distributed_message_pings == 19);
     assert(NUMBER_OF_DISTRIBUTED_MESSAGES == 20);
     assert(sizeof(struct distributed_message_header) == 8);

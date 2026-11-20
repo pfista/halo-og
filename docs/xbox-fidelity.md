@@ -195,7 +195,30 @@ discovery services was a goal until November 19, 2026 and no longer is. By
 upstream `307a42ee` (November 16, 2026) OpenCE had moved from protocol 11 to 44,
 adding co-op, new modes, dedicated-server and admission changes that Halo OG
 does not adopt, and it now checks the version explicitly when a client joins.
-Halo OG does not follow those versions. Review upstream networking fixes individually and
+Halo OG does not follow those versions. Its network version is its own:
+20000 plus the release line of the product version, currently **20006** for
+0.6. Versions 1 to 11 were shared with OpenCE, so Halo OG v0.5.2 and
+earlier, and every OpenCE build, are a different version; a client names the
+mismatch and does not join.
+
+**The product version states which builds play together.** While the major
+version is 0, builds with the same minor version do: every 0.6.x. From 1.0,
+builds with the same major version do: every 1.x. The release line is the
+minor version before 1.0 and 100 times the major version after it, and the
+game refuses a host on another line, naming both releases. The rule for
+changes follows from that:
+
+| Change | Version to raise |
+| --- | --- |
+| Anything machines must agree on: what they send each other, or simulation behavior | Minor before 1.0, major after |
+| A feature that works when only some machines have it, such as a host option an older client can join while it is off | Patch before 1.0, minor after |
+| A fix that other machines cannot observe | Patch |
+
+`HALO_PORT_NETWORK_VERSION` follows `HALO_OG_VERSION` and is never raised on
+its own; `tools/test_network_v11.py` fails when the two disagree. A change of
+the first kind waits for the next release line instead of shipping in a patch.
+
+Review upstream networking fixes individually and
 port one when it improves Halo OG's own protocol. Keep Halo OG hosting defaults
 original. [The interoperability review](network-interoperability.md) is
 retained as the historical protocol-11 audit.
@@ -203,16 +226,15 @@ Game-discovery UI requires a user check-in before implementation and should map
 to original Xbox-style Multiplayer/System Link menus; upstream's PC-style
 server browser UI is not adopted.
 
-Protocol 11 retains host authority and 30 Hz simulation. Its 28-byte PC options
-record does not introduce a new prediction or transport algorithm. Halo OG
-hosts original-rule defaults. At the user's request, the October 4 compatibility
-changes admit differing v11 gametype options for best-effort live testing,
-including options with unimplemented local behavior. The diagnostic helper
-still classifies unsupported options, but no longer controls admission. Host
-time limits and other authoritative state can be replicated, while radar,
-initial vehicle placement, custom loadouts and weapon rules may still differ.
-This is not a claim of supported mixed-host gameplay. That relaxation served
-mixed-host testing; whether to restore the option gate is undecided. See
+Version 20006 sends what protocol 11 sent: host authority, 30 Hz simulation
+and the 28-byte PC options record, with no new prediction or transport
+algorithm. Halo OG hosts original-rule defaults. A client refuses a settings
+record carrying an option it does not implement (radar players, per-team
+vehicle sets, custom loadouts, unknown weapon sets, or an invalid value) before
+the record can precache a map or change state. Valid host-authoritative values,
+such as a time limit or friendly-fire mode, are accepted. From October 4 to
+November 19, 2026 that check was switched off for mixed-host testing with
+upstream builds; it is enforced again. See
 [host settings compatibility](host-time-limit-compatibility.md).
 
 Protocol/version and PB capability checks, packet reassembly, machine/player
@@ -221,13 +243,10 @@ before the received settings can change state or start precaching. Use matching
 Halo OG builds and map revisions for the baseline playtest.
 
 PB capability flag `0x04` is separate from the in-progress flag `0x02`.
-Options-off games advertise stock v11; enabled PB games advertise `0x800B` and
-require supporting peers. Input Delay: 33ms also requires peers that confirm
+Options-off games advertise the stock version, 20006; enabled PB games advertise
+it with bit 15 set (`0xCE26`) and require supporting peers. Input Delay: 33ms also requires peers that confirm
 the delay capability; older PB builds cannot join an enabled-delay match.
-v10/PB-v10 builds must update. For mixed cybersecurity tests, leave Performance
-Options Stock, Input Delay Off and Hardcore Off. Games with five or more players should leave
-Infinite Grenades off because the native Xbox rule still differs even though
-the best-effort gate admits that setting.
+Builds on version 11 or earlier must update.
 See [networking](../port/linux/NETCODE.md), [Performance Options](performance-options.md)
 and [playtesting](playtesting.md) for implementation and player guidance.
 

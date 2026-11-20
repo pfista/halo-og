@@ -23,6 +23,7 @@ PREFIX = r'''
 #include <stdio.h>
 #include <string.h>
 #include "halo_port_limits.h"
+#include "halo_og_version.h"
 #include "networking/network_performance_protocol.h"
 #include "networking/network_expanded_cache_protocol.h"
 typedef unsigned char byte, boolean;
@@ -295,7 +296,19 @@ static void reset(void) {
     network_game_client_settings_staging_size=0;
 }
 static void wire(void) {
-    assert(HALO_PORT_NETWORK_VERSION==11);
+    /* The network version follows the product version's release line, so the
+       builds that play together are the ones the version says do: every 0.6.x,
+       then every 1.x. A bump of one without the other fails here. */
+    unsigned major=0,minor=0;
+    assert(sscanf(HALO_OG_VERSION,"%u.%u",&major,&minor)==2 && major<100 && minor<100);
+    assert(HALO_PORT_NETWORK_VERSION==HALO_OG_NETWORK_VERSION_BASE+(major?major*100:minor));
+    assert(HALO_OG_NETWORK_LINE(HALO_PORT_NETWORK_VERSION)==(major?major*100:minor));
+    assert(NETWORK_PERFORMANCE_ADVERTISED_VERSION==(0x8000u|HALO_PORT_NETWORK_VERSION));
+    assert(HALO_OG_NETWORK_LINE(NETWORK_PERFORMANCE_ADVERTISED_VERSION)==HALO_OG_NETWORK_LINE(HALO_PORT_NETWORK_VERSION));
+    assert(HALO_OG_NETWORK_LINE(20006)==6 && HALO_OG_NETWORK_LINE(0xCE26)==6 && HALO_OG_NETWORK_LINE(20100)==100);
+    /* Builds from before Halo OG had its own versions, and OpenCE's, are another family. */
+    assert(!HALO_OG_NETWORK_LINE(0) && !HALO_OG_NETWORK_LINE(11) && !HALO_OG_NETWORK_LINE(0x800B));
+    assert(!HALO_OG_NETWORK_LINE(12) && !HALO_OG_NETWORK_LINE(44) && !HALO_OG_NETWORK_LINE(20000));
     assert(sizeof(struct network_game)==13120);
     assert(offsetof(struct network_game,variant_options)==HALO_PORT_NETWORK_GAME_VARIANT_OPTIONS_OFFSET);
     assert(offsetof(struct network_game,local_data)==HALO_PORT_NETWORK_GAME_LOCAL_DATA_OFFSET);
@@ -303,12 +316,16 @@ static void wire(void) {
     assert(offsetof(struct game_variant_options,radar_players)==9);
     assert(offsetof(struct game_variant_options,loadout)==24);
     assert((NETWORK_PERFORMANCE_ADVERTISED_FLAG & HALO_PORT_ADVERTISED_IN_PROGRESS_FLAG)==0);
-    assert(network_performance_advertised_version(0,11)==11);
-    assert(network_performance_advertised_version(1,11)==0x800B);
-    assert(network_performance_version_compatible(0x800B,4,11));
-    assert(!network_performance_version_compatible(0x800B,2,11));
-    assert(!network_performance_version_compatible(0x800A,4,11));
-    assert(!network_performance_version_compatible(10,4,11));
+    const unsigned stock=HALO_PORT_NETWORK_VERSION, practice=NETWORK_PERFORMANCE_ADVERTISED_VERSION;
+    assert(network_performance_advertised_version(0,stock)==stock);
+    assert(network_performance_advertised_version(1,stock)==practice);
+    assert(network_performance_version_compatible(stock,0,stock));
+    assert(network_performance_version_compatible(practice,4,stock));
+    assert(!network_performance_version_compatible(practice,2,stock));
+    /* The versions shared with OpenCE, and its later ones, are never compatible. */
+    assert(!network_performance_version_compatible(11,4,stock));
+    assert(!network_performance_version_compatible(0x800B,4,stock));
+    assert(!network_performance_version_compatible(44,4,stock));
     byte encoded[16]; unsigned flags;
     network_performance_encode(encoded,NETWORK_PERFORMANCE_SETTINGS,31);
     assert(network_performance_decode(encoded,16,NETWORK_PERFORMANCE_SETTINGS,&flags) && flags==31);
@@ -357,10 +374,12 @@ static void host_time_limit(void) {
         assert(network_game_client_game_settings_updated(&client,&game));
         assert(client.game.variant_options.time_limit==limits[i]);
         assert(precaches==1 && applied==1 && !dialogs && !errors);
-        /* Differing rules no longer block admission during live testing. */
+        /* A rule this build does not implement blocks admission and leaves
+         * the accepted settings in place. */
         game.variant_options.loadout=1;
-        assert(network_game_client_game_settings_updated(&client,&game));
-        assert(!dialogs && !errors);
+        assert(!network_game_client_game_settings_updated(&client,&game));
+        assert(dialogs==1 && errors==1 && precaches==1 && applied==1);
+        assert(client.game.variant_options.time_limit==limits[i] && !client.game.variant_options.loadout);
     }
     struct network_game game=defaults();
     assert(game.variant_options.time_limit==0);
@@ -415,10 +434,10 @@ static void host_delay_acknowledgement(void) {
     for(unsigned i=0;i<sizeof(unknown_flags)/sizeof(unknown_flags[0]);i++) {
         struct network_game game=defaults(); reset();
         client.state=_network_game_client_state_pregame;
-        game.variant.flags=unknown_flags[i];game.variant_options.time_limit=15;game.variant_options.loadout=1;
+        game.variant.flags=unknown_flags[i];game.variant_options.time_limit=15;
         assert(network_game_client_game_settings_updated(&client,&game));
         assert(client.game.variant.flags==0 && applied_flags==0);
-        assert(client.game.variant_options.time_limit==15 && client.game.variant_options.loadout==1);
+        assert(client.game.variant_options.time_limit==15);
     }
     /* A new host's acknowledgement remains decodable by the mask-63
      * generation. It cannot advertise Hardcore to that older peer. */
@@ -603,7 +622,7 @@ static void expanded_weapon_acknowledgement(void) {
             assert(!network_performance_can_join(required,511));
             assert(network_performance_can_join(required,supported));
             assert(!flags || !network_performance_can_join(required,1023));
-            assert(network_performance_advertised_version(required,11)==0x800B);
+            assert(network_performance_advertised_version(required,HALO_PORT_NETWORK_VERSION)==NETWORK_PERFORMANCE_ADVERTISED_VERSION);
             reset();client.state=_network_game_client_state_pregame;
             assert(!network_game_client_game_settings_updated(&client,&host.game));
             assert(!precaches && !applied && errors==1 && dialogs==1);
@@ -837,9 +856,12 @@ static void host_authority_options(void) {
     game.variant_options.secondary_weapon=8;
     game.variant.universal_variant.weapon_set=11;
     network_game_client_performance_host_capabilities=1023;
-    assert(network_game_client_game_settings_updated(&client,&game));
-    assert(!memcmp(&client.game.variant_options,&game.variant_options,sizeof(game.variant_options)));
-    assert(client.game.variant.universal_variant.weapon_set==11 && !dialogs);
+    /* Options this build does not implement are refused with an explanation,
+     * before the record can precache a map or change the client's game. */
+    before=client.game;
+    assert(!network_game_client_game_settings_updated(&client,&game));
+    assert(!memcmp(&client.game,&before,sizeof(before)));
+    assert(precaches==1 && applied==1 && dialogs==1 && errors==1);
     const short valid_seconds[]={0,1,30,32767};
     for(unsigned i=0;i<sizeof(valid_seconds)/sizeof(valid_seconds[0]);i++) {
         game=defaults();
@@ -909,8 +931,8 @@ static void fragments(void) {
     assert(!memcmp(&client.game.variant_options,&game.variant_options,sizeof(game.variant_options)));
     reset(); game.variant_options.loadout=1;
     game.variant_options.vehicle_set[0]=255; game.variant_options.vehicle_set[1]=3;
-    assert(send_record(&game) && applied==1 && precaches==1 && !dialogs);
-    assert(!memcmp(&client.game.variant_options,&game.variant_options,sizeof(game.variant_options)));
+    /* A reassembled record with unimplemented rules is refused whole. */
+    assert(!send_record(&game) && !applied && !precaches && dialogs==1);
     reset(); struct message_server_game_settings_update piece={0};
     piece.total_size=13092; piece.length=1;
     assert(!network_game_client_receive_game_settings_piece(&client,&piece));

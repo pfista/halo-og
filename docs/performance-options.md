@@ -343,9 +343,9 @@ understand. An unextended v11 host ignores those unknown data messages.
 The updated host keeps capabilities per connection slot and clears them when
 the slot is removed or reused.
 
-All options off preserves stock v11 session admission in either direction for
-original-rule games. When any option is enabled, the host advertises extension
-version `0x800B` alongside capability flag `0x04`. A stock v11 client displays its existing
+All options off advertises Halo OG's stock network version, 20006. When any
+option is enabled, the host advertises that version with bit 15 set (`0xCE26`)
+alongside capability flag `0x04`. A client without practice options displays its
 update-required explanation. The host also checks capability at admission, so
 a stale advertisement or direct join cannot bypass the requirement.
 

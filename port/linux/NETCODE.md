@@ -102,13 +102,24 @@ adds the 28-byte PC gametype-options record to reliable game settings and marks
 loading/playing/postgame advertisements as in progress. The distributed movement,
 hit, object and ping message formats are unchanged from version 10.
 
+Versions 1 to 11 were shared with OpenCE, whose numbers have continued from 12
+with different contents. Halo OG's own versions are 20000 plus the product
+version's release line: the minor version while the major version is 0, then
+100 times the major version. The current one is **20006**, for every 0.6.x
+build. It sends what version 11 sent; its number alone keeps Halo OG and OpenCE
+games apart, and a build on version 11 or earlier is told to update. Builds of
+different release lines do not play together, and the refusal names both
+releases. [The protocol policy](../../docs/xbox-fidelity.md#protocol-compatibility)
+says which changes need a new line.
+
 This fork hosts the original-rule defaults for that new record and refuses active
 PC settings it does not implement before applying settings or precaching a map.
 It also recognizes upstream's action-only input bit while preserving its local
 controls. PB capability uses advertisement flag `0x04`, distinct from the new
-in-progress flag `0x02`; an enabled PB session advertises version `0x800B`.
-See [the v11 selective review](../../docs/xbox-fidelity.md#protocol-compatibility) for exact
-settings, rule and mixed-build compatibility limits.
+in-progress flag `0x02`; an enabled PB session advertises the stock version with
+bit 15 set (`0xCE26`).
+See [the protocol policy](../../docs/xbox-fidelity.md#protocol-compatibility) for exact
+settings and rule limits.
 
 A client plays by its host's rules: in another's game (searching for it,
 in its lobby, or playing it) the developer console, the telnet console

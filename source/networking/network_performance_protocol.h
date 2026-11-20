@@ -32,9 +32,10 @@
 #define NETWORK_PERFORMANCE_HARDCORE_CAMO_FLAG 256
 #define NETWORK_PERFORMANCE_MATCH_RULE_FLAGS (480u | NETWORK_PERFORMANCE_TURN_WITH_AIM_FLAG)
 #define NETWORK_PERFORMANCE_ADVERTISED_FLAG 4
-/* Outside upstream's sequential versions: stock clients show their existing
- * update-required dialog only while practice options are on. */
-#define NETWORK_PERFORMANCE_ADVERTISED_VERSION 0x800B
+/* The stock version (HALO_PORT_NETWORK_VERSION, 20006) with bit 15 set: stock
+ * clients show their existing update-required dialog only while practice
+ * options are on. */
+#define NETWORK_PERFORMANCE_ADVERTISED_VERSION 0xCE26
 
 static inline unsigned network_performance_runtime_supported_flags(
     int queue_supported, int timer_audio_available)

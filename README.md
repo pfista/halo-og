@@ -178,8 +178,8 @@ packet-loss comparisons remain work to complete.
 
 ### Networking
 
-The current shared upstream **protocol 11** uses host authority, local client
-prediction, and corrections at a 30 Hz simulation rate. The host decides damage,
+Halo OG's networking, inherited from upstream **protocol 11**, uses host authority,
+local client prediction, and corrections at a 30 Hz simulation rate. The host decides damage,
 deaths, spawns, pickups, and scores. This modern native networking replaces the
 original Xbox lockstep implementation; matching its LAN feel is a goal we must
 verify, not a claim that the networking code is identical. Protocol 11 adds wire
@@ -191,7 +191,8 @@ algorithm. Use matching Halo OG builds for playtests. See the
 
 Halo OG builds play with other Halo OG builds. Interoperability with OpenCE
 (formerly cybersecurity) clients is no longer a goal: OpenCE's protocol has
-moved on from protocol 11 and carries features Halo OG does not adopt. Desktop
+moved on from protocol 11 and carries features Halo OG does not adopt, and Halo
+OG now has its own network version, so v0.5.2 and earlier must update to join. Desktop
 source builds on macOS, Windows, and Linux
 now discover public games from **games.oghalo.com** in the original
 **Multiplayer → System Link** menu, alongside LAN games. Hosting is public by

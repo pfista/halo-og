@@ -150,6 +150,13 @@ builds from one source commit. Preparing announcement copy does not authorize po
   `port/linux/include/halo_og_version.h`. Bump and commit that header before
   building the matching platform artifacts. Never rewrite existing tags or
   replace their published assets.
+- The version states which builds play together: the same minor version while
+  the major version is 0 (every 0.6.x), the same major version from 1.0. A
+  change that machines must agree on, to what they send each other or to
+  simulation behavior, needs a new minor version before 1.0 and a new major
+  version after it; do not ship one in a patch. `HALO_PORT_NETWORK_VERSION`
+  follows the version header and is never raised on its own. See
+  [protocol compatibility](docs/xbox-fidelity.md#protocol-compatibility).
 - Both the annotated tag message and GitHub release notes must include concise
   commit subjects with short SHAs since the previous reachable Halo OG release
   tag, plus a compare link. Keep the overview and full commit list in the release
