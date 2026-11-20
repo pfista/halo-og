@@ -142,18 +142,18 @@ def update_configuration(config):
             "SUScheduledCheckInterval": 86400}
 
 
-def package(data_root, *, sign_identity="-", release=False, version=APP_VERSION, build=APP_BUILD, content_tools=None):
+def package(data_root, *, sign_identity="-", release=False, update_feed=False, version=APP_VERSION, build=APP_BUILD, content_tools=None):
     require_version(version)
     configuration = json.loads((ROOT / "port/macos/release-config.json").read_text())
-    if release:
-        if not update_configuration(configuration):
-            raise RuntimeError("Set Halo's update feed and public key before creating a release")
-        if not sign_identity.startswith("Developer ID Application:"):
-            raise RuntimeError("A release needs an explicit Developer ID Application signing identity")
+    if (release or update_feed) and not update_configuration(configuration):
+        raise RuntimeError("Set Halo's update feed and public key before embedding them")
+    if release and not sign_identity.startswith("Developer ID Application:"):
+        raise RuntimeError("A release needs an explicit Developer ID Application signing identity")
     destination = BUILD / (APP_NAME + ".app")
     with tempfile.TemporaryDirectory(prefix=".halo-package-", dir=BUILD) as temporary:
         staged = Path(temporary) / destination.name
-        package_into(staged, data_root, sign_identity=sign_identity, release=release, version=version, build=build, content_tools=content_tools)
+        package_into(staged, data_root, sign_identity=sign_identity, release=release, update_feed=update_feed,
+                     version=version, build=build, content_tools=content_tools)
         # A fresh bundle prevents old development resources entering a release.
         # Preserve the previous build, including a running executable's inode.
         backup = None
@@ -170,7 +170,7 @@ def package(data_root, *, sign_identity="-", release=False, version=APP_VERSION,
     print(f"Built {destination}")
 
 
-def package_into(app, data_root, *, sign_identity, release, version, build, content_tools=None):
+def package_into(app, data_root, *, sign_identity, release, version, build, update_feed=False, content_tools=None):
     require_version(version)
     contents = app / "Contents"
     macos = contents / "MacOS"
@@ -234,11 +234,13 @@ def package_into(app, data_root, *, sign_identity, release, version, build, cont
         info["HaloSourceSHA"] = source["source_sha"]
         info["HaloSourceDate"] = source["source_date"]
     configuration = json.loads((ROOT / "port/macos/release-config.json").read_text())
-    if release:
+    if release or update_feed:
+        # The feed and public key are public configuration. An ad-hoc build that
+        # embeds them installs published updates without any developer identity.
         updates = update_configuration(configuration)
         if not updates:
-            raise RuntimeError("Set Halo's update feed and public key before creating a release")
-        if sign_identity == "-":
+            raise RuntimeError("Set Halo's update feed and public key before embedding them")
+        if release and sign_identity == "-":
             raise RuntimeError("A release needs an explicit Developer ID Application signing identity")
         info.update(updates)
     with (contents / "Info.plist").open("wb") as stream:
@@ -452,6 +454,8 @@ def main():
     parser.add_argument("--data-root", type=Path, default=ROOT / "assets")
     parser.add_argument("--no-data-path", action="store_true", help="First launch asks for independently supplied game data")
     parser.add_argument("--release", action="store_true", help="Developer ID signed, hardened runtime build; does not notarize or publish")
+    parser.add_argument("--update-feed", action="store_true",
+                        help="Embed Halo's update feed and public key so this build installs published updates; --release implies it")
     parser.add_argument("--sign-identity", default="-")
     parser.add_argument("--version", default=APP_VERSION,
                         help="Must match HALO_OG_VERSION in port/linux/include/halo_og_version.h")
@@ -467,11 +471,11 @@ def main():
     BUILD = ROOT / "build/macos-metal" if args.renderer else DEFAULT_BUILD
     require_version(args.version)
     os.chdir(ROOT)
-    if args.release:
+    if args.release or args.update_feed:
         if not update_configuration(json.loads((ROOT / "port/macos/release-config.json").read_text())):
             raise RuntimeError("Choose release hosting and configure the public update key first")
-        if not args.sign_identity.startswith("Developer ID Application:"):
-            raise RuntimeError("A release needs an explicit Developer ID Application signing identity")
+    if args.release and not args.sign_identity.startswith("Developer ID Application:"):
+        raise RuntimeError("A release needs an explicit Developer ID Application signing identity")
     if args.plugin_only:
         build_plugin()
         return
@@ -479,7 +483,8 @@ def main():
     if args.build_only:
         return
     package(None if args.no_data_path or args.release else args.data_root,
-            sign_identity=args.sign_identity, release=args.release, version=args.version, build=args.build_number, content_tools=args.content_tools)
+            sign_identity=args.sign_identity, release=args.release, update_feed=args.update_feed,
+            version=args.version, build=args.build_number, content_tools=args.content_tools)
     if args.install:
         install_app(BUILD / (APP_NAME + ".app"), args.install)
 
