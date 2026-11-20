@@ -220,8 +220,10 @@ def object_key(url, origin):
 
 def fetch_public(url):
     """The public bytes at an HTTPS URL, or None when nothing is published there."""
+    # The download host answers Python's default client name with HTTP 403.
+    request = urllib.request.Request(url, headers={"User-Agent": "Halo-OG-release-publisher/1"})
     try:
-        with urllib.request.urlopen(url, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=60) as response:
             return response.read()
     except urllib.error.HTTPError as error:
         if error.code != 404:
