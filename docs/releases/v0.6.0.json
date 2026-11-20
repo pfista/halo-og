@@ -1,0 +1,10 @@
+{
+  "summary": "Halo OG 0.6.0 gives the game its own network version and lets Mac, Windows and Linux install new releases from inside the game. Everyone in a match needs 0.6: this version does not join games hosted on 0.5.2 or earlier, or on OpenCE. The next release will be the first one delivered by the in-game update; if an update does not complete, download the release from GitHub as before.",
+  "highlights": [
+    "Compatibility: the version number now says who can play together. Every 0.6 release joins every other 0.6 release. A game hosted on 0.5.2 or earlier, or on OpenCE, is refused with a message that says who needs to update.",
+    "Mac updates: Check for Updates now downloads a new release and installs it after you quit the game, keeping your maps, saves and settings. Install 0.6.0 from the DMG once; later releases arrive in the app.",
+    "Windows and Linux updates: the update notice now has an Install update button. It downloads the release, verifies it, replaces the game’s files in place, keeps your config.toml and restarts the game. If any step fails, your current version stays as it was. Install 0.6.0 by hand once to get the button.",
+    "Mac renderer: native Metal is now the only renderer. The ANGLE choice is gone from Game Settings → Video, and a Mac that had ANGLE selected starts in Metal with its saves and settings unchanged.",
+    "Lens flares on Windows and Linux: each flare now uses the visibility result for its own light and view. Before, a hidden flare could take its brightness from a different light, including in split-screen."
+  ]
+}
