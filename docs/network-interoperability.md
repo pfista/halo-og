@@ -1,6 +1,11 @@
 # Multiplayer interoperability
 
-Halo OG aims to find and join cybersecurity games while retaining original Xbox
+> **Historical.** Interoperability with OpenCE (formerly cybersecurity) games
+> stopped being a Halo OG goal on November 19, 2026. This page records the
+> October 2026 protocol-11 comparison and its planned testing; it is not current
+> guidance. See the [protocol policy](xbox-fidelity.md#protocol-compatibility).
+
+Halo OG aimed to find and join cybersecurity games while retaining original Xbox
 graphics, presentation and its own menus. Reference their connection and
 discovery protocols independently of their PC-style UI. **Check in with the
 user before implementing discovery UI**, then place it in original Xbox-style

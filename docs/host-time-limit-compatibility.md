@@ -1,5 +1,9 @@
 # Joining hosts with additional game settings
 
+This describes how the client treats protocol-11 host options that Halo OG's
+own hosting menus do not set. It was written for mixed-host testing with
+upstream builds, which is [no longer a goal](xbox-fidelity.md#protocol-compatibility).
+
 The protocol-11 diagnostic helper recognizes these host-authoritative options:
 
 - Nonnegative match time limits and vehicle respawn times.
