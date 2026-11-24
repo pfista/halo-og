@@ -165,6 +165,7 @@ struct game_options;
 #include "networking/network_messages.h"
 #include "networking/telnet_console.h"
 #include "objects/objects.h"
+#include "objects/widgets/antenna.h"
 #include "objects/widgets/widgets.h"
 #include "physics/breakable_surfaces.h"
 #include "physics/collision_usage.h"
@@ -332,6 +333,10 @@ void game_tick(
 		? 1.0f / (2 * TICKS_PER_SECOND)
 		: 1.0f / TICKS_PER_SECOND;
 	effects_update(seconds_per_tick);
+	/* port: with Smooth Motion on, an antenna's chain is stepped here, once
+	a tick, and not in the widget update, which then runs once a frame
+	(antenna.c). With it off this does nothing. */
+	antennas_tick(seconds_per_tick);
 	lock_global_random_seed();
 	rumble_update();
 	first_person_weapons_update();

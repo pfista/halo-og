@@ -102,6 +102,7 @@ static struct widget_type_definition data_0030b2b0[NUMBER_OF_WIDGET_TYPES] =
 		antennas_dispose,
 		antenna_new,
 		antenna_delete,
+		/* (with Smooth Motion on the tick steps the chain instead: antenna.c) */
 		antennas_update,
 		antenna_render
 	},
