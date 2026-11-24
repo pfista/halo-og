@@ -479,7 +479,14 @@ static real object_get_level_of_detail_pixels(
 
 	object_get_bounding_sphere(object_index, &center, &radius);
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* port: Detail Distance. The level of detail, the smallest size drawn,
+	the shadow and how often the lighting is refreshed are all chosen from
+	this size (port/linux/game/detail_distance.c). */
+	return render_frustum_sphere_diameter_in_pixels(&render.frustum, &center, radius) * halo_detail_distance();
+#else
 	return render_frustum_sphere_diameter_in_pixels(&render.frustum, &center, radius);
+#endif
 }
 
 static void render_object_list(

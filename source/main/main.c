@@ -3324,6 +3324,9 @@ void main_loop(
 				{
 					halo_metal_frame_mark(HALO_METAL_FRAME_RENDER_BEGIN);
 					profile_render_start();
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+					halo_detail_distance_refresh();
+#endif
 					render_interpolation_frame_begin();
 					halo_metal_frame_mark(HALO_METAL_FRAME_GAME_RENDER_BEGIN);
 					main_game_render((double)main_globals.seconds_elapsed);

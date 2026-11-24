@@ -148,7 +148,8 @@ Every upstream commit below is from OpenCE's CC0 era (before `4b09168e`).
 | Lens flares out of view | `744040c87` | — | Defer. It changes when a flare fades and needs a comparison on both renderers. |
 | Hardening rounds | `761210d4`, `76addf66`, `54abd344` | — | Defer to the map import work. |
 
-New in the same release, not from upstream: the picture defaults and their
+New in the same release, not from upstream: native resolution in a window on
+Windows and Linux, Detail Distance, the picture defaults and their
 one-time move (`e024d3c72`, `9906611cc`), the 32-player host cap (`f592733cf`),
 separate look sensitivity (`c5314ab4e`) and the 0.7 release line (`eceb73d38`).
 
@@ -414,6 +415,14 @@ picture remains selectable in Video and in
 [the comparison profile](../port/macos/profiles/xbox-ntsc.toml);
 `display.direct_camera` stays `false`, and the simulation stays at 30 Hz. The
 iPhone keeps 480 lines until it has a Resolution setting.
+
+`display.detail_distance` goes with the resolution. The Xbox's level-of-detail,
+shadow and particle cutoffs are sizes in 480-line pixels, chosen so a change
+happens where that picture cannot show it. By default the cutoffs now follow
+the lines actually drawn, up to three times the Xbox's distance, so a native
+picture hides the changes as the Xbox's did and a 480-line picture is exactly
+the Xbox's. The ten-unit range of footstep and impact effects is unchanged
+because those effects carry sounds.
 
 The game writes every setting into `config.toml` at its default, so a changed
 default alone would never reach an existing player. A file with no

@@ -159,13 +159,16 @@ Still open:
 
 ### 4. Picture and sound
 
-Done for 0.7: the new picture defaults, active camouflage at screen
-resolution on both renderers, and three Smooth Motion fixes.
+Done for 0.7: the new picture defaults on Mac, Windows and Linux, active
+camouflage at screen resolution on both renderers, three Smooth Motion fixes,
+and Detail Distance for model pop-in, shadows and particle culling
+(`display.detail_distance`, following the resolution by default).
 
-Still open, all CC0-era unless noted: scope blur at high resolution
-(`f815e1ccb`), fuller Upres HUD (`9da2a45ff`, `3ae09c3d2`, `f8b3eecb3`,
-`f38d526e8`, `c72962a73`), a Detail Distance option for model pop-in and
-particle culling (new), mixer quality (27 commits), room reverb as an option
+Still open, all CC0-era unless noted: a menu row for Detail Distance (the
+Video page is full on every desktop, so it waits for the Advanced page), scope
+blur at high resolution (`f815e1ccb`), fuller Upres HUD (`9da2a45ff`,
+`3ae09c3d2`, `f8b3eecb3`, `f38d526e8`, `c72962a73`), mixer quality (27
+commits), room reverb as an option
 (`8a8e70599`, `4afb59660`), and a Resolution setting on iPhone so it can take
 the native default. Measured Xbox spatial audio (`176b10c5`) is AGPL.
 

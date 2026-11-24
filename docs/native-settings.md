@@ -184,6 +184,22 @@ Smooth Motion enables render interpolation while simulation remains
 30 Hz. Switching interpolation resets its old snapshots before rendering with
 the new setting.
 
+**Detail Distance** has no menu row yet; it is `display.detail_distance` in
+`config.toml`. The Xbox chooses a model's level of detail, whether to draw the
+model and its shadow, and whether to draw a particle from their size on a
+480-line screen. At a higher resolution those changes become visible: models
+lose detail and particles vanish in view. The setting multiplies the distance
+at which they happen.
+
+| Value | Meaning |
+| --- | --- |
+| `0` (default) | Follows the resolution: the lines drawn for each of the Xbox's 480, up to 3 times. At 1080p that is 2.25, at 1440p and above 3, and at 480p exactly the Xbox's distances. |
+| `1` | The Xbox's distances at any resolution |
+| `2`, `3` | Fixed |
+
+Only what is drawn changes. Footstep and impact effects keep the Xbox's range,
+because they carry sounds.
+
 Timer Position is Top Center, Bottom Center or Bottom Right
 (`display.timer_position`, default 0). Timer Size is 50–100%
 (`display.timer_scale`, default 1); editing moves in 5% steps and untouched

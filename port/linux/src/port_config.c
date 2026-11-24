@@ -134,6 +134,12 @@ static const struct config_setting config_settings[] =
 		"Asset Quality: true enables Upres HUD, font glyphs and faithful menu\n"
 		"title redraws; false keeps the Original artwork. Layout and gameplay\n"
 		"stay the same. This legacy key preserves existing HUD preferences." },
+	{ "display.detail_distance", _config_integer, "0", NULL, _environment_value, _platform_all,
+		"How far away models keep their detail and their shadows, and particles\n"
+		"are drawn, as a multiple of the Xbox's distances. 0 follows the\n"
+		"resolution: the lines drawn for each of the Xbox's 480, up to 3, so\n"
+		"480 lines is exactly the Xbox's. 1 is the Xbox's at any resolution;\n"
+		"2 and 3 are fixed. Only what is drawn changes." },
 	{ "display.defaults_revision", _config_integer, "1", NULL, _environment_value, _platform_all,
 		"Written by the game: which display defaults this file has been offered.\n"
 		"A file from 0.6 or earlier has no such line; if it never changed the\n"

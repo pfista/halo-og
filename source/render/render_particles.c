@@ -320,7 +320,15 @@ void render_particles(
 									&position,
 									radius);
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+							/* port: Detail Distance moves the size below which a
+							particle is not drawn; the particle's own minimum size
+							below still uses its real size
+							(port/linux/game/detail_distance.c). */
+							if (diameter * halo_detail_distance() > definition->lod_cutoff)
+#else
 							if (diameter > definition->lod_cutoff)
+#endif
 							{
 								real fade;
 								real scale;
