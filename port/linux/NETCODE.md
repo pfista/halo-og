@@ -263,6 +263,9 @@ a pregame keep-alive every five seconds from the host
      keeps the latest snapshot per unit until its unit and all named
      weapons exist, then moves those same weapon objects into its units.
      Older snapshots are rejected per unit, independently of other units.
+     A client's copy of a unit carries no grenades until the host's
+     inventory arrives (not the unit tag's: a player spawned with the
+     button held threw one the host's copy did not have).
      A change of weapons or grenades goes to every client at once; one of
      ammunition only to the unit's player's machine at once, and to the
      others as often as they are sent that player. A client takes its own
