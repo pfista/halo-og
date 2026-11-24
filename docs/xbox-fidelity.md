@@ -366,6 +366,12 @@ picture remains selectable in Video and in
 `display.direct_camera` stays `false`, and the simulation stays at 30 Hz. The
 iPhone keeps 480 lines until it has a Resolution setting.
 
+The game writes every setting into `config.toml` at its default, so a changed
+default alone would never reach an existing player. A file with no
+`display.defaults_revision` that still holds the 0.6 value for every one of
+those settings moves to the new defaults once. A file that changed any of them
+keeps all of them, as does a tool profile that names only some.
+
 At the user's explicit request, Video exposes optional replacements as
 **Asset Quality: Original / Upres**, with Upres as the default since 0.7. Native Metal now
 supports the same optional assets as ANGLE, including meter coverage blending.

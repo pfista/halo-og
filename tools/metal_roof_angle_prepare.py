@@ -370,6 +370,7 @@ interpolation=false
 direct_camera=false
 high_res_hud=false
 render_height=480
+defaults_revision=1
 vsync=true
 screen_width=640
 window_scale=1

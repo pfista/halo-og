@@ -99,6 +99,7 @@ interpolation = false
 direct_camera = false
 high_res_hud = false
 render_height = 480
+defaults_revision = 1
 
 [audio]
 enabled = {str(host).lower()}

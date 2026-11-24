@@ -131,6 +131,10 @@ static const struct config_setting config_settings[] =
 		"Asset Quality: true enables Upres HUD, font glyphs and faithful menu\n"
 		"title redraws; false keeps the Original artwork. Layout and gameplay\n"
 		"stay the same. This legacy key preserves existing HUD preferences." },
+	{ "display.defaults_revision", _config_integer, "1", NULL, _environment_value, _platform_all,
+		"Written by the game: which display defaults this file has been offered.\n"
+		"A file from 0.6 or earlier has no such line; if it never changed the\n"
+		"display settings it moves once to the current defaults." },
 
 	{ "audio.enabled", _config_boolean, "true", "HALO_NO_AUDIO", _environment_set_is_false, _platform_all,
 		"Play sound." },
@@ -706,6 +710,8 @@ static char *config_add_missing(const char *text, toml_datum_t table)
 
 /* ---------- values */
 
+static char *config_offer_display_defaults(const char *text, size_t size, toml_datum_t table);
+
 static int config_text_is_false(const char *text)
 {
 	char lower[8];
@@ -881,16 +887,19 @@ static void config_load(int complete_file)
 
 		if (result.ok)
 		{
+			char *offered;
 			char *completed;
 
 			for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS; index++)
 				config_set_from_file(&config_values[index], &config_settings[index], result.toptab);
 			config_report_unknown_keys(result.toptab);
 			platform_log("settings: %s", path);
-			completed = complete_file ? config_add_missing(text, result.toptab) : NULL;
-			if (completed && !config_write_file(path, completed))
+			offered = complete_file ? config_offer_display_defaults(text, size, result.toptab) : NULL;
+			completed = complete_file ? config_add_missing(offered ? offered : text, result.toptab) : NULL;
+			if ((completed || offered) && !config_write_file(path, completed ? completed : offered))
 				platform_log("settings: cannot write %s", path);
 			free(completed);
+			free(offered);
 		}
 		else
 		{
@@ -1203,6 +1212,74 @@ static char *config_edit_value(const char *text, size_t size, const struct confi
 	free(addition);
 	toml_free(parsed);
 	return updated;
+}
+
+/* ---------- display defaults */
+
+/* Halo OG 0.7 changed what a new installation looks like: the display's own
+resolution, the Upres assets and a frame for every display refresh. The game
+writes every setting into the file at its default, so a file from 0.6 or
+earlier still names the old defaults and a changed default would never reach
+it. Such a file has no display.defaults_revision. When it holds every one of
+these settings exactly as 0.6 wrote them, the player made no display choice
+and the settings move to the current defaults. A file that changed any of
+them, or that names only some of them (a test or tool profile), keeps what it
+says. Returns the new text, or NULL when nothing moves. */
+static char *config_offer_display_defaults(const char *text, size_t size, toml_datum_t table)
+{
+	/* what 0.6 wrote for each setting, then its name */
+	static const struct
+	{
+		double previous;
+		const char *name;
+	} offered[] =
+	{
+		{ 0.0, "display.interpolation" },
+		{ 0.0, "display.high_res_hud" },
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+		{ 480.0, "display.render_height" },
+		{ 0.0, "display.frame_limit" },
+#elif !defined(HALO_ANDROID) && !defined(HALO_IOS)
+		{ -1.0, "display.render_height" },
+#endif
+	};
+	char *result = NULL;
+	size_t index;
+
+	if (toml_seek(table, "display.defaults_revision").type != TOML_UNKNOWN)
+		return NULL;
+	for (index = 0; index < sizeof(offered) / sizeof(offered[0]); index++)
+	{
+		long setting = config_setting_index(offered[index].name);
+
+		if (setting < 0 || !config_number_matches(toml_seek(table, offered[index].name),
+			config_settings[setting].type, offered[index].previous))
+			return NULL;
+	}
+	for (index = 0; index < sizeof(offered) / sizeof(offered[0]); index++)
+	{
+		const struct config_setting *setting = &config_settings[config_setting_index(offered[index].name)];
+		const char *current = result ? result : text;
+		char *updated = config_edit_value(current, result ? strlen(result) : size, setting, setting->default_value);
+
+		if (!updated)
+		{
+			free(result);
+			return NULL;
+		}
+		free(result);
+		result = updated;
+	}
+	for (index = 0; index < sizeof(offered) / sizeof(offered[0]); index++)
+	{
+		long setting = config_setting_index(offered[index].name);
+
+		config_set_from_text(&config_values[setting], config_settings[setting].type,
+			config_settings[setting].default_value);
+	}
+	platform_log("settings: no display choice had been made, so Resolution, Asset Quality and Smooth Motion "
+		"move to this version's defaults");
+	return result;
 }
 
 struct config_retired_string

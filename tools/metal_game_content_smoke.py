@@ -85,7 +85,7 @@ def controlled_config(template,folder,duration):
     updates={'audio':{'enabled':'false'},'input':{'mouse_sensitivity':'1e-20'},
       'network':{'online':'false','allow_upnp':'false','join_from_clipboard':'false'},
       'update':{'auto':'false'},'display':{'fullscreen':'false','vsync':'false','interpolation':'false','high_res_hud':'false','direct_camera':'false',
-                 'render_height':'480'},
+                 'render_height':'480','defaults_revision':'1'},
       'debug':{'test_input':'"bot:0"','exit_after':str(float(duration)),'gpu_stats':'true','screenshot_every':'30',
                'screenshot_directory':json.dumps(str(folder/'captures')),'texture_dump_directory':json.dumps(str(folder/'dumps')),
                'hidden_window':'false','null_renderer':'false'}}
@@ -99,7 +99,7 @@ def controlled_config(template,folder,duration):
 def validate_config(c,folder,duration):
     require(c['display']['screen_width']==640 and c['display']['window_scale']==2,'Unexpected game/drawable request')
     require(all(c['display'][k] is False for k in ('fullscreen','vsync','interpolation','direct_camera','high_res_hud')),'Presentation override')
-    require(c['display']['render_height']==480,'Original picture not pinned')
+    require(c['display']['render_height']==480 and c['display']['defaults_revision']==1,'Original picture not pinned')
     require(not c['audio']['enabled'] and not any(c['bindings'].values()) and c['input']['mouse_sensitivity']==1e-20,'Human input/audio not isolated')
     require(not c['network']['online'] and not c['network']['allow_upnp'] and not c['network']['join_from_clipboard'] and not c['update']['auto'],'Offline configuration violated')
     d=c['debug'];require(d['test_input']=='bot:0' and d['exit_after']==duration and d['gpu_stats'] and d['screenshot_every']==30,'Bounded scripted diagnostics differ')

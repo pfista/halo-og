@@ -145,6 +145,12 @@ Quality: Original** and **Smooth Motion: Off**. The simulation runs at 30 Hz
 with either picture. The iPhone keeps a 480-line picture because it has no
 Resolution setting yet.
 
+A settings file from 0.6 or earlier moves to these defaults once, and only if
+it never changed Resolution, Asset Quality, Smooth Motion or the Mac frame
+limit. A file that changed any of them keeps all of them. The game records
+the offer as `display.defaults_revision`, so choosing the original picture
+afterwards is kept.
+
 Video includes **Asset Quality: Original / Upres**, with Upres as the default.
 Accept saves `display.high_res_hud`; relaunch Halo to apply the asset choice.
 The legacy key retains existing high-resolution HUD preferences and now controls

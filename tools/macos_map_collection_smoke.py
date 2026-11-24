@@ -109,6 +109,7 @@ vsync = true
 direct_camera = false
 high_res_hud = false
 render_height = 480
+defaults_revision = 1
 [game]
 console_log = "all"
 [debug]

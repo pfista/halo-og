@@ -67,7 +67,7 @@ exit_after = {seconds}.0
         config += 'screenshot_every = ' + str(screenshot_every) + '\n'
     if reference_profile:
         config += ('\n[display]\ninterpolation = false\ndirect_camera = false\nhigh_res_hud = false\n'
-                   'render_height = 480\n')
+                   'render_height = 480\ndefaults_revision = 1\n')
     (saves / "config.toml").write_text(config)
     # All are existing runtime overrides. Personal saves and settings are unused.
     environment = dict(os.environ, HALO_DATA_ROOT=str(data),
