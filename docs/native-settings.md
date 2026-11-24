@@ -50,10 +50,13 @@ as a fifth row at a 24-pixel pitch; their Game Settings pages are the same
 panels as multiplayer's. The main menu's Game Settings pages are separate and
 unchanged.
 
-The one-player pages are checked on screen by `tools/menu_layout_check.py
---tour pause`. Campaign's pages were looked at once in a running game (The
-Silent Cartographer, November 24, 2026). Split screen has not been played with
-two controllers.
+`tools/menu_layout_check.py` walks these pages in a hosted game and fails on
+text that does not fit: `--tour pause` for one player, `--tour pause-2p` and
+`--tour pause-4p` for split screen. The walk presses one controller, so for
+split screen `debug.pause_layout` (2 or 4) shows player one's Pause in a half
+or a quarter of the screen. Campaign's pages were looked at once in a running
+game (The Silent Cartographer, November 24, 2026). Split screen has not been
+played with two controllers.
 
 Audio, Video, Controller and Multiplayer preferences belong to the local installation. They are not
 part of a player profile, map or network gametype. Performance Options remain saved

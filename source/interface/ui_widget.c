@@ -7386,6 +7386,11 @@ static boolean ui_check_for_pause_game(
 					{
 						short layout = local_player_count == 1 ? 0 :
 							(local_player_count == 2 || (local_player_count == 3 && pressed_by_first_local_player)) ? 1 : 2;
+						/* debug.pause_layout: a split-screen layout with one
+						 * controller, for tools/menu_layout_check.py. */
+						long shown_as = config_integer("debug.pause_layout");
+						if (shown_as == 2 || shown_as == 4)
+							layout = shown_as == 2 ? 1 : 2;
 						native_pause_tag = performance_pause_tags[_pp_pause_1p + layout];
 					}
 #endif

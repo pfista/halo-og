@@ -44,9 +44,22 @@ def game_settings_page(place, screen, name):
             ("press", "b"), ("expect", "native_settings\\screen_0_0")]
 
 
-def pause_settings_page(place, screen, name):
-    return [("focus", place), ("press", "a"), ("expect", "native_settings\\" + screen), ("shot", name),
-            ("press", "b"), ("expect", "native_settings\\screen_1_0")]
+def pause_tour(players):
+    """Pause for this many local players: its menu, Performance Options and every Game Settings page."""
+    layout = {1: 1, 2: 2, 4: 3}[players]
+    root, settings = f"performance\\pause_{players}p", f"native_settings\\screen_{layout}_"
+    steps = [("wait", 22), ("press", "start"), ("expect", root), ("shot", "pause"),
+             ("focus", 1), ("press", "a"), ("expect", f"performance\\pause_options_{players}p"), ("shot", "pause-performance"),
+             ("press", "b"), ("expect", root),
+             ("focus", 2), ("press", "a"), ("expect", settings + "0"), ("shot", "pause-settings")]
+    for place, (page, name) in enumerate(((1, "audio"), (2, "video"), (4, "controller"), (5, "multiplayer"))):
+        steps += [("focus", place), ("press", "a"), ("expect", settings + str(page)), ("shot", "pause-" + name)]
+        if name == "audio":
+            # Audio's sub-page, the one a page gets instead of more rows.
+            steps += [("focus", 4), ("press", "a"), ("expect", settings + "3"), ("shot", "pause-audio-timer"),
+                      ("press", "b"), ("expect", settings + str(page))]
+        steps += [("press", "b"), ("expect", settings + "0")]
+    return steps
 
 
 TOURS = {
@@ -60,18 +73,20 @@ TOURS = {
     + game_settings_page(1, "screen_0_2", "game-settings-video")
     + game_settings_page(2, "screen_0_4", "game-settings-controller")
     + game_settings_page(3, "screen_0_5", "game-settings-multiplayer"),
-    # Pause in a hosted Slayer game, one player: its menu, Performance Options and every Game Settings page.
-    "pause": [("wait", 22), ("press", "start"), ("expect", "performance\\pause_1p"), ("shot", "pause"),
-              ("focus", 1), ("press", "a"), ("expect", "performance\\pause_options_1p"), ("shot", "pause-performance"),
-              ("press", "b"), ("expect", "performance\\pause_1p"),
-              ("focus", 2), ("press", "a"), ("expect", "native_settings\\screen_1_0"), ("shot", "pause-settings")]
-    + pause_settings_page(0, "screen_1_1", "pause-audio") + pause_settings_page(1, "screen_1_2", "pause-video")
-    + pause_settings_page(2, "screen_1_4", "pause-controller") + pause_settings_page(3, "screen_1_5", "pause-multiplayer"),
+    # Pause in a hosted Slayer game, one player.
+    "pause": pause_tour(1),
+    # The same pages as two and four players' split screen lays them out. One
+    # controller cannot open a second player's Pause, so debug.pause_layout
+    # shows player one's in a half or a quarter of the screen.
+    "pause-2p": pause_tour(2),
+    "pause-4p": pause_tour(4),
 }
 
 
 # Tours that start in a hosted Slayer game on this map instead of at the main menu.
-IN_GAME = {"pause": "hangemhigh"}
+IN_GAME = {"pause": "hangemhigh", "pause-2p": "hangemhigh", "pause-4p": "hangemhigh"}
+# debug.pause_layout for a tour.
+PAUSE_LAYOUT = {"pause-2p": 2, "pause-4p": 4}
 
 
 class Console:
@@ -135,7 +150,7 @@ class Console:
         return self.state()[0]
 
 
-def prepare(folder, port, asset_quality, render_height, host=None):
+def prepare(folder, port, asset_quality, render_height, host=None, pause_layout=0):
     saves, data, frames = folder / "saves", folder / "data", folder / "frames"
     for directory in (saves, data / "maps", frames, folder / "screens"):
         directory.mkdir(parents=True)
@@ -165,6 +180,7 @@ enabled = false
 telnet_console = true
 telnet_console_port = {port}
 ui_layout_check = true
+pause_layout = {pause_layout}
 screenshot_every = 15
 screenshot_directory = "{frames}"
 ''' + (f'network_test = "host:{host}:slayer"\nnetwork_test_start = 4.0\n' if host else ""))
@@ -227,6 +243,8 @@ def main():
     parser.add_argument("--screen-width", default=None, help="Logical width, such as 640 for 4:3; default follows the window")
     parser.add_argument("--port", type=int, default=2390)
     parser.add_argument("--host", metavar="MAP", help="With --steps: host a Slayer game on this map first, to reach Pause")
+    parser.add_argument("--pause-layout", type=int, choices=(0, 2, 4), default=0,
+                        help="With --steps: show Pause as two or four players' split screen does")
     parser.add_argument("--steps", help="Instead of a tour: comma-separated press:<button>, expect:<name>, "
                         "shot:<name>, wait:<seconds>; prints the top screen after each press")
     args = parser.parse_args()
@@ -245,7 +263,8 @@ def main():
     for index, tour in enumerate(tours):
         folder = output / tour
         environment = prepare(folder, args.port + index, args.asset_quality, args.render_height,
-                              args.host if args.steps else IN_GAME.get(tour))
+                              args.host if args.steps else IN_GAME.get(tour),
+                              args.pause_layout if args.steps else PAUSE_LAYOUT.get(tour, 0))
         if args.screen_width:
             environment["HALO_SCREEN_WIDTH"] = args.screen_width
         console = Console(args.port + index)

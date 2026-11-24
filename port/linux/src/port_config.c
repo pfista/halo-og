@@ -363,6 +363,10 @@ static const struct config_setting config_settings[] =
 	{ "debug.ui_layout_check", _config_boolean, "false", NULL, _environment_value, _platform_all,
 		"Log each menu text that does not fit its box, once, with the box and\n"
 		"the size the text needs (tools/menu_layout_check.py)." },
+	{ "debug.pause_layout", _config_integer, "0", NULL, _environment_value, _platform_all,
+		"Show the multiplayer Pause menus as split screen does, with one\n"
+		"controller: 2 for two players' half screen, 4 for a quarter screen\n"
+		"(tools/menu_layout_check.py); 0 follows the players." },
 	{ "debug.test_input", _config_string, "\"\"", "HALO_TEST_INPUT", _environment_value, _platform_all,
 		"\"bot:<seed>\" plays controller 1 with a scripted pattern (automated\n"
 		"network tests); \"look:<seed>\" stands still, only turning and looking\n"
