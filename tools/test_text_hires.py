@@ -78,6 +78,8 @@ static int enabled = 1, allocation_calls, fail_allocation, fail_at_allocation;
 static float pixel_scale = 2.0f;
 int asset_quality_upres(void) { return enabled; }
 float halo_screen_pixel_scale(void) { return pixel_scale; }
+static long ui_offset_units;
+long halo_screen_ui_offset_units(void) { return ui_offset_units; }
 static void *fixture_malloc(size_t size) {
     allocation_calls++;
     if (fail_allocation || allocation_calls==fail_at_allocation) return NULL;
@@ -459,6 +461,14 @@ static void engine_tests(const char *mode) {
         assert(text_hires_glyph(text_hires_font("ui\\large_ui",24),'H',&large));
         text_hires_batch_end();
         near_value(small.bottom-small.top,large.bottom-large.top);
+        /* On a screen that is not a whole multiple of 480 lines, each letter still lands on whole screen
+           pixels, with the menus' centering counted: between pixels, letters are resampled unevenly. */
+        pixel_scale=2.25f;ui_offset_units=107;
+        quad_count=0;rasterizer_draw_string(&bounds,&clip,NULL,0,"Q");assert(quad_count==2);
+        /* (its right and bottom edges: the box cuts its left and top) */
+        float across=(quads[1][2].position.x+107)*2.25f,down=quads[1][2].position.y*2.25f;
+        assert(fabsf(across-roundf(across))<0.01f && fabsf(down-roundf(down))<0.01f);
+        pixel_scale=2.0f;ui_offset_units=0;
     } else if(!strcmp(mode,"transform")) {
         struct dynamic_screen_vertex before[4];memcpy(before,quads[1],sizeof(before));quad_count=0;
         rasterizer_text_transform.scale=.75f;rasterizer_text_transform.anchor_x=5;rasterizer_text_transform.anchor_y=8;

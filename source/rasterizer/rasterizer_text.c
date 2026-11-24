@@ -445,7 +445,22 @@ static void rasterizer_draw_hires_character_quad(
 		 * places, so it lies where the original letter does. */
 		real pen_x = (real)(x0 - x + character->bitmap_origin_x);
 		real baseline = (real)(y0 - y + character->bitmap_origin_y);
+		real scale = halo_screen_pixel_scale();
 
+		/* On whole screen pixels. The glyph's picture is drawn for whole
+		 * pixels from the pen, but the pen is in units of the game's 480
+		 * lines, which fall between screen pixels unless the screen is a
+		 * whole multiple of 480 lines. Each letter was then resampled at a
+		 * different part of a pixel: stems came out unevenly soft, and
+		 * letters seemed to sit at different heights. Text drawn at another
+		 * size is resampled whatever is done here, so it is left alone. */
+		if (rasterizer_text_transform.scale == 1.0f && scale > 0.0f)
+		{
+			real offset = (real)halo_screen_ui_offset_units();
+
+			pen_x = (real)(long)((pen_x + offset) * scale + (pen_x + offset >= 0.0f ? 0.5f : -0.5f)) / scale - offset;
+			baseline = (real)(long)(baseline * scale + (baseline >= 0.0f ? 0.5f : -0.5f)) / scale;
+		}
 		glyph_left = pen_x + glyph.left;
 		glyph_top = baseline + glyph.top;
 		glyph_right = pen_x + glyph.right;

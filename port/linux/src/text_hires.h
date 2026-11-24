@@ -58,7 +58,10 @@ int text_hires_atlas_pixels(unsigned long data, struct text_hires_atlas_pixels *
 int text_hires_atlas_pixels_since(unsigned long data, uint64_t uploaded_revision,
 	struct text_hires_atlas_pixels *out);
 
-/* Renderer adapter: physical pixels for each unit of the game's 480 lines. */
+/* Renderer adapter: physical pixels for each unit of the game's 480 lines,
+ * and how many units it is moving what is drawn to the right just now (the
+ * menus' centering on a wide screen, halo_screen_ui_offset). */
 float halo_screen_pixel_scale(void);
+long halo_screen_ui_offset_units(void);
 
 #endif
