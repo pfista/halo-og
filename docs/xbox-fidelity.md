@@ -196,13 +196,13 @@ upstream `307a42ee` (November 16, 2026) OpenCE had moved from protocol 11 to 44,
 adding co-op, new modes, dedicated-server and admission changes that Halo OG
 does not adopt, and it now checks the version explicitly when a client joins.
 Halo OG does not follow those versions. Its network version is its own:
-20000 plus the release line of the product version, currently **20006** for
-0.6. Versions 1 to 11 were shared with OpenCE, so Halo OG v0.5.2 and
+20000 plus the release line of the product version, currently **20007** for
+0.7. Versions 1 to 11 were shared with OpenCE, so Halo OG v0.5.2 and
 earlier, and every OpenCE build, are a different version; a client names the
 mismatch and does not join.
 
 **The product version states which builds play together.** While the major
-version is 0, builds with the same minor version do: every 0.6.x. From 1.0,
+version is 0, builds with the same minor version do: every 0.7.x. From 1.0,
 builds with the same major version do: every 1.x. The release line is the
 minor version before 1.0 and 100 times the major version after it, and the
 game refuses a host on another line, naming both releases. The rule for
@@ -226,9 +226,12 @@ Game-discovery UI requires a user check-in before implementation and should map
 to original Xbox-style Multiplayer/System Link menus; upstream's PC-style
 server browser UI is not adopted.
 
-Version 20006 sends what protocol 11 sent: host authority, 30 Hz simulation
-and the 28-byte PC options record, with no new prediction or transport
-algorithm. Halo OG hosts original-rule defaults. A client refuses a settings
+Versions 20006 and 20007 send what protocol 11 sent: host authority, 30 Hz
+simulation and the 28-byte PC options record, with no new prediction or
+transport algorithm. 0.7 is a new line because machines must agree on what it
+changes in the simulation and in what a joiner assumes, not because the
+messages changed: a joiner's copy of a unit starts without grenades, an item
+keeps its resting surface on very large maps, and a host admits 32 players. Halo OG hosts original-rule defaults. A client refuses a settings
 record carrying an option it does not implement (radar players, per-team
 vehicle sets, custom loadouts, unknown weapon sets, or an invalid value) before
 the record can precache a map or change state. Valid host-authoritative values,
@@ -243,8 +246,8 @@ before the received settings can change state or start precaching. Use matching
 Halo OG builds and map revisions for the baseline playtest.
 
 PB capability flag `0x04` is separate from the in-progress flag `0x02`.
-Options-off games advertise the stock version, 20006; enabled PB games advertise
-it with bit 15 set (`0xCE26`) and require supporting peers. Input Delay: 33ms also requires peers that confirm
+Options-off games advertise the stock version, 20007; enabled PB games advertise
+it with bit 15 set (`0xCE27`) and require supporting peers. Input Delay: 33ms also requires peers that confirm
 the delay capability; older PB builds cannot join an enabled-delay match.
 Builds on version 11 or earlier must update.
 See [networking](../port/linux/NETCODE.md), [Performance Options](performance-options.md)

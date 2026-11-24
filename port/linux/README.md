@@ -306,7 +306,7 @@ machines, so the limit is one number. Each machine can have up to 4 players
 Obey these rules:
 
 - All the machines in a game must use a build with the same limits.
-- The port uses Halo OG's own netcode version, 20006 for every 0.6.x build.
+- The port uses Halo OG's own netcode version, 20007 for every 0.7.x build.
   Builds with the same minor version play together. It does not see the Xbox
   game, and it does not join OpenCE builds or Halo OG v0.5.2 and earlier, which
   are on other versions.

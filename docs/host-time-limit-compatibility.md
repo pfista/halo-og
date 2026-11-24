@@ -50,7 +50,7 @@ request for live testing against upstream hosts, and every protocol-11 option
 passed admission. It is enforced again now that Halo OG has its own network
 version.
 
-Any enabled PB option advertises the practice version (`0xCE26`); 33ms delay
+Any enabled PB option advertises the practice version (`0xCE27`); 33ms delay
 also requires confirmed delay support on every peer, so older PB builds cannot
 join an enabled-delay match. See [Performance Options](performance-options.md#host-authority-and-v11-compatibility).
 

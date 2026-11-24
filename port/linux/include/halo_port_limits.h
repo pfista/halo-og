@@ -86,7 +86,7 @@ version after it; this number then follows the product version and is never
 raised on its own. tools/test_network_v11.py checks the two agree. Keep the
 version a plain decimal number on its line: tools/testing_release.py reads it. */
 #define HALO_OG_NETWORK_VERSION_BASE 20000
-#define HALO_PORT_NETWORK_VERSION 20006
+#define HALO_PORT_NETWORK_VERSION 20007
 /* A Halo OG version's release line (6 for 20006), with the practice-options bit
 (network_performance_protocol.h) ignored; 0 for any other build's version. */
 #define HALO_OG_NETWORK_LINE(version) \

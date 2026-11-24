@@ -92,8 +92,9 @@ app data. See [Android installation/data](../port/android/README.md#game-data).
 ## Play together
 
 1. Confirm everyone uses a Halo OG release with the **same first two numbers**,
-   such as any 0.6.x, and matching map data. Releases with a different minor
-   version cannot join each other, and v0.5.2 and earlier cannot join 0.6. The
+   such as any 0.7.x, and matching map data. Releases with a different minor
+   version cannot join each other: 0.6 cannot join 0.7, and v0.5.2 and earlier
+   can join neither. The
    game names both releases when it refuses a join. For this first
    test, use a stock map and select **Performance Options → Stock**, with
    **Input Delay Off** and **Hardcore Off**.
