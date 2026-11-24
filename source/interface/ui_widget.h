@@ -141,6 +141,11 @@ void display_error_deferred(
 	short local_player_index,
 	boolean modal,
 	boolean pause_game_time);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+char const *ui_widget_top_screen_name(
+	char const **focus_name,
+	short *focus_index);
+#endif
 void display_error_abort_to_dashboard_deferred(
 	short error_code,
 	boolean optional);

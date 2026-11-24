@@ -142,7 +142,10 @@ Campaign, Firefight and UI maps stay out of scope: the profile omits scripts.
 ### 3. Menus
 
 Done for 0.7: horizontal and vertical look sensitivity in Game Settings, from
-the main menu and from Pause.
+the main menu and from Pause. A menu walk, `tools/menu_layout_check.py`, now
+fails on any text that does not fit its box; it covers the multiplayer and
+Game Settings screens from the main menu, and found the locked game type
+dialog and one Game Settings description. Pause pages are not in it yet.
 
 Still open:
 

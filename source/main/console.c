@@ -226,6 +226,37 @@ void console_warning(
 #include "performance_console.inc"
 #endif
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* port: commands for automated menu checks (tools/menu_layout_check.py),
+which walk the real menus with scripted presses of controller 1:
+  press up|down|left|right|a|b|x|y|start|back
+  ui    the screen on top, the focused item, and the presses still pending
+"ui" answers on the script console only: a line on screen would be in the
+pictures the check takes. */
+boolean console_process_menu_check_command(char const *command)
+{
+	if (!strncmp(command, "press ", 6))
+	{
+		if (!test_input_press(command + 6))
+			console_printf(FALSE, "press up|down|left|right|a|b|x|y|start|back");
+		return TRUE;
+	}
+	if (!strcmp(command, "ui"))
+	{
+		char const *focus;
+		short focus_index;
+		char const *screen = ui_widget_top_screen_name(&focus, &focus_index);
+		char reply[512];
+
+		snprintf(reply, sizeof(reply), "ui: %s | focus %d %s | presses %d\r\n", screen, focus_index, focus,
+			test_input_presses_pending());
+		telnet_console_print(reply);
+		return TRUE;
+	}
+	return FALSE;
+}
+#endif
+
 static boolean console_process_command(
 	const char *command)
 {
@@ -246,7 +277,7 @@ static boolean console_process_command(
 	console_globals.selected_previous_command_index = NONE;
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-	if (console_process_native_command(command)) return TRUE;
+	if (console_process_menu_check_command(command) || console_process_native_command(command)) return TRUE;
 #endif
 	return hs_compile_and_evaluate(command);
 }

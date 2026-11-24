@@ -367,6 +367,99 @@ static unsigned test_input_gamepad(XINPUT_GAMEPAD *pad)
 	return 1u | 2u | 4u; /* Script writes left X/Y and right X. */
 }
 
+/* Console "press <button>": presses of controller 1 queued for automated
+menu checks (tools/menu_layout_check.py), which walk the real menus as a
+player would. Each press is held, then released, before the next begins. A
+press lasts until the game has read it several times as well as a minimum
+time: a slow frame must not let a press, or the release between two, pass
+between two reads unseen. */
+#define TEST_PRESS_QUEUE 64
+#define TEST_PRESS_READS 3
+#define TEST_PRESS_HOLD_MS 60
+#define TEST_PRESS_GAP_MS 120
+
+static struct
+{
+	WORD buttons;
+	signed char analog;
+} test_presses[TEST_PRESS_QUEUE];
+static unsigned test_press_first, test_press_count;
+static unsigned test_press_reads;
+static BOOL test_press_released;
+static Uint64 test_press_started;
+
+int test_input_press(const char *name)
+{
+	static const struct
+	{
+		const char *name;
+		WORD buttons;
+		signed char analog;
+	} known[] =
+	{
+		{ "up", XINPUT_GAMEPAD_DPAD_UP, -1 }, { "down", XINPUT_GAMEPAD_DPAD_DOWN, -1 },
+		{ "left", XINPUT_GAMEPAD_DPAD_LEFT, -1 }, { "right", XINPUT_GAMEPAD_DPAD_RIGHT, -1 },
+		{ "start", XINPUT_GAMEPAD_START, -1 }, { "back", XINPUT_GAMEPAD_BACK, -1 },
+		{ "a", 0, XINPUT_GAMEPAD_A }, { "b", 0, XINPUT_GAMEPAD_B },
+		{ "x", 0, XINPUT_GAMEPAD_X }, { "y", 0, XINPUT_GAMEPAD_Y },
+	};
+	unsigned index;
+
+	for (index = 0; name && index < sizeof(known) / sizeof(known[0]); index++)
+	{
+		if (!strcmp(name, known[index].name) && test_press_count < TEST_PRESS_QUEUE)
+		{
+			unsigned slot = (test_press_first + test_press_count++) % TEST_PRESS_QUEUE;
+
+			test_presses[slot].buttons = known[index].buttons;
+			test_presses[slot].analog = known[index].analog;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/* the presses still waiting or held, for a script to wait on */
+int test_input_presses_pending(void)
+{
+	return (int)test_press_count;
+}
+
+static void test_input_presses(XINPUT_GAMEPAD *pad, XINPUT_GAMEPAD *navigation)
+{
+	Uint64 now;
+
+	if (!test_press_count)
+		return;
+	now = SDL_GetTicks();
+	if (!test_press_started)
+	{
+		test_press_started = now ? now : 1;
+		test_press_reads = 0;
+		test_press_released = FALSE;
+	}
+	test_press_reads++;
+	if (!test_press_released)
+	{
+		pad->wButtons |= test_presses[test_press_first].buttons;
+		navigation->wButtons |= test_presses[test_press_first].buttons;
+		if (test_presses[test_press_first].analog >= 0)
+			pad->bAnalogButtons[test_presses[test_press_first].analog] = 255;
+		if (test_press_reads >= TEST_PRESS_READS && now - test_press_started >= TEST_PRESS_HOLD_MS)
+		{
+			test_press_released = TRUE;
+			test_press_started = now ? now : 1;
+			test_press_reads = 0;
+		}
+	}
+	else if (test_press_reads >= TEST_PRESS_READS && now - test_press_started >= TEST_PRESS_GAP_MS)
+	{
+		test_press_first = (test_press_first + 1) % TEST_PRESS_QUEUE;
+		test_press_count--;
+		test_press_started = 0;
+	}
+}
+
 static void wheel_update(void)
 {
 	Uint64 now = SDL_GetTicks();
@@ -686,6 +779,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 			if (scripted_axes & HALO_CONTROLLER_AXIS_RIGHT_X) navigation.sThumbRX = state->Gamepad.sThumbRX;
 			if (scripted_axes & HALO_CONTROLLER_AXIS_RIGHT_Y) navigation.sThumbRY = state->Gamepad.sThumbRY;
 		}
+		test_input_presses(&state->Gamepad, &navigation);
 		if (halo_controller_look_active(0,
 			controller_physical_axis_flags[0] & HALO_CONTROLLER_AXIS_LEFT_X ? state->Gamepad.sThumbLX : 0,
 			controller_physical_axis_flags[0] & HALO_CONTROLLER_AXIS_LEFT_Y ? state->Gamepad.sThumbLY : 0,

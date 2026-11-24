@@ -1472,6 +1472,7 @@ static boolean ui_check_for_pause_game(
 #include "native_multiplayer_pause.inc"
 #include "performance_pause_menu.inc"
 #include "game_settings_menu.inc"
+#include "ui_layout_check.inc"
 #endif
 
 /* ---------- globals */
@@ -4185,6 +4186,46 @@ void ui_stop_main_menu_music(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* port: the tag of the screen on top and of the widget with the focus in it,
+with that widget's place among its siblings, for automated menu checks: they
+wait for the screen they asked for and move to an item by name instead of
+counting presses (console "ui") */
+char const *ui_widget_top_screen_name(
+	char const **focus_name,
+	short *focus_index)
+{
+	short stack;
+
+	*focus_name = "none";
+	*focus_index = NONE;
+	for (stack = 0; stack < (short)NUMBEROF(widget_globals.active_widgets); stack++)
+	{
+		struct widget_instance *top = widget_globals.active_widgets[stack];
+
+		if (top)
+		{
+			struct widget_instance *parent = top;
+
+			while (parent->focused_child)
+			{
+				struct widget_instance *sibling;
+				short index = 0;
+
+				for (sibling = parent->child; sibling && sibling != parent->focused_child; sibling = sibling->next)
+					index++;
+				*focus_index = index;
+				parent = parent->focused_child;
+			}
+			if (parent != top)
+				*focus_name = tag_get_name(parent->definition_tag_index);
+			return tag_get_name(top->definition_tag_index);
+		}
+	}
+	return "none";
+}
+#endif
+
 void display_error_deferred(
 	short error_code,
 	short local_player_index,
@@ -5209,6 +5250,9 @@ static void widget_instance_render_text_box(
 				SECONDS_PER_MILLISECOND * 3.0f) + 1.5f) * 0.4f) * color.alpha;
 	}
 	draw_string_set_draw_mode(font_index, NONE, justification, 0, &color);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	ui_layout_check_text(widget, &bounds, &clip, *text);
+#endif
 	if (string_has_icons_to_draw(*text))
 		draw_string_and_hack_in_icons(&bounds, &clip, NULL, 0, *text, FALSE);
 	else

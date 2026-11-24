@@ -85,6 +85,7 @@ to run for every edit. From the repository root:
 | Release selection, changelog or update notices | `python3 -m unittest tools.test_testing_release tools.test_release_changelog tools.test_release_discovery` |
 | Native directory client | `python3 -m unittest tools.test_game_directory tools.test_game_directory_worker` |
 | Directory server | In `services/game-directory`, run `npm ci`, then `npm test`; the real lease-expiry case takes about 91 seconds. |
+| Menu text, menu boxes or Upres fonts | `python3 tools/menu_layout_check.py --output build/menu-layout/<new folder>` walks the real menus in a local Mac build and fails on any text that does not fit its box; it saves a picture of each screen. |
 | Metal CPU/transport behavior | `PYTHONPATH=tools python3 -m unittest tools.test_metal_guest_transport` |
 
 Extracted game data (`assets/`) and Mac build products (`build/macos/`) are
