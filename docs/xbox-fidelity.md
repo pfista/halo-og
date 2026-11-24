@@ -18,7 +18,10 @@ of intervening upstream changes.
 `685bf260a0a648a1d898928a99b17428a2549b92` (October 4, 2026 review).
 The November 17 catch-up inventoried merged history through
 `307a42ee04ba58ccafbc231353629e67476af5cd` and reviewed selected production
-diffs. Review subsequent candidates individually.
+diffs. The November 23 review inventoried the `testing` branch through
+`40d3a1f71f70e1bd955d5ed9b88e8b8a410de28e` (1,083 commits since the fork
+point) and set [the adoption plan](opence-adoption.md). Review subsequent
+candidates individually.
 
 The following decisions still constrain integration. Excluded/deferred changes
 were diff-reviewed and remain unintegrated; their runtime behavior is unvalidated.
@@ -117,6 +120,48 @@ The networking review covered OpenCE agreements 12 through 44. Halo OG retains
 base v11. The 43-to-44 change covers automated MCC package offers and dedicated
 MCC hosting. For v11, the earlier pregame keep-alive width correction
 (`904fbbfc`) merits independent verification against existing lobby traffic.
+
+## November 24 adoption for 0.7
+
+After the November 23 player meeting the user chose to take OpenCE engine work
+more permissively, in the batches of [the adoption plan](opence-adoption.md).
+Every upstream commit below is from OpenCE's CC0 era (before `4b09168e`).
+
+| Area | Upstream | Halo OG | Decision |
+| --- | --- | --- | --- |
+| Joining | `ab3c388c` | `e10e543fb` | Adopt. Connecting clears the closed mark a write made before the socket existed. |
+| Joining | `ff8fc7a6` | `07922fbed` | Adopt. A connect wait that times out is still connecting. |
+| Grenades | `1f87b4ff` | `958472823` | Adopt. A joiner's copy of a unit has no grenades until the host's inventory arrives. Upstream measured 2 of 41 throws unseen by the host before and none after. |
+| Motion sensor | `1ac8186d6` | `832e5f3e8` | Adopt. Three or four local players overran two stack arrays. |
+| Split screen | `cf17201ec` | `2b90d9b30` | Adopt. Dividers follow the screen width. |
+| Help text | `626c42df6` | `97104e2ea` | Adopt. A custom icon in help text read the button icon list at index -1. |
+| String lists | `5ec67a8db` | `665276ed5` | Adopt. |
+| Map text as a format | `c1694f607`, `40bb5ea4a`, `65cd4c29d` | `2b3483c1f` | Adopt as one change. The upstream hunks for its co-op scoreboard are left out. |
+| Items | `d084721f` | `6a030ef0c` | Adopt. Changes behavior only on maps with more than 32,767 collision surfaces. |
+| Active camouflage | `43dc11f22` | `ece84ed2e` | Adopt. |
+| 3D sound distance | `991ab4101` | `783e0ebd4` | Adopt. DirectSound's distance factor converts units for Doppler; the rolloff is a ratio of distances in the same units. This raises distant 3D sounds by up to 10 dB and should be compared with an Xbox. |
+| Camouflage and reflection target | `c92b9defc` | `2ef502d70` | Adopt for OpenGL and write the Metal counterpart. Unchanged at 480 lines. |
+| Smooth Motion pose changes | `e44619818` | `8246f48df` | Adopt. Smooth Motion off is unchanged. |
+| Smooth Motion cinematic camera | `33c2baa28` | `c4c5ca4aa` | Adopt. Smooth Motion off is unchanged. |
+| Antennas and attached effects | `39ece781e` | `acee506b8` | Adopt with a change: upstream steps antennas in the tick at every frame rate, Halo OG only with Smooth Motion on, so the original path is kept when it is off. |
+| Antenna and flag jump threshold | `f2a0f91e4` | — | Exclude. It corrects an original Xbox quirk in stock behavior. |
+| Lens flares out of view | `744040c87` | — | Defer. It changes when a flare fades and needs a comparison on both renderers. |
+| Hardening rounds | `761210d4`, `76addf66`, `54abd344` | — | Defer to the map import work. |
+
+New in the same release, not from upstream: the picture defaults and their
+one-time move (`e024d3c72`, `9906611cc`), the 32-player host cap (`f592733cf`),
+separate look sensitivity (`c5314ab4e`) and the 0.7 release line (`eceb73d38`).
+
+Validation on November 24: the Mac guest builds; `d3d8_gl.c` compiles in the
+guest-only OpenGL configuration; focused fixtures pass for settings and their
+migration, device settings, the settings menu on five platform configurations,
+render scale, the Metal texture cache, desktop resolution, render
+interpolation, solo start, the performance network gate and the v11 wire
+layout. Isolated Mac sessions with the player cloaked rendered correctly on
+Metal at 480 lines, at the 1080p preset and at a native 2560x1920 drawable,
+and Blood Gulch ran with Smooth Motion on and off. Not done: Windows, Linux,
+Android and iPhone builds, a two-machine game, a controller in hand, a vehicle
+antenna on screen, and any comparison with an Xbox.
 
 ## Desktop OpenGL lens flare visibility
 
