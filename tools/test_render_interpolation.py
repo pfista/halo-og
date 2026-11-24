@@ -76,6 +76,9 @@ static int director_get_perspective(short index) {
     assert(index==0); return cinematic ? _director_perspective_scripted : _director_perspective_first_person;
 }
 static boolean director_inhibited_facing(short index) { assert(index==0); return FALSE; }
+/* The object a cinematic's scripted camera point is placed relative to, if any. */
+static long relative_object=NONE;
+static long scripted_camera_object_relative_to(void) { return relative_object; }
 static boolean cinematic_in_progress(void) { return cinematic; }
 static long player_control_get_unit_index(short index) { (void)index; return 0; }
 static void player_control_get_facing_direction(short index,real_vector3d *forward) {
@@ -90,6 +93,9 @@ static void *object_header_block_get(long index,const void *header) {
 }
 static void object_iterator_new(struct object_iterator *iterator,int mask,int flags) {
     assert(mask==_object_mask_all && !flags); iterator->index=0; iterator->visited=FALSE;
+}
+static void *object_try_and_get_and_verify_type(long index,int mask) {
+    assert(mask==_object_mask_all); return index==0 && object_present ? &fixture_object : NULL;
 }
 static void *object_iterator_next(struct object_iterator *iterator) {
     if(iterator->visited || !object_present) return NULL;
@@ -160,7 +166,7 @@ static void reset_fixture(unsigned long tick,boolean interpolation) {
         free(interpolated_objects); interpolated_objects=NULL;
     }
     interpolation_tick=tick; interpolation_frame=0;
-    world_tick=tick; enabled=interpolation; object_present=TRUE; cinematic=TRUE;
+    world_tick=tick; enabled=interpolation; object_present=TRUE; cinematic=TRUE; relative_object=NONE;
     fixture_object.object.node_matrices.size=sizeof(raw_nodes);
     fixture_object.object.parent_object_index=NONE;
     fixture_object.object.first_child_object_index=NONE;
@@ -330,6 +336,19 @@ static void direct_camera_override(void) {
     REQUIRE(close(camera->forward.j,1),"disabled interpolation changed existing direct facing override");
     render_interpolation_frame_end();
 }
+static void scripted_camera_rides_object(void) {
+    reset_fixture(10,TRUE); relative_object=0; tracking_draw(.1f,TRUE,1);
+    advance(1); tracking_draw(.5f,TRUE,.5f);
+    /* The object's pose changes at once this tick, so it is drawn as it is. A camera
+       placed from it must go with it, not blend between its own two samples. */
+    world_tick++; update_raw(); raw_nodes[1]=identity_at((real)world_tick*.25f+12); render_interpolation_tick();
+    struct observer_result observer=observer_at((real)world_tick*.25f);
+    clock_fraction=.5f; render_interpolation_frame_begin();
+    const struct observer_result *camera=render_interpolation_camera(0,&observer);
+    REQUIRE(close(object_get_node_matrices(0)[0].position.x-camera->position.x,8),
+        "scripted camera left the object it rides");
+    render_interpolation_frame_end();
+}
 int main(int argc,char **argv) {
     REQUIRE(argc==2,"one fixture case required");
     direct_enabled=!strcmp(argv[1],"direct-camera");
@@ -343,6 +362,7 @@ int main(int argc,char **argv) {
     else if(!strcmp(argv[1],"wrapping")) wrapping_tick_clock();
     else if(!strcmp(argv[1],"corrections")) corrected_tracking();
     else if(!strcmp(argv[1],"direct-camera")) direct_camera_override();
+    else if(!strcmp(argv[1],"riding-camera")) scripted_camera_rides_object();
     else REQUIRE(FALSE,"unknown fixture case");
     reset_fixture(0,FALSE);
     return 0;
@@ -421,6 +441,9 @@ class RenderInterpolationTests(unittest.TestCase):
 
     def test_camera_and_object_network_correction_glide_stay_coherent_during_fallback(self):
         self.assert_case("corrections")
+
+    def test_cinematic_camera_placed_from_an_object_stays_with_the_object_as_drawn(self):
+        self.assert_case("riding-camera")
 
 
 if __name__ == "__main__":
