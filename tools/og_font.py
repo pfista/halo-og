@@ -49,6 +49,8 @@ UNITS = 64    # font units to the original pixel
 PAD = 2       # empty pixels kept around a bitmap
 DETAIL = 16   # samples to the original pixel when reconstructing
 SMOOTHING = 0.2  # pixels: how far each round of the reconstruction smooths
+SMOOTH = 0.06    # pixels: how far a refitted curve may be from the traced edge
+CORNER_SPAN = 0.35  # pixels either side of a point within which a corner's turn is measured
 SLACK = 0.4   # of a level: how far a pixel's share may be from the middle of its level
 
 
@@ -180,7 +182,7 @@ def weighed(shape, pixels, detail=DETAIL):
     return np.asarray(Image.fromarray(shape.astype(np.uint8) * 255, "L").filter(brush)) > 127
 
 
-def outlines(shape, detail=DETAIL):
+def outlines(shape, detail=DETAIL, tidy=True):
     """The shape's edges as paths of lines and curves, in original pixels from the bitmap's corner: each a
     starting point and steps ("line", point) or ("curve", control, control, point)."""
     import potrace
@@ -188,10 +190,12 @@ def outlines(shape, detail=DETAIL):
     # (nicks an eighth of a pixel wide are closed and the edge smoothed by a sample's worth first: the
     # reconstruction's edge is stepped a sample at a time)
     brush = 2 * max(detail // 8, 1) + 1
-    closed = Image.fromarray(shape.astype(np.uint8) * 255, "L").filter(ImageFilter.MaxFilter(brush)).filter(ImageFilter.MinFilter(brush))
-    tidy = gaussian(np.asarray(closed, np.float32) / 255, 0.08 * detail) > 0.5
+    # (a drawing of finished outlines needs neither, and its corners must stay exact to be found as corners)
+    if tidy:
+        closed = Image.fromarray(shape.astype(np.uint8) * 255, "L").filter(ImageFilter.MaxFilter(brush)).filter(ImageFilter.MinFilter(brush))
+        shape = gaussian(np.asarray(closed, np.float32) / 255, 0.08 * detail) > 0.5
     paths = []
-    for curve in potrace.Bitmap(~tidy).trace(turdsize=detail, alphamax=1.0, opttolerance=0.4):
+    for curve in potrace.Bitmap(~shape).trace(turdsize=detail, alphamax=1.0, opttolerance=0.4):
         def place(point):
             return np.array([point.x / detail - PAD, point.y / detail - PAD])
         steps, here = [], place(curve.start_point)
@@ -206,9 +210,9 @@ def outlines(shape, detail=DETAIL):
     return paths
 
 
-def corner_of(start, first, second, end):
-    """The corner a curve rounds off, where it turns 50 degrees or more between two sides at least 1.2
-    pixels long and cuts the corner by under 0.6 of a pixel; else None."""
+def corner_of(start, first, second, end, side=0.6, cut=0.6):
+    """The corner a curve rounds off, where it turns 50 degrees or more between two sides at least twice
+    `side` pixels long and cuts the corner by under `cut` of a pixel; else None."""
     leave, arrive = first - start, end - second
     cross = leave[0] * arrive[1] - leave[1] * arrive[0]
     lengths = np.hypot(*leave) * np.hypot(*arrive)
@@ -216,7 +220,7 @@ def corner_of(start, first, second, end):
         return None
     corner = start + leave * (((end[0] - start[0]) * arrive[1] - (end[1] - start[1]) * arrive[0]) / cross)
     middle = (start + 3 * first + 3 * second + end) / 8
-    if min(np.hypot(*(corner - start)), np.hypot(*(end - corner))) < 0.6 or np.hypot(*(corner - middle)) >= 0.6:
+    if min(np.hypot(*(corner - start)), np.hypot(*(end - corner))) < side or np.hypot(*(corner - middle)) >= cut:
         return None
     return corner
 
@@ -249,6 +253,174 @@ def sharpen(paths, coverage):
         [("line", step[1]), ("line", step[2])] if step[0] == "corner" else [step])]) for start, steps in paths]
 
 
+def squared(paths):
+    """Corners that outlining a drawing of sharp-cornered outlines rounded by a sample or two, made sharp again."""
+    result = []
+    for start, steps in paths:
+        here, kept = start, []
+        for step in steps:
+            corner = corner_of(here, step[1], step[2], step[3], side=0.25, cut=0.12) if step[0] == "curve" else None
+            kept += [("line", corner), ("line", step[3])] if corner is not None else [step]
+            here = step[-1]
+        result.append((start, kept))
+    return result
+
+
+def unit(vector):
+    length = float(np.hypot(vector[0], vector[1]))
+    return vector / length if length > 1e-9 else np.array([1.0, 0.0])
+
+
+def bezier(curve, t):
+    t = np.asarray(t)[:, None]
+    return (1 - t) ** 3 * curve[0] + 3 * (1 - t) ** 2 * t * curve[1] + 3 * (1 - t) * t ** 2 * curve[2] + t ** 3 * curve[3]
+
+
+def fit_cubics(points, start, end, tolerance, depth=0):
+    """As few cubic curves through a run of points as stay within the tolerance, leaving along `start` and
+    arriving against `end` (unit vectors pointing into the run from each of its ends). Schneider's fit."""
+    if len(points) == 2:
+        reach = float(np.hypot(*(points[1] - points[0]))) / 3
+        return [np.array([points[0], points[0] + start * reach, points[1] + end * reach, points[1]])]
+    along = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(points, axis=0).T))])
+    total = along[-1]
+    u = along / max(total, 1e-9)
+    curve, worst = None, 1
+    for _ in range(4):
+        b0, b1, b2, b3 = (1 - u) ** 3, 3 * (1 - u) ** 2 * u, 3 * (1 - u) * u ** 2, u ** 3
+        a1, a2 = start[None, :] * b1[:, None], end[None, :] * b2[:, None]
+        rest = points - (points[0][None, :] * (b0 + b1)[:, None] + points[-1][None, :] * (b2 + b3)[:, None])
+        c00, c01, c11 = (a1 * a1).sum(), (a1 * a2).sum(), (a2 * a2).sum()
+        x0, x1 = (a1 * rest).sum(), (a2 * rest).sum()
+        determinant = c00 * c11 - c01 * c01
+        first = second = 0.0
+        if abs(determinant) > 1e-12:
+            first, second = (x0 * c11 - x1 * c01) / determinant, (c00 * x1 - c01 * x0) / determinant
+        if first < total * 1e-3 or second < total * 1e-3:  # (a handle pointing backwards: thirds instead)
+            first = second = total / 3
+        curve = np.array([points[0], points[0] + start * first, points[-1] + end * second, points[-1]])
+        error = np.hypot(*(bezier(curve, u) - points).T)
+        worst = int(np.argmax(error[1:-1])) + 1
+        if error[worst] <= tolerance:
+            return [curve]
+        # move each point's place along the curve toward where the curve is nearest it, and fit again
+        d1 = 3 * ((1 - u) ** 2)[:, None] * (curve[1] - curve[0]) + 6 * ((1 - u) * u)[:, None] * (curve[2] - curve[1]) + \
+            3 * (u ** 2)[:, None] * (curve[3] - curve[2])
+        d2 = 6 * (1 - u)[:, None] * (curve[2] - 2 * curve[1] + curve[0]) + 6 * u[:, None] * (curve[3] - 2 * curve[2] + curve[1])
+        off = bezier(curve, u) - points
+        bottom = (d1 * d1).sum(axis=1) + (off * d2).sum(axis=1)
+        u = np.clip(u - np.where(np.abs(bottom) > 1e-9, (off * d1).sum(axis=1) / np.where(bottom == 0, 1, bottom), 0), 0, 1)
+        u[0], u[-1] = 0, 1
+    if depth > 7 or len(points) < 6:
+        return [curve]
+    worst = min(max(worst, 2), len(points) - 3)
+    middle = unit(points[worst - 2] - points[worst + 2])
+    return fit_cubics(points[:worst + 1], start, middle, tolerance, depth + 1) + \
+        fit_cubics(points[worst:], -middle, end, tolerance, depth + 1)
+
+
+def pieces(path):
+    """A path as its pieces, each with its own start: ["line", a, b] or ["curve", a, control, control, b]."""
+    start, steps = path
+    found, here = [], start
+    for step in steps:
+        if np.hypot(*(step[-1] - here)) > 1e-6:
+            found.append(["line", here, step[1]] if step[0] == "line" else ["curve", here, step[1], step[2], step[3]])
+        here = step[-1]
+    return found
+
+
+def corners_in(points, closed=False, sharp=50.0):
+    """Where a run of points turns a corner: the places it turns `sharp` degrees or more within `span`
+    pixels either side, as indices. A closed run (its last point is its first) is searched all the way round."""
+    span = CORNER_SPAN
+    count = len(points) - 1 if closed else len(points)
+    ring = np.concatenate([points[:count]] * 3) if closed else points
+    along = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(ring, axis=0).T))])
+    turn = np.zeros(count)
+    for index in range(count):
+        at = index + count if closed else index
+        before, after = np.searchsorted(along, along[at] - span, side="right") - 1, np.searchsorted(along, along[at] + span)
+        if before < 0 or after >= len(ring) or along[at] - along[before] < span * 0.6 or along[after] - along[at] < span * 0.6:
+            continue
+        into, out = ring[at] - ring[before], ring[after] - ring[at]
+        turn[index] = abs(np.degrees(np.arctan2(into[0] * out[1] - into[1] * out[0], into @ out)))
+    found = []
+    for index in np.argsort(-turn):  # the sharpest first; nothing else within a span of one already taken
+        if turn[index] < sharp:
+            break
+        place = along[index + count if closed else index]
+        if all(min(abs(place - along[(other + count) if closed else other]), (along[count] - abs(place - along[other + count])) if closed else 1e9) > span for other in found):
+            found.append(int(index))
+    return sorted(found)
+
+
+def refit(points, leave, arrive, tolerance):
+    """Steps through a run of points: split at its corners, each part a line where it is straight within
+    the tolerance and otherwise as few curves as stay within it. `leave` and `arrive` are the directions
+    the run must start and end along (None at an end that is a corner)."""
+    cuts = [0] + corners_in(points) + [len(points) - 1]
+    steps = []
+    for first, last in zip(cuts, cuts[1:]):
+        part = points[first:last + 1]
+        if len(part) < 2:
+            continue
+        along = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(part, axis=0).T))])
+        near, far = min(int(np.searchsorted(along, 0.25)), len(part) - 1) or 1, max(int(np.searchsorted(along, along[-1] - 0.25)) - 1, 0)
+        start = leave if first == 0 and leave is not None else unit(part[near] - part[0])
+        end = -arrive if last == len(points) - 1 and arrive is not None else unit(part[min(far, len(part) - 2)] - part[-1])
+        chord = unit(part[-1] - part[0])
+        stray = np.abs((part[:, 0] - part[0][0]) * chord[1] - (part[:, 1] - part[0][1]) * chord[0]).max()
+        if stray <= tolerance and start @ chord > 0.94 and -end @ chord > 0.94:
+            steps.append(("line", part[-1]))
+        else:
+            steps += [("curve", c[1], c[2], c[3]) for c in fit_cubics(part, start, end, tolerance)]
+    return steps
+
+
+def smoothed(paths, tolerance):
+    """Each run of curves between straight lines redrawn: split at its corners, and each part a line where
+    it is straight within the tolerance, otherwise as few curves as stay within the tolerance of it. The
+    reconstruction holds every pixel's ink, and sixteen levels of it are coarse: along a curve or a slope
+    that leaves ripples a few hundredths of a pixel high, which this takes out. Straight edges are lines
+    already and are left alone; corners stay corners."""
+    result = []
+    for path in paths:
+        found = pieces(path)
+        if len(found) < 2:
+            continue
+        lines = [index for index, piece in enumerate(found) if piece[0] == "line"]
+
+        def sampled(run):
+            return np.concatenate([run[0][1][None, :]] + [bezier(np.array(piece[1:]), np.linspace(0, 1, 11)[1:]) for piece in run])
+
+        if not lines:  # one closed outline with no straight line in it
+            points = sampled(found)
+            turned = corners_in(points, closed=True)
+            if turned:  # start it at a corner
+                points = np.concatenate([points[turned[0]:-1], points[:turned[0] + 1]])
+                result.append((points[0], refit(points, None, None, tolerance)))
+            else:  # a closed curve: it leaves and arrives along the same direction
+                heading = unit(points[1] - points[-2])
+                result.append((points[0], [("curve", c[1], c[2], c[3]) for c in fit_cubics(points, heading, -heading, tolerance)]))
+            continue
+        found = found[lines[0]:] + found[:lines[0]]
+        steps, index = [], 0
+        while index < len(found):
+            if found[index][0] == "line":
+                steps.append(("line", found[index][2]))
+                index += 1
+                continue
+            last = index
+            while last < len(found) and found[last][0] == "curve":
+                last += 1
+            before, after = found[index - 1], found[last % len(found)]  # (lines both: a run is every curve between two)
+            steps += refit(sampled(found[index:last]), unit(before[2] - before[1]), unit(after[2] - after[1]), tolerance)
+            index = last
+        result.append((found[0][1], steps))
+    return result
+
+
 _letters = {}
 
 
@@ -256,9 +428,9 @@ def letter(coverage, weight=0.0):
     """A letter's outlines from its bitmap (remembered: the reconstruction is the slow part)."""
     key = (coverage.shape, coverage.tobytes(), weight)
     if key not in _letters:
-        paths = sharpen(outlines(reconstruct(coverage)), coverage)
-        if weight:  # (the weight is added to the finished outline, drawn large, and traced again)
-            paths = outlines(weighed(fill(paths, coverage.shape, DETAIL) > 0.5, weight))
+        paths = smoothed(sharpen(outlines(reconstruct(coverage)), coverage), SMOOTH)
+        if weight:  # (the weight is added to the finished outline, drawn large, and that is outlined again)
+            paths = smoothed(squared(outlines(weighed(fill(paths, coverage.shape, DETAIL) > 0.5, weight), tidy=False)), SMOOTH)
         _letters[key] = paths
     return _letters[key]
 

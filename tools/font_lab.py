@@ -9,6 +9,7 @@ of tiles per character. Click the line or tile that looks most like the
 original; the page lists the picks as text to paste back.
 
     python3 tools/font_lab.py --output build/font-lab/<new folder>
+    python3 tools/font_lab.py --output ... --review    # only our own font: its weight, and each letter to flag
     python3 tools/font_lab.py --output ... --typeface Other-Bold.ttf --typeface 'Variable[wght].ttf@800'
     python3 tools/font_lab.py --output ... --characters RtC= --phrase "COOPERATIVE PLAY"    # seconds, not minutes
 
@@ -749,8 +750,143 @@ save();
 """
 
 
+REVIEW_PHRASES = ["COOPERATIVE PLAY", "Team Slayer Pro", "Choose another to edit.", "A=SELECT  B=BACK", "0123456789 : . , ' - % = ?"]
+REVIEW_WEIGHTS = [("true weight", 0.0), ("+0.15 px", 0.15), ("+0.3 px", 0.3)]
+REVIEW_PAGE = """<!doctype html>
+<meta charset="utf-8">
+<title>Font review</title>
+<style>
+ body { background: #101114; color: #d8dae0; font: 14px/1.45 -apple-system, system-ui, sans-serif; margin: 0 0 170px; }
+ header, section { padding: 12px 20px; } h1 { font-size: 20px; margin: 0 0 6px; } h2 { font-size: 17px; margin: 22px 0 2px; }
+ h3 { font-size: 13px; margin: 16px 0 6px; color: #9aa0ad; font-weight: 600; } p { margin: 4px 0; max-width: 860px; }
+ .line { display: flex; align-items: center; gap: 10px; padding: 2px 6px; border: 2px solid transparent; border-radius: 6px; width: max-content; }
+ .line.pick { cursor: pointer; } .line.pick:hover, .letter:hover { border-color: #3a4152; }
+ .line.picked { border-color: #ffd24a; background: #2a2613; }
+ .label { width: 110px; flex: none; color: #9aa0ad; font-size: 12px; } img { display: block; }
+ .phrase { margin-bottom: 14px; } .letters { display: flex; flex-wrap: wrap; gap: 6px; }
+ .letter { display: flex; gap: 2px; border: 2px solid transparent; border-radius: 6px; padding: 2px; cursor: pointer; background: #16171b; }
+ .letter.flagged { border-color: #ff5d5d; background: #2e1414; }
+ footer { position: fixed; left: 0; right: 0; bottom: 0; background: #181a20; border-top: 1px solid #2c3140; padding: 8px 20px;
+   display: flex; gap: 12px; align-items: flex-start; } textarea { flex: 1; height: 130px; background: #0c0d10; color: #d8dae0;
+   border: 1px solid #2c3140; border-radius: 6px; font: 12px/1.4 ui-monospace, monospace; padding: 6px; }
+ footer button { background: #2a3040; color: #e8eaf0; border: 1px solid #3a4152; border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+</style>
+<header>
+ <h1>Font review</h1>
+ <p>Two things to decide for each font. <b>1.</b> Click the line whose weight reads most like the original. <b>2.</b> Click any
+ letter that looks wrong; each pair is the original on the left and our font on the right, at the weight you picked.
+ Say what is wrong in the notes box, then copy and paste the result into the chat.</p>
+</header>
+<main id="main"></main>
+<footer><textarea id="result" readonly></textarea><textarea id="notes" placeholder="Notes: what looks wrong, and where"></textarea>
+<div><button id="copy">Copy</button><br><br><button id="clear">Clear</button></div></footer>
+<script>
+const DATA = __DATA__;
+const main = document.getElementById("main"), result = document.getElementById("result"), notes = document.getElementById("notes");
+let state = {weights: {}, flags: {}};
+try { state = JSON.parse(localStorage.getItem(DATA.run) || "null") || state; notes.value = localStorage.getItem(DATA.run + ":notes") || ""; } catch (error) {}
+function element(tag, attributes, parent) {
+  const node = document.createElement(tag);
+  for (const key in attributes) { if (key === "text") node.textContent = attributes[key]; else node[key] = attributes[key]; }
+  if (parent) parent.appendChild(node);
+  return node;
+}
+function shown(font) { return font.name in state.weights ? state.weights[font.name] : 1; }
+function refresh() {
+  try { localStorage.setItem(DATA.run, JSON.stringify(state)); localStorage.setItem(DATA.run + ":notes", notes.value); } catch (error) {}
+  const lines = ["Font review (" + DATA.run + ")"];
+  for (const font of DATA.fonts) {
+    const flagged = Object.keys(state.flags[font.name] || {});
+    lines.push(font.name + ": weight " + (font.name in state.weights ? DATA.weights[state.weights[font.name]] : "not picked") +
+      "; letters flagged: " + (flagged.length ? flagged.join(" ") : "none"));
+  }
+  if (notes.value.trim()) lines.push("Notes: " + notes.value.trim());
+  result.value = lines.join("\\n");
+  document.querySelectorAll(".line.pick").forEach(node => node.classList.toggle("picked", state.weights[node.dataset.font] === +node.dataset.weight));
+  document.querySelectorAll(".letter").forEach(node => {
+    node.classList.toggle("flagged", !!(state.flags[node.dataset.font] || {})[node.dataset.letter]);
+    const font = DATA.fonts[+node.dataset.index];
+    node.lastChild.src = font.letters[+node.dataset.at].ours[shown(font)];
+  });
+}
+DATA.fonts.forEach((font, index) => {
+  const section = element("section", {}, main);
+  element("h2", {text: font.title}, section);
+  element("p", {text: font.note}, section);
+  element("h3", {text: "1. Weight: click the line that reads most like the original"}, section);
+  for (const phrase of font.phrases) {
+    const block = element("div", {className: "phrase"}, section);
+    const first = element("div", {className: "line"}, block);
+    element("div", {className: "label", text: "ORIGINAL"}, first);
+    element("img", {src: phrase.original, width: phrase.width, height: phrase.height}, first);
+    phrase.lines.forEach((image, weight) => {
+      const row = element("div", {className: "line pick"}, block);
+      row.dataset.font = font.name; row.dataset.weight = weight;
+      element("div", {className: "label", text: DATA.weights[weight]}, row);
+      element("img", {src: image, width: phrase.width, height: phrase.height}, row);
+      row.onclick = () => { if (state.weights[font.name] === weight) delete state.weights[font.name]; else state.weights[font.name] = weight; refresh(); };
+    });
+  }
+  element("h3", {text: "2. Letters: click any that looks wrong (original left, ours right)"}, section);
+  const grid = element("div", {className: "letters"}, section);
+  font.letters.forEach((letter, at) => {
+    const pair = element("div", {className: "letter", title: letter.text}, grid);
+    pair.dataset.font = font.name; pair.dataset.letter = letter.text; pair.dataset.index = index; pair.dataset.at = at;
+    element("img", {src: letter.original, width: letter.width, height: letter.height}, pair);
+    element("img", {src: letter.ours[1], width: letter.width, height: letter.height}, pair);
+    pair.onclick = () => { const mine = state.flags[font.name] = state.flags[font.name] || {};
+      if (mine[letter.text]) delete mine[letter.text]; else mine[letter.text] = true; refresh(); };
+  });
+});
+document.getElementById("copy").onclick = () => { result.select(); try { navigator.clipboard.writeText(result.value); } catch (error) { document.execCommand("copy"); } };
+document.getElementById("clear").onclick = () => { state = {weights: {}, flags: {}}; refresh(); };
+notes.oninput = refresh;
+refresh();
+</script>
+"""
+REVIEW_NOTES = {
+    "ui\\large_ui": ("Large menu font", "Menu lists and buttons. The in-game message font (ui\\interstate) has these same letters "
+                     "set one pixel closer together, so reviewing this covers both."),
+    "ui\\small_ui": ("Small menu font", "Descriptions, legends and settings rows."),
+}
+
+
+def review(args, cache):
+    """The page for settling our own font: only its weight and its letters, beside the original."""
+    # (pictures hold twice the pixels they are shown at, for sharp screens; letters are shown twice as large as phrases)
+    detail, close = args.scale * 2, args.scale * 4
+    recipes = [recipe_ours, recipe_ours_15, recipe_ours_30]
+    data = {"run": args.output.name, "weights": [label for label, _ in REVIEW_WEIGHTS], "fonts": []}
+    for name in filter(None, args.fonts.split(",")):
+        font = MapFont(cache, name)
+        title, note = REVIEW_NOTES.get(name, (name, ""))
+        entry = {"name": name, "title": title + " (" + name + ")", "note": note, "phrases": [], "letters": []}
+        for text in args.phrase or REVIEW_PHRASES:
+            original = original_line(font, text, detail)
+            entry["phrases"].append({
+                "original": picture(original, detail, 1, TEXT, GROUND, 1.0),
+                "lines": [picture(recipe_line(font, text, recipe, None, detail, {}), detail, 1, TEXT, GROUND, 0.5) for recipe in recipes],
+                "width": original.shape[1] // 2, "height": original.shape[0] // 2})
+        for character in args.characters or "".join(chr(code) for code in range(33, 127) if code in font.glyphs):
+            original = original_line(font, character, close)
+            entry["letters"].append({
+                "text": character, "original": picture(original, close, 1, TILE_TEXT, TILE_GROUND, 0),
+                "ours": [picture(recipe_line(font, character, recipe, None, close, {}), close, 1, TILE_TEXT, TILE_GROUND, 0)
+                         for recipe in recipes],
+                "width": original.shape[1] // 2, "height": original.shape[0] // 2})
+        data["fonts"].append(entry)
+        print(f"{name}: {len(entry['phrases'])} phrases, {len(entry['letters'])} letters")
+    args.output.mkdir(parents=True)
+    page = args.output / "index.html"
+    page.write_text(REVIEW_PAGE.replace("__DATA__", json.dumps(data).replace("</", "<\\/")))
+    print(f"Page: {page} ({page.stat().st_size // 1024} KB)")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--review", action="store_true", help="Write the short page for settling our own font: its "
+                        "weight against the original on a few phrases, and each letter beside the original to flag. "
+                        "Covers the large and small fonts unless --fonts says otherwise")
     parser.add_argument("--output", type=Path, required=True, help="A new folder for index.html")
     parser.add_argument("--fonts", default="ui\\large_ui,ui\\small_ui,ui\\interstate",
                         help="Font tags, comma-separated; '' for none. The maps have these three and the console's "
@@ -768,6 +904,10 @@ def main():
     if args.output.exists():
         sys.exit("Use a new output folder so earlier pages are kept")
     cache = XboxMap(PRIMARY / "assets/maps/ui.map")
+    if args.review:
+        if args.fonts == parser.get_default("fonts"):
+            args.fonts = "ui\\large_ui,ui\\small_ui"
+        return review(args, cache)
     files = {entry["tag"]: FONTS / entry["file"] for entry in json.loads((FONTS / "fonts.json").read_text())["fonts"]}
     chosen = [recipe for recipe in RECIPES if recipe[0] in args.recipes.split(",")]
     detail = args.scale * 2
