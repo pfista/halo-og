@@ -157,7 +157,8 @@ Pause page takes its row size, font, spacing and frame from one table
 (`native_pause_styles`); [native settings](native-settings.md) describes the
 layout. One player gets a panel 82 pixels wider with every row in the large
 font at the original 27-pixel pitch. Split screen keeps a smaller panel with
-one font on each page. The frame and the selection box are drawn in pieces, so
+one font on each page. A setting shows its name at the left of its row and
+its value at the right. The frame and the selection box are drawn in pieces, so
 they can be any size without stretching their corners. The walk now covers the
 split-screen layouts too (`--tour pause-2p`, `--tour pause-4p`), by showing
 player one's Pause in a half or a quarter of the screen.

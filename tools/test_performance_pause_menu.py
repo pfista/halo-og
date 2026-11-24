@@ -243,6 +243,9 @@ int main(void) {
    for(int row=0;row<7;row++) {
      assert(rows[row].widget_tag.index==performance_pause_tags[_pp_preset+split+row]);
      assert(rows[row].vertical_offset==row*style->row_height+(row==6 ? style->action_gap:0));
+     /* A setting's name starts at the left inset and its value ends at the
+      * right one; APPLY is centred. */
+     assert(ui_widget_definition_get(rows[row].widget_tag.index)->horizontal_offset==(row<6 ? style->text_inset:style->text_trail));
      struct widget_instance candidate={.definition_tag_index=rows[row].widget_tag.index};
      assert(performance_pause_is_spinner(&candidate)==(row<6));
    }
@@ -279,6 +282,18 @@ int main(void) {
    for(unsigned i=0;performance_pause_text[text][i];i++)
      if(performance_pause_text[text][i]==L'\r') line_break=TRUE;
  assert(!line_break);
+ }
+ /* Every value of a setting is "name<tab>< value >", with the same spaces around every arrow. */
+ for(int list=1;list<7;list++) {
+   struct string_list *values=tag_get(UNICODE_STRING_LIST_TAG,performance_pause_string_tags[list]);
+   const wchar_t *first=((struct string_list_entry *)values->strings.address)[0].string.address;
+   size_t name=0; while(first[name] && first[name]!=L'\t') name++;
+   for(long i=0;i<values->strings.count;i++) {
+     const wchar_t *text=((struct string_list_entry *)values->strings.address)[i].string.address;
+     size_t length=ustrlen(text);
+     assert(!memcmp(text,first,(name+1)*sizeof(wchar_t)) && text[name]==L'\t');
+     assert(text[name+1]==L'<' && text[name+2]==L' ' && text[length-2]==L' ' && text[length-1]==L'>');
+   }
  }
  assert(performance_pause_definitions[_pp_entry_1p].string_list_index==0);
  assert(performance_pause_definitions[_pp_settings_1p].string_list_index==16);
@@ -446,20 +461,35 @@ int main(void) {
 
 class PerformancePauseMenuTest(unittest.TestCase):
     def test_sound_values_and_help_fit_stock_fonts(self):
+        from tools.primary_checkout import PRIMARY
         from tools.verify_performance_sound_samples import Cache
-        paths = [ROOT / f"assets/maps/{name}.map" for name in ("ui", "bloodgulch")]
-        paths = [path for path in paths if path.exists()]
+        paths = [next((root / f"assets/maps/{name}.map" for root in (ROOT, PRIMARY)
+                       if (root / f"assets/maps/{name}.map").exists()), None) for name in ("ui", "bloodgulch")]
+        paths = [path for path in paths if path is not None]
         if not paths:
             self.skipTest("owned Xbox cache assets required for font metrics")
         source = (ROOT / "source/interface/performance_pause_menu.inc").read_text()
         array = source.split("static wchar_t performance_pause_text[][64] =", 1)[1].split("};", 1)[0]
         texts = [ast.literal_eval(value[1:]) for value in re.findall(r'L"(?:\\.|[^"\\])*"', array)]
+        # Row widths and insets come from the kit: one player's rows are in the
+        # large font, split screen's settings in the small one.
+        kit = (ROOT / "source/interface/native_pause_frame.inc").read_text()
+        styles = [(small == "TRUE", int(width), int(inset), int(trail)) for small, width, inset, trail in
+                  re.findall(r"\{(TRUE|FALSE), (\d+), \d+, \d+, (\d+), (\d+), \d+, \d+, \d+, \d+\}", kit)]
+        self.assertEqual(len(styles), 3)
+        wide, split = styles[0], styles[2]
+        self.assertFalse(wide[0])
+        self.assertTrue(split[0])
+        settings = [index for index, text in enumerate(texts) if "\t" in text]
+        self.assertEqual(len(settings), 16)
+        checks = [(r"ui\large_ui", settings, wide[1] - 2 * wide[2] + wide[3]),
+                  (r"ui\small_ui", settings, split[1] - 2 * split[2] + split[3]),
+                  (r"ui\large_ui", [0, 1, 2, 13, 16], wide[1] - wide[3]), (r"ui\small_ui", [1, 2, 13], split[1] - split[3]),
+                  (r"ui\large_ui", [0, 16], styles[1][1] - styles[1][3]),
+                  (r"ui\small_ui", range(23, len(texts)), 284), (r"ui\small_ui", [3, 4], 284)]
         for path in paths:
             cache = Cache(path)
-            for font_path, indices, limit in (
-                (r"ui\large_ui", range(17, 23), 202),
-                (r"ui\small_ui", range(23, len(texts)), 284),
-            ):
+            for font_path, indices, limit in checks:
                 font = cache.by_path[font_path]
                 count, address, _ = cache.unpack("<3I", font["address"] + 0x7C)
                 glyphs = {}
@@ -468,7 +498,8 @@ class PerformancePauseMenuTest(unittest.TestCase):
                     glyphs[chr(code)] = (advance, width, origin_x)
                 for index in indices:
                     self.assertLess(len(texts[index]), 64)
-                    for line in texts[index].splitlines():
+                    # A setting needs its name, at least two spaces and its value.
+                    for line in texts[index].replace("\t", "  ").splitlines():
                         with self.subTest(map=path.stem, font=font_path, text=line):
                             cursor = ink_right = 0
                             for character in line:

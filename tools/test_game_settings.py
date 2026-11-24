@@ -464,6 +464,11 @@ static void settings_check_pause_page(short layout,short page,struct ui_widget_d
         assert(row->bounds.x0==0 && row->bounds.y0==0 && row->bounds.x1==style->row_width && row->bounds.y1==style->row_height);
         assert(TEST_FLAG(row->flags,_widget_native_pause_row_bit) && row->background_bitmap.index==originals[6].background_bitmap.index);
         assert(row->vertical_offset==style->text_y && !child->horizontal_offset);
+        /* A setting, and the link to a sub-page among settings: the name at the
+         * left end and the value at the right, the same distance in. ACCEPT
+         * and a list's rows are centred. */
+        assert(row->horizontal_offset==(action && i<count ? style->text_inset:style->text_trail));
+        assert(row->justification==_text_justification_center);
         assert(child->vertical_offset==i*style->row_height+(action && i==rows-1 ? style->action_gap:0));
         assert(child->vertical_offset+style->row_height<=column->bounds.y1);
     }
@@ -1156,7 +1161,7 @@ static void settings_controller_staging(void) {
         struct widget_instance *left=setting_control(root,_device_setting_left_stick_deadzone);
         short index=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_left_stick_deadzone;
         assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==9000);
-        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Xbox":L"Left Deadzone: < Xbox >"));
+        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Xbox":L"Left Deadzone\t< Xbox >"));
         for(unsigned i=0;i<3;i++) assert(game_settings_event(left,_device_settings_previous));
         assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==0);
         assert(game_settings_event(left,_device_settings_previous));
@@ -1213,9 +1218,9 @@ static void settings_acceleration_staging(void) {
         struct widget_instance *acceleration=setting_control(root,_device_setting_look_acceleration);
         short index=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_look_acceleration;
         assert(device_settings_drafts[local].values[_device_setting_look_acceleration]==1);
-        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Xbox":L"Look Acceleration: < Xbox >"));
+        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Xbox":L"Look Acceleration\t< Xbox >"));
         assert(game_settings_event(acceleration,_device_settings_next));
-        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Off":L"Look Acceleration: < Off >"));
+        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Off":L"Look Acceleration\t< Off >"));
         assert(device_settings_drafts[local].values[_device_setting_look_acceleration]==0);
         assert(!writes && settings_values[_device_setting_look_acceleration]==1);
         assert(settings_values[_device_setting_left_stick_deadzone]==9000 && settings_values[_device_setting_right_stick_deadzone]==9000);
@@ -1233,7 +1238,7 @@ static void settings_acceleration_staging(void) {
         assert(game_settings_event(root,_device_settings_accept) && writes==2); dispose(root);
         root=open_settings(layouts[layout],_ds_controller,local);
         assert(device_settings_drafts[local].values[_device_setting_look_acceleration]==0);
-        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Off":L"Look Acceleration: < Off >"));
+        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Off":L"Look Acceleration\t< Off >"));
         acceleration=setting_control(root,_device_setting_look_acceleration);
         assert(game_settings_event(acceleration,_device_settings_next));
         assert(game_settings_event(root,_device_settings_cancel)); dispose(root);
@@ -1261,18 +1266,18 @@ static void settings_look_sensitivity_staging(void) {
         struct widget_instance *root=open_settings(layouts[layout],_ds_controller,local);
         short horizontal=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_look_sensitivity_horizontal;
         short vertical=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_look_sensitivity_vertical;
-        assert(!wcscmp(device_settings.text[horizontal],device_settings.native_pages ? L"Profile":L"Look Horizontal: < Profile >"));
-        assert(!wcscmp(device_settings.text[vertical],device_settings.native_pages ? L"Profile":L"Look Vertical: < Profile >"));
+        assert(!wcscmp(device_settings.text[horizontal],device_settings.native_pages ? L"Profile":L"Look Horizontal\t< Profile >"));
+        assert(!wcscmp(device_settings.text[vertical],device_settings.native_pages ? L"Profile":L"Look Vertical\t< Profile >"));
         /* Profile is the lower end: Previous stays there. */
         assert(game_settings_event(setting_control(root,_device_setting_look_sensitivity_vertical),_device_settings_previous));
         assert(device_settings_drafts[local].values[_device_setting_look_sensitivity_vertical]==0);
         for(unsigned step=0;step<12;step++)
             assert(game_settings_event(setting_control(root,_device_setting_look_sensitivity_horizontal),_device_settings_next));
         assert(device_settings_drafts[local].values[_device_setting_look_sensitivity_horizontal]==10);
-        assert(!wcscmp(device_settings.text[horizontal],device_settings.native_pages ? L"10":L"Look Horizontal: < 10 >"));
+        assert(!wcscmp(device_settings.text[horizontal],device_settings.native_pages ? L"10":L"Look Horizontal\t< 10 >"));
         for(unsigned step=0;step<3;step++)
             assert(game_settings_event(setting_control(root,_device_setting_look_sensitivity_vertical),_device_settings_next));
-        assert(!wcscmp(device_settings.text[vertical],device_settings.native_pages ? L"3":L"Look Vertical: < 3 >"));
+        assert(!wcscmp(device_settings.text[vertical],device_settings.native_pages ? L"3":L"Look Vertical\t< 3 >"));
         assert(!writes && settings_values[_device_setting_look_sensitivity_horizontal]==0);
         assert(game_settings_event(root,_device_settings_accept));
         assert(writes==1 && applied_mask==((1UL<<_device_setting_look_sensitivity_horizontal)|
@@ -1361,6 +1366,8 @@ static void settings_pause_and_campaign(void) {
     assert(device_settings.heading[_ds_audio].text_font.index==originals[6].text_font.index);
     assert(device_settings.split_accept.text_font.index==tag_loaded(FONT_GROUP_TAG,"ui\\small_ui"));
     assert(device_settings.choice[_ds_pause_4p][0].text_font.index==originals[6].text_font.index);
+    /* The sub-page's link lines up with the names; it has no value. */
+    assert(!wcscmp(string_at(&device_settings.timer_link[_ds_pause_1p],device_settings.timer_link[_ds_pause_1p].string_list_index),L"Timer Audio...\t"));
     struct widget_instance *one=open_settings(_ds_pause_1p,_ds_audio,0),*two=open_settings(_ds_pause_4p,_ds_audio,3);
     assert(!game_settings_is_native_spinner(setting_control(one,_device_setting_master_volume)));
     assert(device_settings.column[_ds_pause_1p][_ds_audio].child_widgets.count==7);
@@ -1369,8 +1376,8 @@ static void settings_pause_and_campaign(void) {
     assert(device_settings.column[_ds_pause_4p][_ds_controller].child_widgets.count==6);
     assert(game_settings_event(setting_control(two,_device_setting_master_volume),_device_settings_next));
     assert(device_settings_drafts[3].values[_device_setting_master_volume]==0.2 && device_settings_drafts[0].values[_device_setting_master_volume]==0.125);
-    assert(!wcscmp(device_settings.text[_ds_value_start+3*NUMBER_OF_DEVICE_SETTINGS],L"Master: < 20% >"));
-    assert(!wcscmp(device_settings.text[_ds_value_start],L"Master: < 12.5% >"));
+    assert(!wcscmp(device_settings.text[_ds_value_start+3*NUMBER_OF_DEVICE_SETTINGS],L"Master\t< 20% >"));
+    assert(!wcscmp(device_settings.text[_ds_value_start],L"Master\t< 12.5% >"));
     struct widget_instance *column=one->child->next,*help=widget_instance_find_by_tag_index_recursive(one,device_settings.footer_tags[_ds_audio]);
     assert(column->type==_ui_widget_type_column_list && help);
     column->focused_child=column->child->next;
@@ -1461,7 +1468,7 @@ static void settings_cross_map_rebuild(void) {
         assert(strings!=old_strings && tag_index_is_group(strings,'ustr'));
         assert(device_settings_campaign.events[0][0].widget_tag.index!=NONE);
         struct widget_instance *audio=open_settings(_ds_solo,_ds_audio,0);
-        assert(!wcscmp(device_settings.text[_ds_value_start],L"Master: < 12.5% >"));
+        assert(!wcscmp(device_settings.text[_ds_value_start],L"Master\t< 12.5% >"));
         dispose(audio);
     }
 }
@@ -1482,10 +1489,48 @@ static void settings_about_metrics(void) {
     }
 }
 static void settings_text_metrics(struct ui_widget_definition *definition,wchar_t *text) {
+    /* A Pause setting is drawn inside both insets: its name from the left,
+     * its value to the right. The Python side puts two spaces between them. */
+    boolean setting=wcschr(text,L'\t')!=NULL;
     printf("%s %d",tag_get_name(definition->text_font.index),
-        definition->bounds.x1-definition->bounds.x0-definition->horizontal_offset);
+        definition->bounds.x1-definition->bounds.x0-definition->horizontal_offset-(setting ? native_pause_value_inset(definition):0));
     for(unsigned i=0;text[i];i++) printf(" %u",(unsigned)text[i]);
     puts("");
+}
+/* Every row of every Pause page, with each value the player can reach. */
+static void settings_pause_metrics(void) {
+    for(short split=0;split<2;split++) {
+        short layout=split ? _ds_pause_4p:_ds_pause_1p;
+        settings_setup(1); assert(performance_pause_build());
+        for(short page=0;page<_ds_page_count;page++) {
+            struct ui_widget_definition *heading=split ? &device_settings.split_heading[page]:&device_settings.heading[page];
+            settings_text_metrics(heading,string_at(heading,heading->string_list_index));
+            if(page==_ds_game) {
+                for(unsigned i=0;i<NUMBEROF(device_settings.choice[layout]);i++)
+                    settings_text_metrics(&device_settings.choice[layout][i],
+                        string_at(&device_settings.choice[layout][i],device_settings.choice[layout][i].string_list_index));
+                continue;
+            }
+            struct widget_instance *root=open_settings(layout,page,0);
+            struct ui_widget_definition *accept=split ? &device_settings.split_accept:&device_settings.accept;
+            settings_text_metrics(accept,string_at(accept,accept->string_list_index));
+            for(short i=0;i<device_settings_page_counts[page];i++) {
+                short setting=device_settings_page_rows[page][i];
+                if(setting==NONE) {
+                    settings_text_metrics(&device_settings.timer_link[layout],
+                        string_at(&device_settings.timer_link[layout],device_settings.timer_link[layout].string_list_index));
+                    continue;
+                }
+                struct widget_instance *row=setting_control(root,setting);
+                struct ui_widget_definition *definition=ui_widget_definition_get(row->definition_tag_index);
+                for(short direction=0;direction<2;direction++) for(short step=0;step<24;step++) {
+                    settings_text_metrics(definition,device_settings.text[_ds_value_start+setting]);
+                    assert(game_settings_event(row,direction ? _device_settings_previous:_device_settings_next));
+                }
+            }
+            dispose(root);
+        }
+    }
 }
 static void settings_controller_metrics(void) {
     /* The main menu, one player's Pause and split screen's. */
@@ -1527,6 +1572,7 @@ static void settings_controller_metrics(void) {
 int main(int argc,char **argv) {
     if(argc==2 && !strcmp(argv[1],"--about-metrics")) { settings_about_metrics(); return 0; }
     if(argc==2 && !strcmp(argv[1],"--controller-metrics")) { settings_controller_metrics(); return 0; }
+    if(argc==2 && !strcmp(argv[1],"--pause-metrics")) { settings_pause_metrics(); return 0; }
     settings_structure(); settings_native_chooser(); settings_about(); settings_native_options(); settings_game_chooser(); settings_staging();
     settings_timer_staging(); settings_timer_video(); settings_multiplayer_staging(); settings_controller_staging(); settings_acceleration_staging(); settings_look_sensitivity_staging();
     settings_menu_repeat_staging(); settings_hud_staging();
@@ -1719,6 +1765,7 @@ def game_settings_fixture_source(*, mac_video=False):
 int main(int argc,char **argv) {
     if(argc==2 && !strcmp(argv[1],"--about-metrics")) { settings_about_metrics(); return 0; }
     if(argc==2 && !strcmp(argv[1],"--controller-metrics")) { settings_controller_metrics(); return 0; }
+    if(argc==2 && !strcmp(argv[1],"--pause-metrics")) { settings_pause_metrics(); return 0; }
     mac_settings_video(); mac_settings_pause_layouts(); settings_about();
     settings_native_chooser(); settings_game_chooser(); settings_staging();
     settings_timer_staging(); settings_multiplayer_staging(); settings_controller_staging();
@@ -1732,22 +1779,47 @@ int main(int argc,char **argv) {
 
 
 class NativeGameSettingsTests(unittest.TestCase):
+    def verify_pause_font_metrics(self, binary):
+        """Every Pause row, with each value a player can step to, fits its row in the page's font."""
+        strings = self.verify_font_metrics(binary, "--pause-metrics", 1000)
+        if strings is None:
+            return
+        rows = {(font, value) for font, _, value in strings}
+        # One player's pages are all in the large font; split screen's settings in the small one.
+        for value in ("Default Game Types\t< Off >", "Position\t< Bottom Center >", "Anti-Aliasing\t< FXAA >",
+                      "Timer Audio...\t", "Master\t< 100% >", "FPS Limit\t< Uncapped >"):
+            self.assertIn((r"ui\large_ui", value), rows)
+            self.assertIn((r"ui\small_ui", value), rows)
+        self.assertIn((r"ui\large_ui", "ACCEPT"), rows)
+        self.assertIn((r"ui\small_ui", "ACCEPT"), rows)
+        # One font per page: one player's rows (281 for centred text, 267
+        # between a setting's insets) are never small, and split screen's
+        # settings (230) are never large.
+        self.assertEqual({font for font, width, _ in strings if width in (281, 267)}, {r"ui\large_ui"})
+        self.assertEqual({font for font, width, _ in strings if width == 230}, {r"ui\small_ui"})
+        self.assertEqual({width for _, width, _ in strings}, {281, 267, 247, 250, 230})
+
     def verify_controller_font_metrics(self, binary):
         """Measure deadzones and Controller choices with owned Xbox fonts."""
+        strings = self.verify_font_metrics(binary, "--controller-metrics", 64000)
+        if strings is not None:
+            self.assertEqual({font for font, _, _ in strings}, {r"ui\large_ui", r"ui\small_ui"})
+
+    def verify_font_metrics(self, binary, mode, at_least):
+        """Measure what the fixture prints (font, room, text) with owned Xbox fonts."""
         from tools.verify_performance_sound_samples import Cache
         paths = [next((root / f"assets/maps/{name}.map" for root in (ROOT, PRIMARY)
                        if (root / f"assets/maps/{name}.map").exists()), None) for name in ("ui", "bloodgulch")]
         paths = [path for path in paths if path is not None]
         if not paths:
-            return
-        output = subprocess.run([str(binary), "--controller-metrics"], check=True,
+            return None
+        output = subprocess.run([str(binary), mode], check=True,
                                 text=True, capture_output=True).stdout
         strings = []
         for value in output.splitlines():
             font, width, *codes = value.split()
             strings.append((font, int(width), "".join(chr(int(code)) for code in codes)))
-        self.assertGreater(len(strings), 64000)
-        self.assertEqual({font for font, _, _ in strings}, {r"ui\large_ui", r"ui\small_ui"})
+        self.assertGreater(len(strings), at_least)
         for path in paths:
             cache = Cache(path)
             fonts = {}
@@ -1766,12 +1838,14 @@ class NativeGameSettingsTests(unittest.TestCase):
                 if key not in measured:
                     cursor, glyphs = fonts[name]
                     ink_right = cursor
-                    for character in value:
+                    # A Pause setting: its name, at least two spaces, its value.
+                    for character in value.replace("\t", "  "):
                         advance, ink_width, origin_x = glyphs[character]
                         ink_right = max(ink_right, cursor + origin_x + ink_width)
                         cursor += advance
                     measured[key] = max(cursor, ink_right)
                 self.assertLessEqual(measured[key], width, f"{path.stem}: {value!r} clips in {name}")
+        return strings
 
     def verify_about_font_metrics(self, binary):
         """Measure every production page with the owned UI font, including long names/counts."""
@@ -1833,10 +1907,9 @@ class NativeGameSettingsTests(unittest.TestCase):
             for index in range(count):
                 code, advance, width, _, origin_x = cache.unpack("<H4h", address + index * 0x14)
                 glyphs[chr(code)] = (advance, width, origin_x)
-            widths = [(value, 276) for value in strings]
-            widths.extend((value, 202) for value in ("Resolution: < 2160p >",
-                "Resolution: < Native >", "FPS Limit: < Uncapped >", "FPS Limit: < 120 FPS >", "AA: < FXAA >",
-                "Position: < Bottom Center >", "Timer Size: < 100% >", "Asset Quality: < Original >"))
+            # Pause's own row texts (a name, a tab and a value) are measured
+            # in their rows by verify_pause_font_metrics.
+            widths = [(value, 276) for value in strings if "\t" not in value]
             widths.append(("Original", 112))
             for value, available in widths:
                 lines = value.splitlines()
@@ -1869,6 +1942,7 @@ class NativeGameSettingsTests(unittest.TestCase):
                     if platform == "HALO_MACOS":
                         self.verify_about_font_metrics(binary)
                         self.verify_controller_font_metrics(binary)
+                        self.verify_pause_font_metrics(binary)
 
 
 @unittest.skipUnless(shutil.which("clang") and (SDL / "include/SDL3/SDL.h").exists(), "clang and SDL3 headers required")

@@ -1887,6 +1887,36 @@ static void native_pause_frame_render(struct ui_widget_definition const *definit
 	}
 }
 
+/* A native Pause row whose text holds a tab shows a setting: its name from
+ * the row's left end and its value to the right end, each inset by the
+ * kit's measure. `bounds` arrives with the left inset. */
+static boolean native_pause_row_render_text(struct widget_instance const *widget,
+	struct ui_widget_definition const *definition, rectangle2d const *bounds,
+	rectangle2d const *clip, wchar_t const *text)
+{
+	wchar_t name[64], value[64], fitted[NUMBEROF(name) + NUMBEROF(value) + 2];
+	rectangle2d inner = *bounds;
+	short tab, index, length = 0;
+	if (!TEST_FLAG(definition->flags, _widget_native_pause_row_bit)) return FALSE;
+	for (tab = 0; text[tab] && text[tab] != L'\t'; tab++);
+	if (!text[tab] || tab >= (short)NUMBEROF(name)) return FALSE;
+	for (index = 0; index < tab; index++) name[index] = fitted[length++] = text[index];
+	name[tab] = 0;
+	/* The row is wide enough when the name, two spaces and the value fit. */
+	fitted[length++] = L' ';
+	fitted[length++] = L' ';
+	for (index = 0; text[tab + 1 + index] && index < (short)NUMBEROF(value) - 1; index++)
+		value[index] = fitted[length++] = text[tab + 1 + index];
+	value[index] = fitted[length] = 0;
+	inner.x1 -= native_pause_value_inset(definition);
+	draw_string_set_format(NONE, _text_justification_left, 0);
+	ui_layout_check_text(widget, &inner, clip, fitted);
+	rasterizer_draw_unicode_string(&inner, clip, NULL, 0, name);
+	draw_string_set_format(NONE, _text_justification_right, 0);
+	rasterizer_draw_unicode_string(&inner, clip, NULL, 0, value);
+	return TRUE;
+}
+
 /* A native Pause row's selection box, at the row's own size. */
 static void native_pause_box_render(struct bitmap_data *bitmap, rectangle2d const *row,
 	rectangle2d *clip, pixel32 color)
@@ -5269,6 +5299,8 @@ static void widget_instance_render_text_box(
 	}
 	draw_string_set_draw_mode(font_index, NONE, justification, 0, &color);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (native_pause_row_render_text(widget, definition, &bounds, &clip, *text))
+		return;
 	ui_layout_check_text(widget, &bounds, &clip, *text);
 #endif
 	if (string_has_icons_to_draw(*text))
@@ -5488,6 +5520,9 @@ static void widget_instance_render_spinner_list(
 					definition->justification,
 					0,
 					&color);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				if (!native_pause_row_render_text(widget, definition, &bounds, &clip, item_text))
+#endif
 				rasterizer_draw_unicode_string(&bounds, &clip, NULL, 0, item_text);
 			}
 		}

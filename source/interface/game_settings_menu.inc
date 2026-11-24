@@ -19,7 +19,7 @@ enum { _ds_settings_label, _ds_profile_label, _ds_game_label, _ds_about_label, _
     _ds_timer_label, _ds_timer_help, _ds_timer_link_label, _ds_timer_link_help,
     _ds_select_key_label, _ds_accept_key_label, _ds_failure_brief, _ds_partial_failure_brief,
     _ds_about_heading, _ds_about_info, _ds_multiplayer_label, _ds_multiplayer_help,
-    _ds_controller_label, _ds_controller_help, _ds_row_label_start,
+    _ds_controller_label, _ds_controller_help, _ds_pause_timer_link_label, _ds_row_label_start,
     _ds_help_start = _ds_row_label_start + NUMBER_OF_DEVICE_SETTINGS,
     _ds_value_start = _ds_help_start + NUMBER_OF_DEVICE_SETTINGS };
 static short const device_settings_choices[] = {_ds_audio, _ds_video, _ds_controller, _ds_multiplayer};
@@ -580,7 +580,10 @@ static boolean device_settings_build(void)
         "TIMER AUDIO...", "Choose timer volume and cues.\r\nHost Timer Sounds must be on.",
         "=SELECT", "=ACCEPT", "COULD NOT SAVE", "REVIEW SETTINGS", "", "",
         "MULTIPLAYER", "Left/Right: Adjust\r\nAccept saves. B: Cancel",
-        "CONTROLLER", "Left/Right: Adjust\r\nAccept saves. B: Cancel"};
+        "CONTROLLER", "Left/Right: Adjust\r\nAccept saves. B: Cancel",
+        /* In Pause the link to the sub-page lines up with the names of the
+         * settings around it; it has no value to show. */
+        "Timer Audio...\t"};
     static char const *const row_labels[] = {
         "MASTER VOLUME:", "MUSIC VOLUME:", "EFFECTS VOLUME:", "DIALOGUE VOLUME:", "TIMER VOLUME:",
         "MENU MUSIC:", "FULLSCREEN:", "VSYNC:", "SMOOTH MOTION:",
@@ -766,6 +769,7 @@ static boolean device_settings_build(void)
         /* Every row of a Pause page uses its style's one font. */
         text_definition(&device_settings.row[row], style, strings, (short)(_ds_value_start + row), TRUE);
         if (main_menu) device_settings.row[row].text_font.index = font;
+        else native_pause_setting_definition(&device_settings.row[row], _native_pause_wide);
         performance_pause_block(&device_settings.row[row].event_handlers, NUMBEROF(device_settings.row_events), device_settings.row_events);
         snprintf(device_settings.row_names[row], sizeof(device_settings.row_names[row]), "ui\\native_settings\\row_%ld", row);
         device_settings.row_tags[row] = device_settings_register(device_settings.row_names[row], &device_settings.row[row]);
@@ -775,6 +779,7 @@ static boolean device_settings_build(void)
         {
             text_definition(&device_settings.split_row[row], &device_settings.pause_styles[_native_pause_split_options],
                 strings, (short)(_ds_value_start + row), TRUE);
+            native_pause_setting_definition(&device_settings.split_row[row], _native_pause_split_options);
             performance_pause_block(&device_settings.split_row[row].event_handlers, NUMBEROF(device_settings.row_events), device_settings.row_events);
             snprintf(device_settings.split_row_names[row], sizeof(device_settings.split_row_names[row]), "ui\\native_settings\\split_row_%ld", row);
             device_settings.split_row_tags[row] = device_settings_register(device_settings.split_row_names[row], &device_settings.split_row[row]);
@@ -817,8 +822,10 @@ static boolean device_settings_build(void)
             if (device_settings.screen_tags[layout][page] == NONE || column_tags[layout][page] == NONE) return FALSE;
         }
         text_definition(&device_settings.timer_link[layout],
-            main_menu ? style : &device_settings.pause_styles[options_style], strings, _ds_timer_link_label, TRUE);
+            main_menu ? style : &device_settings.pause_styles[options_style], strings,
+            main_menu ? _ds_timer_link_label : _ds_pause_timer_link_label, TRUE);
         if (main_menu) device_settings.timer_link[layout].text_font.index = font;
+        else native_pause_setting_definition(&device_settings.timer_link[layout], options_style);
         for (i = 0; i < 2; i++)
             performance_pause_event_definition(&device_settings.timer_events[layout][i], i ? _gamepad_binary_button_start : _gamepad_analog_button_a,
                 _device_settings_enter_timer, FLAG(_event_handler_run_function_bit) | FLAG(_event_handler_open_widget_bit),
@@ -1105,7 +1112,7 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
         , "Resolution"
 #endif
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        , "FPS Limit", "AA"
+        , "FPS Limit", "Anti-Aliasing"
 #endif
         , "Default Game Types", "Look Horizontal", "Look Vertical"
         };
@@ -1132,7 +1139,7 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
         }
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         else if (row == _device_setting_anti_aliasing)
-            snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "FXAA" : "OFF");
+            snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "FXAA" : device_settings.native_pages ? "OFF" : "Off");
         else if (row == _device_setting_frame_limit)
         {
             if (draft->values[row] == 0.0) snprintf(value, sizeof(value), "Uncapped");
@@ -1168,9 +1175,12 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Faster" : "Original");
         else if (row == _device_setting_asset_quality)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Upres" : "Original");
-        else snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "ON" : "OFF");
+        /* The main menu's capitals; Pause's values read as words, like Xbox and Original. */
+        else if (device_settings.native_pages) snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "ON" : "OFF");
+        else snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "On" : "Off");
         if (device_settings.native_pages) snprintf(text, sizeof(text), "%s", value);
-        else snprintf(text, sizeof(text), "%s: < %s >", names[row], value);
+        /* A Pause row: the name at the left, its value at the right. */
+        else snprintf(text, sizeof(text), "%s\t< %s >", names[row], value);
         device_settings_text(index, text);
         if (device_settings.native_pages) widget->parameters.list.selected_index = index;
         else widget->parameters.text_box.string_list_index = index;

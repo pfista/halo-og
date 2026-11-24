@@ -183,7 +183,13 @@ static void rows_and_titles(void) {
   assert(row.text_font.index==(style->small_font ? 21:20) && row.background_bitmap.index==13);
   assert(row.type==_ui_widget_type_text_box && TEST_FLAG(row.flags,_widget_native_pause_row_bit));
   assert(row.bounds.x0==0 && row.bounds.y0==0 && row.bounds.x1==style->row_width && row.bounds.y1==style->row_height);
-  assert(row.justification==_text_justification_center && row.vertical_offset==style->text_y && !row.horizontal_offset);
+  assert(row.justification==_text_justification_center && row.vertical_offset==style->text_y);
+  /* Centred text is moved by the large font's trailing space, and a setting's
+   * value reaches that far past its inset: both ends sit the same distance in. */
+  assert(row.horizontal_offset==style->text_trail && style->text_trail==(style->small_font ? 0:3));
+  struct ui_widget_definition setting=row;
+  native_pause_setting_definition(&setting,index);
+  assert(setting.horizontal_offset==style->text_inset && native_pause_value_inset(&setting)==style->text_inset-style->text_trail);
   native_pause_title_definition(&title,&row);
   assert(!title.flags && title.background_bitmap.index==NONE && title.text_font.index==row.text_font.index);
   assert(title.text_color.red==1 && title.text_color.green==1 && title.text_color.blue==1 && title.text_color.alpha==1);
@@ -192,6 +198,9 @@ static void rows_and_titles(void) {
  }
  /* The stock button's text sits three lines below its top. */
  assert(native_pause_styles[_native_pause_wide].text_y==3 && native_pause_styles[_native_pause_wide].row_height==27);
+ /* A row that is not one of the kit's keeps its own offset on both sides. */
+ struct ui_widget_definition other={.bounds={0,0,30,300},.horizontal_offset=7};
+ assert(native_pause_value_inset(&other)==7);
 }
 static void tag_lifecycle(void) {
  registry_count=0;native_pause_frame_count=0;

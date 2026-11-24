@@ -49,6 +49,10 @@ struct native_pause_style
 	short row_height; /* rows follow each other at this pitch: a box never reaches the next row */
 	short text_y;     /* text top inside a row; 3 is the stock button's */
 	short text_inset; /* a setting's name and value, from the row's ends */
+	/* The large font leaves about three pixels after a line's last letter.
+	 * Centred text moves right by half of it and a value reaches that far
+	 * past its inset, so what is drawn sits evenly in its row. */
+	short text_trail;
 	short top;        /* frame top to the title */
 	short title_gap;  /* title to the first row; a title is a row without a box */
 	short action_gap; /* settings to ACCEPT or APPLY */
@@ -59,9 +63,9 @@ struct native_pause_style
  * large rows where four fit and uses the small font for pages of settings. */
 static struct native_pause_style const native_pause_styles[NUMBER_OF_NATIVE_PAUSE_STYLES] =
 {
-	{FALSE, 284, 27, 3, 10, 10, 6, 13, 8},
-	{FALSE, 250, 27, 3, 10, 10, 6, 13, 8},
-	{TRUE, 250, 21, 2, 10, 5, 2, 6, 5},
+	{FALSE, 284, 27, 3, 10, 3, 10, 6, 13, 8},
+	{FALSE, 250, 27, 3, 10, 3, 10, 6, 13, 8},
+	{TRUE, 250, 21, 2, 10, 0, 5, 2, 6, 5},
 };
 
 struct native_pause_panel
@@ -279,12 +283,32 @@ static boolean native_pause_row_definition(struct ui_widget_definition *definiti
 	definition->text_color.green = 150.0f / 255.0f;
 	definition->text_color.blue = 1.0f;
 	definition->justification = _text_justification_center;
+	definition->horizontal_offset = style->text_trail;
 	definition->vertical_offset = style->text_y;
 	definition->list_header_bitmap.group_tag = definition->list_footer_bitmap.group_tag = 'bitm';
 	definition->list_header_bitmap.index = definition->list_footer_bitmap.index = NONE;
 	definition->extended_description_widget.group_tag = UI_WIDGET_DEFINITION_TAG;
 	definition->extended_description_widget.index = NONE;
 	return TRUE;
+}
+
+/* A row that shows a setting: its text is "name<tab>value", drawn as the
+ * name from the left end and the value to the right end, so names and values
+ * line up down the page. */
+static void native_pause_setting_definition(struct ui_widget_definition *definition, short style_index)
+{
+	definition->horizontal_offset = native_pause_styles[style_index].text_inset;
+}
+
+/* How far a setting's value stops short of its row's right end. */
+static short native_pause_value_inset(struct ui_widget_definition const *row)
+{
+	short index;
+	for (index = 0; index < NUMBER_OF_NATIVE_PAUSE_STYLES; index++)
+		if (row->bounds.x1 - row->bounds.x0 == native_pause_styles[index].row_width &&
+			row->bounds.y1 - row->bounds.y0 == native_pause_styles[index].row_height)
+			return (short)(row->horizontal_offset - native_pause_styles[index].text_trail);
+	return row->horizontal_offset;
 }
 
 static void native_pause_title_definition(struct ui_widget_definition *definition,

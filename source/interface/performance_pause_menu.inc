@@ -56,13 +56,15 @@ static wchar_t performance_pause_text[][64] =
 	L"PERFORMANCE OPTIONS", L"APPLY", L"RETURN",
 	L"Apply to change host settings.",
 	L"Host settings (view only).",
-	L"Preset: < Default >", L"Preset: < Practice >", L"Preset: < Pro >", L"Preset: < Custom >",
-	L"Match timer: < Off >", L"Match timer: < On >",
-	L"Markers: < Off >", L"Markers: < On >",
+	/* A setting's row is its name, a tab and its value: the name is drawn
+	 * from the row's left end and the value to its right end. */
+	L"Preset\t< Default >", L"Preset\t< Practice >", L"Preset\t< Pro >", L"Preset\t< Custom >",
+	L"Match Timer\t< Off >", L"Match Timer\t< On >",
+	L"Markers\t< Off >", L"Markers\t< On >",
 	L"PERFORMANCE OPTIONS",
-	L"Timer sounds: < Off >", L"Timer sounds: < On >", L"GAME SETTINGS",
-	L"Movement: < Normal >", L"Movement: < Just Me >", L"Movement: < Silent >",
-	L"Weapon: < Normal >", L"Weapon: < Just Me >", L"Weapon: < Silent >",
+	L"Timer Sounds\t< Off >", L"Timer Sounds\t< On >", L"GAME SETTINGS",
+	L"Movement\t< Normal >", L"Movement\t< Just Me >", L"Movement\t< Silent >",
+	L"Weapon\t< Normal >", L"Weapon\t< Just Me >", L"Weapon\t< Silent >",
 	L"Original footsteps,\r\njumps and landings.",
 	L"Just Me: hear your movement.\r\nOthers cannot hear it.",
 	L"Silent: no movement sounds.\r\nCombat sounds stay normal.",
@@ -331,6 +333,7 @@ static boolean performance_pause_build(void)
 			if (index <= _pp_weapon)
 			{
 				definition->type = _ui_widget_type_spinner_list;
+				native_pause_setting_definition(definition, style_index);
 				definition->flags |= FLAG(_widget_dpad_leftright_tabs_thru_list_items_bit);
 				definition->list_flags = FLAG(_list_items_generated_from_string_list_tag);
 				definition->text_label_string_list.index = performance_pause_string_tags[index - _pp_preset + 1];
@@ -358,7 +361,7 @@ static boolean performance_pause_build(void)
 		footer->bounds.y1 = 40;
 		footer->bounds.x1 = NATIVE_PAUSE_HELP_WIDTH;
 		footer->text_font.index = font;
-		footer->vertical_offset = 0;
+		footer->horizontal_offset = footer->vertical_offset = 0;
 		footer->string_list_index = 3;
 	}
 	performance_pause_ready = TRUE;

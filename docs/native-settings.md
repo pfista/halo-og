@@ -35,6 +35,11 @@ and every Game Settings page are one panel, measured in one place
 - The frame's height follows its content: the same space above the title,
   between the title and the first row, and between the last row and the
   legend's divider on every page. Titles are the page's own font in white.
+- A setting's row shows its name at the left end and its value, between
+  arrows, at the right end, so names and values line up down the page. A link
+  to a sub-page lines up with the names. Lists and actions are centred.
+  Pause's values read as words (**On**, **Off**, **Xbox**); the main menu keeps
+  its capitals.
 - **Accept** and **Apply** stand half a row apart from the settings above them.
 - A page shows at most eight rows, its Accept or Apply included. A page that
   needs more gets a sub-page, as Audio has **Timer Audio**; rows are never
