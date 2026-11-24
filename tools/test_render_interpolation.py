@@ -115,6 +115,11 @@ static void matrix4x3_inverse(const real_matrix4x3 *m,real_matrix4x3 *out) {
     real_vector3d p=transform(&r,(real_vector3d){-m->position.x,-m->position.y,-m->position.z});
     r.position=(real_point3d){p.i,p.j,p.k}; *out=r;
 }
+static real_point3d *matrix4x3_inverse_transform_point(const real_matrix4x3 *m,const real_point3d *p,real_point3d *out) {
+    real_matrix4x3 inverse;matrix4x3_inverse(m,&inverse);
+    real_vector3d r=transform(&inverse,(real_vector3d){p->x,p->y,p->z});
+    *out=(real_point3d){r.i+inverse.position.x,r.j+inverse.position.y,r.k+inverse.position.z};return out;
+}
 static void matrix4x3_multiply(const real_matrix4x3 *a,const real_matrix4x3 *b,real_matrix4x3 *out) {
     real_matrix4x3 r={.scale=a->scale*b->scale};
     real_matrix4x3 basis=*a; basis.scale=1;
@@ -280,6 +285,19 @@ static void ordinary_cuts(void) {
     raw_nodes[0]=identity_at(100); raw_nodes[1]=identity_at(101);
     render_interpolation_tick(); clock_fraction=.1f; render_interpolation_frame_begin();
     REQUIRE(close(object_get_node_matrices(0)[0].position.x,100),"object teleport stopped snapping");
+    render_interpolation_frame_end();
+    /* A pose the game changes at once (a model swapped, an actor waking) is drawn as it is:
+       a node moved further within the root's frame than one tick allows. */
+    raw_nodes[0]=identity_at(100.25f); raw_nodes[1]=identity_at(103.25f);
+    render_interpolation_tick(); clock_fraction=.5f; render_interpolation_frame_begin();
+    REQUIRE(close(object_get_node_matrices(0)[0].position.x,100.25f) &&
+        close(object_get_node_matrices(0)[1].position.x,103.25f),"a changed pose was blended from the old one");
+    render_interpolation_frame_end();
+    /* The same pose moving a little within the root's frame still blends. */
+    raw_nodes[0]=identity_at(100.5f); raw_nodes[1]=identity_at(103.6f);
+    render_interpolation_tick(); clock_fraction=.5f; render_interpolation_frame_begin();
+    REQUIRE(close(object_get_node_matrices(0)[0].position.x,100.375f) &&
+        close(object_get_node_matrices(0)[1].position.x,103.425f),"ordinary limb movement stopped blending");
     render_interpolation_frame_end();
 }
 static void wrapping_tick_clock(void) {
