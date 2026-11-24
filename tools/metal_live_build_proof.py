@@ -214,7 +214,7 @@ def display_configuration_checks(text, anti_aliasing=False):
                   lambda token: token[0] if token[0].startswith(('"', "'")) else
                   re.sub(r'[^\n]', ' ', token[0]), text, flags=re.S)
     required = {'display.frame_limit': ('integer', '"0"', 0),
-                'display.render_height': ('integer', '"480"', 480)}
+                'display.render_height': ('integer', 'NATIVE_RENDER_HEIGHT_DEFAULT', 0)}
     if anti_aliasing:
         required['display.anti_aliasing'] = ('string', r'"\"off\""', 'off')
     result = {}

@@ -39,7 +39,8 @@ int main(int argc,char **argv) {
         puts("0");return 0;
     }
     if(!strcmp(argv[1],"defaults")) {
-        assert(config_integer("display.render_height")==480);
+        assert(config_integer("display.render_height")==0);
+        assert(config_boolean("display.interpolation") && config_boolean("display.high_res_hud"));
         puts("1");return 0;
     }
     /* Warm the cache through an identical registered boolean save without
@@ -201,7 +202,9 @@ class MacVideoConfigTests(unittest.TestCase):
         self.assertNotIn("renderer", config["display"])
         self.assertEqual(config["display"]["anti_aliasing"], "off")
         self.assertEqual(config["display"]["frame_limit"], 0)
-        self.assertEqual(config["display"]["render_height"], 480)
+        self.assertEqual(config["display"]["render_height"], 0)
+        self.assertIs(config["display"]["interpolation"], True)
+        self.assertIs(config["display"]["high_res_hud"], True)
 
 
 if __name__ == "__main__":

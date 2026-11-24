@@ -338,8 +338,10 @@ class InputBindings(unittest.TestCase):
         config, _ = self.run_probe()
         settings = tomllib.loads(config)
         self.assertTrue(settings["audio"]["menu_music"])
-        for key in ("interpolation", "direct_camera", "high_res_hud"):
-            self.assertFalse(settings["display"][key])
+        # Since 0.7 a new installation draws every display refresh with Upres assets.
+        for key in ("interpolation", "high_res_hud"):
+            self.assertTrue(settings["display"][key])
+        self.assertFalse(settings["display"]["direct_camera"])
         bindings = settings["bindings"]
         self.assertEqual(bindings["x"], "E, R")
         self.assertEqual(bindings["select"], "Grave, F1")

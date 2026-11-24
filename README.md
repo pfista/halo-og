@@ -137,14 +137,15 @@ comparisons remain acceptance work.
 
 ### Rendering and FPS
 
-With Smooth Motion off, gameplay draws one frame per simulation tick, targeting
-the original 30 FPS presentation. Optional **Smooth Motion** interpolates frames
-between ticks so rendering can follow a higher display refresh rate. It keeps
+**Smooth Motion** interpolates frames between simulation ticks so rendering
+follows the display's refresh rate. With it off, gameplay draws one frame per
+tick, the original 30 FPS presentation. It keeps
 the simulation at 30 Hz and presents world motion roughly one tick behind the
 simulation (about 33 ms). **VSync** defaults on; turning it off removes display
 synchronization, with actual FPS depending on hardware and workload. On Mac,
-the Video menu also offers a frame limit. Smooth Motion and the
-high-resolution HUD default off; existing saved choices are preserved.
+the Video menu also offers a frame limit. Since 0.7, Smooth Motion, Upres
+assets and the display's native resolution are the defaults; the original Xbox
+picture is [three settings away](docs/native-settings.md#video).
 
 ### Performance
 

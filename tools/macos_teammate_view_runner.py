@@ -98,6 +98,7 @@ window_scale = 1
 interpolation = false
 direct_camera = false
 high_res_hud = false
+render_height = 480
 
 [audio]
 enabled = {str(host).lower()}

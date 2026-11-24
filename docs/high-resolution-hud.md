@@ -3,7 +3,8 @@
 Choose **Settings → Game Settings → Video → Asset Quality**, then select
 **Original** or **Upres**. The same control is available through Game Settings in
 Pause. Accept saves the choice; Cancel discards it. Quit and reopen Halo to apply
-the saved choice. Original is the default.
+the saved choice. Upres is the default since 0.7; Original keeps the maps' own
+artwork.
 
 The setting retains `display.high_res_hud` in `config.toml` as a legacy key, so
 an existing enabled HUD preference becomes Upres without a migration write.

@@ -138,7 +138,14 @@ playing. Changing Menu Music during a match affects the next main-menu visit.
 
 ## Video
 
-Video includes **Asset Quality: Original / Upres**, with Original as the default.
+Since 0.7 a new installation uses the enhanced picture: the display's own
+resolution on Mac, Windows and Linux, **Asset Quality: Upres** and **Smooth
+Motion: On**. For the original Xbox picture choose **Resolution: 480p**, **Asset
+Quality: Original** and **Smooth Motion: Off**. The simulation runs at 30 Hz
+with either picture. The iPhone keeps a 480-line picture because it has no
+Resolution setting yet.
+
+Video includes **Asset Quality: Original / Upres**, with Upres as the default.
 Accept saves `display.high_res_hud`; relaunch Halo to apply the asset choice.
 The legacy key retains existing high-resolution HUD preferences and now controls
 HUD redraws, scalable font glyphs and faithful menu title replacements together.
@@ -169,7 +176,7 @@ VSync and Smooth Motion use `display.vsync` and `display.interpolation` in
 
 | Renderer/platform | Resolution behavior | Default |
 | --- | --- | --- |
-| Mac Native Metal | Resolution applies between frames after Accept, in fullscreen or a window. Native fits the current Retina drawable; the game's logical aspect stays fixed at startup. | 480p |
+| Mac Native Metal | Resolution applies between frames after Accept, in fullscreen or a window. Native fits the current Retina drawable; the game's logical aspect stays fixed at startup. | Native |
 | Windows/Linux OpenGL | Resolution applies between frames after Accept, in fullscreen or a window. Native fits the current drawable while retaining the game's logical aspect. | Auto: native pixels fullscreen, Xbox 640x480 in a window |
 | Mac ANGLE | Uses the existing display scaling; Resolution controls apply only to Native Metal. | Existing display scaling |
 
@@ -179,7 +186,8 @@ Windows/Linux, 0 is Native, and the preset values are their heights in pixels.
 Window size remains independent: drag the window edge or change
 `display.window_scale` for its initial size. Native follows drawable size changes;
 fixed presets keep a stable render size while the window scales the picture.
-Unsupported values fall back to each platform's default. The OpenGL renderer
+An unsupported value falls back to 480p on Mac and Auto on Windows and Linux.
+The OpenGL renderer
 limits physical target sizes to the GPU's supported texture dimensions and
 releases obsolete screen targets and framebuffers when resolution changes.
 

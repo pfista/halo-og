@@ -354,13 +354,20 @@ the hold timer. It defaults Original and applies only after Accept, with no
 simulation, gameplay-button or network-rule change. See
 [menu repeat](menu-repeat.md) for the option and validation boundaries.
 
-New configurations set `display.high_res_hud`, `display.interpolation` and
-`display.direct_camera` to `false`. Existing choices are preserved. Simulation
-stays at 30 Hz; high-refresh rendering can be appropriate, with interpolation
-and input response assessed separately.
+Since 0.7, at the user's request after the November 2026 player meeting, a new
+installation uses the enhanced picture: `display.interpolation` and
+`display.high_res_hud` are `true`, and the Mac's `display.render_height` is `0`
+(the display's own resolution; Windows and Linux already chose it in
+fullscreen). This is the one deliberate exception to "options default to the
+original": players compared the 480-line, 30 FPS default with other builds and
+read it as a worse port. It changes only what is drawn. The original Xbox
+picture remains selectable in Video and in
+[the comparison profile](../port/macos/profiles/xbox-ntsc.toml);
+`display.direct_camera` stays `false`, and the simulation stays at 30 Hz. The
+iPhone keeps 480 lines until it has a Resolution setting.
 
 At the user's explicit request, Video exposes optional replacements as
-**Asset Quality: Original / Upres**, with Original as the default. Native Metal now
+**Asset Quality: Original / Upres**, with Upres as the default since 0.7. Native Metal now
 supports the same optional assets as ANGLE, including meter coverage blending.
 These are hand-authored PC-derived reconstructions in Xbox layout, not a new
 stock-artwork baseline. Upres also enables font substitutes and 34 menu title

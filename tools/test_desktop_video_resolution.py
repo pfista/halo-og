@@ -465,7 +465,7 @@ int main(int argc,char **argv) {
     return 0;
 }
 '''
-        for defines,expected in (((),"-1"), (("-DHALO_MACOS=1","-DHALO_ANDROID=1"),"480")):
+        for defines,expected in (((),"-1"), (("-DHALO_MACOS=1","-DHALO_ANDROID=1"),"0")):
             with self.subTest(defines=defines),tempfile.TemporaryDirectory(prefix="halo-resolution-config-") as folder:
                 prefix=Path(folder)/"prefix.h";prefix.write_text(PREFIX)
                 env={key:value for key,value in os.environ.items() if not key.startswith("HALO_")}

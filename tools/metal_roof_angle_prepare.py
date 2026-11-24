@@ -369,6 +369,7 @@ application_id=""
 interpolation=false
 direct_camera=false
 high_res_hud=false
+render_height=480
 vsync=true
 screen_width=640
 window_scale=1

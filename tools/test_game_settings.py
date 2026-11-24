@@ -1920,18 +1920,19 @@ class ConfigBooleanPersistenceTests(unittest.TestCase):
 
     def test_hud_boolean_save_reload_and_failure(self):
         setting = "display.high_res_hud"
+        # original_value is read before the file exists: the default, Upres since 0.7.
         original = '# video preferences\n[display]\nhigh_res_hud = false # original artwork\nvsync = true\n'
         high_res = original.replace('= false # original', '= true # original')
-        self.run_save(original, high_res, setting=setting, value=1, original_value=0)
-        self.run_save(high_res, original, setting=setting, original_value=0)
+        self.run_save(original, high_res, setting=setting, value=1, original_value=1)
+        self.run_save(high_res, original, setting=setting, original_value=1)
         self.run_save(original, original, setting=setting, mode="failure", value=1,
-                      original_value=0, success=False)
+                      original_value=1, success=False)
         malformed = original.replace('= false # original', '= "Original" # original')
         self.run_save(malformed, malformed, setting=setting, value=1,
-                      original_value=0, success=False)
+                      original_value=1, success=False)
         missing = '# video preferences\n[display]\nvsync = true\n'
         self.run_save(missing, missing.replace('[display]\n', '[display]\nhigh_res_hud = true\n'),
-                      setting=setting, value=1, original_value=0)
+                      setting=setting, value=1, original_value=1)
 
     def test_retired_menu_repeat_setting_is_rejected_without_changing_file(self):
         setting = "input.fast_menu_repeat"

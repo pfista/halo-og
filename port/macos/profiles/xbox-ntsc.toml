@@ -8,6 +8,7 @@ vsync = true
 interpolation = false
 direct_camera = false
 high_res_hud = false
+render_height = 480
 
 [audio]
 enabled = true

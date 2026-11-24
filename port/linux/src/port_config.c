@@ -69,6 +69,15 @@ struct config_setting
 	const char *comment;
 };
 
+/* The Mac draws at its display's own resolution unless a player chooses
+otherwise. The iPhone has no Resolution setting in its menus yet, so it keeps
+the Xbox height until a player can choose there. */
+#if defined(HALO_IOS)
+#define NATIVE_RENDER_HEIGHT_DEFAULT "480"
+#else
+#define NATIVE_RENDER_HEIGHT_DEFAULT "0"
+#endif
+
 static const struct config_setting config_settings[] =
 {
 	{ "display.fullscreen", _config_boolean, "true", "HALO_FULLSCREEN", _environment_value, _platform_desktop,
@@ -82,10 +91,13 @@ static const struct config_setting config_settings[] =
 		"Xbox's 4:3." },
 	{ "display.vsync", _config_boolean, "true", "HALO_NO_VSYNC", _environment_set_is_false, _platform_all,
 		"Wait for the display between frames; false draws as fast as possible." },
-	/* Original Xbox presentation is the fork's baseline; enhancements are opt-in. */
-	{ "display.interpolation", _config_boolean, "false", "HALO_INTERPOLATION", _environment_value, _platform_all,
-		"Draw a frame for every display refresh, blending between the game's 30\n"
-		"ticks a second; false keeps the original 30 frames a second." },
+	/* Since 0.7 a new installation draws at the display's resolution and
+	refresh rate with the Upres assets. The original Xbox picture stays one
+	setting away: 480 lines, the original artwork and 30 frames a second.
+	The simulation is 30 ticks a second either way. */
+	{ "display.interpolation", _config_boolean, "true", "HALO_INTERPOLATION", _environment_value, _platform_all,
+		"Smooth Motion: draw a frame for every display refresh, blending between\n"
+		"the game's 30 ticks a second; false keeps the original 30 frames a second." },
 #if defined(HALO_MACOS)
 	{ "display.frame_limit", _config_integer, "0", NULL, _environment_value, _platform_all,
 		"Native Metal render cap: 0 is uncapped, or choose 30, 60 or 120.\n"
@@ -95,10 +107,11 @@ static const struct config_setting config_settings[] =
 		"Native Metal world smoothing: off preserves the original picture; fxaa\n"
 		"smooths world edges before drawing the original HUD. Original assets\n"
 		"and the game's 30 ticks a second stay unchanged. Restart to apply." },
-	{ "display.render_height", _config_integer, "480", NULL, _environment_value, _platform_all,
+	{ "display.render_height", _config_integer, NATIVE_RENDER_HEIGHT_DEFAULT, NULL, _environment_value, _platform_all,
 		"Native Metal render height: 0 for the native drawable, or 480, 720,\n"
-		"1080, 1440 or 2160 pixels. Native mode uses actual Retina pixels.\n"
-		"Width follows the startup aspect. Accept applies between frames." },
+		"1080, 1440 or 2160 pixels. Native mode uses actual Retina pixels;\n"
+		"480 is the original Xbox picture. Width follows the startup aspect.\n"
+		"Accept applies between frames." },
 #elif !defined(HALO_ANDROID) && !defined(HALO_IOS)
 	{ "display.render_height", _config_integer, "-1", NULL, _environment_value, _platform_desktop,
 		"Render height in fullscreen or a window: -1 keeps automatic selection\n"
@@ -114,10 +127,10 @@ static const struct config_setting config_settings[] =
 		"In first person, point the view where the player aims now instead of\n"
 		"where the last tick left it: the view turns the frame the mouse moves,\n"
 		"not up to two ticks (66 ms) later." },
-	{ "display.high_res_hud", _config_boolean, "false", "HALO_HIGH_RES_HUD", _environment_value, _platform_all,
-		"Asset Quality: false keeps Original; true enables Upres HUD, font\n"
-		"glyphs and faithful menu title redraws. Layout and gameplay stay\n"
-		"the same. This legacy key preserves existing HUD preferences." },
+	{ "display.high_res_hud", _config_boolean, "true", "HALO_HIGH_RES_HUD", _environment_value, _platform_all,
+		"Asset Quality: true enables Upres HUD, font glyphs and faithful menu\n"
+		"title redraws; false keeps the Original artwork. Layout and gameplay\n"
+		"stay the same. This legacy key preserves existing HUD preferences." },
 
 	{ "audio.enabled", _config_boolean, "true", "HALO_NO_AUDIO", _environment_set_is_false, _platform_all,
 		"Play sound." },

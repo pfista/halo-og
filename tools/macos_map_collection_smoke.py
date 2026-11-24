@@ -108,6 +108,7 @@ interpolation = true
 vsync = true
 direct_camera = false
 high_res_hud = false
+render_height = 480
 [game]
 console_log = "all"
 [debug]
