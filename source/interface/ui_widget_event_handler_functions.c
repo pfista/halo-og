@@ -3479,8 +3479,16 @@ boolean ui_widget_event_handler_function_invoke(
 		}
 #endif
 		result = event_handler_function_list.functions[(short)function_index](widget, event, widget_deleted);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		/* port: to the log, not the screen. A handler that refuses (an empty
+		 * game type slot, the locked game type) is ordinary play, and the
+		 * Xbox's players never saw its console. */
+		if (!result)
+			error(_error_silent, "event handler '%s' failed", event_handler_function_list.names[(short)function_index]);
+#else
 		if (!result)
 			console_warning("event handler '%s' failed", event_handler_function_list.names[(short)function_index]);
+#endif
 		return result;
 	}
 	error(2, "invalid event_handler_function");
