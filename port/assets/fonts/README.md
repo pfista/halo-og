@@ -26,12 +26,16 @@ Each is drawn from its font tag's pixels alone, with no other typeface:
 `tools/og_font.py` decodes the tag's 16 stored levels to the share of each
 pixel a letter covers, finds the smoothest shape that every pixel would store
 the same way, and writes its outline with the tag's own advances, 64 font
-units to the pixel. These files were built with `--weight 0.15`, which moves
-every edge out by 0.15 of a pixel: the maps store faint pixels brighter than
-their share, so the original reads heavier on screen than its true shape. To
-rebuild them (NumPy, Pillow, potracer and fontTools, and game data):
+units to the pixel. `--weight` moves every edge out by a part of a pixel: the
+maps store faint pixels brighter than their share, so the original reads
+heavier on screen than its true shape. The large and message fonts are at
+their true weight, as chosen in review; the small and console fonts carry
+0.15 of a pixel until theirs is chosen. To rebuild them (NumPy, Pillow,
+potracer and fontTools, and game data):
 
-    python3 tools/og_font.py --output port/assets/fonts --weight 0.15
+    python3 tools/og_font.py --output port/assets/fonts --fonts 'ui\large_ui,ui\interstate'
+    python3 tools/og_font.py --output port/assets/fonts --weight 0.15 \
+      --fonts 'ui\small_ui,old tags\internal system plain'
 
 `fonts.json` marks them with `units_per_pixel`, and the game then draws each
 glyph from the pen, where its outline lies. A font without it is a substitute
