@@ -12,6 +12,10 @@
 #define HALO_METAL_RENDER_MAX_DIMENSION 8192u
 #define HALO_METAL_RENDER_SCALE_UNIFORM 0u
 #define HALO_METAL_RENDER_SCALE_NATIVE_AXES 1u
+/* The title's secondary color target (rasterizer_xbox.c): mirrors'
+ * reflections and active camouflage draw into it. */
+#define HALO_METAL_RENDER_SECONDARY_WIDTH 320u
+#define HALO_METAL_RENDER_SECONDARY_HEIGHT 240u
 
 struct halo_metal_render_dimensions {
     uint32_t logical_width, logical_height, storage_width, storage_height;
@@ -37,6 +41,15 @@ int halo_metal_render_target_dimensions(uint32_t logical_width, uint32_t logical
  * Zero and dimensions above the host's8192-axis limit fail without mutation. */
 int halo_metal_render_native_target_dimensions(uint32_t logical_width, uint32_t logical_height,
     uint32_t screen_width, uint32_t storage_width, uint32_t storage_height,
+    struct halo_metal_render_dimensions *dimensions);
+
+/* The secondary color target keeps its logical 320x240 units and gets the
+ * screen's pixels per unit, as desktop OpenGL gives it: left at 320x240
+ * pixels, a cloaked player is a coarse smear on a sharp picture. screen is
+ * the scaled logical screen_width x480 target from either function above;
+ * the result uses its scale mode. At 480 lines it is exactly 320x240.
+ * dimensions may alias screen. Fails without mutation on invalid input. */
+int halo_metal_render_secondary_target_dimensions(const struct halo_metal_render_dimensions *screen,
     struct halo_metal_render_dimensions *dimensions);
 
 /* Clip ordered logical edges to the target, round each edge half up, then

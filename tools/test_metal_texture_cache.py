@@ -160,6 +160,16 @@ int main(int argc,char **argv) {
         struct native_resource **link=&resources;while(*link!=replacement)link=&(*link)->next;
         *link=replacement->next;free(replacement);
         struct native_resource *after=target_get(&surface);assert(after->storage_width==640 && initialized_targets);
+        /* The secondary color target (camouflage, reflections) keeps 320x240 units and
+           gets the screen's pixels per unit. */
+        D3DSurface secondary={0,0x5000,0,format(0x12,0,0,1),319u|(239u<<12)|(39u<<24)};
+        struct native_resource *half=target_get(&secondary);
+        assert(half->storage_width==320 && half->storage_height==240);
+        render_height=720;half=target_get(&secondary);
+        assert(half->storage_width==480 && half->storage_height==360 && half->description.width==320);
+        render_height=0;native_storage_width=1280;native_storage_height=960;half=target_get(&secondary);
+        assert(half->storage_width==640 && half->storage_height==480 &&
+            half->scale_mode==HALO_METAL_RENDER_SCALE_NATIVE_AXES);
     } else if(!strcmp(argv[1],"reset-hud")) {
         struct native_resource *one=make_resource(0,texture.Format,0,HALO_METAL_SHADER_READ);
         one->description.hires=TRUE;one->hud_asset=7;

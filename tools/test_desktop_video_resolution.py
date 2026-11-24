@@ -181,14 +181,16 @@ int main(void) {
 #include <assert.h>
 #include <stdlib.h>
 #define SCREEN_HEIGHT 480
+#define SECONDARY_TARGET_WIDTH 320
+#define SECONDARY_TARGET_HEIGHT 240
 #define RENDER_TARGET_BUCKET_COUNT 256
  typedef unsigned GLuint;
-struct xgpu_render_target { unsigned long data,width,height;GLuint texture; };
+struct xgpu_render_target { unsigned long data,width,height;int depth;GLuint texture; };
 ''' + function(gl, "struct render_target_entry\n") + ";\n" + function(gl, "struct framebuffer_entry\n") + r''';
 static struct render_target_entry *render_targets,*render_target_buckets[RENDER_TARGET_BUCKET_COUNT];
 static struct framebuffer_entry *framebuffers;
 static unsigned textures_deleted,framebuffers_deleted,invalidations;
-static void glDeleteTextures(int count,const GLuint *id) { assert(count==1 && (*id==11 || *id==12));textures_deleted++; }
+static void glDeleteTextures(int count,const GLuint *id) { assert(count==1 && (*id==11 || *id==12 || *id==15));textures_deleted++; }
 static void glDeleteFramebuffers(int count,const GLuint *id) { assert(count==1 && *id<4);framebuffers_deleted++; }
 static void xgpu_gl_state_invalidate(void) { invalidations++; }
 ''' + function(gl, "static struct render_target_entry **render_target_bucket(") + "\n" + function(gl, "static void screen_render_targets_retire(") + r'''
@@ -203,14 +205,19 @@ static void framebuffer(GLuint id,GLuint color,GLuint depth) {
     entry->next=framebuffers;framebuffers=entry;
 }
 int main(void) {
+    /* 15 is the secondary color target (camouflage, reflections), drawn at the screen's scale too;
+       16 is a depth target of the same size, which is not. */
+    target(12288,320,240,15);target(16384,320,240,16);render_targets->target.depth=1;
     target(4096,640,480,11);target(4096,640,480,12);target(4096,256,256,13);target(8192,854,480,14);
     framebuffer(1,11,12);framebuffer(2,11,0);framebuffer(3,13,12);framebuffer(4,13,14);
     screen_render_targets_retire(640);
-    assert(textures_deleted==2 && framebuffers_deleted==3 && invalidations==1);
-    assert(render_targets->target.texture==14 && render_targets->next->target.texture==13 && !render_targets->next->next);
+    assert(textures_deleted==3 && framebuffers_deleted==3 && invalidations==1);
+    assert(!*render_target_bucket(12288) && (*render_target_bucket(16384))->target.texture==16);
+    assert(render_targets->target.texture==14 && render_targets->next->target.texture==13 &&
+        render_targets->next->next->target.texture==16 && !render_targets->next->next->next);
     assert((*render_target_bucket(4096))->target.texture==13 && !(*render_target_bucket(4096))->next_in_bucket);
     assert(framebuffers->framebuffer==4 && !framebuffers->next);
-    screen_render_targets_retire(640);assert(textures_deleted==2 && framebuffers_deleted==3);
+    screen_render_targets_retire(640);assert(textures_deleted==3 && framebuffers_deleted==3);
     while(render_targets) { struct render_target_entry *next=render_targets->next;free(render_targets);render_targets=next; }
     free(framebuffers);return 0;
 }

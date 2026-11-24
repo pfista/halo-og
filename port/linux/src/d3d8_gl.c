@@ -828,6 +828,11 @@ static void surface_dimensions(const D3DSurface *surface, unsigned long *width, 
 		format == D3DFMT_LIN_D24S8 || format == D3DFMT_LIN_F24S8 || format == D3DFMT_LIN_D16 || format == D3DFMT_LIN_F16;
 }
 
+/* the secondary render target, the size of the Xbox's (rasterizer_xbox.c):
+mirrors' reflections and active camouflage draw into it */
+#define SECONDARY_TARGET_WIDTH 320
+#define SECONDARY_TARGET_HEIGHT 240
+
 static struct render_target_entry *render_target_get(const D3DSurface *surface)
 {
 	struct render_target_entry *entry;
@@ -839,8 +844,13 @@ static struct render_target_entry *render_target_get(const D3DSurface *surface)
 	float scale[2] = { 1.0f, 1.0f };
 
 	surface_dimensions(surface, &width, &height, &depth);
-	/* the screen's targets are drawn at the screen's scale */
-	if (width == (unsigned long)halo_screen_width() && height == SCREEN_HEIGHT)
+	/* the screen's targets are drawn at the screen's scale, and so is the
+	secondary target: it keeps the game's 320x240 units, which its shaders'
+	constants are in, and gets the screen's pixels a unit. Left at 320x240
+	pixels, a cloaked player was a coarse smear on a sharp picture, far
+	easier to see than on the Xbox, where it is half the screen's detail */
+	if ((width == (unsigned long)halo_screen_width() && height == SCREEN_HEIGHT) ||
+		(!depth && width == SECONDARY_TARGET_WIDTH && height == SECONDARY_TARGET_HEIGHT))
 	{
 		scale[0] = screen_scale[0];
 		scale[1] = screen_scale[1];
@@ -881,15 +891,18 @@ static struct render_target_entry *render_target_get(const D3DSurface *surface)
 }
 
 #ifndef HALO_ANDROID
-/* Only retire screen-sized targets between frames. Without this, every
- * Native window resize retains another color/depth texture and its FBOs. */
+/* Only retire the targets drawn at the screen's scale between frames: the
+ * screen-sized ones and the secondary target. Without this, every Native
+ * window resize retains another color/depth texture and its FBOs. */
 static void screen_render_targets_retire(long old_width)
 {
     struct render_target_entry **link = &render_targets;
     while (*link)
     {
         struct render_target_entry *entry = *link;
-        if (entry->target.width == (unsigned long)old_width && entry->target.height == SCREEN_HEIGHT)
+        if ((entry->target.width == (unsigned long)old_width && entry->target.height == SCREEN_HEIGHT) ||
+            (!entry->target.depth && entry->target.width == SECONDARY_TARGET_WIDTH &&
+                entry->target.height == SECONDARY_TARGET_HEIGHT))
         {
             struct framebuffer_entry **framebuffer = &framebuffers;
             struct render_target_entry **bucket = render_target_bucket(entry->target.data);
