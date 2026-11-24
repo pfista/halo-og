@@ -417,6 +417,25 @@ static void engine_tests(const char *mode) {
             assert(quads[1][v].position.y>=3 && quads[1][v].position.y<=9);
         }
         assert(quads[1][0].texture_coordinates.x>0 && quads[1][1].texture_coordinates.x>quads[1][0].texture_coordinates.x);
+    } else if(!strcmp(mode,"ink")) {
+        /* A substitute glyph fills the original glyph's ink, to a part of a pixel: columns 2 to 5
+           of the 8-wide bitmap, the first half covered, and rows 3 to 9. Text then keeps the
+           original font's sizes and spacing whatever the substitute's own proportions are. */
+        memset(original_ink[0],0,sizeof(original_ink[0]));
+        for(int row=3;row<=9;row++) {
+            original_ink[0][row*8+2]=128;
+            for(int column=3;column<=5;column++) original_ink[0][row*8+column]=255;
+        }
+        quad_count=0;rasterizer_draw_string(&bounds,&clip,NULL,0,"Q");assert(quad_count==2);
+        near_value(quads[1][1].position.x-quads[1][0].position.x,6-(2+(1-128/255.f)));
+        near_value(quads[1][2].position.y-quads[1][1].position.y,7);
+        /* (the bitmap's left edge is at 0: the pen at the leading width, less the glyph's origin) */
+        near_value(quads[1][0].position.x,2+(1-128/255.f));
+        /* The whole substitute glyph is shown in it, not a part of one. */
+        assert(quads[1][0].texture_coordinates.x<quads[1][1].texture_coordinates.x);
+        /* A glyph with no ink draws nothing. */
+        memset(original_ink[0],0,sizeof(original_ink[0]));
+        quad_count=0;rasterizer_draw_string(&bounds,&clip,NULL,0,"Z");assert(!quad_count);
     } else if(!strcmp(mode,"transform")) {
         struct dynamic_screen_vertex before[4];memcpy(before,quads[1],sizeof(before));quad_count=0;
         rasterizer_text_transform.scale=.75f;rasterizer_text_transform.anchor_x=5;rasterizer_text_transform.anchor_y=8;
@@ -542,7 +561,8 @@ def fixture_source():
                  "draw_string", "draw_unicode_string", "draw_string_preflight", "draw_unicode_string_preflight"):
         source += function(draw, name) + "\n"
     for name in ("rasterizer_text_submit_character", "hires_text_font_get", "rasterizer_preflight_hires_character",
-                 "hires_text_prepare", "rasterizer_draw_hires_character_quad", "rasterizer_draw_hires_character",
+                 "hires_text_prepare", "hires_ink_edges", "hires_original_ink_get",
+                 "rasterizer_draw_hires_character_quad", "rasterizer_draw_hires_character",
                  "rasterizer_draw_hires_character_with_dropshadow", "rasterizer_draw_string",
                  "rasterizer_draw_unicode_string"):
         source += function(raster, name) + "\n"
@@ -659,6 +679,9 @@ class TextHiresTests(unittest.TestCase):
 
     def test_clipping_and_shadow_color(self):
         self.run_case("clipping")
+
+    def test_substitute_glyph_fills_the_original_glyphs_ink(self):
+        self.run_case("ink")
 
     def test_existing_scaled_text_transform_is_preserved(self):
         self.run_case("transform")

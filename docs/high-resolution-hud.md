@@ -33,7 +33,9 @@ The font/menu extension selectively ports upstream commit
 `ui\\large_ui` and `ui\\interstate`, and Overpass 750 for `ui\\small_ui`.
 Glyphs are rasterized at the renderer's pixel scale while the game's original
 font tags still control character advances, wrapping, colors, shadows and
-clipping. Unsupported fonts/characters or atlas failures use original bitmap
+clipping. Each substitute glyph is drawn into the rectangle the original
+glyph's ink occupies, measured to a part of a pixel, so letter sizes, letter
+spacing and line widths are the original's. Unsupported fonts/characters or atlas failures use original bitmap
 text for the entire string. Original mode creates no replacement glyph atlas.
 
 The 34 menu title images in `port/assets/titles` replace text already authored
