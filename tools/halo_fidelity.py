@@ -254,6 +254,7 @@ auto_download = false
 interpolation = {str(interpolation).lower()}
 direct_camera = false
 high_res_hud = false
+render_height = 480
 defaults_revision = 1
 vsync = true
 [debug]

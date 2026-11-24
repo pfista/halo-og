@@ -198,11 +198,11 @@ VSync and Smooth Motion use `display.vsync` and `display.interpolation` in
 | Renderer/platform | Resolution behavior | Default |
 | --- | --- | --- |
 | Mac Native Metal | Resolution applies between frames after Accept, in fullscreen or a window. Native fits the current Retina drawable; the game's logical aspect stays fixed at startup. | Native |
-| Windows/Linux OpenGL | Resolution applies between frames after Accept, in fullscreen or a window. Native fits the current drawable while retaining the game's logical aspect. | Auto: native pixels fullscreen, Xbox 640x480 in a window |
+| Windows/Linux OpenGL | Resolution applies between frames after Accept, in fullscreen or a window. Native fits the current drawable while retaining the game's logical aspect. | Native |
 | Mac ANGLE | Uses the existing display scaling; Resolution controls apply only to Native Metal. | Existing display scaling |
 
-Windows and Linux also provide **Auto**, which preserves the existing fullscreen
-and windowed behavior. The setting is `display.render_height`: -1 is Auto on
+Windows and Linux also provide **Auto**, their default before 0.7: native
+pixels in fullscreen and the Xbox's 640x480 in a window. The setting is `display.render_height`: -1 is Auto on
 Windows/Linux, 0 is Native, and the preset values are their heights in pixels.
 Window size remains independent: drag the window edge or change
 `display.window_scale` for its initial size. Native follows drawable size changes;

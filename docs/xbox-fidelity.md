@@ -404,9 +404,10 @@ simulation, gameplay-button or network-rule change. See
 
 Since 0.7, at the user's request after the November 2026 player meeting, a new
 installation uses the enhanced picture: `display.interpolation` and
-`display.high_res_hud` are `true`, and the Mac's `display.render_height` is `0`
-(the display's own resolution; Windows and Linux already chose it in
-fullscreen). This is the one deliberate exception to "options default to the
+`display.high_res_hud` are `true`, and `display.render_height` is `0` on Mac,
+Windows and Linux (the display's own resolution, in fullscreen or a window;
+before 0.7 the Mac drew 480 lines and Windows and Linux drew 480 lines in a
+window). This is the one deliberate exception to "options default to the
 original": players compared the 480-line, 30 FPS default with other builds and
 read it as a worse port. It changes only what is drawn. The original Xbox
 picture remains selectable in Video and in

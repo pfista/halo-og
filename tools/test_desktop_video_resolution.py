@@ -473,7 +473,8 @@ int main(int argc,char **argv) {
     return 0;
 }
 '''
-        for defines,expected in (((),"-1"), (("-DHALO_MACOS=1","-DHALO_ANDROID=1"),"0")):
+        # Since 0.7 every desktop draws at the native drawable by default.
+        for defines,expected in (((),"0"), (("-DHALO_MACOS=1","-DHALO_ANDROID=1"),"0")):
             with self.subTest(defines=defines),tempfile.TemporaryDirectory(prefix="halo-resolution-config-") as folder:
                 prefix=Path(folder)/"prefix.h";prefix.write_text(PREFIX)
                 env={key:value for key,value in os.environ.items() if not key.startswith("HALO_")}
@@ -482,6 +483,31 @@ int main(int argc,char **argv) {
                         str(PORT/"port_config.c"),str(ROOT/"port/third_party/tomlc17/tomlc17.c"))
                 self.compile_run(source,defines=defines,inputs=inputs,arguments=(expected,),env=env)
                 self.compile_run(source,defines=defines,inputs=inputs,arguments=("1080",),env=env)
+
+    def test_windows_and_linux_settings_from_0_6_move_to_native_unless_a_picture_was_chosen(self):
+        if not (SDL / "include/SDL3/SDL.h").exists():
+            self.skipTest("SDL3 headers required")
+        source = CONFIG_HARNESS.split("int main(", 1)[0] + r'''
+int main(int argc,char **argv) {
+    (void)argc;
+    assert(config_integer("display.render_height")==atol(argv[1]));
+    assert(config_boolean("display.interpolation")==atoi(argv[2]));
+    assert(config_boolean("display.high_res_hud")==atoi(argv[2]));
+    return 0;
+}
+'''
+        written_by_0_6 = "[display]\ninterpolation = false\nrender_height = -1\nhigh_res_hud = false\n"
+        for text, height, enhanced in ((written_by_0_6, "0", "1"),
+                                       (written_by_0_6.replace("-1", "480"), "480", "0"),
+                                       (written_by_0_6.replace("-1", "1080"), "1080", "0")):
+            with self.subTest(height=height),tempfile.TemporaryDirectory(prefix="halo-desktop-defaults-") as folder:
+                prefix=Path(folder)/"prefix.h";prefix.write_text(PREFIX)
+                (Path(folder)/"config.toml").write_text(text)
+                env={key:value for key,value in os.environ.items() if not key.startswith("HALO_")}
+                env.update(HALO_SAVE_ROOT=folder,HALO_DATA_ROOT=folder)
+                inputs=("-pthread","-include",str(prefix),"-I",str(SDL/"include"),"-I",str(ROOT/"port/third_party/tomlc17"),
+                        str(PORT/"port_config.c"),str(ROOT/"port/third_party/tomlc17/tomlc17.c"))
+                self.compile_run(source,inputs=inputs,arguments=(height,enhanced),env=env)
 
 
 if __name__ == "__main__":

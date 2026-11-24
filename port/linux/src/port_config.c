@@ -113,11 +113,14 @@ static const struct config_setting config_settings[] =
 		"480 is the original Xbox picture. Width follows the startup aspect.\n"
 		"Accept applies between frames." },
 #elif !defined(HALO_ANDROID) && !defined(HALO_IOS)
-	{ "display.render_height", _config_integer, "-1", NULL, _environment_value, _platform_desktop,
-		"Render height in fullscreen or a window: -1 keeps automatic selection\n"
-		"(native fullscreen, Xbox 480p window); 0 fits the native drawable;\n"
-		"480, 720, 1080, 1440 or 2160 select a fixed height. Applies between\n"
-		"frames; game coordinates and the 30 Hz simulation stay unchanged." },
+	/* Native in a window as well as fullscreen since 0.7, as on the Mac, so
+	the same settings give the same picture on every desktop. */
+	{ "display.render_height", _config_integer, "0", NULL, _environment_value, _platform_desktop,
+		"Render height in fullscreen or a window: 0 fits the native drawable;\n"
+		"-1 is Auto (native fullscreen, Xbox 480p window); 480, 720, 1080,\n"
+		"1440 or 2160 select a fixed height. 480 is the original Xbox picture.\n"
+		"Applies between frames; game coordinates and the 30 Hz simulation\n"
+		"stay unchanged." },
 #endif
 	{ "display.timer_position", _config_integer, "0", NULL, _environment_value, _platform_all,
 		"PB timer position: 0 is top center, 1 bottom center, 2 bottom right." },
