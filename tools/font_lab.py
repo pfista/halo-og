@@ -16,6 +16,10 @@ The first candidates use the typeface fonts.json gives the tag: as 0.6 drew it,
 as the game draws it now, and tuned per letter. Each --typeface adds another
 typeface, tuned per letter, so a letter can be matched to its closest outline.
 
+The menus' large titles are pictures in the maps, not text. The page ends with
+each one beside the picture Upres draws in its place (port/assets/titles);
+click a redraw that looks wrong to flag it.
+
 Each candidate also gets a number: how much it differs from the original once
 it is shrunk back to the Xbox's pixels, as a share of the original's ink.
 Lower is closer. A recipe is a function in RECIPES; add one to try an idea.
@@ -34,14 +38,15 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from hud_assets import XboxMap  # noqa: E402
+from hud_assets import XboxMap, decode_bitmap  # noqa: E402
 from primary_checkout import PRIMARY  # noqa: E402
 
 FONTS = ROOT / "port/assets/fonts"
+TITLES = ROOT / "port/assets/titles"
 PHRASES = [
     "COOPERATIVE PLAY", "SPLIT SCREEN", "Team Slayer Pro", "Edit Gametypes", "Capture the Flag",
     "A=SELECT  B=BACK", "Choose another to edit.", "PLAY AVATAR WAVY TYPE LT", "Rally Oddball illicit fjord",
@@ -114,7 +119,19 @@ def gaussian(image, sigma):
 
 
 def weigh(mask, shift):
-    """Move every edge of a mask out by `shift` pixels (in for a negative one): bolder or lighter strokes."""
+    """Move every edge of a mask out by `shift` pixels (in for a negative one): bolder or lighter strokes.
+    A square brush, so square corners stay square."""
+    steps = int(round(shift))
+    if not steps:
+        return mask
+    pad = abs(steps) + 2
+    image = Image.fromarray((np.pad(mask, pad) * 255 + 0.5).astype(np.uint8), "L")
+    brush = ImageFilter.MaxFilter(2 * steps + 1) if steps > 0 else ImageFilter.MinFilter(-2 * steps + 1)
+    return np.asarray(image.filter(brush), np.float32) / 255
+
+
+def weigh_round(mask, shift):
+    """The same with a round brush (blur and threshold): it rounds corners."""
     if abs(shift) < 0.02:
         return mask
     sigma = max(1.5 * abs(shift), 1.0)
@@ -268,6 +285,156 @@ def traced(glyph, detail, edge, level, smooth):
     return mask, (0, 0, width * detail, height * detail), (-pad, -pad, width - pad, height - pad)
 
 
+def level_loops(field, level=0.5):
+    """The closed outlines where a field of samples at pixel centres crosses a level (marching squares), as
+    lists of points with the ink on one side throughout."""
+    field = np.pad(field, 1)
+    ink = field > level
+    after = {}
+
+    def crossing(p, q):
+        p, q = min(p, q), max(p, q)
+        a, b = field[p[1], p[0]], field[q[1], q[0]]
+        t = (level - a) / (b - a)
+        return round(p[0] + (q[0] - p[0]) * t - 1, 6), round(p[1] + (q[1] - p[1]) * t - 1, 6)
+
+    for y in range(field.shape[0] - 1):
+        for x in range(field.shape[1] - 1):
+            corners = [(x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1)]
+            inked = [bool(ink[corner[1], corner[0]]) for corner in corners]
+            edges = [index for index in range(4) if inked[index] != inked[(index + 1) % 4]]  # edge i: corner i to i+1
+            if len(edges) == 2:
+                cuts = [(edges[0], edges[1], inked.index(True), True)]
+            elif len(edges) == 4:  # a saddle: the middle says which two corners are joined
+                middle = bool(field[y:y + 2, x:x + 2].mean() > level)
+                cuts = [((index - 1) % 4, index, index, not middle) for index in range(4) if inked[index] != middle]
+            else:
+                continue
+            for first, second, corner, corner_inked in cuts:
+                p = crossing(corners[first], corners[(first + 1) % 4])
+                q = crossing(corners[second], corners[(second + 1) % 4])
+                side = (q[0] - p[0]) * (corners[corner][1] - 1 - p[1]) - (q[1] - p[1]) * (corners[corner][0] - 1 - p[0])
+                if (side > 0) != corner_inked:
+                    p, q = q, p
+                after[p] = q
+    loops = []
+    while after:
+        start = next(iter(after))
+        loop, point = [start], after.pop(start)
+        while point != start and point in after:
+            loop.append(point)
+            point = after.pop(point)
+        if len(loop) >= 3:
+            loops.append(np.array(loop))
+    return loops
+
+
+def breakpoints(loop, tolerance):
+    """The fewest points of an outline that keep every other point within the tolerance of the lines between
+    them (Ramer-Douglas-Peucker), as indices."""
+    count = len(loop)
+    far = int(np.argmax(((loop - loop[0]) ** 2).sum(axis=1)))
+    keep = {0, far}
+
+    def split(a, b):
+        if b - a < 2:
+            return
+        p, q = loop[a % count], loop[b % count]
+        chain = loop[np.arange(a + 1, b) % count]
+        along = q - p
+        length = math.hypot(along[0], along[1])
+        if length > 1e-9:
+            distance = np.abs((chain[:, 0] - p[0]) * along[1] - (chain[:, 1] - p[1]) * along[0]) / length
+        else:
+            distance = np.hypot(chain[:, 0] - p[0], chain[:, 1] - p[1])
+        worst = int(np.argmax(distance))
+        if distance[worst] > tolerance:
+            keep.add((a + 1 + worst) % count)
+            split(a, a + 1 + worst)
+            split(a + 1 + worst, b)
+
+    split(0, far)
+    split(far, count)
+    return sorted(keep)
+
+
+def clean_outline(loop, tolerance, corner=55.0, reach=2.0):
+    """An outline redrawn from its own points: a straight line fitted to each run between breakpoints, the
+    lines met at sharp corners, and gentle turns rounded into curves. Returns the points to fill."""
+    count, cuts = len(loop), breakpoints(loop, tolerance)
+    if len(cuts) < 3:
+        return loop
+    lines = []
+    for index, a in enumerate(cuts):
+        b = cuts[(index + 1) % len(cuts)]
+        run = loop[np.arange(a, (b if b > a else b + count) + 1) % count]
+        inner = run[1:-1] if len(run) >= 4 else run  # (the ends are where the next line's corner was cut off)
+        centre, along = inner.mean(axis=0), run[-1] - run[0]
+        if len(inner) >= 3:
+            axis = np.linalg.svd(inner - centre)[2][0]
+            along = axis if axis @ along >= 0 else -axis
+        lines.append((centre, along / max(math.hypot(along[0], along[1]), 1e-9)))
+    vertices = []
+    for index, a in enumerate(cuts):
+        (c1, d1), (c2, d2) = lines[index - 1], lines[index]
+        turn = d1[0] * d2[1] - d1[1] * d2[0]
+        vertex = (c1 + d1 * ((loop[a] - c1) @ d1) + c2 + d2 * ((loop[a] - c2) @ d2)) / 2
+        if abs(turn) > 0.2:
+            met = c1 + d1 * (((c2[0] - c1[0]) * d2[1] - (c2[1] - c1[1]) * d2[0]) / turn)
+            if math.hypot(met[0] - loop[a][0], met[1] - loop[a][1]) < 0.8:
+                vertex = met
+        vertices.append(vertex)
+    points = []
+    for index, here in enumerate(vertices):
+        into, out = here - vertices[index - 1], vertices[(index + 1) % len(vertices)] - here
+        before, after = math.hypot(into[0], into[1]), math.hypot(out[0], out[1])
+        if before < 1e-6 or after < 1e-6:
+            continue
+        turn = abs(math.degrees(math.atan2(into[0] * out[1] - into[1] * out[0], into @ out)))
+        if turn >= corner or turn < 4 or (turn >= 30 and min(before, after) >= 4):
+            points.append(here)
+            continue
+        start, end = here - into / before * min(before / 2, reach), here + out / after * min(after / 2, reach)
+        for t in np.linspace(0, 1, 9):
+            points.append((1 - t) ** 2 * start + 2 * (1 - t) * t * here + t * t * end)
+    return np.array(points)
+
+
+def cleaned(glyph, detail, tolerance, level=0.5):
+    """The original letter's own outline, cleaned, filled at `detail` pixels to the logical pixel."""
+    if not glyph.ink:
+        return None
+    pad, over = 2, 4
+    rows, columns = glyph.coverage.shape
+    size = ((columns + 2 * pad) * detail * over, (rows + 2 * pad) * detail * over)
+    filled = np.zeros(size[::-1], bool)
+    for loop in level_loops(glyph.coverage, level):
+        path = clean_outline(loop, tolerance)
+        if len(path) < 3:
+            continue
+        image = Image.new("1", size, 0)
+        # (a sample is the middle of its pixel)
+        ImageDraw.Draw(image).polygon([((x + 0.5 + pad) * detail * over, (y + 0.5 + pad) * detail * over) for x, y in path], fill=1)
+        filled ^= np.asarray(image, bool)
+    mask = filled.reshape(size[1] // over, over, size[0] // over, over).mean(axis=(1, 3)).astype(np.float32)
+    return mask, (0, 0, mask.shape[1], mask.shape[0]), (-pad, -pad, columns + pad, rows + pad)
+
+
+def recipe_clean(font, glyph, character, outline, detail, state):
+    """The original letter's own outline with straight runs made straight, corners sharp and turns smooth."""
+    return cleaned(glyph, detail, 0.3)
+
+
+def recipe_clean_tight(font, glyph, character, outline, detail, state):
+    """The same, following the original's pixels more closely."""
+    return cleaned(glyph, detail, 0.2)
+
+
+def recipe_clean_loose(font, glyph, character, outline, detail, state):
+    """The same, straightening more."""
+    return cleaned(glyph, detail, 0.45)
+
+
 def recipe_trace(font, glyph, character, outline, detail, state):
     """The original letter itself, enlarged with a smooth curve and given a sharp edge."""
     return traced(glyph, detail, 1.5, 0.5, 0)
@@ -291,8 +458,11 @@ RECIPES = [
     ("trace", "original, sharpened", recipe_trace),
     ("trace-smooth", "original, enlarged", recipe_trace_smooth),
     ("trace-bold", "original, heavier", recipe_trace_bold),
+    ("trace-clean-tight", "clean outline, tight", recipe_clean_tight),
+    ("trace-clean", "clean outline", recipe_clean),
+    ("trace-clean-loose", "clean outline, loose", recipe_clean_loose),
 ]
-DEFAULT_RECIPES = "shipped,fit,matched,trace-smooth"
+DEFAULT_RECIPES = "shipped,fit,matched,trace-smooth,trace-clean-tight,trace-clean,trace-clean-loose"
 
 
 # ---------- lines and pictures
@@ -363,6 +533,30 @@ def png(image, shrink):
     return "data:image/png;base64," + base64.b64encode(data.getvalue()).decode("ascii")
 
 
+def title_pictures(cache, scale):
+    """Each menu title as the maps have it, enlarged, and as port/assets/titles redraws it, cut to the text."""
+    listing = json.loads((TITLES / "titles.json").read_text())
+    ground = np.array(GROUND, np.float32)
+    titles = []
+    for asset in listing["assets"]:
+        size = (asset["width"] * scale, asset["height"] * scale)
+        original = Image.fromarray(decode_bitmap(cache.bitmap_group(asset["tag"])["bitmaps"][asset["bitmap"]]), "RGBA")
+        redraw = Image.open(TITLES / (asset["name"] + ".png")).convert("RGBA")
+        # (colour multiplied by alpha before resizing, so transparent texels do not tint the edges)
+        pair = [np.asarray(original.convert("RGBa").resize(size, Image.BILINEAR), np.float32),
+                np.asarray(redraw.convert("RGBa").resize(size, Image.LANCZOS), np.float32)]
+        inked = np.nonzero(np.maximum(pair[0][..., 3], pair[1][..., 3]) > 24)
+        if not len(inked[0]):
+            continue
+        top, bottom = max(inked[0].min() - 2 * scale, 0), min(inked[0].max() + 2 * scale, size[1])
+        left, right = max(inked[1].min() - 2 * scale, 0), min(inked[1].max() + 2 * scale, size[0])
+        images = [png(ground * (1 - image[top:bottom, left:right, 3:] / 255) + image[top:bottom, left:right, :3], 1)
+                  for image in pair]
+        titles.append({"text": asset["text"], "name": asset["name"], "original": images[0], "redraw": images[1],
+                       "width": int(right - left) // 2, "height": int(bottom - top) // 2})
+    return listing["font"], titles
+
+
 def glyph_error(font, character, recipe, outline, detail, state):
     glyph = font.glyphs[ord(character)]
     drawn = recipe(font, glyph, character, outline, detail, state)
@@ -415,7 +609,7 @@ try { picks = JSON.parse(localStorage.getItem(DATA.run) || "{}"); } catch (error
 function save() {
   try { localStorage.setItem(DATA.run, JSON.stringify(picks)); } catch (error) {}
   const lines = ["Font lab picks (" + DATA.run + ")"];
-  for (const font of DATA.fonts) {
+  for (const font of DATA.fonts.concat(DATA.titles.length ? [{name: "menu titles"}] : [])) {
     const mine = picks[font.name] || {}, tally = {};
     for (const key in mine) tally[mine[key]] = (tally[mine[key]] || 0) + 1;
     lines.push(font.name + "  totals: " + (Object.keys(tally).map(k => k + " x" + tally[k]).join(", ") || "none"));
@@ -471,6 +665,22 @@ for (const font of DATA.fonts) {
     });
   }
 }
+if (DATA.titles.length) {
+  const section = element("section", {}, main);
+  element("h2", {text: "Menu titles (pictures in the maps, redrawn with " + DATA.titleFont + ")"}, section);
+  element("p", {text: "These are not text: each is one picture. Click a redraw that looks wrong to flag it."}, section);
+  for (const title of DATA.titles) {
+    element("h3", {text: title.text}, section);
+    const block = element("div", {}, section);
+    [["ORIGINAL", title.original], ["0.7 now", title.redraw]].forEach((line, index) => {
+      const row = element("div", {className: "line" + (index ? " pick" : "")}, block);
+      element("b", {text: line[0]}, element("div", {className: "label"}, row));
+      element("img", {src: line[1], width: title.width, height: title.height}, row);
+      if (index) { row.dataset.font = "menu titles"; row.dataset.key = 'title "' + title.text + '" (' + title.name + ")";
+        row.dataset.recipe = "needs work"; row.onclick = () => pick(row); }
+    });
+  }
+}
 document.getElementById("overlay").onchange = event => document.querySelectorAll("img[data-plain]").forEach(image => {
   image.src = event.target.checked ? image.dataset.overlay : image.dataset.plain; });
 document.getElementById("copy").onclick = () => { box.select(); try { navigator.clipboard.writeText(box.value); } catch (error) { document.execCommand("copy"); } };
@@ -483,7 +693,10 @@ save();
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output", type=Path, required=True, help="A new folder for index.html")
-    parser.add_argument("--fonts", default="ui\\large_ui,ui\\small_ui", help="Font tags, comma-separated")
+    parser.add_argument("--fonts", default="ui\\large_ui,ui\\small_ui,ui\\interstate",
+                        help="Font tags, comma-separated; '' for none. The maps have these three and the console's "
+                        "'old tags\\internal system plain', which Upres does not redraw")
+    parser.add_argument("--no-titles", action="store_true", help="Leave out the menu title pictures")
     parser.add_argument("--scale", type=int, default=4, help="Screen pixels to the Xbox pixel in phrase lines (tiles use twice this)")
     parser.add_argument("--phrase", action="append", help="A phrase to draw instead of the built-in ones; repeat for more")
     parser.add_argument("--characters", help="Characters for the tile tables; default every printable ASCII one in the font")
@@ -499,8 +712,11 @@ def main():
     files = {entry["tag"]: FONTS / entry["file"] for entry in json.loads((FONTS / "fonts.json").read_text())["fonts"]}
     chosen = [recipe for recipe in RECIPES if recipe[0] in args.recipes.split(",")]
     detail = args.scale * 2
-    data = {"run": args.output.name, "fonts": []}
-    for name in args.fonts.split(","):
+    data = {"run": args.output.name, "fonts": [], "recipes": [], "titles": [], "titleFont": ""}
+    if not args.no_titles:
+        data["titleFont"], data["titles"] = title_pictures(cache, args.scale)
+        print(f"menu titles: {len(data['titles'])} pictures")
+    for name in filter(None, args.fonts.split(",")):
         font = MapFont(cache, name)
         shipped = Outline(files[name], font.capital_rows, detail)
         # each candidate: its name for picks, its label, its recipe, its typeface
