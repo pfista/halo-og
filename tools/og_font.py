@@ -52,6 +52,91 @@ SMOOTHING = 0.2  # pixels: how far each round of the reconstruction smooths
 SLACK = 0.4   # of a level: how far a pixel's share may be from the middle of its level
 
 
+def straight_parts(share, detail):
+    """The pixels whose share is explained by a straight level or upright edge, each with how it is filled.
+
+    Along a straight edge that does not lie on a pixel boundary, the pixels it crosses all hold the same
+    share, with solid pixels on one side and empty ones on the other: a strip. Where two such edges meet,
+    the corner pixel holds the product of their two shares (or all but the product of what they leave).
+    These pixels are filled as exactly that, so stems, bars and their corners come out straight and
+    square. Smoothing cannot do it: it rounds every corner, and holding the area then bulges the end."""
+    rows, columns = share.shape
+    level = np.rint(share * 15).astype(int)
+    solid, blank = level == 15, level == 0
+    strips = {}  # (row, column) -> (upright?, the side the ink is on: -1 left/top, 1 right/bottom)
+    for upright in (True, False):
+        for y in range(1, rows - 1):
+            for x in range(1, columns - 1):
+                if solid[y, x] or blank[y, x]:
+                    continue
+                before, after = ((y, x - 1), (y, x + 1)) if upright else ((y - 1, x), (y + 1, x))
+                side = -1 if solid[before] and blank[after] else 1 if blank[before] and solid[after] else 0
+                if side:
+                    strips[(y, x, upright)] = side
+    runs = []  # (cells, upright?, share, side)
+    for (y, x, upright), side in strips.items():  # two or more in a row along the edge, a level apart at most
+        step = (1, 0) if upright else (0, 1)
+        if strips.get((y - step[0], x - step[1], upright)) == side and abs(level[y - step[0], x - step[1]] - level[y, x]) <= 1:
+            continue  # (not the start of its run)
+        run = [(y, x)]
+        while strips.get((run[-1][0] + step[0], run[-1][1] + step[1], upright)) == side and \
+                abs(level[run[-1][0] + step[0], run[-1][1] + step[1]] - level[run[-1]]) <= 1:
+            run.append((run[-1][0] + step[0], run[-1][1] + step[1]))
+        if len(run) >= 2:
+            runs.append((run, upright, float(np.mean([share[cell] for cell in run])), side))
+    width = {(cell, upright): (index, mean, side) for index, (run, upright, mean, side) in enumerate(runs) for cell in run}
+
+    def block(across, down):
+        """A pixel filled across (share, side) and down (share, side); None for all of that direction."""
+        pattern = np.ones((detail, detail), bool)
+        for axis, part in ((1, across), (0, down)):
+            if part:
+                keep = np.zeros(detail, bool)
+                keep[:int(round(part[0] * detail))] = True
+                if part[1] > 0:
+                    keep = keep[::-1]
+                pattern &= keep[None, :] if axis == 1 else keep[:, None]
+        return pattern
+
+    corners = {}  # cell -> (pattern, the two runs that meet in it)
+    for y in range(1, rows - 1):
+        for x in range(1, columns - 1):
+            if solid[y, x] or blank[y, x] or ((y, x), True) in width or ((y, x), False) in width:
+                continue
+            for dx in (-1, 1):
+                for dy in (-1, 1):
+                    # an outside corner: the upright edge comes from the pixel above or below, the level one from beside
+                    upright_edge, level_edge = width.get(((y + dy, x), True)), width.get(((y, x + dx), False))
+                    if upright_edge and level_edge and upright_edge[2] == dx and level_edge[2] == dy and \
+                            blank[y - dy, x] and blank[y, x - dx] and abs(upright_edge[1] * level_edge[1] - share[y, x]) <= 0.7 / 15:
+                        corners[(y, x)] = (block((upright_edge[1], dx), (level_edge[1], dy)), (upright_edge[0], level_edge[0]))
+                    # an inside corner: solid toward the ink, the two edges leaving along the other sides
+                    upright_edge, level_edge = width.get(((y - dy, x), True)), width.get(((y, x - dx), False))
+                    if upright_edge and level_edge and upright_edge[2] == dx and level_edge[2] == dy and \
+                            solid[y + dy, x] and solid[y, x + dx] and \
+                            abs(1 - (1 - upright_edge[1]) * (1 - level_edge[1]) - share[y, x]) <= 0.7 / 15:
+                        corners[(y, x)] = (~block((1 - upright_edge[1], -dx), (1 - level_edge[1], -dy)), (upright_edge[0], level_edge[0]))
+    # A curve at its highest, lowest, leftmost or rightmost also runs level or upright for a few pixels, and
+    # must stay a curve. A stroke's edge is long, or ends at both ends in a corner: on a pixel boundary (the
+    # next pixel solid or empty) or in a corner pixel as above.
+    kept = set()
+    for index, (run, upright, mean, side) in enumerate(runs):
+        step = (1, 0) if upright else (0, 1)
+        ends = [(run[0][0] - step[0], run[0][1] - step[1]), (run[-1][0] + step[0], run[-1][1] + step[1])]
+        if len(run) >= 6 or all(solid[end] or blank[end] or (end in corners and index in corners[end][1]) for end in ends):
+            kept.add(index)
+    patterns = {}
+    for index in kept:
+        run, upright, mean, side = runs[index]
+        for cell in run:
+            if (cell, not upright) not in width or width[(cell, not upright)][0] not in kept:
+                patterns[cell] = block((mean, side), None) if upright else block(None, (mean, side))
+    for cell, (pattern, pair) in corners.items():
+        if pair[0] in kept and pair[1] in kept:
+            patterns[cell] = pattern
+    return patterns
+
+
 def reconstruct(coverage, detail=DETAIL, rounds=80):
     """The smoothest shape that every pixel would store as it is stored, as a grid of `detail` samples to
     the pixel with PAD empty pixels around. Each round smooths the shape, then in every pixel keeps as many
@@ -63,6 +148,14 @@ def reconstruct(coverage, detail=DETAIL, rounds=80):
     rows, columns = share.shape
     field = np.asarray(Image.fromarray(share, "F").resize((columns * detail, rows * detail), Image.BICUBIC)).copy()
     last = detail * detail - 1
+    straight = straight_parts(share, detail)
+
+    def hold(samples):
+        for (y, x), pattern in straight.items():
+            samples[y * detail:(y + 1) * detail, x * detail:(x + 1) * detail] = pattern
+        return samples
+
+    field = hold(field)
     least = np.ceil(np.clip(share - SLACK / 15, 0, 1) * (last + 1)).astype(int)
     most = np.floor(np.clip(share + SLACK / 15, 0, 1) * (last + 1)).astype(int)
     for _ in range(rounds):
@@ -73,8 +166,8 @@ def reconstruct(coverage, detail=DETAIL, rounds=80):
         below = np.take_along_axis(order, np.clip(last - wanted, 0, last)[..., None], 2)[..., 0]
         above = np.take_along_axis(order, np.clip(last + 1 - wanted, 0, last)[..., None], 2)[..., 0]
         level = np.where(wanted == 0, np.inf, np.where(wanted == last + 1, -np.inf, (below + above) / 2))
-        field = (blocks > level[..., None]).reshape(rows, columns, detail, detail).transpose(0, 2, 1, 3).reshape(
-            rows * detail, columns * detail).astype(np.float32)
+        field = hold((blocks > level[..., None]).reshape(rows, columns, detail, detail).transpose(0, 2, 1, 3).reshape(
+            rows * detail, columns * detail).astype(np.float32))
     return field > 0.5
 
 
