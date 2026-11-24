@@ -42,6 +42,9 @@ enum
     _device_setting_anti_aliasing,
 #endif
     _device_setting_show_default_game_types,
+    /* 0 keeps the player profile's Look Sensitivity; 1 to 10 set this axis. */
+    _device_setting_look_sensitivity_horizontal,
+    _device_setting_look_sensitivity_vertical,
     NUMBER_OF_DEVICE_SETTINGS
 };
 

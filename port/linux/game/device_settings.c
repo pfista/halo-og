@@ -36,7 +36,14 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
     , "display.frame_limit", "display.anti_aliasing"
 #endif
     , "game.show_default_game_types"
+    , "input.look_sensitivity_horizontal", "input.look_sensitivity_vertical"
 };
+
+static int device_setting_is_look_sensitivity(int setting)
+{
+    return setting == _device_setting_look_sensitivity_horizontal ||
+        setting == _device_setting_look_sensitivity_vertical;
+}
 
 static int device_setting_is_finite(double value)
 {
@@ -84,6 +91,8 @@ double device_settings_get(short setting)
     }
     if (setting == _device_setting_left_stick_deadzone || setting == _device_setting_right_stick_deadzone)
         return halo_controller_deadzone(config_integer(setting_names[setting]));
+    if (device_setting_is_look_sensitivity(setting))
+        return halo_controller_look_sensitivity(setting == _device_setting_look_sensitivity_vertical);
     if (setting >= _device_setting_menu_music) return config_boolean(setting_names[setting]) != 0;
     value = config_real(setting_names[setting]);
     /* Keep malformed file values out of slider indices. */
@@ -149,6 +158,11 @@ int device_settings_apply(unsigned long changed_mask,
         else if (setting == _device_setting_left_stick_deadzone || setting == _device_setting_right_stick_deadzone)
         {
             if (values[setting] < 0.0 || values[setting] > HALO_CONTROLLER_DEADZONE_MAX ||
+                values[setting] != (int)values[setting]) return 0;
+        }
+        else if (device_setting_is_look_sensitivity(setting))
+        {
+            if (values[setting] < 0.0 || values[setting] > HALO_CONTROLLER_LOOK_SENSITIVITY_MAX ||
                 values[setting] != (int)values[setting]) return 0;
         }
         else if (values[setting] < 0.0 || values[setting] > 1.0 ||

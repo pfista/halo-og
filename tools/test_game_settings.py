@@ -95,6 +95,7 @@ static boolean widget_event_function_list_widget_goto_next_item(struct widget_in
     (void)e; (void)d; w->parameters.list.selected_index=(w->parameters.list.selected_index+1)%w->parameters.list.number_of_items; return TRUE;
 }
 #include "game/device_settings.h"
+#define HALO_CONTROLLER_LOOK_SENSITIVITY_MAX 10
 static double settings_values[NUMBER_OF_DEVICE_SETTINGS];
 static unsigned writes,errors;
 static unsigned long applied_mask;
@@ -435,7 +436,7 @@ static void settings_structure(void) {
     assert(device_settings.column[0][_ds_audio].child_widgets.count==6);
     assert(device_settings.column[0][_ds_video].child_widgets.count==(HALO_DEVICE_HAS_RENDER_RESOLUTION ? 7:6));
     assert(device_settings.column[0][_ds_timer].child_widgets.count==5);
-    assert(device_settings.column[0][_ds_controller].child_widgets.count==3);
+    assert(device_settings.column[0][_ds_controller].child_widgets.count==5);
     assert(device_settings.column[0][_ds_multiplayer].child_widgets.count==4);
     assert(!game_settings_is_adjustable(NULL));
     struct widget_instance item={0};
@@ -731,14 +732,16 @@ static void settings_native_options(void) {
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         ,L"FPS LIMIT:",L"ANTI-ALIASING:"
 #endif
-        ,L"DEFAULT GAME TYPES:"};
+        ,L"DEFAULT GAME TYPES:",L"HORIZONTAL SENSITIVITY:",L"VERTICAL SENSITIVITY:"};
     static const short rows_by_page[5][7]={
         {0,1,2,3,NONE,5}, {6,7,8,22,
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
         _device_setting_render_height,
 #endif
-        13,14}, {4,9,10,11,12}, {18,19,20}, {15,16,17,_device_setting_show_default_game_types}};
-    static const short counts[5]={6,HALO_DEVICE_HAS_RENDER_RESOLUTION ? 7:6,5,3,4};
+        13,14}, {4,9,10,11,12},
+        {_device_setting_look_sensitivity_horizontal,_device_setting_look_sensitivity_vertical,20,18,19},
+        {15,16,17,_device_setting_show_default_game_types}};
+    static const short counts[5]={6,HALO_DEVICE_HAS_RENDER_RESOLUTION ? 7:6,5,5,4};
     settings_setup(0); assert(device_settings_build());
     assert(device_settings.native_pages && !game_settings_is_native_spinner(NULL));
     for(short page=_ds_audio;page<=_ds_multiplayer;page++) {
@@ -1207,6 +1210,41 @@ static void settings_acceleration_staging(void) {
     }
 }
 
+static void settings_look_sensitivity_staging(void) {
+    /* Each look axis is Profile (the Xbox's one profile value) or 1 to 10, set from
+     * the main menu and from Pause in a match, and saved only on Accept. */
+    const short layouts[]={_ds_main,_ds_pause_1p,_ds_pause_4p,_ds_solo};
+    const short modes[]={0,1,1,2}, locals[]={0,0,3,0};
+    for(unsigned layout=0;layout<NUMBEROF(layouts);layout++) {
+        short local=locals[layout]; settings_setup(modes[layout]); assert(device_settings_build());
+        settings_values[_device_setting_look_sensitivity_horizontal]=0;
+        settings_values[_device_setting_look_sensitivity_vertical]=0;
+        struct widget_instance *root=open_settings(layouts[layout],_ds_controller,local);
+        short horizontal=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_look_sensitivity_horizontal;
+        short vertical=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_look_sensitivity_vertical;
+        assert(!wcscmp(device_settings.text[horizontal],device_settings.native_pages ? L"Profile":L"Look Horizontal: < Profile >"));
+        assert(!wcscmp(device_settings.text[vertical],device_settings.native_pages ? L"Profile":L"Look Vertical: < Profile >"));
+        /* Profile is the lower end: Previous stays there. */
+        assert(game_settings_event(setting_control(root,_device_setting_look_sensitivity_vertical),_device_settings_previous));
+        assert(device_settings_drafts[local].values[_device_setting_look_sensitivity_vertical]==0);
+        for(unsigned step=0;step<12;step++)
+            assert(game_settings_event(setting_control(root,_device_setting_look_sensitivity_horizontal),_device_settings_next));
+        assert(device_settings_drafts[local].values[_device_setting_look_sensitivity_horizontal]==10);
+        assert(!wcscmp(device_settings.text[horizontal],device_settings.native_pages ? L"10":L"Look Horizontal: < 10 >"));
+        for(unsigned step=0;step<3;step++)
+            assert(game_settings_event(setting_control(root,_device_setting_look_sensitivity_vertical),_device_settings_next));
+        assert(!wcscmp(device_settings.text[vertical],device_settings.native_pages ? L"3":L"Look Vertical: < 3 >"));
+        assert(!writes && settings_values[_device_setting_look_sensitivity_horizontal]==0);
+        assert(game_settings_event(root,_device_settings_accept));
+        assert(writes==1 && applied_mask==((1UL<<_device_setting_look_sensitivity_horizontal)|
+            (1UL<<_device_setting_look_sensitivity_vertical)));
+        assert(settings_values[_device_setting_look_sensitivity_horizontal]==10 &&
+            settings_values[_device_setting_look_sensitivity_vertical]==3);
+        assert(settings_values[_device_setting_look_acceleration]==1);
+        dispose(root);
+    }
+}
+
 static void settings_menu_repeat_staging(void) {
     /* Menu cadence is fixed; no page may expose or save the retired row. */
     for(short layout=_ds_main;layout<_ds_layout_count;layout++) {
@@ -1271,7 +1309,8 @@ static void settings_pause_and_campaign(void) {
             assert(!TEST_FLAG(device_settings.screen[i+1][page].flags,_widget_pause_game_time_bit));
             struct ui_widget_child_reference *children=device_settings.screen_children[i+1][page];
             struct ui_widget_definition *frame=ui_widget_definition_get(children[0].widget_tag.index);
-            short height=page==_ds_game || page==_ds_controller ? 159:
+            /* Controller has five options and Accept: the six-row frame, at the stock pitch. */
+            short height=page==_ds_game ? 159:
                 page==_ds_audio || page==_ds_video ? 240:213;
             assert(frame->bounds.y1==height && frame->bounds.x0==-4 && frame->bounds.x1==222);
             assert(children[0].horizontal_offset==children[1].horizontal_offset-8);
@@ -1306,7 +1345,7 @@ static void settings_pause_and_campaign(void) {
     assert(device_settings.column[_ds_pause_1p][_ds_audio].child_widgets.count==7);
     assert(device_settings.column[_ds_pause_4p][_ds_video].child_widgets.count==(HALO_DEVICE_HAS_RENDER_RESOLUTION ? 8:7));
     assert(device_settings.column[_ds_pause_4p][_ds_timer].child_widgets.count==6);
-    assert(device_settings.column[_ds_pause_4p][_ds_controller].child_widgets.count==4);
+    assert(device_settings.column[_ds_pause_4p][_ds_controller].child_widgets.count==6);
     assert(game_settings_event(setting_control(two,_device_setting_master_volume),_device_settings_next));
     assert(device_settings_drafts[3].values[_device_setting_master_volume]==0.2 && device_settings_drafts[0].values[_device_setting_master_volume]==0.125);
     assert(!wcscmp(device_settings.text[_ds_value_start+3*NUMBER_OF_DEVICE_SETTINGS],L"Master: < 20% >"));
@@ -1463,7 +1502,7 @@ int main(int argc,char **argv) {
     if(argc==2 && !strcmp(argv[1],"--about-metrics")) { settings_about_metrics(); return 0; }
     if(argc==2 && !strcmp(argv[1],"--controller-metrics")) { settings_controller_metrics(); return 0; }
     settings_structure(); settings_native_chooser(); settings_about(); settings_native_options(); settings_game_chooser(); settings_staging();
-    settings_timer_staging(); settings_timer_video(); settings_multiplayer_staging(); settings_controller_staging(); settings_acceleration_staging();
+    settings_timer_staging(); settings_timer_video(); settings_multiplayer_staging(); settings_controller_staging(); settings_acceleration_staging(); settings_look_sensitivity_staging();
     settings_menu_repeat_staging(); settings_hud_staging();
     settings_pause_and_campaign(); settings_registration_failure(); settings_cross_map_rebuild();
     puts("native game settings tests passed"); return 0;
@@ -1486,7 +1525,7 @@ static unsigned mac_visible_rows(struct widget_instance *column) {
 }
 static void mac_settings_video(void) {
     settings_setup(0); assert(device_settings_build());
-    assert(NUMBER_OF_DEVICE_SETTINGS==27 && device_settings_page_counts[_ds_video]==7 && device_settings_page_counts[_ds_timer]==7);
+    assert(NUMBER_OF_DEVICE_SETTINGS==29 && device_settings_page_counts[_ds_video]==7 && device_settings_page_counts[_ds_timer]==7);
     for(unsigned i=0;i<7;i++) assert(device_settings.column_children[_ds_main][_ds_video][i].vertical_offset+28<321);
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_render_height],L"Accept applies"));
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_anti_aliasing],L"Relaunch"));

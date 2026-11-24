@@ -38,6 +38,26 @@ static __inline short halo_controller_deadzone_for_stick(int right_stick)
 		"input.right_stick_deadzone" : "input.left_stick_deadzone"));
 }
 
+/* Look Sensitivity is one number in an Xbox profile, 1 to 10, which sets both
+ * the turning and the up/down rate from the tables below (player_ui.c). The
+ * device settings can set either axis on its own; 0 keeps the profile's. */
+#define HALO_CONTROLLER_LOOK_SENSITIVITY_MAX 10
+
+static __inline long halo_controller_look_sensitivity(int vertical)
+{
+	long value = config_integer(vertical ? "input.look_sensitivity_vertical" :
+		"input.look_sensitivity_horizontal");
+
+	return value >= 0 && value <= HALO_CONTROLLER_LOOK_SENSITIVITY_MAX ? value : 0;
+}
+
+/* Degrees a second for a setting of 1 to 10: the profile tables' own values
+ * (80 to 260 turning, 40 to 130 up and down). */
+static __inline float halo_controller_look_rate(int vertical, long sensitivity)
+{
+	return vertical ? 30.0f + 10.0f * (float)sensitivity : 60.0f + 20.0f * (float)sensitivity;
+}
+
 /* Only physical stick axes reach this hook, before keyboard/controller merging. */
 int halo_controller_look_active(short gamepad_index,
 	short left_x, short left_y, short right_x, short right_y);

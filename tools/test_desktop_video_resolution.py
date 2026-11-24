@@ -88,7 +88,8 @@ class DesktopVideoResolutionTests(unittest.TestCase):
         # the older full fixture do not participate in these resolution checks.
         source = SETTINGS_HARNESS.split("int main(", 1)[0].replace(
             '"input.fast_menu_repeat", "display.high_res_hud"};',
-            '"input.fast_menu_repeat", "display.high_res_hud", "game.show_default_game_types"};') + SETTINGS_MAIN
+            '"input.fast_menu_repeat", "display.high_res_hud", "game.show_default_game_types",\n'
+            '    "input.look_sensitivity_horizontal", "input.look_sensitivity_vertical"};') + SETTINGS_MAIN
         for defines in (("-DHALO_LINUX=1",), ("-DHALO_WINDOWS=1",),
                         ("-DHALO_MACOS=1", "-DHALO_ANDROID=1"),
                         ("-DHALO_ANDROID=1",), ("-DHALO_MACOS=1", "-DHALO_IOS=1", "-DHALO_ANDROID=1")):

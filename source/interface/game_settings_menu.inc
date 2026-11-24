@@ -28,13 +28,13 @@ static short const device_settings_deadzone_presets[] = {0, 3277, 6553, 9000, 98
 static char const *const device_settings_deadzone_labels[] = {"0%", "10%", "20%", "Xbox", "30%", "40%", "49%"};
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 7
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 7, 3, 4};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 7, 5, 4};
 #elif HALO_DEVICE_HAS_RENDER_RESOLUTION
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 7
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 5, 3, 4};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 5, 5, 4};
 #else
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 6
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 6, 5, 3, 4};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 6, 5, 5, 4};
 #endif
 static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX_PAGE_ROWS] = {
     {NONE, NONE, NONE, NONE},
@@ -56,7 +56,8 @@ static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX
     {_device_setting_timer_volume, _device_setting_timer_countdown, _device_setting_timer_beeps,
      _device_setting_timer_minutes, _device_setting_timer_items},
 #endif
-    {_device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone, _device_setting_look_acceleration},
+    {_device_setting_look_sensitivity_horizontal, _device_setting_look_sensitivity_vertical,
+     _device_setting_look_acceleration, _device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone},
     {_device_setting_show_og_maps, _device_setting_show_community_maps, _device_setting_join_in_progress,
      _device_setting_show_default_game_types}};
 static short const device_settings_page_titles[_ds_page_count] = {_ds_game_label, _ds_audio_label, _ds_video_label, _ds_timer_label, _ds_controller_label, _ds_multiplayer_label};
@@ -582,7 +583,7 @@ static boolean device_settings_build(void)
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "FPS LIMIT:", "ANTI-ALIASING:"
 #endif
-        , "DEFAULT GAME TYPES:"
+        , "DEFAULT GAME TYPES:", "HORIZONTAL SENSITIVITY:", "VERTICAL SENSITIVITY:"
         };
     static char const *const help[] = {
         "Hear the whole battlefield.\r\nAdjust master game audio.",
@@ -622,6 +623,8 @@ static boolean device_settings_build(void)
         "Smooth world edges with FXAA.\r\nOriginal HUD stays unchanged.\r\nRelaunch Halo to apply."
 #endif
         , "Show original built-in game types.\r\nCustom types and Team Slayer Pro\r\nstay visible when this option is off."
+        , "Set turning speed on its own, 1 to 10.\r\nProfile uses each player's own\r\nLook Sensitivity, as on the Xbox."
+        , "Set looking up and down, 1 to 10.\r\nProfile uses each player's own\r\nLook Sensitivity, as on the Xbox."
         };
     static char const *const heading_names[] = {"ui\\native_settings\\game_title", "ui\\native_settings\\audio_title", "ui\\native_settings\\video_title", "ui\\native_settings\\timer_title", "ui\\native_settings\\controller_title", "ui\\native_settings\\multiplayer_title"};
     static char const *const footer_names[] = {"ui\\native_settings\\game_help", "ui\\native_settings\\audio_help", "ui\\native_settings\\video_help", "ui\\native_settings\\timer_help", "ui\\native_settings\\controller_help", "ui\\native_settings\\multiplayer_help"};
@@ -1031,7 +1034,7 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "FPS Limit", "AA"
 #endif
-        , "Default Game Types"
+        , "Default Game Types", "Look Horizontal", "Look Vertical"
         };
     short row, local = (short)(draft - device_settings_drafts);
     for (row = 0; row < NUMBER_OF_DEVICE_SETTINGS; row++)
@@ -1083,6 +1086,11 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
         }
         else if (row == _device_setting_look_acceleration)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Xbox" : "Off");
+        else if (row == _device_setting_look_sensitivity_horizontal || row == _device_setting_look_sensitivity_vertical)
+        {
+            if (draft->values[row] == 0.0) snprintf(value, sizeof(value), "Profile");
+            else snprintf(value, sizeof(value), "%.0f", draft->values[row]);
+        }
         else if (row == _device_setting_fast_menu_repeat)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Faster" : "Original");
         else if (row == _device_setting_asset_quality)
@@ -1271,6 +1279,13 @@ static boolean game_settings_event(struct widget_instance *widget, short functio
     }
     else if (row == _device_setting_timer_position)
         draft->values[row] = ((short)draft->values[row] + (function == _device_settings_next ? 1 : 2)) % 3;
+    else if (row == _device_setting_look_sensitivity_horizontal || row == _device_setting_look_sensitivity_vertical)
+    {
+        /* Profile (0), then the original scale's 1 to 10; no wrap at either end. */
+        short step = (short)draft->values[row] + (function == _device_settings_next ? 1 : -1);
+        draft->values[row] = step < 0 ? 0 : step > HALO_CONTROLLER_LOOK_SENSITIVITY_MAX ?
+            HALO_CONTROLLER_LOOK_SENSITIVITY_MAX : step;
+    }
     else if (device_settings_is_stick_deadzone(row))
     {
         short preset;

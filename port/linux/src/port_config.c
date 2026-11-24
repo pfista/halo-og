@@ -182,6 +182,13 @@ static const struct config_setting config_settings[] =
 		"Keep the original map-authored held-stick horizontal turning boost.\n"
 		"Controller settings call this Xbox; Off removes only this timed boost.\n"
 		"Sensitivity, pitch response and direct mouse aiming stay separate." },
+	{ "input.look_sensitivity_horizontal", _config_integer, "0", NULL, _environment_value, _platform_all,
+		"Controller turning speed, 1 to 10 on the original Look Sensitivity\n"
+		"scale (80 to 260 degrees a second); 0 uses each player profile's own\n"
+		"Look Sensitivity, as on the Xbox. Applies to every local controller." },
+	{ "input.look_sensitivity_vertical", _config_integer, "0", NULL, _environment_value, _platform_all,
+		"Controller up and down looking speed, 1 to 10 on the original scale\n"
+		"(40 to 130 degrees a second); 0 uses the player profile's own." },
 	/* Bindings are config-only: they do not need application environment variables. */
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define BINDING(name, mac, other, comment) { "bindings." #name, _config_string, "\"" mac "\"", NULL, _environment_value, _platform_all, comment },

@@ -38,6 +38,21 @@ timer audio are enabled.
 
 ## Controller
 
+**Horizontal Sensitivity** and **Vertical Sensitivity** set how fast the look
+stick turns and how fast it looks up and down, each on its own. Both offer
+**Profile** and 1 to 10. Profile is the default and the original behavior: each
+player's profile has one Look Sensitivity that sets both. A number uses the
+same scale as the profile setting, 80 to 260 degrees a second for turning and
+40 to 130 for up and down, so Horizontal 5 with Vertical 5 equals a profile
+sensitivity of 5. Like the rest of Game Settings, they can be changed from the
+main menu or from Pause during a match, and take effect on Accept.
+
+They save locally as `input.look_sensitivity_horizontal` and
+`input.look_sensitivity_vertical` (0 is Profile) and apply to every local
+controller, so split-screen players who want different speeds should leave
+them on Profile and use their own profiles. Mouse aiming is unaffected. Aim is
+local input, so the options need no agreement from the host or other players.
+
 Controller has separate **Left Stick Deadzone** and **Right Stick Deadzone**
 controls. Each offers 0%, 10%, 20%, Xbox, 30%, 40% and 49% presets. **Xbox** is
 the default and restores the original raw dead-zone value of 9000, approximately
@@ -47,8 +62,8 @@ can expose drift; the same original axial filter rescales the remaining range.
 The settings save locally as `input.left_stick_deadzone` and
 `input.right_stick_deadzone`, integer values from 0 to 16000. They apply to every
 connected local controller, including touch sticks on iOS, rather than being
-stored in player profiles. Sensitivity and control layout retain their original
-profile controls. Left/right stick labels also fit Southpaw and Legacy layouts.
+stored in player profiles. Control layout retains its original profile
+control. Left/right stick labels also fit Southpaw and Legacy layouts.
 
 Accept saves and applies the draft; Cancel leaves the current preferences in
 place. Mouse sensitivity and keyboard movement are separate. Controller use
