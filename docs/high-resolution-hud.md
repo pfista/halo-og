@@ -48,6 +48,16 @@ character, with a measured difference and a way to pick the closest by eye.
 Its candidates include other typefaces and per-letter tuning that the game
 does not draw yet.
 
+`tools/og_font.py` rebuilds a font tag as a scalable font of our own, from the
+tag's pixels alone and with no other typeface. The maps store a letter's pixels
+in 16 levels that are evenly spaced shares of a pixel, kept through a curve
+that lifts the faint ones: one fifteenth of a pixel is stored as 104 of 255.
+Read as brightness, every stroke comes out about a third of a pixel too heavy
+and small counters close. Decoded, the smoothest shape that every pixel would
+store the same way is the letter's outline, and the tool writes those outlines
+as a TrueType font with the tag's own advances. The fonts are work in
+progress in `build/font-lab/fonts`; the game does not use them yet.
+
 The 34 menu title images in `port/assets/titles` replace text already authored
 as bitmaps: 33 are 4× and one is 2×, capped at 2048 pixels. Their manifests retain
 the English text, original bitmap dimensions, per-letter positions and pixel

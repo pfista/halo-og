@@ -12,9 +12,10 @@ original; the page lists the picks as text to paste back.
     python3 tools/font_lab.py --output ... --typeface Other-Bold.ttf --typeface 'Variable[wght].ttf@800'
     python3 tools/font_lab.py --output ... --characters RtC= --phrase "COOPERATIVE PLAY"    # seconds, not minutes
 
-The first candidates use the typeface fonts.json gives the tag: as 0.6 drew it,
-as the game draws it now, and tuned per letter. Each --typeface adds another
-typeface, tuned per letter, so a letter can be matched to its closest outline.
+By default the candidates are the game as it draws the text now, the original
+letter enlarged, and our own font (tools/og_font.py) at three weights. --recipes
+picks others: as 0.6 drew it (shipped), tuned per letter (matched), cleaned
+traces. Each --typeface adds another typeface, tuned per letter.
 
 The menus' large titles are pictures in the maps, not text. The page ends with
 each one beside the picture Upres draws in its place (port/assets/titles);
@@ -54,6 +55,19 @@ PHRASES = [
 ]
 TEXT, GROUND, TILE_TEXT, TILE_GROUND = (77, 155, 255), (8, 22, 48), (236, 236, 236), (22, 22, 26)
 PAD = 3  # empty logical pixels around a line
+# The maps store a letter's pixels in 16 levels. They are evenly spaced shares of a pixel, 0 to 15
+# fifteenths, stored through a curve that lifts the faint ones: this is each level's stored value.
+LEVELS = [0, 104, 124, 140, 154, 167, 178, 189, 199, 208, 217, 225, 233, 240, 248, 255]
+
+
+def shares(stored_levels):
+    """Stored levels (0 to 1) as the share of each pixel the letter covers."""
+    return np.interp(stored_levels * 255, LEVELS, np.arange(16) / 15).astype(np.float32)
+
+
+def stored(covered):
+    """The share of each pixel covered as the maps would store it (0 to 1)."""
+    return (np.interp(covered, np.arange(16) / 15, LEVELS) / 255).astype(np.float32)
 
 
 # ---------- the maps' fonts
@@ -207,8 +221,9 @@ def shrunk(mask, source, target, shape, detail=8):
 
 
 def difference(drawn, coverage):
-    """How far a shrunk redraw is from the original bitmap, as a share of the original's ink."""
-    return float(np.abs(drawn - np.pad(coverage, 1)).sum() / max(coverage.sum(), 1e-6))
+    """How far a shrunk redraw, stored as the maps store a letter, is from the original bitmap, as a share
+    of the original's ink."""
+    return float(np.abs(stored(drawn) - np.pad(coverage, 1)).sum() / max(coverage.sum(), 1e-6))
 
 
 # ---------- recipes: each returns (mask, source rectangle, target rectangle relative to the bitmap's corner)
@@ -435,6 +450,31 @@ def recipe_clean_loose(font, glyph, character, outline, detail, state):
     return cleaned(glyph, detail, 0.45)
 
 
+def ours(glyph, detail, weight):
+    """Our own font's letter (tools/og_font.py): its outline filled at `detail` pixels to the pixel."""
+    import og_font
+    if not glyph.ink:
+        return None
+    mask = og_font.fill(og_font.letter(glyph.coverage, weight), glyph.coverage.shape, detail)
+    rows, columns = glyph.coverage.shape
+    return mask, (0, 0, mask.shape[1], mask.shape[0]), (-og_font.PAD, -og_font.PAD, columns + og_font.PAD, rows + og_font.PAD)
+
+
+def recipe_ours(font, glyph, character, outline, detail, state):
+    """Our font: the letter's true shape, rebuilt from the original's pixels."""
+    return ours(glyph, detail, 0.0)
+
+
+def recipe_ours_15(font, glyph, character, outline, detail, state):
+    """Our font with every edge 0.15 of a pixel further out."""
+    return ours(glyph, detail, 0.15)
+
+
+def recipe_ours_30(font, glyph, character, outline, detail, state):
+    """Our font with every edge 0.3 of a pixel further out."""
+    return ours(glyph, detail, 0.3)
+
+
 def recipe_trace(font, glyph, character, outline, detail, state):
     """The original letter itself, enlarged with a smooth curve and given a sharp edge."""
     return traced(glyph, detail, 1.5, 0.5, 0)
@@ -461,8 +501,11 @@ RECIPES = [
     ("trace-clean-tight", "clean outline, tight", recipe_clean_tight),
     ("trace-clean", "clean outline", recipe_clean),
     ("trace-clean-loose", "clean outline, loose", recipe_clean_loose),
+    ("trace-ours", "our font", recipe_ours),
+    ("trace-ours-15", "our font +0.15", recipe_ours_15),
+    ("trace-ours-30", "our font +0.3", recipe_ours_30),
 ]
-DEFAULT_RECIPES = "shipped,fit,matched,trace-smooth,trace-clean-tight,trace-clean,trace-clean-loose"
+DEFAULT_RECIPES = "fit,trace-smooth,trace-ours,trace-ours-15,trace-ours-30"
 
 
 # ---------- lines and pictures
@@ -575,6 +618,8 @@ PAGE = """<!doctype html>
  .line { display: flex; align-items: center; gap: 10px; padding: 2px 6px; border: 2px solid transparent; border-radius: 6px;
    width: max-content; } .line.pick { cursor: pointer; } .line.pick:hover { border-color: #3a4152; }
  .line.picked, .tiles button.picked { border-color: #ffd24a !important; background: #2a2613; }
+ .line.flagged, .tiles button.flagged { border-color: #ff5d5d !important; background: #2e1414; }
+ #notes { flex: 0.6; }
  .line.original { position: sticky; top: 0; z-index: 1; background: #101114; border-bottom-color: #2c3140; border-radius: 0; }
  .label { width: 190px; flex: none; color: #9aa0ad; font-size: 12px; } .label b { color: #d8dae0; font-weight: 600; }
  img { display: block; image-rendering: auto; }
@@ -594,34 +639,47 @@ PAGE = """<!doctype html>
  <p>Under each original line is the same text drawn by each candidate. Click the candidate that looks most like the
  original; in the character tables, click the best tile for each character. The number is how much a candidate differs
  from the original once shrunk back to the Xbox's pixels, as a percentage of the original's ink: lower is closer.
- Your picks collect in the box at the bottom. Copy them and paste them into the chat.</p>
+ <b>Shift-click</b> a line or tile that has something wrong with it to flag it in red, and say what in the notes box.
+ Your picks, flags and notes collect at the bottom. Copy them and paste them into the chat.</p>
  <label><input type="checkbox" id="overlay"> Show character tiles as differences (red: only in the original, cyan: only
  in the redraw, white: both)</label>
 </header>
 <main id="main"></main>
-<footer><textarea id="picks" readonly></textarea><div><button id="copy">Copy picks</button><br><br>
+<footer><textarea id="picks" readonly></textarea><textarea id="notes" placeholder="Notes: what looks wrong, and where"></textarea><div><button id="copy">Copy picks</button><br><br>
 <button id="clear">Clear picks</button></div></footer>
 <script>
 const DATA = __DATA__;
 const main = document.getElementById("main"), box = document.getElementById("picks");
-let picks = {};
-try { picks = JSON.parse(localStorage.getItem(DATA.run) || "{}"); } catch (error) {}
+const notes = document.getElementById("notes");
+let picks = {}, flags = {};
+try { picks = JSON.parse(localStorage.getItem(DATA.run) || "{}"); flags = JSON.parse(localStorage.getItem(DATA.run + ":flags") || "{}");
+  notes.value = localStorage.getItem(DATA.run + ":notes") || ""; } catch (error) {}
 function save() {
-  try { localStorage.setItem(DATA.run, JSON.stringify(picks)); } catch (error) {}
+  try { localStorage.setItem(DATA.run, JSON.stringify(picks)); localStorage.setItem(DATA.run + ":flags", JSON.stringify(flags));
+    localStorage.setItem(DATA.run + ":notes", notes.value); } catch (error) {}
   const lines = ["Font lab picks (" + DATA.run + ")"];
   for (const font of DATA.fonts.concat(DATA.titles.length ? [{name: "menu titles"}] : [])) {
     const mine = picks[font.name] || {}, tally = {};
     for (const key in mine) tally[mine[key]] = (tally[mine[key]] || 0) + 1;
     lines.push(font.name + "  totals: " + (Object.keys(tally).map(k => k + " x" + tally[k]).join(", ") || "none"));
     for (const key in mine) lines.push("  " + key + " -> " + mine[key]);
+    for (const key in flags[font.name] || {}) lines.push("  FLAGGED " + key);
   }
+  if (notes.value.trim()) lines.push("Notes: " + notes.value.trim());
   box.value = lines.join("\\n");
   document.querySelectorAll("[data-key]").forEach(node => {
     const mine = picks[node.dataset.font] || {};
     node.classList.toggle("picked", mine[node.dataset.key] === node.dataset.recipe);
+    node.classList.toggle("flagged", !!(flags[node.dataset.font] || {})[node.dataset.key + " in " + node.dataset.recipe]);
   });
 }
-function pick(node) {
+function pick(node, event) {
+  if (event && event.shiftKey) {
+    const marked = flags[node.dataset.font] = flags[node.dataset.font] || {}, key = node.dataset.key + " in " + node.dataset.recipe;
+    if (marked[key]) delete marked[key]; else marked[key] = true;
+    save();
+    return;
+  }
   const mine = picks[node.dataset.font] = picks[node.dataset.font] || {};
   if (mine[node.dataset.key] === node.dataset.recipe) delete mine[node.dataset.key]; else mine[node.dataset.key] = node.dataset.recipe;
   save();
@@ -644,7 +702,7 @@ for (const font of DATA.fonts) {
       element("b", {text: index ? DATA.recipes[index - 1][1] : "ORIGINAL"}, label);
       if (index) { element("span", {text: "  " + line.error + "%"}, label);
         row.dataset.font = font.name; row.dataset.key = 'phrase "' + phrase.text + '"'; row.dataset.recipe = DATA.recipes[index - 1][0];
-        row.onclick = () => pick(row); }
+        row.onclick = event => pick(row, event); }
       element("img", {src: line.image, width: line.width, height: line.height}, row);
     });
   }
@@ -661,7 +719,7 @@ for (const font of DATA.fonts) {
       image.dataset.plain = tile.image; image.dataset.overlay = tile.overlay || tile.image;
       if (index) { element("small", {text: tile.error + "%"}, button);
         button.dataset.font = font.name; button.dataset.key = "character " + character.text; button.dataset.recipe = DATA.recipes[index - 1][0];
-        button.onclick = () => pick(button); }
+        button.onclick = event => pick(button, event); }
     });
   }
 }
@@ -677,14 +735,15 @@ if (DATA.titles.length) {
       element("b", {text: line[0]}, element("div", {className: "label"}, row));
       element("img", {src: line[1], width: title.width, height: title.height}, row);
       if (index) { row.dataset.font = "menu titles"; row.dataset.key = 'title "' + title.text + '" (' + title.name + ")";
-        row.dataset.recipe = "needs work"; row.onclick = () => pick(row); }
+        row.dataset.recipe = "needs work"; row.onclick = event => pick(row, event); }
     });
   }
 }
 document.getElementById("overlay").onchange = event => document.querySelectorAll("img[data-plain]").forEach(image => {
   image.src = event.target.checked ? image.dataset.overlay : image.dataset.plain; });
 document.getElementById("copy").onclick = () => { box.select(); try { navigator.clipboard.writeText(box.value); } catch (error) { document.execCommand("copy"); } };
-document.getElementById("clear").onclick = () => { picks = {}; save(); };
+document.getElementById("clear").onclick = () => { picks = {}; flags = {}; save(); };
+notes.oninput = save;
 save();
 </script>
 """
