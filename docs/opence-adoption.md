@@ -144,8 +144,9 @@ Campaign, Firefight and UI maps stay out of scope: the profile omits scripts.
 Done for 0.7: horizontal and vertical look sensitivity in Game Settings, from
 the main menu and from Pause. A menu walk, `tools/menu_layout_check.py`, now
 fails on any text that does not fit its box; it covers the multiplayer and
-Game Settings screens from the main menu, and found the locked game type
-dialog and one Game Settings description. Pause pages are not in it yet.
+Game Settings screens from the main menu and the one-player Pause pages of a
+hosted game, and found the locked game type dialog and one Game Settings
+description. Split-screen Pause is not in it: it presses one controller.
 
 Still open:
 
@@ -154,10 +155,31 @@ Still open:
 - One overflow rule: more options means a sub-page, never squeezed rows.
 - One **Advanced** level under Game Settings and under the gametype editor,
   with a single **Reset to Original**.
-- Known defects from a code review, not yet checked on screen: two fonts for
-  one role on a pause page, Video and Timer rows packed tighter than their
-  height, multiplayer pause text offset sideways instead of down, and text
-  titles where Xbox uses header art.
+- Pause pages, confirmed on screen (November 24, 2026; pictures from
+  `tools/menu_layout_check.py --tour pause`):
+  - The Pause list mixes sizes: Resume Game and Leave Game in the large font,
+    Performance Options and Game Settings in the small one, because
+    "PERFORMANCE OPTIONS" is 224 pixels wide in the large font and the button
+    is 202.
+  - Video, Controller and Multiplayer rows are in the small font under a
+    large title and a large Accept. Video's rows are packed at a 20-pixel
+    pitch and touch the selection box; Multiplayer and Video leave an empty
+    band above the legend.
+  - Performance Options drops the spaces around its arrows on two rows to
+    fit ("<Off>" beside "< Off >").
+  - The Game Settings title sits against the first row.
+  The widest row is 251 pixels in the large font ("Default Game Types:
+  < OFF >"). The plan: a full-screen Pause panel about 66 pixels wider, with
+  every row in the large font at the original 27-pixel pitch, rows centred
+  between title and legend, and one title style. The frame's middle already
+  stretches sideways; the 202-pixel selection box needs the same three-piece
+  drawing. Split-screen viewports keep the compact layout, since a quarter
+  screen is 320 pixels wide.
+- The menu walk checks each text against its own box. It does not yet catch
+  rows that overlap each other, which is how Video's packed rows passed.
+- Upres text is moving from a substitute typeface to fonts rebuilt from the
+  maps' own letters (`tools/og_font.py`). The game does not draw them yet:
+  their weight and a letter-by-letter review come first.
 - A linear look response curve as an option beside the Xbox curve.
 
 ### 4. Picture and sound

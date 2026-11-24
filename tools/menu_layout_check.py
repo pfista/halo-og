@@ -44,6 +44,11 @@ def game_settings_page(place, screen, name):
             ("press", "b"), ("expect", "native_settings\\screen_0_0")]
 
 
+def pause_settings_page(place, screen, name):
+    return [("focus", place), ("press", "a"), ("expect", "native_settings\\" + screen), ("shot", name),
+            ("press", "b"), ("expect", "native_settings\\screen_1_0")]
+
+
 TOURS = {
     # The game type list's legend and the locked game type's dialog.
     "gametypes": MULTIPLAYER + [
@@ -55,11 +60,18 @@ TOURS = {
     + game_settings_page(1, "screen_0_2", "game-settings-video")
     + game_settings_page(2, "screen_0_4", "game-settings-controller")
     + game_settings_page(3, "screen_0_5", "game-settings-multiplayer"),
+    # Pause in a hosted Slayer game, one player: its menu, Performance Options and every Game Settings page.
+    "pause": [("wait", 22), ("press", "start"), ("expect", "performance\\pause_1p"), ("shot", "pause"),
+              ("focus", 1), ("press", "a"), ("expect", "performance\\pause_options_1p"), ("shot", "pause-performance"),
+              ("press", "b"), ("expect", "performance\\pause_1p"),
+              ("focus", 2), ("press", "a"), ("expect", "native_settings\\screen_1_0"), ("shot", "pause-settings")]
+    + pause_settings_page(0, "screen_1_1", "pause-audio") + pause_settings_page(1, "screen_1_2", "pause-video")
+    + pause_settings_page(2, "screen_1_4", "pause-controller") + pause_settings_page(3, "screen_1_5", "pause-multiplayer"),
 }
 
 
 # Tours that start in a hosted Slayer game on this map instead of at the main menu.
-IN_GAME = {}
+IN_GAME = {"pause": "hangemhigh"}
 
 
 class Console:
