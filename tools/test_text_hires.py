@@ -399,7 +399,8 @@ static void engine_tests(const char *mode) {
     assert(!original_draws && quad_count==4 && bound_bitmap==hires_text_atlas);
     assert(!batch_active && bitmap_allocations==1);
     pixel32 packed=(127UL<<24)|(51UL<<16)|(102UL<<8)|204UL;
-    assert(quads[0][0].color==(packed&0xff000000UL));
+    /* The substitute's shadow is half as dark as the color: the original's soft glyph shows half of it. */
+    assert(quads[0][0].color==(((packed>>24)+1)/2<<24));
     assert(quads[1][0].color==(packed^0xffffffUL));
     assert(quads[3][0].color==packed);
     for(int vertex=0;vertex<4;vertex++) {
@@ -411,7 +412,7 @@ static void engine_tests(const char *mode) {
     if(!strcmp(mode,"clipping")) {
         quad_count=0;global_shadow_color=0x80203040;clip=(rectangle2d){3,3,9,7};
         rasterizer_draw_string(&bounds,&clip,NULL,0,"A");assert(quad_count==2);
-        assert(quads[0][0].color==global_shadow_color);
+        assert(quads[0][0].color==0x40203040);
         for(int v=0;v<4;v++) {
             assert(quads[1][v].position.x>=3 && quads[1][v].position.x<=7);
             assert(quads[1][v].position.y>=3 && quads[1][v].position.y<=9);

@@ -35,8 +35,11 @@ Glyphs are rasterized at the renderer's pixel scale while the game's original
 font tags still control character advances, wrapping, colors, shadows and
 clipping. Each substitute glyph is drawn into the rectangle the original
 glyph's ink occupies, measured to a part of a pixel, so letter sizes, letter
-spacing and line widths are the original's. Unsupported fonts/characters or atlas failures use original bitmap
-text for the entire string. Original mode creates no replacement glyph atlas.
+spacing and line widths are the original's. A substitute glyph's drop shadow is
+drawn at half the darkness of the original's: the original glyph's soft edge
+shows about half of its shadow, and a sharp glyph would show all of it.
+Unsupported fonts/characters or atlas failures use original bitmap text for the
+entire string. Original mode creates no replacement glyph atlas.
 
 The 34 menu title images in `port/assets/titles` replace text already authored
 as bitmaps: 33 are 4× and one is 2×, capped at 2048 pixels. Their manifests retain

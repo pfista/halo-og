@@ -455,10 +455,21 @@ static void rasterizer_draw_hires_character_quad(
 	u1 = glyph.u0 + (right - glyph_left) / (glyph_right - glyph_left) * (glyph.u1 - glyph.u0);
 	v0 = glyph.v0 + (top - glyph_top) / (glyph_bottom - glyph_top) * (glyph.v1 - glyph.v0);
 	v1 = glyph.v0 + (bottom - glyph_top) / (glyph_bottom - glyph_top) * (glyph.v1 - glyph.v0);
+	/* The original shadow is the glyph again, one pixel down and right. Its
+	 * glyph has a soft edge about a pixel wide, so the shadow that shows is a
+	 * fringe fading from dark at the letter to nothing a pixel out: half as
+	 * dark, on average, as the shadow's color. A sharp substitute drawn the
+	 * same way leaves a hard fringe at the color's full darkness, which
+	 * stands out far more. Its shadow is drawn at half strength instead. */
 	for (pass = drop_shadow ? 0 : 1; pass < 2; pass++)
 	{
 		real offset = pass == 0 ? 1.0f : 0.0f;
-		unsigned long vertex_color = pass == 0 ? (global_shadow_color ? global_shadow_color : color & 0xFF000000) : color;
+		unsigned long vertex_color = color;
+		if (pass == 0)
+		{
+			unsigned long shadow_color = global_shadow_color ? global_shadow_color : color & 0xFF000000;
+			vertex_color = (((shadow_color >> 24) + 1) / 2 << 24) | (shadow_color & 0x00FFFFFF);
+		}
 		vertices[0].color = vertices[1].color = vertices[2].color = vertices[3].color = vertex_color;
 		vertices[0].position.x = vertices[3].position.x = left + offset;
 		vertices[1].position.x = vertices[2].position.x = right + offset;
