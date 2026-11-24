@@ -6306,8 +6306,8 @@ static void render_home_menu_version(void)
 {
 	long font_index = NONE;
 	rectangle2d bounds = { 455, 16, 476, 240 };
-	/* A build number: small, grey and out of the way. */
-	real_argb_color color = { 0.55f, 0.74f, 0.76f, 0.78f };
+	/* A build number: small, faint and out of the way. */
+	real_argb_color color = { 0.5f, 1.0f, 1.0f, 1.0f };
 
 	if (!main_menu_screen_is_active() || !widget_globals.active_widgets[0]->visible)
 		return;
@@ -6325,7 +6325,10 @@ static void render_home_menu_version(void)
 	color.alpha *= widget_instance_get_cumulative_alpha_modifier(widget_globals.active_widgets[0]);
 	/* Menus occupy centered 640 columns; this footer belongs to the screen edge. */
 	halo_screen_ui_offset(FALSE);
+	/* (no drop shadow under it: a shadow color with no alpha, where none set means black) */
+	rasterizer_text_set_shadow_color(0x00000001);
 	draw_string_render_label(font_index, &bounds, &color, "OG v" HALO_OG_VERSION);
+	rasterizer_text_set_shadow_color(0);
 	halo_screen_ui_offset(TRUE);
 }
 #endif
