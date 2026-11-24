@@ -25,6 +25,11 @@ under the SIL Open Font License 1.1 (`Overpass-OFL.txt`), without a
 Reserved Font Name. Matched against the maps' glyphs, its weights 900 and 750 overlap
 them as much as Interstate Bold does, at the same letter widths.
 
+To compare a substitute with the maps' own letters, or to try another
+typeface, run `python3 tools/font_lab.py --output build/font-lab/<new folder>`
+(NumPy and Pillow). A typeface added from its findings needs its license file
+here and a row in the table above.
+
 The menus' titles are pictures of text in the maps, set in another
 commercial typeface. OpenCE (Open Community Edition) stands in for it:
 Newtown, a typeface in the same style by Roger White (1994), which its author

@@ -41,6 +41,13 @@ shows about half of its shadow, and a sharp glyph would show all of it.
 Unsupported fonts/characters or atlas failures use original bitmap text for the
 entire string. Original mode creates no replacement glyph atlas.
 
+`tools/font_lab.py` is where a closer redraw is worked out. It reads a font
+tag's glyphs from `ui.map` and writes one page to `build/font-lab` with the
+original text above each candidate redraw, for phrases and for every
+character, with a measured difference and a way to pick the closest by eye.
+Its candidates include other typefaces and per-letter tuning that the game
+does not draw yet.
+
 The 34 menu title images in `port/assets/titles` replace text already authored
 as bitmaps: 33 are 4× and one is 2×, capped at 2048 pixels. Their manifests retain
 the English text, original bitmap dimensions, per-letter positions and pixel
