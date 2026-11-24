@@ -289,9 +289,10 @@ half a second.
 
 ## System link
 
-The Xbox game lets 16 players on 4 machines play a system link game. This
-port lets up to 128 players on up to 128 machines play. Each machine can
-have up to 4 players (split screen).
+The Xbox game lets 16 players on 4 machines play a system link game. A Halo OG
+host admits up to 32 players. The network records hold 128 players on up to 128
+machines, so the limit is one number. Each machine can have up to 4 players
+(split screen).
 
 - `include/halo_port_limits.h` sets the limits.
 - `include/halo_port_capacity.h` sets the memory for the limits. The game

@@ -5,12 +5,16 @@ Multiplayer session limits of the native builds (Windows, Linux, Android),
 force-included by halo_linux_prefix.h and halo_windows_prefix.h.
 
 The Xbox game allows 16 players on at most 4 machines (up to 4 players each
-on split screen). The native builds allow 128 players on up to 128
+on split screen). The native builds' records hold 128 players on up to 128
 machines; split screen stays at 4 players per machine.
 
 128 is the largest session that fits the game's existing records: player,
 machine and team indices are stored in signed chars (0..127 with NONE), and
 a finishing place in 7 bits.
+
+A Halo OG host admits HALO_OG_HOST_MAXIMUM_PLAYERS players: twice the Xbox's
+16, the size players asked for in November 2026. The records keep their 128
+slots, so what machines send each other does not change with this number.
 */
 
 #ifndef __HALO_PORT_LIMITS_H
@@ -20,6 +24,9 @@ a finishing place in 7 bits.
 
 #define HALO_PORT_MAXIMUM_NETWORK_PLAYERS 128
 #define HALO_PORT_MAXIMUM_NETWORK_MACHINES 128
+
+/* the most players a host lets into its game (network_server_manager.c) */
+#define HALO_OG_HOST_MAXIMUM_PLAYERS 32
 
 /* a host polls its listening socket and one socket per machine; the Xbox's
 Winsock headers default to 64 (the prefix headers define FD_SETSIZE from

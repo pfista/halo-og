@@ -4235,10 +4235,12 @@ static boolean network_game_server_setup_game_from_playlist(
 		server->game.map.version = 0;
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 		server->game.minimum_players = 1;
+		/* The records hold more; a Halo OG host admits this many. */
+		server->game.maximum_players = HALO_OG_HOST_MAXIMUM_PLAYERS;
 #else
 		server->game.minimum_players = 2;
-#endif
 		server->game.maximum_players = MAXIMUM_NETWORK_PLAYER_COUNT;
+#endif
 		game_variant_options_default(&server->game.variant, &server->game.variant_options);
 
 		if (server->game.variant.universal_variant.teams)

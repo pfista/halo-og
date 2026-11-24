@@ -41,6 +41,7 @@ typedef uint16_t word;
 #define error(...) ((void)0)
 #define MAXIMUM_NETWORK_MACHINE_COUNT 4
 #define MAXIMUM_NETWORK_PLAYER_COUNT 16
+#define HALO_OG_HOST_MAXIMUM_PLAYERS 12
 #define NUMBER_OF_MULTIPLAYER_TEAMS 2
 #define MAXIMUM_MACHINE_NAME_LENGTH 32
 #define NETWORK_GAME_NAME_LENGTH 16
@@ -191,12 +192,15 @@ static void reset(boolean split,boolean teams) {
     /* An ordinary lobby must replace a preceding expanded cache selection. */
     network_game_server_cache_selection.expanded=1;
     assert(network_game_server_setup_game_from_playlist(&server));
-    assert(opened==1 && server.game.maximum_players==MAXIMUM_NETWORK_PLAYER_COUNT);
+    assert(opened==1);
     assert(server.game.maximum_teams==(teams?2:1));
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+    /* A Halo OG host admits its own cap, not every slot the records hold. */
+    assert(server.game.maximum_players==HALO_OG_HOST_MAXIMUM_PLAYERS);
     assert(server.game.minimum_players==1);
     assert(network_game_server_cache_selection.expanded==0);
 #else
+    assert(server.game.maximum_players==MAXIMUM_NETWORK_PLAYER_COUNT);
     assert(server.game.minimum_players==2);
     assert(network_game_server_cache_selection.expanded==1);
 #endif
