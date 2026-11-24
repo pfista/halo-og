@@ -16,11 +16,12 @@ place of the bitmap fonts of the maps (`port/linux/src/text_hires.c`).
 | `OGMenuLarge.ttf` | `ui\large_ui` | Halo OG: rebuilt from that tag's own letters (`tools/og_font.py`) |
 | `OGMessage.ttf` | `ui\interstate` | Halo OG: rebuilt from that tag's own letters, which are `ui\large_ui`'s set one pixel closer |
 | `OGMenuSmall.ttf` | `ui\small_ui` | Halo OG: rebuilt from that tag's own letters |
+| `OGConsole.ttf` | the version label on the main menu, at three quarters of its size | Halo OG: rebuilt from the console's font, `old tags\internal system plain` |
 | `Overpass-900.ttf`, `Overpass-750.ttf` | nothing in the game; the text tests' substitute typeface | Overpass, weights 900 and 750 |
 | `OpenCE-Regular.ttf` | the menus' titles, as pictures (`port/assets/titles`) | OpenCE: Newtown, respaced for this project (`tools/title_font.py`) |
 | `Newtown-Regular.ttf` | (OpenCE's source) | Newtown by Roger White, unmodified |
 
-The three OG fonts are work in progress and under review letter by letter.
+The OG fonts are work in progress and under review letter by letter.
 Each is drawn from its font tag's pixels alone, with no other typeface:
 `tools/og_font.py` decodes the tag's 16 stored levels to the share of each
 pixel a letter covers, finds the smoothest shape that every pixel would store

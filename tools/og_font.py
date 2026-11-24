@@ -44,6 +44,8 @@ FAMILIES = {
     "ui\\large_ui": ("OG Menu Large", "OGMenuLarge.ttf"),
     "ui\\small_ui": ("OG Menu Small", "OGMenuSmall.ttf"),
     "ui\\interstate": ("OG Message", "OGMessage.ttf"),
+    # the console's font, which the main menu's version label is set in
+    "old tags\\internal system plain": ("OG Console", "OGConsole.ttf"),
 }
 UNITS = 64    # font units to the original pixel
 PAD = 2       # empty pixels kept around a bitmap
@@ -516,7 +518,7 @@ def build(font: MapFont, family: str, path: Path, weight=0.0):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output", type=Path, required=True, help="Folder for the font files")
-    parser.add_argument("--fonts", default=",".join(FAMILIES), help="Font tags, comma-separated")
+    parser.add_argument("--fonts", default=",".join(FAMILIES), help="Font tags, comma-separated: " + ", ".join(FAMILIES))
     parser.add_argument("--weight", type=float, default=0.0, help="Move every edge out by this part of a pixel")
     args = parser.parse_args()
     cache = XboxMap(PRIMARY / "assets/maps/ui.map")

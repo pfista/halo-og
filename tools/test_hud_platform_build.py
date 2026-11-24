@@ -74,7 +74,7 @@ class HudPlatformBuildTests(unittest.TestCase):
             *("port/assets/hud/" + asset["name"] + ".png" for asset in assets),
             *("port/assets/titles/" + asset["name"] + ".png" for asset in titles),
             "port/assets/fonts/OGMenuLarge.ttf", "port/assets/fonts/OGMenuSmall.ttf",
-            "port/assets/fonts/OGMessage.ttf"}
+            "port/assets/fonts/OGMessage.ttf", "port/assets/fonts/OGConsole.ttf"}
         for target in ("linux", "windows", "android", "ios", "macos", "macos-metal"):
             with self.subTest(target=target):
                 edges = self.graph(target)

@@ -56,7 +56,11 @@ every stroke comes out about a third of a pixel too heavy and small counters
 close. Decoded, the smoothest shape that every pixel would store the same way
 is the letter's outline; pixels on straight level or upright edges and their
 corners are filled exactly, so stems and bar ends stay straight and square.
-The fonts are under review letter by letter. `tools/font_lab.py` writes the
+The version label on the main menu is the console's font,
+`old tags\\internal system plain`, rebuilt the same way (`OGConsole.ttf`) and
+drawn at three quarters of its size through a font tag the game makes for it,
+`ui\\og_build_label`; with Original assets the label is the console font as the
+maps have it. The fonts are under review letter by letter. `tools/font_lab.py` writes the
 pages for that: the original text above each candidate, with a measured
 difference, and `--review` for only our own font's weight and letters.
 

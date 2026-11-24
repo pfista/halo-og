@@ -45,9 +45,11 @@ class MenuAssetManifestTests(unittest.TestCase):
         fonts = json.loads((ROOT / "port/assets/fonts/fonts.json").read_text())["fonts"]
         self.assertEqual({font["tag"]: font["file"] for font in fonts}, {
             "ui\\large_ui": "OGMenuLarge.ttf", "ui\\interstate": "OGMessage.ttf",
-            "ui\\small_ui": "OGMenuSmall.ttf"})
-        # (tools/og_font.py writes 64 font units to one pixel of the tag)
-        self.assertEqual({font["units_per_pixel"] for font in fonts}, {64})
+            "ui\\small_ui": "OGMenuSmall.ttf", "ui\\og_build_label": "OGConsole.ttf"})
+        # (tools/og_font.py writes 64 font units to one pixel of the tag; the version label's tag is made by
+        # the game for the console's font at three quarters of its size)
+        self.assertEqual({font["tag"]: font["units_per_pixel"] for font in fonts}, {
+            "ui\\large_ui": 64, "ui\\interstate": 64, "ui\\small_ui": 64, "ui\\og_build_label": 85})
         for font in fonts:
             self.assertTrue((ROOT / "port/assets/fonts" / font["file"]).is_file())
 

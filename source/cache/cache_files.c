@@ -341,7 +341,7 @@ long cache_files_register_runtime_ui_tag(
 	struct cache_file_tag_instance *instance;
 
 	if (!cache_file_globals.tags_loaded || !global_tag_instances ||
-		(group_tag != 'DeLa' && group_tag != 'ustr') ||
+		(group_tag != 'DeLa' && group_tag != 'ustr' && group_tag != 'font') ||
 		!name || !name[0] || !definition)
 	{
 		return NONE;

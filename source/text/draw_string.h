@@ -79,6 +79,8 @@ void draw_string_render_label(
 	rectangle2d const *bounds,
 	real_argb_color const *color,
 	char const *string);
+long draw_string_build_label_font(
+	void);
 #endif
 void draw_string(
 	draw_character_proc draw_character,

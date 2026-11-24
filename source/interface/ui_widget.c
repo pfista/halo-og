@@ -6304,13 +6304,22 @@ void render_ui_widgets_postgame(
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 static void render_home_menu_version(void)
 {
-	long font_index;
-	rectangle2d bounds = { 448, 16, 476, 240 };
-	real_argb_color color = { 0.7f, 0.8f, 0.8f, 0.8f };
+	long font_index = NONE;
+	rectangle2d bounds = { 455, 16, 476, 240 };
+	/* A build number: small, grey and out of the way. */
+	real_argb_color color = { 0.55f, 0.74f, 0.76f, 0.78f };
 
 	if (!main_menu_screen_is_active() || !widget_globals.active_widgets[0]->visible)
 		return;
-	font_index = tag_loaded(FONT_GROUP_TAG, "ui\\small_ui");
+	/* The console's monospace font at three quarters of its size where text
+	is drawn at the display's resolution; otherwise that font as the maps
+	have it, which is the smallest they hold. */
+	if (asset_quality_upres())
+		font_index = draw_string_build_label_font();
+	if (font_index == NONE)
+		font_index = tag_loaded(FONT_GROUP_TAG, "old tags\\internal system plain");
+	if (font_index == NONE)
+		font_index = tag_loaded(FONT_GROUP_TAG, "ui\\small_ui");
 	if (font_index == NONE)
 		return;
 	color.alpha *= widget_instance_get_cumulative_alpha_modifier(widget_globals.active_widgets[0]);
