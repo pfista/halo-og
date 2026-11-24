@@ -4501,8 +4501,13 @@ void display_error(
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 				if (error_code == _error_locked_game_type)
 				{
+					/* The stock dialog's text box is 247 pixels wide and also
+					draws the frame, whose inside is only 211 with the left
+					margin repeated on the right; nothing wraps. Like the
+					stock messages, this one is broken into lines that stay
+					inside (tools/menu_layout_check.py checks it). */
 					static wchar_t locked_text[] =
-						L"Team Slayer Pro is locked.\r\nChoose another game type to change the rules.";
+						L"Team Slayer Pro\r\nis a locked game type.\r\nChoose another to edit.";
 					static struct string_list_entry locked_entry;
 					static struct string_list locked_strings;
 					static struct ui_widget_definition locked_definition;
