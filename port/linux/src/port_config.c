@@ -362,7 +362,8 @@ static const struct config_setting config_settings[] =
 		"Percent of datagrams received that are dropped, for the same; 0 none." },
 	{ "debug.ui_layout_check", _config_boolean, "false", NULL, _environment_value, _platform_all,
 		"Log each menu text that does not fit its box, once, with the box and\n"
-		"the size the text needs (tools/menu_layout_check.py)." },
+		"the size the text needs, and each pair of rows in a list whose boxes\n"
+		"overlap (tools/menu_layout_check.py)." },
 	{ "debug.pause_layout", _config_integer, "0", NULL, _environment_value, _platform_all,
 		"Show the multiplayer Pause menus as split screen does, with one\n"
 		"controller: 2 for two players' half screen, 4 for a quarter screen\n"

@@ -6253,6 +6253,9 @@ static void widget_instance_render_recursive(
 		break;
 
 	case _ui_widget_type_column_list:
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		ui_layout_check_rows(widget, definition);
+#endif
 		widget_instance_render_column_list(
 			widget,
 			definition,

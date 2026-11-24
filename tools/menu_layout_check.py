@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Walk the real menus and fail on any text that does not fit its box.
+"""Walk the real menus and fail on text that does not fit its box or rows that overlap.
 
 Starts one isolated Mac game with debug.ui_layout_check on, drives controller 1
 through the script console ("press <button>"), waits for each screen by its
 tag name ("ui"), and saves a picture of every screen it visits. The game logs
-each text that is wider or taller than its box; any such line fails the run.
+each text that is wider or taller than its box, and each pair of rows in a
+list whose boxes reach each other; any such line fails the run.
 
 Needs a local Mac build (tools/macos_build.py --build-only) and game data in
 the primary checkout. Personal saves and settings are not used.
@@ -291,7 +292,7 @@ def main():
         lines = [line.split(LAYOUT_MARKER, 1)[1] for line in (folder / "game.log").read_text(errors="replace").splitlines()
                  if LAYOUT_MARKER in line]
         shutil.rmtree(folder / "frames", ignore_errors=True)
-        print(f"{tour}: {len(list((folder / 'screens').iterdir()))} screens, {len(lines)} texts that do not fit")
+        print(f"{tour}: {len(list((folder / 'screens').iterdir()))} screens, {len(lines)} layout problems")
         for line in lines:
             print("  " + line)
         failures += [f"{tour}: {line}" for line in lines]
@@ -301,7 +302,7 @@ def main():
         for failure in failures:
             print("  " + failure)
         sys.exit(1)
-    print("Every text on the visited screens fits its box")
+    print("Every text on the visited screens fits its box and no rows overlap")
 
 
 if __name__ == "__main__":

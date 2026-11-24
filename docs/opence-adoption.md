@@ -161,20 +161,23 @@ one font on each page. A setting shows its name at the left of its row and
 its value at the right. The frame and the selection box are drawn in pieces, so
 they can be any size without stretching their corners. The walk now covers the
 split-screen layouts too (`--tour pause-2p`, `--tour pause-4p`), by showing
-player one's Pause in a half or a quarter of the screen.
+player one's Pause in a half or a quarter of the screen. It also fails on rows
+of a list whose boxes overlap: Video's packed rows had passed because each
+text fitted its own box.
 
 Still open:
 
 - The menu kit covers Pause only. The main menu's Game Settings and the
-  gametype editor still clone stock widgets with numbers typed into each page,
-  and campaign's Pause list is still the authored one with a fifth row at a
-  24-pixel pitch.
+  gametype editor still clone stock widgets with numbers typed into each page.
+- Campaign's Pause list is still the authored one with **Game Settings** added
+  as a fifth row at a 24-pixel pitch, so its 27-pixel rows overlap by three
+  lines. The overlap check reports it when that menu is open; the walk has no
+  campaign tour yet. Giving it the kit's rows means resizing the authored frame
+  and the mission objectives panel beside it.
 - The overflow rule, more options means a sub-page, is enforced for Pause
   (eight rows a page). The main menu pages have no such limit yet.
 - One **Advanced** level under Game Settings and under the gametype editor,
   with a single **Reset to Original**.
-- The menu walk checks each text against its own box. It does not yet catch
-  rows that overlap each other, which is how Video's packed rows passed.
 - Upres text is moving from a substitute typeface to fonts rebuilt from the
   maps' own letters (`tools/og_font.py`). The game does not draw them yet:
   their weight and a letter-by-letter review come first.

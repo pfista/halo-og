@@ -56,8 +56,8 @@ panels as multiplayer's. The main menu's Game Settings pages are separate and
 unchanged.
 
 `tools/menu_layout_check.py` walks these pages in a hosted game and fails on
-text that does not fit: `--tour pause` for one player, `--tour pause-2p` and
-`--tour pause-4p` for split screen. The walk presses one controller, so for
+text that does not fit its box and on rows that overlap: `--tour pause` for
+one player, `--tour pause-2p` and `--tour pause-4p` for split screen. The walk presses one controller, so for
 split screen `debug.pause_layout` (2 or 4) shows player one's Pause in a half
 or a quarter of the screen. Campaign's pages were looked at once in a running
 game (The Silent Cartographer, November 24, 2026). Split screen has not been

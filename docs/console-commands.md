@@ -361,7 +361,7 @@ settings or registered config keys for application preferences.
 | `bindings.console = "F2"` | `[bindings]` in `config.toml`; edit with the game closed and restart. |
 | `console_dump_to_file true` | Actual console variable; additionally writes `console_printf`/warning output to the error log. |
 | `debug.telnet_console = true` and `debug.telnet_console_port = 2323` | `[debug]` in `config.toml`; optional local script-console listener, bound to 127.0.0.1. |
-| `debug.ui_layout_check = true` | Config-only menu check: logs each text a menu cannot show whole, with its box and the size it needs. With it, the script console's `press up\|down\|left\|right\|a\|b\|x\|y\|start\|back` presses a button on controller 1 and `ui` prints the top screen and the focused item, which is how `tools/menu_layout_check.py` walks the menus. |
+| `debug.ui_layout_check = true` | Config-only menu check: logs each text a menu cannot show whole, with its box and the size it needs, and each pair of rows in a list whose boxes overlap. With it, the script console's `press up\|down\|left\|right\|a\|b\|x\|y\|start\|back` presses a button on controller 1 and `ui` prints the top screen and the focused item, which is how `tools/menu_layout_check.py` walks the menus. |
 | `debug.pause_layout = 2` or `4` | Config-only menu check: shows the multiplayer Pause menus as two or four players' split screen lays them out, in a half or a quarter of the screen, with one controller. `tools/menu_layout_check.py --tour pause-2p` and `--tour pause-4p` use it. 0, the default, follows the players. |
 | `debug.network_latency` / `debug.network_loss` | Config-only test settings that add delay/drop datagrams, not console diagnostics or ping display. |
 
