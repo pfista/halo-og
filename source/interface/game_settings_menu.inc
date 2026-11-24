@@ -387,7 +387,7 @@ static boolean device_settings_build_native_pages(long strings, long const *head
         L"Adjust music, sound effects,\r\ndialogue and overall volume.",
         L"Choose fullscreen, VSync\r\nand smooth motion settings.",
         L"Choose stick deadzones\r\nand look acceleration\r\nfor this device.",
-        L"Choose map sets and game types.\r\nAllow new players into matches\r\nafter they start."};
+        L"Pick map sets and game types.\r\nLet new players join matches\r\nafter they start."};
     struct ui_widget_definition *base[NUMBEROF(templates)];
     struct ui_widget_child_reference *chooser_rows;
     long i, tag, page, row;
