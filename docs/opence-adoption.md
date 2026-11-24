@@ -148,33 +148,28 @@ Game Settings screens from the main menu and the one-player Pause pages of a
 hosted game, and found the locked game type dialog and one Game Settings
 description. Split-screen Pause is not in it: it presses one controller.
 
+Done since (November 24, 2026): one Pause panel. The walk had shown the Pause
+list mixing two font sizes because "PERFORMANCE OPTIONS" did not fit the
+202-pixel button, Video's rows packed at a 20-pixel pitch and touching the
+selection box, empty bands above the legend, two Performance Options rows
+without spaces around their arrows, and titles in two sizes. Now every native
+Pause page takes its row size, font, spacing and frame from one table
+(`native_pause_styles`); [native settings](native-settings.md) describes the
+layout. One player gets a panel 82 pixels wider with every row in the large
+font at the original 27-pixel pitch. Split screen keeps a smaller panel with
+one font on each page. The frame and the selection box are drawn in pieces, so
+they can be any size without stretching their corners.
+
 Still open:
 
-- One shared menu kit that reads row size, spacing, fonts and legend from the
-  stock Xbox widgets instead of numbers typed into each page.
-- One overflow rule: more options means a sub-page, never squeezed rows.
+- The menu kit covers Pause only. The main menu's Game Settings and the
+  gametype editor still clone stock widgets with numbers typed into each page,
+  and campaign's Pause list is still the authored one with a fifth row at a
+  24-pixel pitch.
+- The overflow rule, more options means a sub-page, is enforced for Pause
+  (eight rows a page). The main menu pages have no such limit yet.
 - One **Advanced** level under Game Settings and under the gametype editor,
   with a single **Reset to Original**.
-- Pause pages, confirmed on screen (November 24, 2026; pictures from
-  `tools/menu_layout_check.py --tour pause`):
-  - The Pause list mixes sizes: Resume Game and Leave Game in the large font,
-    Performance Options and Game Settings in the small one, because
-    "PERFORMANCE OPTIONS" is 224 pixels wide in the large font and the button
-    is 202.
-  - Video, Controller and Multiplayer rows are in the small font under a
-    large title and a large Accept. Video's rows are packed at a 20-pixel
-    pitch and touch the selection box; Multiplayer and Video leave an empty
-    band above the legend.
-  - Performance Options drops the spaces around its arrows on two rows to
-    fit ("<Off>" beside "< Off >").
-  - The Game Settings title sits against the first row.
-  The widest row is 251 pixels in the large font ("Default Game Types:
-  < OFF >"). The plan: a full-screen Pause panel about 66 pixels wider, with
-  every row in the large font at the original 27-pixel pitch, rows centred
-  between title and legend, and one title style. The frame's middle already
-  stretches sideways; the 202-pixel selection box needs the same three-piece
-  drawing. Split-screen viewports keep the compact layout, since a quarter
-  screen is 320 pixels wide.
 - The menu walk checks each text against its own box. It does not yet catch
   rows that overlap each other, which is how Video's packed rows passed.
 - Upres text is moving from a substitute typeface to fonts rebuilt from the

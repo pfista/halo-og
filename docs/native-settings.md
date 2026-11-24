@@ -17,18 +17,43 @@ pages clone the original Advanced Controls editor: blue option rows, separate
 labels and values, the original arrow graphics, contextual help, and the native
 Accept/Cancel legend. There are no replacement fonts or new artwork.
 
-In-game settings use the resident pause artwork: original 202×27 buttons,
-original bitmap fonts and text baseline, and the blue frame with its native
-Select/Back legend. Taller option pages extend the middle of the frame while
-preserving its corners and footer divider. Split-screen pages fit within their
-local viewport; focused help appears beneath the frame in full-screen layouts.
+In-game menus use the resident pause artwork: the blue frame with its
+Select/Back legend, the rounded selection box, and the original bitmap fonts at
+the stock button's text position. Pause, Performance Options, Game Settings
+and every Game Settings page are one panel, measured in one place
+(`native_pause_styles` in `source/interface/native_pause_frame.inc`):
 
-Multiplayer uses shared, fixed Xbox-style pause layouts for one, two and four
-local players. Game Settings and Performance share the same button style,
+| | One player | Split screen |
+| --- | --- | --- |
+| Panel | 308 pixels wide (the original is 226), centred | 274 wide, centred in the half or quarter screen |
+| Pause list, Game Settings list | Large font, the original 27-pixel rows | The same |
+| Pages of settings | Large font, 27-pixel rows | Small font, 21-pixel rows, so that eight fit 240 lines |
+| Help for the focused row | Beneath the frame | None |
+
+- Every row of a page uses one font and one size, and the selection box is
+  never taller than the space between rows.
+- The frame's height follows its content: the same space above the title,
+  between the title and the first row, and between the last row and the
+  legend's divider on every page. Titles are the page's own font in white.
+- **Accept** and **Apply** stand half a row apart from the settings above them.
+- A page shows at most eight rows, its Accept or Apply included. A page that
+  needs more gets a sub-page, as Audio has **Timer Audio**; rows are never
+  squeezed, and a ninth row on a page does not compile.
+- The frame's corners and the selection box's rounded ends are drawn as
+  authored. Only their middles stretch, so the art is the map's own at any size.
+
+Multiplayer uses these layouts for one, two and four local players,
 independent of a map's authored pause-menu children. Imported main-menu editor
 tags do not switch in-game settings to the main-menu layout. Campaign and
-cooperative play retain their authored pause roots. The dual-renderer local
-build completed; in-game validation remains pending.
+cooperative play keep their authored Pause list, with **Game Settings** added
+as a fifth row at a 24-pixel pitch; their Game Settings pages are the same
+panels as multiplayer's. The main menu's Game Settings pages are separate and
+unchanged.
+
+The one-player pages are checked on screen by `tools/menu_layout_check.py
+--tour pause`. Campaign's pages were looked at once in a running game (The
+Silent Cartographer, November 24, 2026). Split screen has not been played with
+two controllers.
 
 Audio, Video, Controller and Multiplayer preferences belong to the local installation. They are not
 part of a player profile, map or network gametype. Performance Options remain saved

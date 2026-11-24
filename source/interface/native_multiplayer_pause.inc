@@ -2,18 +2,21 @@
  * resident artwork and real leave actions, never the menu's geometry or rows. */
 #include <string.h>
 
-static char const native_multiplayer_pause_resume_name[] = "ui\\native_pause\\resume_game";
-static char const native_multiplayer_pause_leave_name[] = "ui\\native_pause\\leave_game";
+/* The Pause list has two sizes: one player's and split screen's. */
+enum { NUMBER_OF_NATIVE_MULTIPLAYER_PAUSE_SIZES = 2 };
+static char const *const native_multiplayer_pause_button_names[NUMBER_OF_NATIVE_MULTIPLAYER_PAUSE_SIZES][2] = {
+	{"ui\\native_pause\\resume_game", "ui\\native_pause\\leave_game"},
+	{"ui\\native_pause\\split_resume_game", "ui\\native_pause\\split_leave_game"}};
 static char const native_multiplayer_pause_labels_name[] = "ui\\native_pause\\labels";
 static struct ui_widget_definition native_multiplayer_pause_roots[3];
-static struct ui_widget_definition native_multiplayer_pause_style;
-static struct ui_widget_definition native_multiplayer_pause_buttons[2];
+static struct ui_widget_definition native_multiplayer_pause_styles[NUMBER_OF_NATIVE_PAUSE_STYLES];
+static struct ui_widget_definition native_multiplayer_pause_buttons[NUMBER_OF_NATIVE_MULTIPLAYER_PAUSE_SIZES][2];
 static struct ui_widget_event_handler_reference native_multiplayer_pause_root_events[3];
 static struct ui_widget_event_handler_reference native_multiplayer_pause_resume_events[2];
 static wchar_t native_multiplayer_pause_text[2][16] = {L"RESUME GAME", L"LEAVE GAME"};
 static struct string_list_entry native_multiplayer_pause_string_entries[2];
 static struct string_list native_multiplayer_pause_strings;
-static long native_multiplayer_pause_button_tags[2];
+static long native_multiplayer_pause_button_tags[NUMBER_OF_NATIVE_MULTIPLAYER_PAUSE_SIZES][2];
 static boolean native_multiplayer_pause_ready;
 
 static void native_multiplayer_pause_reference(struct tag_reference *reference,
@@ -106,12 +109,12 @@ static struct ui_widget_definition const *native_multiplayer_pause_leave_definit
 static boolean native_multiplayer_pause_build(void)
 {
 	struct ui_widget_definition const *resume, *leave;
-	long resume_source, labels, font, bitmap, dim, index;
+	long resume_source, labels, dim, index, size;
 	static short const widths[3] = {640, 640, 320};
 	static short const heights[3] = {480, 240, 240};
 	if (native_multiplayer_pause_ready &&
-		tag_loaded(UI_WIDGET_DEFINITION_TAG, native_multiplayer_pause_resume_name) == native_multiplayer_pause_button_tags[0] &&
-		tag_loaded(UI_WIDGET_DEFINITION_TAG, native_multiplayer_pause_leave_name) == native_multiplayer_pause_button_tags[1])
+		tag_loaded(UI_WIDGET_DEFINITION_TAG, native_multiplayer_pause_button_names[0][0]) == native_multiplayer_pause_button_tags[0][0] &&
+		tag_loaded(UI_WIDGET_DEFINITION_TAG, native_multiplayer_pause_button_names[1][1]) == native_multiplayer_pause_button_tags[1][1])
 		return TRUE;
 	native_multiplayer_pause_ready = FALSE;
 	resume_source = native_pause_resident_tag(UI_WIDGET_DEFINITION_TAG,
@@ -119,23 +122,11 @@ static boolean native_multiplayer_pause_build(void)
 	resume = resume_source != NONE ? ui_widget_definition_get(resume_source) : NULL;
 	leave = native_multiplayer_pause_leave_definition();
 	if (!leave || !leave->event_handlers.count) return FALSE;
-	font = native_pause_resident_tag(FONT_GROUP_TAG, "ui\\large_ui");
-	if (font == NONE) font = native_pause_resident_tag(FONT_GROUP_TAG, "ui\\small_ui");
-	bitmap = native_pause_resident_tag('bitm', "ui\\shell\\bitmaps\\menu_bkds");
-	if (bitmap == NONE && resume) bitmap = resume->background_bitmap.index;
-	if (font == NONE || !tag_index_is_group(bitmap, 'bitm')) return FALSE;
+	for (index = 0; index < NUMBER_OF_NATIVE_PAUSE_STYLES; index++)
+		if (!native_pause_row_definition(&native_multiplayer_pause_styles[index], (short)index,
+			resume ? resume->background_bitmap.index : NONE))
+			return FALSE;
 	dim = native_pause_resident_tag('bitm', "ui\\shell\\bitmaps\\semi_transparent_grey");
-	native_multiplayer_pause_clear(&native_multiplayer_pause_style);
-	native_multiplayer_pause_style.type = _ui_widget_type_text_box;
-	native_multiplayer_pause_style.bounds = (rectangle2d){0, 0, 27, 202};
-	native_multiplayer_pause_style.text_font.index = font;
-	native_multiplayer_pause_style.background_bitmap.index = bitmap;
-	native_multiplayer_pause_style.text_color.alpha = 1.0f;
-	native_multiplayer_pause_style.text_color.red = 40.0f / 255.0f;
-	native_multiplayer_pause_style.text_color.green = 150.0f / 255.0f;
-	native_multiplayer_pause_style.text_color.blue = 1.0f;
-	native_multiplayer_pause_style.justification = _text_justification_center;
-	native_multiplayer_pause_style.horizontal_offset = 3;
 	for (index = 0; index < 3; index++)
 	{
 		struct ui_widget_definition *root = &native_multiplayer_pause_roots[index];
@@ -165,27 +156,27 @@ static boolean native_multiplayer_pause_build(void)
 	labels = cache_files_register_runtime_ui_tag(UNICODE_STRING_LIST_TAG,
 		native_multiplayer_pause_labels_name, &native_multiplayer_pause_strings);
 	if (labels == NONE) return FALSE;
-	for (index = 0; index < 2; index++)
-	{
-		struct ui_widget_definition *button = &native_multiplayer_pause_buttons[index];
-		*button = native_multiplayer_pause_style;
-		button->text_label_string_list.index = labels;
-		button->string_list_index = (short)index;
-		if (index == 0)
+	for (size = 0; size < NUMBER_OF_NATIVE_MULTIPLAYER_PAUSE_SIZES; size++)
+		for (index = 0; index < 2; index++)
 		{
-			button->event_handlers.count = 2;
-			button->event_handlers.address = native_multiplayer_pause_resume_events;
+			struct ui_widget_definition *button = &native_multiplayer_pause_buttons[size][index];
+			*button = native_multiplayer_pause_styles[size ? _native_pause_split_menu : _native_pause_wide];
+			button->text_label_string_list.index = labels;
+			button->string_list_index = (short)index;
+			if (index == 0)
+			{
+				button->event_handlers.count = 2;
+				button->event_handlers.address = native_multiplayer_pause_resume_events;
+			}
+			else
+			{
+				button->event_handlers = leave->event_handlers;
+				button->conditional_widgets = leave->conditional_widgets;
+			}
+			native_multiplayer_pause_button_tags[size][index] = cache_files_register_runtime_ui_tag(
+				UI_WIDGET_DEFINITION_TAG, native_multiplayer_pause_button_names[size][index], button);
+			if (native_multiplayer_pause_button_tags[size][index] == NONE) return FALSE;
 		}
-		else
-		{
-			button->event_handlers = leave->event_handlers;
-			button->conditional_widgets = leave->conditional_widgets;
-		}
-		native_multiplayer_pause_button_tags[index] = cache_files_register_runtime_ui_tag(
-			UI_WIDGET_DEFINITION_TAG, index ? native_multiplayer_pause_leave_name : native_multiplayer_pause_resume_name,
-			button);
-		if (native_multiplayer_pause_button_tags[index] == NONE) return FALSE;
-	}
 	native_multiplayer_pause_ready = TRUE;
 	return TRUE;
 }
@@ -196,17 +187,25 @@ static struct ui_widget_definition const *native_multiplayer_pause_root(short la
 	return &native_multiplayer_pause_roots[layout];
 }
 
-static struct ui_widget_definition const *native_multiplayer_pause_button_style(void)
+/* The row every native Pause page builds on, in one of the kit's styles. */
+static struct ui_widget_definition const *native_multiplayer_pause_button_style(short style)
 {
-	return native_multiplayer_pause_build() ? &native_multiplayer_pause_style : NULL;
+	if (style < 0 || style >= NUMBER_OF_NATIVE_PAUSE_STYLES || !native_multiplayer_pause_build()) return NULL;
+	return &native_multiplayer_pause_styles[style];
 }
 
-static long native_multiplayer_pause_resume_tag(void)
+static long native_multiplayer_pause_resume_tag(short style)
 {
-	return native_multiplayer_pause_build() ? native_multiplayer_pause_button_tags[0] : NONE;
+	return native_multiplayer_pause_build() ? native_multiplayer_pause_button_tags[style != _native_pause_wide][0] : NONE;
 }
 
-static long native_multiplayer_pause_leave_tag(void)
+static long native_multiplayer_pause_leave_tag(short style)
 {
-	return native_multiplayer_pause_build() ? native_multiplayer_pause_button_tags[1] : NONE;
+	return native_multiplayer_pause_build() ? native_multiplayer_pause_button_tags[style != _native_pause_wide][1] : NONE;
+}
+
+static boolean native_multiplayer_pause_is_resume(long tag)
+{
+	return native_multiplayer_pause_ready && tag != NONE &&
+		(tag == native_multiplayer_pause_button_tags[0][0] || tag == native_multiplayer_pause_button_tags[1][0]);
 }

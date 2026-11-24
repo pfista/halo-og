@@ -19,10 +19,12 @@ PREFIX = r'''
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 typedef unsigned char byte, boolean;
 typedef unsigned short word;
+typedef struct { short x,y; } point2d;
 typedef struct { short y0,x0,y1,x1; } rectangle2d;
 typedef struct { float alpha,red,green,blue; } real_argb_color;
 #define TRUE 1
@@ -30,8 +32,10 @@ typedef struct { float alpha,red,green,blue; } real_argb_color;
 #define NONE (-1)
 #define MAXIMUM_NUMBER_OF_LOCAL_PLAYERS 4
 #define FLAG(n) (1L << (n))
+#define TEST_FLAG(value,n) (((value) & FLAG(n)) != 0)
 #define csmemset memset
 #define csmemcpy memcpy
+#define csstrcmp strcmp
 enum { _gamepad_analog_button_a=0, _gamepad_analog_button_b=1,
  _gamepad_binary_button_dpad_up=8, _gamepad_binary_button_dpad_down,
  _gamepad_binary_button_dpad_left, _gamepad_binary_button_dpad_right,
@@ -56,48 +60,59 @@ static size_t ustrlen(const wchar_t *s) { size_t n=0; while(s[n]) ++n; return n;
 '''
 
 STUBS = r'''
-static struct ui_widget_definition originals[6], frame, pause_frame, legend;
+static struct ui_widget_definition originals[6], legend, row_styles[3], list_buttons[2][2];
 static boolean locked;
 static void *game_engine_get_variant(void) { return &locked; }
 static boolean playlist_profile_variant_is_locked(void *variant) { assert(variant==&locked); return locked; }
+/* The production kit supplies every size; only the map's tags are stubs. */
+struct tag_iterator { int unused; };
+static long tag_loaded(long group,const char *name);
+static void *tag_get(long group,long index);
+#define ui_widget_definition_get(i) ((struct ui_widget_definition *)tag_get(UI_WIDGET_DEFINITION_TAG,(i)))
+static long cache_files_register_runtime_ui_tag(long group,const char *name,void *definition);
+static boolean tag_index_is_group(long tag,long group) { return group=='bitm' && tag>=8 && tag<=12; }
+static void tag_iterator_new(struct tag_iterator *iterator,long group) { (void)iterator; (void)group; }
+static long tag_iterator_next(struct tag_iterator *iterator) { (void)iterator; return NONE; }
+static const char *tag_get_name(long tag) { (void)tag; return NULL; }
+/* PRODUCTION PAUSE KIT */
 static boolean native_multiplayer_pause_build(void) { return TRUE; }
-static struct ui_widget_definition const *native_multiplayer_pause_button_style(void) { return &originals[4]; }
+static struct ui_widget_definition const *native_multiplayer_pause_button_style(short style) { return &row_styles[style]; }
 static struct ui_widget_definition const *native_multiplayer_pause_root(short layout) { return &originals[layout]; }
-static long native_multiplayer_pause_resume_tag(void) { return 5; }
-static long native_multiplayer_pause_leave_tag(void) { return 6; }
-static long native_pause_resident_tag(long group,char const *name) { assert(group==FONT_GROUP_TAG && !strcmp(name,"ui\\small_ui")); return 7; }
-static long native_pause_frame_tag(short height) { assert(height==159 || height==240); if(height==159) { pause_frame.bounds=(rectangle2d){0,-4,159,222}; return 9003; } frame.bounds=(rectangle2d){0,-4,240,222}; return 9001; }
-static long native_pause_legend_tag(void) { legend.bounds=(rectangle2d){0,0,20,200}; return 9002; }
+static long native_multiplayer_pause_resume_tag(short style) { return style==_native_pause_wide ? 5 : 15; }
+static long native_multiplayer_pause_leave_tag(short style) { return style==_native_pause_wide ? 6 : 16; }
 static struct ui_widget_child_reference root_children[3][3], list_children[2];
 static const char *original_names[6]={
  "ui\\shell\\multiplayer_game\\pause_game\\1p_pause_game",
  "ui\\shell\\multiplayer_game\\pause_game\\2p_pause_game",
  "ui\\shell\\multiplayer_game\\pause_game\\4p_pause_game",
  "ui\\shell\\multiplayer_game\\pause_game\\mp_pause_list", "resume", "quit"};
-static struct { long group,id; const char *name; void *definition; } registry[64];
+static struct { long group,id; const char *name; void *definition; } registry[96];
 static unsigned registry_count,generation,set_calls,host_flags;
 static boolean host=TRUE,refuse;
 static long tag_loaded(long group,const char *name) {
- if(group==FONT_GROUP_TAG && !strcmp(name,"ui\\small_ui")) return 7;
+ static const char *const bitmaps[]={"ui\\shell\\bitmaps\\menu_bkds","","ui\\shell\\bitmaps\\pausebox2_left",
+  "ui\\shell\\bitmaps\\pausebox2_center","ui\\shell\\bitmaps\\pausebox2_right"};
+ if(group==FONT_GROUP_TAG) return !strcmp(name,"ui\\small_ui") ? 7 : !strcmp(name,"ui\\large_ui") ? 9 : NONE;
+ if(group=='bitm') { for(unsigned i=0;i<5;i++) if(!strcmp(name,bitmaps[i])) return 8+i; return NONE; }
+ if(group==UI_WIDGET_DEFINITION_TAG && !strcmp(name,"ui\\shell\\main_menu\\button_key_sm")) return 9002;
  for(unsigned i=0;i<6;i++) if(group==UI_WIDGET_DEFINITION_TAG && !strcmp(name,original_names[i])) return i+1;
  for(unsigned i=0;i<registry_count;i++) if(group==registry[i].group && !strcmp(name,registry[i].name)) return registry[i].id;
  return NONE;
 }
 static void *tag_get(long group,long index) {
  (void)group;
- if(index==9001) return &frame;
- if(index==9003) return &pause_frame;
  if(index==9002) return &legend;
- if(index>=1 && index<=6) return &originals[index-1];
+ if(index==5 || index==6) return &list_buttons[0][index-5];
+ if(index==15 || index==16) return &list_buttons[1][index-15];
+ if(index>=1 && index<=4) return &originals[index-1];
  for(unsigned i=0;i<registry_count;i++) if(index==registry[i].id) return registry[i].definition;
  assert(!"invalid tag"); return NULL;
 }
-#define ui_widget_definition_get(i) ((struct ui_widget_definition *)tag_get(UI_WIDGET_DEFINITION_TAG,(i)))
 static long cache_files_register_runtime_ui_tag(long group,const char *name,void *definition) {
  for(unsigned i=0;i<registry_count;i++) if(!strcmp(name,registry[i].name)) {
    assert(group==registry[i].group && definition==registry[i].definition); return registry[i].id;
  }
- assert(registry_count<64); unsigned i=registry_count++;
+ assert(registry_count<96); unsigned i=registry_count++;
  registry[i].group=group; registry[i].name=name; registry[i].definition=definition;
  return registry[i].id=100+generation*100+i;
 }
@@ -134,7 +149,8 @@ static struct widget_instance *make_widget(long tag,struct widget_instance *pare
    *tail=make_widget(c->widget_tag.index,w,local); tail=&(*tail)->next;
  }
  w->focused_child=w->child;
- if(w->child && w->child->definition_tag_index==9001) w->focused_child=w->child->next;
+ if(w->child && TEST_FLAG(ui_widget_definition_get(w->child->definition_tag_index)->flags,_widget_native_pause_frame_bit))
+   w->focused_child=w->child->next;
  return w;
 }
 static void free_widget(struct widget_instance *w) {
@@ -143,7 +159,7 @@ static void free_widget(struct widget_instance *w) {
  free(w);
 }
 static struct widget_instance *control(struct widget_instance *root,int i) {
- struct widget_instance *w=widget_instance_find_by_tag_index_recursive(root,performance_pause_tags[i]); assert(w); return w;
+ struct widget_instance *w=performance_pause_control(root,i); assert(w); return w;
 }
 static struct widget_instance *open_options(int layout,int local) {
  struct widget_instance *root=make_widget(performance_pause_tags[_pp_options_1p+layout],NULL,local);
@@ -154,10 +170,9 @@ static void setup(void) {
  originals[3].type=_ui_widget_type_column_list;
  originals[3].child_widgets.count=2; originals[3].child_widgets.address=list_children;
  list_children[0].widget_tag.index=5; list_children[1].widget_tag.index=6;
- originals[4].type=originals[5].type=_ui_widget_type_text_box;
- originals[4].text_font.index=9; originals[4].background_bitmap.index=8;
- originals[4].vertical_offset=3;
- originals[4].bounds.x1=202; originals[4].bounds.y1=27;
+ for(int i=0;i<NUMBER_OF_NATIVE_PAUSE_STYLES;i++) assert(native_pause_row_definition(&row_styles[i],i,NONE));
+ for(int i=0;i<2;i++) for(int j=0;j<2;j++) list_buttons[i][j]=row_styles[i ? _native_pause_split_menu : _native_pause_wide];
+ legend.bounds=(rectangle2d){0,0,24,168};
  for(int i=0;i<3;i++) {
    originals[i].bounds.x1=i==2 ? 320 : 640; originals[i].bounds.y1=i ? 240 : 480;
    originals[i].child_widgets.count=3; originals[i].child_widgets.address=root_children[i];
@@ -166,51 +181,99 @@ static void setup(void) {
    root_children[i][1].vertical_offset=i ? 95 : 207;
  }
 }
+/* A page: its frame first, then rows that share one font and size, never
+ * reach each other, and end above the legend's divider. */
+static void check_page(struct ui_widget_definition *root,struct ui_widget_child_reference *children,
+   struct ui_widget_definition *column,long font,short width,short height) {
+ struct ui_widget_definition *page_frame=ui_widget_definition_get(children[0].widget_tag.index);
+ struct ui_widget_child_reference *rows=column->child_widgets.address;
+ assert(TEST_FLAG(page_frame->flags,_widget_native_pause_frame_bit));
+ assert(page_frame->bounds.x1==width+2*NATIVE_PAUSE_FRAME_MARGIN);
+ assert(children[0].horizontal_offset==children[1].horizontal_offset-NATIVE_PAUSE_FRAME_MARGIN);
+ /* Centred, and whole in its viewport. */
+ assert(children[0].horizontal_offset*2+page_frame->bounds.x1==root->bounds.x1);
+ assert(children[0].vertical_offset>=0 && children[0].vertical_offset+page_frame->bounds.y1<=root->bounds.y1);
+ assert(column->bounds.x1==width);
+ for(long i=0;i<column->child_widgets.count;i++) {
+   struct ui_widget_definition *row=ui_widget_definition_get(rows[i].widget_tag.index);
+   assert(row->text_font.index==font && row->bounds.x1==width && row->bounds.y1==height && !rows[i].horizontal_offset);
+   assert(TEST_FLAG(row->flags,_widget_native_pause_row_bit) && row->background_bitmap.index==8);
+   assert(row->vertical_offset==native_pause_styles[font==9 ? _native_pause_wide : _native_pause_split_options].text_y);
+   if(i) assert(rows[i].vertical_offset>=rows[i-1].vertical_offset+height);
+   assert(rows[i].vertical_offset+height<=column->bounds.y1);
+ }
+ assert(children[1].vertical_offset+column->bounds.y1<children[0].vertical_offset+page_frame->bounds.y1-NATIVE_PAUSE_FOOTER);
+}
 int main(void) {
  setup(); struct ui_widget_definition before[6]; memcpy(before,originals,sizeof(before));
  assert(performance_pause_remap_tag(5)==5 && performance_pause_remap_tag(NONE)==NONE);
- assert(performance_pause_remap_tag(1)!=1 && registry_count==32);
+ /* Seven string lists, the widgets and one frame for each of four page sizes. */
+ assert(performance_pause_remap_tag(1)!=1 && registry_count==7+_pp_widget_count+4);
  assert(!memcmp(before,originals,sizeof(before)));
  for(int i=0;i<3;i++) {
+   struct ui_widget_definition *pause=&performance_pause_definitions[_pp_pause_1p+i];
+   struct ui_widget_definition *list=&performance_pause_definitions[_pp_list_1p+i];
+   struct ui_widget_definition *options=&performance_pause_definitions[_pp_options_1p+i];
+   int split=i ? PERFORMANCE_PAUSE_SPLIT : 0;
    assert(performance_pause_remap_tag(i+1)==performance_pause_tags[_pp_pause_1p+i]);
-   assert(performance_pause_children[i][1].horizontal_offset==root_children[i][1].horizontal_offset);
-   assert(performance_pause_children[i][1].vertical_offset==(i==0 ? 179 : i==1 ? 67 : 61));
-   assert(performance_pause_list_children[i][0].widget_tag.index==5);
-   assert(performance_pause_list_children[i][3].widget_tag.index==6);
+   /* The Pause list: four rows of the original size, in one font, wide
+    * enough for PERFORMANCE OPTIONS in it. */
+   assert(performance_pause_list_children[i][0].widget_tag.index==(i ? 15:5));
+   assert(performance_pause_list_children[i][1].widget_tag.index==performance_pause_tags[_pp_entry_1p+i]);
+   assert(performance_pause_list_children[i][2].widget_tag.index==performance_pause_tags[_pp_settings_1p+i]);
+   assert(performance_pause_list_children[i][3].widget_tag.index==(i ? 16:6));
+   assert(list->child_widgets.count==4 && pause->child_widgets.count==3);
+   check_page(pause,performance_pause_children[i],list,9,i ? 250:284,27);
+   assert(performance_pause_children[i][1].widget_tag.index==performance_pause_tags[_pp_list_1p+i]);
+   assert(performance_pause_children[i][2].widget_tag.index==9002);
    assert(performance_pause_settings_events[i][0].widget_tag.index==900+i);
    assert(performance_pause_entry_events[i][0].widget_tag.index==performance_pause_tags[_pp_options_1p+i]);
-   assert(performance_pause_definitions[_pp_options_1p+i].controller_index==_widget_controller_any);
-   int x=(originals[i].bounds.x1-202)/2-1, y=(originals[i].bounds.y1-240)/2;
-   assert(performance_pause_option_children[i][0].widget_tag.index==9001);
-   assert(performance_pause_option_children[i][0].horizontal_offset==x-8);
-   assert(performance_pause_option_children[i][0].vertical_offset==y);
-   assert(performance_pause_option_children[i][1].horizontal_offset==x);
-   assert(performance_pause_option_children[i][1].vertical_offset==y+22);
-   assert(performance_pause_option_children[i][2].vertical_offset==y);
-   assert(performance_pause_option_children[i][3].widget_tag.index==9002);
-   assert(performance_pause_option_children[i][3].horizontal_offset==x+17);
-   assert(performance_pause_option_children[i][3].vertical_offset==y+215);
-   assert(performance_pause_definitions[_pp_options_1p+i].child_widgets.count==(i ? 4:5));
-   if(!i) assert(performance_pause_option_children[i][4].vertical_offset+40<=originals[i].bounds.y1);
+   assert(options->controller_index==_widget_controller_any);
+   /* Performance Options: a title and seven rows, APPLY apart from the six settings. */
+   struct ui_widget_child_reference *children=performance_pause_option_children[i];
+   struct ui_widget_definition *column=&performance_pause_definitions[_pp_column+split];
+   struct ui_widget_definition *title=&performance_pause_definitions[_pp_title+split];
+   struct ui_widget_definition *page_frame=ui_widget_definition_get(children[0].widget_tag.index);
+   const struct native_pause_style *style=&native_pause_styles[i ? _native_pause_split_options : _native_pause_wide];
+   assert(children[1].widget_tag.index==performance_pause_tags[_pp_column+split]);
+   assert(children[2].widget_tag.index==performance_pause_tags[_pp_title+split]);
+   assert(column->child_widgets.count==7 && column->child_widgets.address==performance_pause_column_children[i!=0]);
+   check_page(options,children,column,i ? 7:9,i ? 250:284,i ? 21:27);
+   struct ui_widget_child_reference *rows=column->child_widgets.address;
+   for(int row=0;row<7;row++) {
+     assert(rows[row].widget_tag.index==performance_pause_tags[_pp_preset+split+row]);
+     assert(rows[row].vertical_offset==row*style->row_height+(row==6 ? style->action_gap:0));
+     struct widget_instance candidate={.definition_tag_index=rows[row].widget_tag.index};
+     assert(performance_pause_is_spinner(&candidate)==(row<6));
+   }
+   /* The title is the page's own font in white, with the same space above
+    * it and below it on every page. */
+   assert(title->text_font.index==(i ? 7:9) && title->background_bitmap.index==NONE && !title->flags);
+   assert(title->text_color.red==1 && title->text_color.green==1 && title->text_color.blue==1);
+   assert(title->string_list_index==13 && title->bounds.x1==column->bounds.x1 && title->bounds.y1==style->row_height);
+   assert(children[2].horizontal_offset==children[1].horizontal_offset);
+   assert(children[2].vertical_offset==children[0].vertical_offset+style->top);
+   assert(children[1].vertical_offset==children[2].vertical_offset+style->row_height+style->title_gap);
+   assert(children[1].vertical_offset+column->bounds.y1+style->bottom==
+       children[0].vertical_offset+page_frame->bounds.y1-NATIVE_PAUSE_FOOTER);
+   /* The legend sits in the frame's footer, centred. */
+   assert(children[3].widget_tag.index==9002);
+   assert(children[3].vertical_offset==children[0].vertical_offset+page_frame->bounds.y1-NATIVE_PAUSE_LEGEND_Y);
+   assert((children[3].horizontal_offset-children[0].horizontal_offset)*2+168==page_frame->bounds.x1);
+   assert(options->child_widgets.count==(i ? 4:5));
+   if(!i) {
+     /* Help for the focused row, under the frame and inside the screen. */
+     struct ui_widget_definition *footer=&performance_pause_definitions[_pp_footer];
+     assert(children[4].widget_tag.index==performance_pause_tags[_pp_footer] && footer->text_font.index==7);
+     assert(children[4].vertical_offset>=children[0].vertical_offset+page_frame->bounds.y1);
+     assert(children[4].vertical_offset+footer->bounds.y1<=originals[i].bounds.y1);
+     assert(children[4].horizontal_offset*2+footer->bounds.x1==originals[i].bounds.x1 && !footer->flags);
+   }
  }
- assert(performance_pause_definitions[_pp_column].child_widgets.count==7);
- for(int i=0;i<7;i++) {
-   struct ui_widget_child_reference *row=&performance_pause_column_children[i];
-   struct ui_widget_definition *definition=ui_widget_definition_get(row->widget_tag.index);
-   assert(row->vertical_offset==27*i && definition->bounds.y1==27 && definition->bounds.x1==202);
-   assert(row->horizontal_offset==0 && definition->vertical_offset==3 && definition->text_font.index==9);
-   assert(definition->background_bitmap.index==originals[4].background_bitmap.index);
-   assert(row->vertical_offset+definition->bounds.y1<=performance_pause_definitions[_pp_column].bounds.y1);
-   struct widget_instance candidate={.definition_tag_index=row->widget_tag.index};
-   assert(performance_pause_is_spinner(&candidate)==(i<6));
- }
+ /* One player's panel: 284-pixel rows at the original 27-pixel pitch. */
+ assert(performance_pause_children[0][1].horizontal_offset==178 && performance_pause_children[0][0].horizontal_offset==166);
+ assert(performance_pause_list_children[0][3].vertical_offset==81 && performance_pause_column_children[0][6].vertical_offset==175);
  assert(!performance_pause_is_spinner(NULL));
- assert(performance_pause_definitions[_pp_title].bounds.y1==22);
- assert(performance_pause_definitions[_pp_title].text_font.index==7);
- assert(performance_pause_definitions[_pp_title].vertical_offset==0);
- // Seven complete buttons finish at the cap-preserved footer divider (240-29).
- assert(22+performance_pause_definitions[_pp_column].bounds.y1==211);
- assert(performance_pause_definitions[_pp_title].string_list_index==13);
  for(int text=3;text<=4;text++) {
    boolean line_break=FALSE;
    for(unsigned i=0;performance_pause_text[text][i];i++)
@@ -218,8 +281,7 @@ int main(void) {
  assert(!line_break);
  }
  assert(performance_pause_definitions[_pp_entry_1p].string_list_index==0);
- assert(performance_pause_definitions[_pp_entry_1p].text_font.index==7);
- assert(performance_pause_definitions[_pp_settings_1p].text_font.index==7);
+ assert(performance_pause_definitions[_pp_settings_1p].string_list_index==16);
  assert(ustrlen(performance_pause_text[0])==19 && ustrlen(performance_pause_text[13])==19);
  assert(performance_pause_root_events[1].flags==FLAG(_event_handler_go_back_to_previous_widget_bit));
  assert(performance_pause_apply_events[0].flags==(FLAG(_event_handler_run_function_bit)|FLAG(_event_handler_go_back_to_previous_widget_bit)));
@@ -375,7 +437,7 @@ int main(void) {
    assert(performance_pause_event(control(root,_pp_apply),_performance_pause_apply) && host_flags==(128|extras));
    free_widget(root);
  }
- registry_count=0; generation++; assert(performance_pause_remap_tag(1)!=old && registry_count==32);
+ registry_count=0; generation++; assert(performance_pause_remap_tag(1)!=old && registry_count==7+_pp_widget_count+4);
  assert(!performance_pause_drafts[0].root && !performance_pause_drafts[1].root);
  return 0;
 }
@@ -431,13 +493,15 @@ class PerformancePauseMenuTest(unittest.TestCase):
                           "static inline boolean performance_variant_flags_valid(",
                           "static inline short performance_variant_preset("):
             performance_declarations += block(variant_header, signature) + "\n"
-        fixture = PREFIX.replace("/* PERFORMANCE DECLARATIONS */", performance_declarations) + "\n".join(declarations) + STUBS
+        kit = (ROOT / "source/interface/native_pause_frame.inc").read_text()
+        fixture = PREFIX.replace("/* PERFORMANCE DECLARATIONS */", performance_declarations) + "\n".join(declarations)
+        fixture += STUBS.replace("/* PRODUCTION PAUSE KIT */", kit)
         fixture += (ROOT / "source/interface/performance_pause_menu.inc").read_text() + HARNESS
         with tempfile.TemporaryDirectory(prefix="halo-native-pause-") as tmp:
             path = Path(tmp) / "test.c"
             path.write_text(fixture)
             binary = Path(tmp) / "test"
-            subprocess.run(["clang", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-multichar", "-fshort-wchar", str(path), "-o", str(binary)], check=True)
+            subprocess.run(["clang", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-multichar", "-Wno-unused-function", "-fshort-wchar", str(path), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
 
 

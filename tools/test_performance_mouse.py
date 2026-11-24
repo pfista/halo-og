@@ -214,7 +214,8 @@ class PerformanceMouse(unittest.TestCase):
         source += STUBS.replace("/* PRODUCTION ENUMS */", "\n".join(enums)).replace("/* PRODUCTION FOCUS */", focus).replace("/* PRODUCTION LIST */", lists).replace("/* PRODUCTION MOUSE */", mouse) + CHECKS
         self.compile_platforms(source)
 
-    def test_settings_mouse_arrows_and_wheel(self):
+    def settings_mouse_source(self):
+        """The settings fixture with the production mouse code and the pointer boundary."""
         from tools.test_game_settings import game_settings_fixture_source
         source = game_settings_fixture_source().split("int main(", 1)[0]
         ui = (ROOT / "source/interface/ui_widget.c").read_text()
@@ -229,7 +230,6 @@ class PerformanceMouse(unittest.TestCase):
 #define MIN(a,b) ((a)<(b) ? (a):(b))
 #define MAX(a,b) ((a)>(b) ? (a):(b))
 #define csmemmove memmove
-typedef struct {short x,y;} point2d;
 enum {_gamepad_analog_button_x=2,_gamepad_analog_button_y,_gamepad_analog_button_black,
       _gamepad_analog_button_white,_error_silent=0};
 """ + stubs
@@ -241,6 +241,10 @@ enum {_gamepad_analog_button_x=2,_gamepad_analog_button_y,_gamepad_analog_button
         source += "\n" + ui[ui.index("#define UI_MOUSE_MAXIMUM_TARGETS"):ui.index("static void widget_instance_render_recursive(\n", ui.index("#define UI_MOUSE_MAXIMUM_TARGETS"))]
         source += "\n".join(c_block(CHECKS, signature) for signature in (
             "static void draw_targets(", "static void render_pb(", "static point2d spinner_arrow_point(", "static short click_at("))
+        return source
+
+    def test_settings_mouse_arrows_and_wheel(self):
+        source = self.settings_mouse_source()
         source += r'''
 static void apply_posted_setting(struct widget_instance *spinner) {
     struct ui_widget_definition *definition=ui_widget_definition_get(spinner->definition_tag_index);
@@ -283,6 +287,60 @@ int main(void) {
     puts("Settings arrows and wheel use actual shared native widgets on every platform");
 }
 '''
+        self.compile_platforms(source)
+
+    def test_pause_rows_are_picked_across_their_whole_box(self):
+        """A Pause row's place for the mouse is its selection box, in one player's panel and split screen's."""
+        source = self.settings_mouse_source()
+        source += r"""
+int main(void) {
+    settings_setup(1); assert(performance_pause_build());
+    for(short layout=_ds_pause_1p;layout<=_ds_pause_4p;layout++) for(short page=_ds_audio;page<_ds_page_count;page++) {
+        struct widget_instance *root=open_settings(layout,page,0);
+        struct ui_widget_child_reference *children=device_settings.screen_children[layout][page];
+        struct ui_widget_definition *frame=ui_widget_definition_get(children[0].widget_tag.index);
+        short x=children[1].horizontal_offset,y=children[1].vertical_offset,count=device_settings_page_counts[page],index=0;
+        struct widget_instance *column=root->child->next;
+        assert(column->type==_ui_widget_type_column_list);
+        root->visible=TRUE; widget_globals.active_widgets[0]=root;
+        ui_mouse_press_count=ui_mouse_target_count=0;
+        ui_mouse_hover_pending=ui_mouse_click_pending=FALSE;
+        for(struct widget_instance *row=column->child;row;row=row->next,index++) {
+            struct ui_widget_definition *definition=ui_widget_definition_get(row->definition_tag_index);
+            short top=y+device_settings.column_children[layout][page][index].vertical_offset;
+            short width=definition->bounds.x1,height=definition->bounds.y1;
+            boolean adjustable=index<count && device_settings_page_rows[page][index]!=NONE;
+            /* The box is as wide as the panel's rows: 284 for one player. */
+            assert(width==frame->bounds.x1-2*NATIVE_PAUSE_FRAME_MARGIN && width==(layout==_ds_pause_1p ? 284:250));
+            render_pb(root);
+            const point2d inside[]={{x,top},{(short)(x+width-1),top},{x,(short)(top+height-1)},
+                {(short)(x+width-1),(short)(top+height-1)},{(short)(x+width/2),(short)(top+height/2)}};
+            for(unsigned i=0;i<5;i++) {
+                struct ui_mouse_target *target=ui_mouse_target_at(inside[i].x,inside[i].y);
+                assert(target && target->widget==row && target->kind==_ui_mouse_target_item);
+                assert(target->bounds.x0==x && target->bounds.x1==x+width && target->bounds.y0==top && target->bounds.y1==top+height);
+            }
+            /* Beside the box, and in the space above ACCEPT, nothing is picked. */
+            assert(!ui_mouse_target_at((short)(x-1),(short)(top+height/2)));
+            assert(!ui_mouse_target_at((short)(x+width),(short)(top+height/2)));
+            if(index==count) assert(!ui_mouse_target_at((short)(x+width/2),(short)(top-1)));
+            if(adjustable) {
+                /* Either side of a setting steps its value; the row is never sent Accept. */
+                assert(game_settings_is_adjustable(row));
+                assert(click_at(root,(short)(x+width/4),(short)(top+height/2))==_widget_event_dpad_left);
+                assert(click_at(root,(short)(x+width-width/4),(short)(top+height/2))==_widget_event_dpad_right);
+            } else {
+                assert(!game_settings_is_adjustable(row));
+                assert(click_at(root,(short)(x+width/2),(short)(top+height/2))==_gamepad_analog_button_a);
+            }
+            assert(ui_mouse_widget_has_focus(row));
+        }
+        assert(index==count+1);
+        widget_globals.active_widgets[0]=NULL; dispose(root);
+    }
+    puts("Pause rows are picked across their whole selection box in every layout");
+}
+"""
         self.compile_platforms(source)
 
     def compile_platforms(self, source):

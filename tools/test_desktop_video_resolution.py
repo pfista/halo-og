@@ -227,7 +227,10 @@ int main(void) {
 
     def test_menu_presets_and_platform_row_counts(self):
         menu = (ROOT / "source/interface/game_settings_menu.inc").read_text()
-        definitions = menu[menu.index("#define DEVICE_SETTINGS_ENTRY"):menu.index("#define DEVICE_SETTINGS_STRING_COUNT")]
+        # The page tables check themselves against the Pause kit's row limit.
+        kit = (ROOT / "source/interface/native_pause_frame.inc").read_text()
+        definitions = function(kit, "enum\n{\n\t/* One overflow rule") + ";\n"
+        definitions += menu[menu.index("#define DEVICE_SETTINGS_ENTRY"):menu.index("#define DEVICE_SETTINGS_STRING_COUNT")]
         build = function(menu, "static boolean device_settings_build(")
         copy = build[build.index("    static char const *const captions"):build.index("    static char const *const heading_names")]
         cycle = function(menu, "static double device_settings_cycle_choice(")
@@ -273,7 +276,10 @@ int main(void) {
 
     def test_mac_resolution_menu_stages_accepts_cancels_and_exposes_all_metal_controls(self):
         menu = (ROOT / "source/interface/game_settings_menu.inc").read_text()
-        definitions = menu[menu.index("#define DEVICE_SETTINGS_ENTRY"):menu.index("#define DEVICE_SETTINGS_STRING_COUNT")]
+        # The page tables check themselves against the Pause kit's row limit.
+        kit = (ROOT / "source/interface/native_pause_frame.inc").read_text()
+        definitions = function(kit, "enum\n{\n\t/* One overflow rule") + ";\n"
+        definitions += menu[menu.index("#define DEVICE_SETTINGS_ENTRY"):menu.index("#define DEVICE_SETTINGS_STRING_COUNT")]
         storage = SETTINGS_HARNESS.split("int main(", 1)[0].replace(
             '"input.fast_menu_repeat", "display.high_res_hud"};',
             '"input.fast_menu_repeat", "display.high_res_hud", "game.show_default_game_types"};')
@@ -302,6 +308,7 @@ static struct {
     unsigned about_page;
     long about_tag,accept_tag,screen_tags[_ds_layout_count][_ds_page_count];
     long row_tags[NUMBER_OF_DEVICE_SETTINGS],heading_tags[_ds_page_count],footer_tags[_ds_page_count];
+    long split_row_tags[NUMBER_OF_DEVICE_SETTINGS],split_heading_tags[_ds_page_count];
     struct { short vertical_offset; } column_children[_ds_layout_count][_ds_page_count][DEVICE_SETTINGS_MAX_PAGE_ROWS+1];
 } device_settings;
 static struct { long spinner_tags[NUMBER_OF_DEVICE_SETTINGS]; } device_settings_native;
@@ -319,6 +326,8 @@ static struct widget_instance *widget_instance_find_by_tag_index_recursive(struc
 }
 ''' + "\n".join(function(menu, signature) for signature in (
             "static struct device_settings_draft *device_settings_draft_for(",
+            "static short device_settings_row_setting(",
+            "static struct widget_instance *device_settings_find_heading(",
             "static boolean game_settings_is_native_spinner(",
             "static double device_settings_cycle_choice(",
             "static boolean device_settings_is_stick_deadzone(")) + r'''
@@ -339,8 +348,10 @@ int main(void) {
     footer.parent=&root;footer.definition_tag_index=300;
     for(i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) {
         device_settings.row_tags[i]=400+i;
+        device_settings.split_row_tags[i]=NONE;
         device_settings_native.spinner_tags[i]=500+i;
     }
+    for(i=0;i<_ds_page_count;i++) device_settings.heading_tags[i]=device_settings.split_heading_tags[i]=NONE;
     for(i=0;i<=DEVICE_SETTINGS_MAX_PAGE_ROWS;i++) {
         short setting=i<DEVICE_SETTINGS_MAX_PAGE_ROWS ? device_settings_page_rows[_ds_video][i] : NONE;
         rows[i].visible=TRUE;rows[i].parent=&column;rows[i].previous=i ? &rows[i-1] : NULL;

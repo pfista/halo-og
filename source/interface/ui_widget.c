@@ -1867,11 +1867,11 @@ void draw_bitmap_in_rect(
 }
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-static void native_pause_frame_render(struct widget_instance *widget,
+static void native_pause_frame_render(struct ui_widget_definition const *definition,
 	rectangle2d *clip, point2d origin, real alpha)
 {
 	short piece, band;
-	if (!native_pause_frame_is_widget(widget->definition_tag_index)) return;
+	if (!TEST_FLAG(definition->flags, _widget_native_pause_frame_bit)) return;
 	for (piece = 0; piece < 3; piece++)
 	{
 		struct bitmap_data *bitmap = bitmap_group_get_bitmap_from_sequence(
@@ -1879,13 +1879,26 @@ static void native_pause_frame_render(struct widget_instance *widget,
 		for (band = 0; band < 3; band++)
 		{
 			rectangle2d destination, source;
-			native_pause_frame_slice(piece, band,
-				ui_widget_definition_get(widget->definition_tag_index)->bounds.y1,
+			native_pause_frame_slice(piece, band, definition->bounds.x1, definition->bounds.y1,
 				origin, &destination, &source);
 			draw_bitmap_region_in_rect(bitmap, &destination, &source, clip,
 				modulate_pixel32_by_real_alpha(0xFFFFFFFF, alpha), NULL, FALSE, &source);
 		}
 	}
+}
+
+/* A native Pause row's selection box, at the row's own size. */
+static void native_pause_box_render(struct bitmap_data *bitmap, rectangle2d const *row,
+	rectangle2d *clip, pixel32 color)
+{
+	short piece, band;
+	for (piece = 0; piece < 3; piece++)
+		for (band = 0; band < 3; band++)
+		{
+			rectangle2d destination, source;
+			native_pause_box_slice(piece, band, row, &destination, &source);
+			draw_bitmap_region_in_rect(bitmap, &destination, &source, clip, color, NULL, FALSE, &source);
+		}
 }
 #endif
 
@@ -3266,7 +3279,7 @@ static void event_handler_dispatch(
 		handler->event_type == _gamepad_binary_button_start) && event_widget_name &&
 		(!csstrcmp(event_widget_name, "ui\\shell\\multiplayer_game\\pause_game\\resume_game_button") ||
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-		 !csstrcmp(event_widget_name, native_multiplayer_pause_resume_name) ||
+		 native_multiplayer_pause_is_resume(widget->definition_tag_index) ||
 #endif
 		 !csstrcmp(event_widget_name, "ui\\shell\\solo_game\\pause_game\\resume_game_button")))
 		resume_mouse = TRUE;
@@ -6077,7 +6090,7 @@ static void widget_instance_render_recursive(
 		return;
 	ui_mouse_note_target(widget, definition, offset);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-	native_pause_frame_render(widget, clip_rect, offset, alpha_modifier);
+	native_pause_frame_render(definition, clip_rect, offset, alpha_modifier);
 #endif
 	bitmap = bitmap_group_get_bitmap_from_sequence(
 		definition->background_bitmap.index,
@@ -6156,6 +6169,11 @@ static void widget_instance_render_recursive(
 				alpha_modifier;
 		}
 		color = modulate_pixel32_by_real_alpha(0xFFFFFFFF, alpha);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (TEST_FLAG(definition->flags, _widget_native_pause_row_bit))
+			native_pause_box_render(bitmap, &bounds, clip, color);
+		else
+#endif
 		draw_bitmap_in_rect(
 			bitmap,
 			&bounds,
