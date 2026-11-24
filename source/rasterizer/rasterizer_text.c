@@ -429,22 +429,41 @@ static void rasterizer_draw_hires_character_quad(
 	struct dynamic_screen_vertex vertices[NUMBER_OF_VERTICES_PER_QUADRILATERAL];
 	real left, top, right, bottom, u0, v0, u1, v1;
 	real ink[4], glyph_left, glyph_top, glyph_right, glyph_bottom;
+	long replacement;
 	short pass;
 	rectangle2d character_clip;
-	if (!text_hires_glyph(hires_text_font_get(font), character->character, &glyph) ||
+	replacement = hires_text_font_get(font);
+	if (!text_hires_glyph(replacement, character->character, &glyph) ||
 		glyph.right <= glyph.left || glyph.bottom <= glyph.top)
 		return;
-	if (!hires_original_ink_get(font, character, ink))
-		return;
+	/* x0 and y0 are where the part of the original glyph's bitmap that the
+	 * clip left begins, x and y how much the clip took off its left and top. */
+	if (text_hires_font_own(replacement))
+	{
+		/* The tag's own letters rebuilt: the outline is drawn in the tag's
+		 * pixels from the pen on the baseline, which the bitmap's origin
+		 * places, so it lies where the original letter does. */
+		real pen_x = (real)(x0 - x + character->bitmap_origin_x);
+		real baseline = (real)(y0 - y + character->bitmap_origin_y);
+
+		glyph_left = pen_x + glyph.left;
+		glyph_top = baseline + glyph.top;
+		glyph_right = pen_x + glyph.right;
+		glyph_bottom = baseline + glyph.bottom;
+	}
+	else
+	{
+		/* A substitute typeface fills the rectangle of the original glyph's
+		 * ink and is cut where the original is, so a box that fits the
+		 * original text fits this. */
+		if (!hires_original_ink_get(font, character, ink))
+			return;
+		glyph_left = (real)(x0 - x) + ink[0];
+		glyph_top = (real)(y0 - y) + ink[1];
+		glyph_right = (real)(x0 - x) + ink[2];
+		glyph_bottom = (real)(y0 - y) + ink[3];
+	}
 	draw_string_get_character_clip(state, &character_clip);
-	/* The original glyph's ink on the screen: x0 and y0 are where the part of
-	 * its bitmap that the clip left begins, x and y how much the clip took
-	 * off its left and top. The substitute fills that rectangle and is cut
-	 * where the original is, so a box that fits the original text fits this. */
-	glyph_left = (real)(x0 - x) + ink[0];
-	glyph_top = (real)(y0 - y) + ink[1];
-	glyph_right = (real)(x0 - x) + ink[2];
-	glyph_bottom = (real)(y0 - y) + ink[3];
 	left = MAX(glyph_left, (real)character_clip.x0);
 	right = MIN(glyph_right, (real)character_clip.x1);
 	top = MAX(glyph_top, (real)character_clip.y0);

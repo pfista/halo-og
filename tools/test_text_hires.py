@@ -37,9 +37,13 @@ def function(source, name):
     return declaration(source, source[match.start():match.end()])
 
 
-def embedded_fonts():
-    """Use the production 32-bit word ABI, without unrelated PNG tables."""
-    fonts = json.loads((ROOT / "port/assets/fonts/fonts.json").read_text())["fonts"]
+def embedded_fonts(own=False):
+    """Use the production 32-bit word ABI, without unrelated PNG tables. With `own`, the fonts fonts.json
+    lists: rebuilt from their tags' own letters. Otherwise a substitute typeface for each tag, which is
+    sized by capital height and fitted to the original ink: the path any font without units_per_pixel takes."""
+    fonts = json.loads((ROOT / "port/assets/fonts/fonts.json").read_text())["fonts"] if own else [
+        {"tag": "ui\\large_ui", "file": "Overpass-900.ttf"}, {"tag": "ui\\interstate", "file": "Overpass-900.ttf"},
+        {"tag": "ui\\small_ui", "file": "Overpass-750.ttf"}]
     files = sorted({font["file"] for font in fonts})
     lines = ['#include "text_hires.h"']
     for index, name in enumerate(files):
@@ -55,7 +59,7 @@ def embedded_fonts():
         tag = json.dumps(font["tag"])
         name = json.dumps(font["file"])
         size = (ROOT / "port/assets/fonts" / font["file"]).stat().st_size
-        lines.append(f"{{{tag},{name},font{files.index(font['file'])},{size}}},")
+        lines.append(f"{{{tag},{name},font{files.index(font['file'])},{size},{int(font.get('units_per_pixel', 0))}}},")
     lines += ["};", f"const unsigned int text_hires_embedded_count = {len(fonts)};"]
     return "\n".join(lines) + "\n"
 
@@ -437,6 +441,24 @@ static void engine_tests(const char *mode) {
         /* A glyph with no ink draws nothing. */
         memset(original_ink[0],0,sizeof(original_ink[0]));
         quad_count=0;rasterizer_draw_string(&bounds,&clip,NULL,0,"Z");assert(!quad_count);
+    } else if(!strcmp(mode,"own")) {
+        /* A font rebuilt from the tag's own letters is drawn from the pen, where its own outline lies: the
+           same whatever the original bitmap holds, and at the tag's size whatever capital height is asked. */
+        struct text_hires_glyph small,large;
+        memset(original_ink[0],0,sizeof(original_ink[0]));
+        for(int row=3;row<=9;row++) for(int column=2;column<=5;column++) original_ink[0][row*8+column]=255;
+        quad_count=0;rasterizer_draw_string(&bounds,&clip,NULL,0,"Q");assert(quad_count==2);
+        float left=quads[1][0].position.x,width=quads[1][1].position.x-quads[1][0].position.x;
+        assert(width>0);
+        for(int row=3;row<=9;row++) { original_ink[0][row*8+1]=255;original_ink[0][row*8+6]=255; }
+        quad_count=0;rasterizer_draw_string(&bounds,&clip,NULL,0,"Q");assert(quad_count==2);
+        near_value(quads[1][0].position.x,left);near_value(quads[1][1].position.x-quads[1][0].position.x,width);
+        assert(text_hires_font_own(text_hires_font("ui\\large_ui",12)));
+        assert(text_hires_batch_begin(0));
+        assert(text_hires_glyph(text_hires_font("ui\\large_ui",12),'H',&small));
+        assert(text_hires_glyph(text_hires_font("ui\\large_ui",24),'H',&large));
+        text_hires_batch_end();
+        near_value(small.bottom-small.top,large.bottom-large.top);
     } else if(!strcmp(mode,"transform")) {
         struct dynamic_screen_vertex before[4];memcpy(before,quads[1],sizeof(before));quad_count=0;
         rasterizer_text_transform.scale=.75f;rasterizer_text_transform.anchor_x=5;rasterizer_text_transform.anchor_y=8;
@@ -593,12 +615,12 @@ int main(int argc,char **argv) {
     return source
 
 
-def build_fixture(directory):
+def build_fixture(directory, own=False):
     folder = Path(directory)
     folder.mkdir(parents=True, exist_ok=True)
     source, embedded = folder / "text-fixture.c", folder / "fonts.c"
     source.write_text(fixture_source())
-    embedded.write_text(embedded_fonts())
+    embedded.write_text(embedded_fonts(own))
     executable = folder / ("text-fixture.exe" if sys.platform == "win32" else "text-fixture")
     command = ["clang", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-but-set-variable",
@@ -683,6 +705,11 @@ class TextHiresTests(unittest.TestCase):
 
     def test_substitute_glyph_fills_the_original_glyphs_ink(self):
         self.run_case("ink")
+
+    def test_a_font_rebuilt_from_its_tag_is_drawn_from_the_pen_at_the_tags_size(self):
+        with tempfile.TemporaryDirectory(prefix="halo-text-own-") as directory:
+            result = subprocess.run([str(build_fixture(directory, own=True)), "own"], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_existing_scaled_text_transform_is_preserved(self):
         self.run_case("transform")

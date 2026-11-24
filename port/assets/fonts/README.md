@@ -2,8 +2,8 @@
 
 Halo OG selectively imports these fonts and notices from cybersecurity's
 [0182da817285b67eee8264663ca79f7c32d66b5e](https://github.com/cybersecurity/halo-ce-universal/commit/0182da817285b67eee8264663ca79f7c32d66b5e)
-at the user's request. They are enabled by Asset Quality: Upres; Original is
-the default and keeps the maps' fonts and artwork. OpenCE is an internal
+at the user's request. They are enabled by Asset Quality: Upres; Original
+keeps the maps' fonts and artwork. OpenCE is an internal
 typeface filename only: this import changes no visible branding, original
 menu words or menu structure.
 
@@ -13,22 +13,37 @@ place of the bitmap fonts of the maps (`port/linux/src/text_hires.c`).
 
 | File | Draws | From |
 | --- | --- | --- |
-| `Overpass-900.ttf` | `ui\large_ui`, `ui\interstate` | Overpass, weight 900 (Black) |
-| `Overpass-750.ttf` | `ui\small_ui` | Overpass, weight 750 |
+| `OGMenuLarge.ttf` | `ui\large_ui` | Halo OG: rebuilt from that tag's own letters (`tools/og_font.py`) |
+| `OGMessage.ttf` | `ui\interstate` | Halo OG: rebuilt from that tag's own letters, which are `ui\large_ui`'s set one pixel closer |
+| `OGMenuSmall.ttf` | `ui\small_ui` | Halo OG: rebuilt from that tag's own letters |
+| `Overpass-900.ttf`, `Overpass-750.ttf` | nothing in the game; the text tests' substitute typeface | Overpass, weights 900 and 750 |
 | `OpenCE-Regular.ttf` | the menus' titles, as pictures (`port/assets/titles`) | OpenCE: Newtown, respaced for this project (`tools/title_font.py`) |
 | `Newtown-Regular.ttf` | (OpenCE's source) | Newtown by Roger White, unmodified |
 
-The maps' fonts are Interstate (Tobias Frere-Jones, The Font Bureau), a
-commercial typeface that cannot be shipped. Overpass (Red Hat, Delve
-Withrington) follows the same Highway Gothic road-sign alphabet and is
-under the SIL Open Font License 1.1 (`Overpass-OFL.txt`), without a
-Reserved Font Name. Matched against the maps' glyphs, its weights 900 and 750 overlap
-them as much as Interstate Bold does, at the same letter widths.
+The three OG fonts are work in progress and under review letter by letter.
+Each is drawn from its font tag's pixels alone, with no other typeface:
+`tools/og_font.py` decodes the tag's 16 stored levels to the share of each
+pixel a letter covers, finds the smoothest shape that every pixel would store
+the same way, and writes its outline with the tag's own advances, 64 font
+units to the pixel. These files were built with `--weight 0.15`, which moves
+every edge out by 0.15 of a pixel: the maps store faint pixels brighter than
+their share, so the original reads heavier on screen than its true shape. To
+rebuild them (NumPy, Pillow, potracer and fontTools, and game data):
 
-To compare a substitute with the maps' own letters, or to try another
-typeface, run `python3 tools/font_lab.py --output build/font-lab/<new folder>`
-(NumPy and Pillow). A typeface added from its findings needs its license file
-here and a row in the table above.
+    python3 tools/og_font.py --output port/assets/fonts --weight 0.15
+
+`fonts.json` marks them with `units_per_pixel`, and the game then draws each
+glyph from the pen, where its outline lies. A font without it is a substitute
+typeface: sized by the tag's capital height and fitted into each original
+glyph's ink. Overpass was that substitute through 0.6. The maps' fonts are
+Interstate (Tobias Frere-Jones, The Font Bureau), a commercial typeface that
+cannot be shipped, and Overpass (Red Hat, Delve Withrington) follows the same
+Highway Gothic road-sign alphabet under the SIL Open Font License 1.1
+(`Overpass-OFL.txt`). It stays here for the tests of the substitute path.
+
+To compare a font with the maps' own letters run
+`python3 tools/font_lab.py --output build/font-lab/<new folder>`, with
+`--review` for the short page.
 
 The menus' titles are pictures of text in the maps, set in another
 commercial typeface. OpenCE (Open Community Edition) stands in for it:
@@ -53,5 +68,5 @@ The Overpass files are static instances of Google Fonts' variable Overpass
     python3 -m fontTools.varLib.instancer 'Overpass[wght].ttf' wght=900 -o Overpass-900.ttf
     python3 -m fontTools.varLib.instancer 'Overpass[wght].ttf' wght=750 -o Overpass-750.ttf
 
-The builds embed the Overpass files (`tools/embed_assets.py`), and the
-release packages carry `Overpass-OFL.txt`, as the license asks.
+The builds embed the fonts `fonts.json` lists (`tools/embed_assets.py`). The
+release packages still carry `Overpass-OFL.txt`.
