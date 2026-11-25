@@ -95,6 +95,7 @@ static boolean widget_event_function_list_widget_goto_next_item(struct widget_in
     (void)e; (void)d; w->parameters.list.selected_index=(w->parameters.list.selected_index+1)%w->parameters.list.number_of_items; return TRUE;
 }
 #include "game/device_settings.h"
+#define HALO_CONTROLLER_LOOK_SENSITIVITY_MAX 10
 static double settings_values[NUMBER_OF_DEVICE_SETTINGS];
 static unsigned writes,errors;
 static unsigned long applied_mask;
@@ -108,10 +109,8 @@ int device_settings_apply(unsigned long mask,const double values[NUMBER_OF_DEVIC
     for(unsigned i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) if(mask & (1UL<<i)) settings_values[i]=values[i];
     return TRUE;
 }
-/* The shared frame renderer has its own asset/UV fixture. Here its tag
- * boundary provides the production dimensions for Settings composition. */
-static long native_pause_frame_tag(short height);
-static long native_pause_legend_tag(void);
+/* The production Pause kit sizes every page; its renderer has its own
+ * asset/UV fixture (tools/test_native_pause_frame.py). */
 /* SHARED NATIVE PAUSE DEPENDENCIES */
 #include "interface/native_multiplayer_pause.inc"
 #include "interface/performance_pause_menu.inc"
@@ -126,20 +125,7 @@ static struct ui_widget_definition originals[12], originals_before[12];
 static struct ui_widget_child_reference original_roots[3][5],original_lists[2][4];
 static struct ui_widget_event_handler_reference original_entry_events[2], original_leave_event;
 static long entry_id,profile_id,original_root_ids[3],original_list_ids[2],resume_id,quit_id;
-static struct ui_widget_definition native_frames[3];
-static int settings_assets[2];
-static long native_pause_frame_tag(short height) {
-    const short heights[]={159,213,240};
-    const char *names[]={"ui\\fixture\\pause_frame159","ui\\fixture\\pause_frame213","ui\\fixture\\pause_frame240"};
-    for(unsigned i=0;i<NUMBEROF(heights);i++) if(height==heights[i]) {
-        long existing=tag_loaded('DeLa',names[i]); if(existing!=NONE) return existing;
-        performance_pause_clear_definition(&native_frames[i]);
-        native_frames[i].bounds=(rectangle2d){0,-4,height,222};
-        return cache_files_register_runtime_ui_tag('DeLa',names[i],&native_frames[i]);
-    }
-    assert(0); return NONE;
-}
-static long native_pause_legend_tag(void) {return tag_loaded('DeLa',"ui\\shell\\main_menu\\button_key_sm");}
+static int settings_assets[5];
 static long add_stock(long group,const char *name,void *definition) {
     assert(settings_header.tag_count < (long)NUMBEROF(settings_map));
     long id=stock_id(settings_header.tag_count);
@@ -350,6 +336,9 @@ static void settings_setup(short mode) {
         originals[6].text_color=(real_argb_color){1,0.156863f,0.588235f,1};
         originals[8].bounds=(rectangle2d){0,0,24,174};
         add_stock('DeLa',"ui\\shell\\main_menu\\button_key_sm",&originals[8]);
+        add_stock('bitm',"ui\\shell\\bitmaps\\pausebox2_left",&settings_assets[2]);
+        add_stock('bitm',"ui\\shell\\bitmaps\\pausebox2_center",&settings_assets[3]);
+        add_stock('bitm',"ui\\shell\\bitmaps\\pausebox2_right",&settings_assets[4]);
     }
     if(mode==0) {
         profile_id=add_stock('DeLa',"ui\\shell\\main_menu\\settings_select\\player_setup\\player_profile_select_screen",&originals[1]);
@@ -425,8 +414,64 @@ static struct widget_instance *open_settings(short layout,short page,short local
     return root;
 }
 static struct widget_instance *setting_control(struct widget_instance *root,short setting) {
-    long tag=device_settings.native_pages ? device_settings_native.spinner_tags[setting]:device_settings.row_tags[setting];
-    struct widget_instance *w=widget_instance_find_by_tag_index_recursive(root,tag); assert(w); return w;
+    struct widget_instance *w=device_settings.native_pages ?
+        widget_instance_find_by_tag_index_recursive(root,device_settings_native.spinner_tags[setting]):
+        device_settings_find_row(root,setting);
+    assert(w); return w;
+}
+/* A Pause page in either size: the frame follows its content, every row has
+ * the page's one font and size, and no row reaches the next. */
+static void settings_check_pause_page(short layout,short page,struct ui_widget_definition const *base) {
+    boolean split=base->bounds.y1<480,action=page!=_ds_game;
+    short index=!split ? _native_pause_wide:action ? _native_pause_split_options:_native_pause_split_menu;
+    const struct native_pause_style *style=&native_pause_styles[index];
+    long font=tag_loaded(FONT_GROUP_TAG,style->small_font ? "ui\\small_ui":"ui\\large_ui");
+    struct ui_widget_definition *screen=&device_settings.screen[layout][page],*column=&device_settings.column[layout][page];
+    struct ui_widget_child_reference *children=device_settings.screen_children[layout][page];
+    struct ui_widget_definition *frame=ui_widget_definition_get(children[0].widget_tag.index);
+    struct ui_widget_definition *heading=ui_widget_definition_get(children[2].widget_tag.index);
+    short count=device_settings_page_counts[page],rows=count+action,height=frame->bounds.y1;
+    assert(TEST_FLAG(frame->flags,_widget_native_pause_frame_bit));
+    assert(frame->bounds.x0==0 && frame->bounds.x1==style->row_width+2*NATIVE_PAUSE_FRAME_MARGIN);
+    assert(children[0].horizontal_offset==children[1].horizontal_offset-NATIVE_PAUSE_FRAME_MARGIN);
+    assert(children[0].horizontal_offset*2+frame->bounds.x1==base->bounds.x1);
+    assert(children[0].vertical_offset>=0 && children[0].vertical_offset+height<=base->bounds.y1);
+    /* One title style: the page's font in white, the same space around it on every page. */
+    assert(children[2].widget_tag.index==(split ? device_settings.split_heading_tags[page]:device_settings.heading_tags[page]));
+    assert(heading->text_font.index==font && heading->background_bitmap.index==NONE && !heading->flags);
+    assert(heading->text_color.red==1 && heading->text_color.green==1 && heading->text_color.blue==1);
+    assert(heading->bounds.x1==style->row_width && heading->bounds.y1==style->row_height);
+    assert(children[2].horizontal_offset==children[1].horizontal_offset);
+    assert(children[2].vertical_offset==children[0].vertical_offset+style->top);
+    assert(children[1].vertical_offset==children[2].vertical_offset+style->row_height+style->title_gap);
+    assert(children[1].vertical_offset+column->bounds.y1+style->bottom==children[0].vertical_offset+height-NATIVE_PAUSE_FOOTER);
+    assert(children[3].widget_tag.index==native_pause_legend_tag());
+    assert(children[3].horizontal_offset==children[1].horizontal_offset+native_pause_legend_x(index));
+    assert(children[3].vertical_offset==children[0].vertical_offset+height-NATIVE_PAUSE_LEGEND_Y);
+    assert(screen->child_widgets.count==(!split && action ? 5:4));
+    if(!split && action) {
+        assert(children[4].widget_tag.index==device_settings.footer_tags[page]);
+        assert(children[4].vertical_offset>=children[0].vertical_offset+height && children[4].vertical_offset+60<=base->bounds.y1);
+    }
+    assert(column->bounds.x1==style->row_width && column->child_widgets.count==rows && rows<=NATIVE_PAUSE_MAXIMUM_ROWS);
+    for(short i=0;i<rows;i++) {
+        struct ui_widget_child_reference *child=&device_settings.column_children[layout][page][i];
+        struct ui_widget_definition *row=ui_widget_definition_get(child->widget_tag.index);
+        short setting=i<count && action ? device_settings_page_rows[page][i]:NONE;
+        if(setting!=NONE) assert(child->widget_tag.index==(split ? device_settings.split_row_tags[setting]:device_settings.row_tags[setting]));
+        else if(action && i==count) assert(child->widget_tag.index==(split ? device_settings.split_accept_tag:device_settings.accept_tag));
+        assert(row->text_font.index==font);
+        assert(row->bounds.x0==0 && row->bounds.y0==0 && row->bounds.x1==style->row_width && row->bounds.y1==style->row_height);
+        assert(TEST_FLAG(row->flags,_widget_native_pause_row_bit) && row->background_bitmap.index==originals[6].background_bitmap.index);
+        assert(row->vertical_offset==style->text_y && !child->horizontal_offset);
+        /* A setting, and the link to a sub-page among settings: the name at the
+         * left end and the value at the right, the same distance in. ACCEPT
+         * and a list's rows are centred. */
+        assert(row->horizontal_offset==(action && i<count ? style->text_inset:style->text_trail));
+        assert(row->justification==_text_justification_center);
+        assert(child->vertical_offset==i*style->row_height+(action && i==rows-1 ? style->action_gap:0));
+        assert(child->vertical_offset+style->row_height<=column->bounds.y1);
+    }
 }
 static void settings_structure(void) {
     settings_setup(0); assert(game_settings_remap_tag(entry_id)!=entry_id);
@@ -435,7 +480,7 @@ static void settings_structure(void) {
     assert(device_settings.column[0][_ds_audio].child_widgets.count==6);
     assert(device_settings.column[0][_ds_video].child_widgets.count==(HALO_DEVICE_HAS_RENDER_RESOLUTION ? 7:6));
     assert(device_settings.column[0][_ds_timer].child_widgets.count==5);
-    assert(device_settings.column[0][_ds_controller].child_widgets.count==3);
+    assert(device_settings.column[0][_ds_controller].child_widgets.count==5);
     assert(device_settings.column[0][_ds_multiplayer].child_widgets.count==4);
     assert(!game_settings_is_adjustable(NULL));
     struct widget_instance item={0};
@@ -731,14 +776,16 @@ static void settings_native_options(void) {
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         ,L"FPS LIMIT:",L"ANTI-ALIASING:"
 #endif
-        ,L"DEFAULT GAME TYPES:"};
+        ,L"DEFAULT GAME TYPES:",L"HORIZONTAL SENSITIVITY:",L"VERTICAL SENSITIVITY:"};
     static const short rows_by_page[5][7]={
         {0,1,2,3,NONE,5}, {6,7,8,22,
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
         _device_setting_render_height,
 #endif
-        13,14}, {4,9,10,11,12}, {18,19,20}, {15,16,17,_device_setting_show_default_game_types}};
-    static const short counts[5]={6,HALO_DEVICE_HAS_RENDER_RESOLUTION ? 7:6,5,3,4};
+        13,14}, {4,9,10,11,12},
+        {_device_setting_look_sensitivity_horizontal,_device_setting_look_sensitivity_vertical,20,18,19},
+        {15,16,17,_device_setting_show_default_game_types}};
+    static const short counts[5]={6,HALO_DEVICE_HAS_RENDER_RESOLUTION ? 7:6,5,5,4};
     settings_setup(0); assert(device_settings_build());
     assert(device_settings.native_pages && !game_settings_is_native_spinner(NULL));
     for(short page=_ds_audio;page<=_ds_multiplayer;page++) {
@@ -1067,7 +1114,7 @@ static void settings_timer_staging(void) {
         assert(writes==1 && settings_values[_device_setting_timer_volume]==0.5);
         assert(device_settings_drafts[local].values[_device_setting_timer_volume]==0.6);
         struct widget_instance *failure_footer=widget_instance_find_by_tag_index_recursive(root,device_settings.footer_tags[_ds_audio]);
-        struct widget_instance *failure_title=widget_instance_find_by_tag_index_recursive(root,device_settings.heading_tags[_ds_audio]);
+        struct widget_instance *failure_title=device_settings_find_heading(root,_ds_audio);
         assert(failure_title);
         if(layout==_ds_pause_4p || layout==_ds_coop) {
             assert(!failure_footer && failure_title->parameters.text_box.string_list_index==_ds_failure_brief);
@@ -1114,7 +1161,7 @@ static void settings_controller_staging(void) {
         struct widget_instance *left=setting_control(root,_device_setting_left_stick_deadzone);
         short index=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_left_stick_deadzone;
         assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==9000);
-        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Xbox":L"Left Deadzone: < Xbox >"));
+        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Xbox":L"Left Deadzone\t< Xbox >"));
         for(unsigned i=0;i<3;i++) assert(game_settings_event(left,_device_settings_previous));
         assert(device_settings_drafts[local].values[_device_setting_left_stick_deadzone]==0);
         assert(game_settings_event(left,_device_settings_previous));
@@ -1171,9 +1218,9 @@ static void settings_acceleration_staging(void) {
         struct widget_instance *acceleration=setting_control(root,_device_setting_look_acceleration);
         short index=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_look_acceleration;
         assert(device_settings_drafts[local].values[_device_setting_look_acceleration]==1);
-        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Xbox":L"Look Acceleration: < Xbox >"));
+        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Xbox":L"Look Acceleration\t< Xbox >"));
         assert(game_settings_event(acceleration,_device_settings_next));
-        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Off":L"Look Acceleration: < Off >"));
+        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Off":L"Look Acceleration\t< Off >"));
         assert(device_settings_drafts[local].values[_device_setting_look_acceleration]==0);
         assert(!writes && settings_values[_device_setting_look_acceleration]==1);
         assert(settings_values[_device_setting_left_stick_deadzone]==9000 && settings_values[_device_setting_right_stick_deadzone]==9000);
@@ -1191,7 +1238,7 @@ static void settings_acceleration_staging(void) {
         assert(game_settings_event(root,_device_settings_accept) && writes==2); dispose(root);
         root=open_settings(layouts[layout],_ds_controller,local);
         assert(device_settings_drafts[local].values[_device_setting_look_acceleration]==0);
-        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Off":L"Look Acceleration: < Off >"));
+        assert(!wcscmp(device_settings.text[index],device_settings.native_pages ? L"Off":L"Look Acceleration\t< Off >"));
         acceleration=setting_control(root,_device_setting_look_acceleration);
         assert(game_settings_event(acceleration,_device_settings_next));
         assert(game_settings_event(root,_device_settings_cancel)); dispose(root);
@@ -1203,6 +1250,41 @@ static void settings_acceleration_staging(void) {
         assert(writes==3 && applied_mask==(1UL<<_device_setting_look_acceleration));
         assert(settings_values[_device_setting_look_acceleration]==1);
         assert(settings_values[_device_setting_left_stick_deadzone]==9000 && settings_values[_device_setting_right_stick_deadzone]==9000);
+        dispose(root);
+    }
+}
+
+static void settings_look_sensitivity_staging(void) {
+    /* Each look axis is Profile (the Xbox's one profile value) or 1 to 10, set from
+     * the main menu and from Pause in a match, and saved only on Accept. */
+    const short layouts[]={_ds_main,_ds_pause_1p,_ds_pause_4p,_ds_solo};
+    const short modes[]={0,1,1,2}, locals[]={0,0,3,0};
+    for(unsigned layout=0;layout<NUMBEROF(layouts);layout++) {
+        short local=locals[layout]; settings_setup(modes[layout]); assert(device_settings_build());
+        settings_values[_device_setting_look_sensitivity_horizontal]=0;
+        settings_values[_device_setting_look_sensitivity_vertical]=0;
+        struct widget_instance *root=open_settings(layouts[layout],_ds_controller,local);
+        short horizontal=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_look_sensitivity_horizontal;
+        short vertical=_ds_value_start+local*NUMBER_OF_DEVICE_SETTINGS+_device_setting_look_sensitivity_vertical;
+        assert(!wcscmp(device_settings.text[horizontal],device_settings.native_pages ? L"Profile":L"Look Horizontal\t< Profile >"));
+        assert(!wcscmp(device_settings.text[vertical],device_settings.native_pages ? L"Profile":L"Look Vertical\t< Profile >"));
+        /* Profile is the lower end: Previous stays there. */
+        assert(game_settings_event(setting_control(root,_device_setting_look_sensitivity_vertical),_device_settings_previous));
+        assert(device_settings_drafts[local].values[_device_setting_look_sensitivity_vertical]==0);
+        for(unsigned step=0;step<12;step++)
+            assert(game_settings_event(setting_control(root,_device_setting_look_sensitivity_horizontal),_device_settings_next));
+        assert(device_settings_drafts[local].values[_device_setting_look_sensitivity_horizontal]==10);
+        assert(!wcscmp(device_settings.text[horizontal],device_settings.native_pages ? L"10":L"Look Horizontal\t< 10 >"));
+        for(unsigned step=0;step<3;step++)
+            assert(game_settings_event(setting_control(root,_device_setting_look_sensitivity_vertical),_device_settings_next));
+        assert(!wcscmp(device_settings.text[vertical],device_settings.native_pages ? L"3":L"Look Vertical\t< 3 >"));
+        assert(!writes && settings_values[_device_setting_look_sensitivity_horizontal]==0);
+        assert(game_settings_event(root,_device_settings_accept));
+        assert(writes==1 && applied_mask==((1UL<<_device_setting_look_sensitivity_horizontal)|
+            (1UL<<_device_setting_look_sensitivity_vertical)));
+        assert(settings_values[_device_setting_look_sensitivity_horizontal]==10 &&
+            settings_values[_device_setting_look_sensitivity_vertical]==3);
+        assert(settings_values[_device_setting_look_acceleration]==1);
         dispose(root);
     }
 }
@@ -1262,55 +1344,40 @@ static void settings_pause_and_campaign(void) {
     for(unsigned i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) assert(device_settings_native.spinner_tags[i]==NONE);
     assert(register_calls<MAXIMUM_RUNTIME_UI_TAGS && !memcmp(originals,originals_before,sizeof(originals)));
     for(unsigned i=0;i<3;i++) {
-        assert(performance_pause_list_children[i][0].widget_tag.index==native_multiplayer_pause_resume_tag());
-        assert(performance_pause_list_children[i][3].widget_tag.index==native_multiplayer_pause_leave_tag());
+        short menu_style=i ? _native_pause_split_menu:_native_pause_wide;
+        assert(performance_pause_list_children[i][0].widget_tag.index==native_multiplayer_pause_resume_tag(menu_style));
+        assert(performance_pause_list_children[i][3].widget_tag.index==native_multiplayer_pause_leave_tag(menu_style));
         assert(performance_pause_settings_events[i][0].widget_tag.index==device_settings.screen_tags[i+1][_ds_game]);
-        assert(performance_pause_children[i][1].vertical_offset+111<=original_roots[i][2].vertical_offset);
+        /* The Pause list and every Game Settings page share one panel width. */
+        assert(ui_widget_definition_get(performance_pause_children[i][0].widget_tag.index)->bounds.x1==
+            ui_widget_definition_get(device_settings.screen_children[i+1][_ds_video][0].widget_tag.index)->bounds.x1);
+        assert(performance_pause_children[i][0].horizontal_offset==device_settings.screen_children[i+1][_ds_video][0].horizontal_offset);
         for(unsigned page=0;page<_ds_page_count;page++) {
             assert(device_settings.screen[i+1][page].controller_index==_widget_controller_any);
             assert(!TEST_FLAG(device_settings.screen[i+1][page].flags,_widget_pause_game_time_bit));
-            struct ui_widget_child_reference *children=device_settings.screen_children[i+1][page];
-            struct ui_widget_definition *frame=ui_widget_definition_get(children[0].widget_tag.index);
-            short height=page==_ds_game || page==_ds_controller ? 159:
-                page==_ds_audio || page==_ds_video ? 240:213;
-            assert(frame->bounds.y1==height && frame->bounds.x0==-4 && frame->bounds.x1==222);
-            assert(children[0].horizontal_offset==children[1].horizontal_offset-8);
-            assert(children[0].vertical_offset>=0 && children[0].vertical_offset+height<=originals[i].bounds.y1);
-            assert(children[2].widget_tag.index==device_settings.heading_tags[page]);
-            assert(children[3].widget_tag.index==native_pause_legend_tag());
-            assert(children[3].horizontal_offset==children[1].horizontal_offset+17);
-            assert(children[3].vertical_offset==children[0].vertical_offset+height-25);
-            assert(device_settings.screen[i+1][page].child_widgets.count==(!i && page!=_ds_game ? 5:4));
-            struct ui_widget_definition *column=&device_settings.column[i+1][page];
-            assert(column->bounds.x1==202);
-            if(page!=_ds_game) {
-                assert(children[1].vertical_offset==children[0].vertical_offset+22);
-                assert(children[1].vertical_offset+column->bounds.y1<=children[0].vertical_offset+height-29);
-            }
-            if(!i && page!=_ds_game) assert(children[4].vertical_offset+60<=originals[i].bounds.y1);
+            settings_check_pause_page((short)(i+1),(short)page,&originals[i]);
         }
     }
-    for(unsigned row=0;row<NUMBER_OF_DEVICE_SETTINGS;row++) {
-        assert(!memcmp(&device_settings.row[row].bounds,&originals[6].bounds,sizeof(rectangle2d)));
-        assert(device_settings.row[row].background_bitmap.index==originals[6].background_bitmap.index);
-        assert(device_settings.row[row].vertical_offset==0);
-        long font=tag_loaded(FONT_GROUP_TAG,row==_device_setting_interpolation || row==_device_setting_timer_position || row>=_device_setting_show_og_maps ? "ui\\small_ui":"ui\\large_ui");
-        assert(device_settings.row[row].text_font.index==font);
-    }
-    assert(device_settings.accept.text_font.index==originals[6].text_font.index && device_settings.accept.vertical_offset==0);
+    /* One player: the original 27-pixel rows in the large font, 284 wide. */
+    assert(device_settings.row[_device_setting_show_default_game_types].bounds.x1==284);
+    assert(device_settings.split_row[_device_setting_show_default_game_types].bounds.x1==250);
+    assert(device_settings.accept.text_font.index==originals[6].text_font.index && device_settings.accept.vertical_offset==3);
     assert(device_settings.choice[_ds_pause_1p][0].text_font.index==originals[6].text_font.index);
     assert(device_settings.heading[_ds_audio].text_font.index==originals[6].text_font.index);
-    assert(device_settings.heading[_ds_audio].bounds.y1==22 && !device_settings.heading[_ds_audio].vertical_offset);
+    assert(device_settings.split_accept.text_font.index==tag_loaded(FONT_GROUP_TAG,"ui\\small_ui"));
+    assert(device_settings.choice[_ds_pause_4p][0].text_font.index==originals[6].text_font.index);
+    /* The sub-page's link lines up with the names; it has no value. */
+    assert(!wcscmp(string_at(&device_settings.timer_link[_ds_pause_1p],device_settings.timer_link[_ds_pause_1p].string_list_index),L"Timer Audio...\t"));
     struct widget_instance *one=open_settings(_ds_pause_1p,_ds_audio,0),*two=open_settings(_ds_pause_4p,_ds_audio,3);
     assert(!game_settings_is_native_spinner(setting_control(one,_device_setting_master_volume)));
     assert(device_settings.column[_ds_pause_1p][_ds_audio].child_widgets.count==7);
     assert(device_settings.column[_ds_pause_4p][_ds_video].child_widgets.count==(HALO_DEVICE_HAS_RENDER_RESOLUTION ? 8:7));
     assert(device_settings.column[_ds_pause_4p][_ds_timer].child_widgets.count==6);
-    assert(device_settings.column[_ds_pause_4p][_ds_controller].child_widgets.count==4);
+    assert(device_settings.column[_ds_pause_4p][_ds_controller].child_widgets.count==6);
     assert(game_settings_event(setting_control(two,_device_setting_master_volume),_device_settings_next));
     assert(device_settings_drafts[3].values[_device_setting_master_volume]==0.2 && device_settings_drafts[0].values[_device_setting_master_volume]==0.125);
-    assert(!wcscmp(device_settings.text[_ds_value_start+3*NUMBER_OF_DEVICE_SETTINGS],L"Master: < 20% >"));
-    assert(!wcscmp(device_settings.text[_ds_value_start],L"Master: < 12.5% >"));
+    assert(!wcscmp(device_settings.text[_ds_value_start+3*NUMBER_OF_DEVICE_SETTINGS],L"Master\t< 20% >"));
+    assert(!wcscmp(device_settings.text[_ds_value_start],L"Master\t< 12.5% >"));
     struct widget_instance *column=one->child->next,*help=widget_instance_find_by_tag_index_recursive(one,device_settings.footer_tags[_ds_audio]);
     assert(column->type==_ui_widget_type_column_list && help);
     column->focused_child=column->child->next;
@@ -1322,7 +1389,8 @@ static void settings_pause_and_campaign(void) {
     assert(help->parameters.text_box.string_list_index==_ds_audio_help);
     save_succeeds=FALSE;
     assert(!game_settings_event(two,_device_settings_accept));
-    struct widget_instance *heading=widget_instance_find_by_tag_index_recursive(two,device_settings.heading_tags[_ds_audio]);
+    struct widget_instance *heading=device_settings_find_heading(two,_ds_audio);
+    assert(heading && heading->definition_tag_index==device_settings.split_heading_tags[_ds_audio]);
     assert(heading->parameters.text_box.string_list_index==_ds_failure_brief);
     assert(game_settings_event(setting_control(two,_device_setting_master_volume),_device_settings_next));
     assert(heading->parameters.text_box.string_list_index==_ds_audio_label);
@@ -1344,6 +1412,8 @@ static void settings_pause_and_campaign(void) {
         assert(device_settings.screen[_ds_solo+i][_ds_game].child_widgets.count==4);
         for(unsigned page=0;page<_ds_page_count;page++) {
             assert(TEST_FLAG(device_settings.screen[_ds_solo+i][page].flags,_widget_pause_game_time_bit));
+            /* Campaign and co-op settings pages are the same panels as multiplayer's. */
+            settings_check_pause_page((short)(_ds_solo+i),(short)page,&originals[i]);
             one=open_settings(_ds_solo+i,page,i);
             assert(widget_globals.pause_game_time_count==1);
             dispose(one);
@@ -1398,7 +1468,7 @@ static void settings_cross_map_rebuild(void) {
         assert(strings!=old_strings && tag_index_is_group(strings,'ustr'));
         assert(device_settings_campaign.events[0][0].widget_tag.index!=NONE);
         struct widget_instance *audio=open_settings(_ds_solo,_ds_audio,0);
-        assert(!wcscmp(device_settings.text[_ds_value_start],L"Master: < 12.5% >"));
+        assert(!wcscmp(device_settings.text[_ds_value_start],L"Master\t< 12.5% >"));
         dispose(audio);
     }
 }
@@ -1419,16 +1489,56 @@ static void settings_about_metrics(void) {
     }
 }
 static void settings_text_metrics(struct ui_widget_definition *definition,wchar_t *text) {
+    /* A Pause setting is drawn inside both insets: its name from the left,
+     * its value to the right. The Python side puts two spaces between them. */
+    boolean setting=wcschr(text,L'\t')!=NULL;
     printf("%s %d",tag_get_name(definition->text_font.index),
-        definition->bounds.x1-definition->bounds.x0-definition->horizontal_offset);
+        definition->bounds.x1-definition->bounds.x0-definition->horizontal_offset-(setting ? native_pause_value_inset(definition):0));
     for(unsigned i=0;text[i];i++) printf(" %u",(unsigned)text[i]);
     puts("");
 }
+/* Every row of every Pause page, with each value the player can reach. */
+static void settings_pause_metrics(void) {
+    for(short split=0;split<2;split++) {
+        short layout=split ? _ds_pause_4p:_ds_pause_1p;
+        settings_setup(1); assert(performance_pause_build());
+        for(short page=0;page<_ds_page_count;page++) {
+            struct ui_widget_definition *heading=split ? &device_settings.split_heading[page]:&device_settings.heading[page];
+            settings_text_metrics(heading,string_at(heading,heading->string_list_index));
+            if(page==_ds_game) {
+                for(unsigned i=0;i<NUMBEROF(device_settings.choice[layout]);i++)
+                    settings_text_metrics(&device_settings.choice[layout][i],
+                        string_at(&device_settings.choice[layout][i],device_settings.choice[layout][i].string_list_index));
+                continue;
+            }
+            struct widget_instance *root=open_settings(layout,page,0);
+            struct ui_widget_definition *accept=split ? &device_settings.split_accept:&device_settings.accept;
+            settings_text_metrics(accept,string_at(accept,accept->string_list_index));
+            for(short i=0;i<device_settings_page_counts[page];i++) {
+                short setting=device_settings_page_rows[page][i];
+                if(setting==NONE) {
+                    settings_text_metrics(&device_settings.timer_link[layout],
+                        string_at(&device_settings.timer_link[layout],device_settings.timer_link[layout].string_list_index));
+                    continue;
+                }
+                struct widget_instance *row=setting_control(root,setting);
+                struct ui_widget_definition *definition=ui_widget_definition_get(row->definition_tag_index);
+                for(short direction=0;direction<2;direction++) for(short step=0;step<24;step++) {
+                    settings_text_metrics(definition,device_settings.text[_ds_value_start+setting]);
+                    assert(game_settings_event(row,direction ? _device_settings_previous:_device_settings_next));
+                }
+            }
+            dispose(root);
+        }
+    }
+}
 static void settings_controller_metrics(void) {
-    for(short mode=0;mode<2;mode++) {
-        settings_setup(mode); assert(device_settings_build());
-        struct widget_instance *root=open_settings(mode ? _ds_pause_4p:_ds_main,_ds_controller,0);
-        struct ui_widget_definition *heading=&device_settings.heading[_ds_controller];
+    /* The main menu, one player's Pause and split screen's. */
+    for(short mode=0;mode<3;mode++) {
+        settings_setup(mode ? 1:0); assert(device_settings_build());
+        struct widget_instance *root=open_settings(mode==0 ? _ds_main:mode==1 ? _ds_pause_1p:_ds_pause_4p,_ds_controller,0);
+        struct ui_widget_definition *heading=mode==2 ? &device_settings.split_heading[_ds_controller]:&device_settings.heading[_ds_controller];
+        struct ui_widget_definition *rows=mode==2 ? device_settings.split_row:device_settings.row;
         settings_text_metrics(heading,string_at(heading,heading->string_list_index));
         for(short setting=_device_setting_left_stick_deadzone;setting<=_device_setting_right_stick_deadzone;setting++) {
             struct ui_widget_definition *definition;
@@ -1436,7 +1546,7 @@ static void settings_controller_metrics(void) {
                 definition=&device_settings_native.row_labels[setting];
                 settings_text_metrics(definition,string_at(definition,definition->string_list_index));
             }
-            definition=!mode ? &device_settings_native.spinners[setting]:&device_settings.row[setting];
+            definition=!mode ? &device_settings_native.spinners[setting]:&rows[setting];
             /* Check every valid raw value through production rendering. Tiny
              * custom percentages are wider than the normal preset labels. */
             for(long raw=0;raw<=16000;raw++) {
@@ -1450,7 +1560,7 @@ static void settings_controller_metrics(void) {
             definition=&device_settings_native.row_labels[_device_setting_look_acceleration];
             settings_text_metrics(definition,string_at(definition,definition->string_list_index));
         }
-        definition=!mode ? &device_settings_native.spinners[_device_setting_look_acceleration]:&device_settings.row[_device_setting_look_acceleration];
+        definition=!mode ? &device_settings_native.spinners[_device_setting_look_acceleration]:&rows[_device_setting_look_acceleration];
         for(short state=0;state<=1;state++) {
             device_settings_drafts[0].values[_device_setting_look_acceleration]=state;
             device_settings_render_draft(&device_settings_drafts[0]);
@@ -1462,8 +1572,9 @@ static void settings_controller_metrics(void) {
 int main(int argc,char **argv) {
     if(argc==2 && !strcmp(argv[1],"--about-metrics")) { settings_about_metrics(); return 0; }
     if(argc==2 && !strcmp(argv[1],"--controller-metrics")) { settings_controller_metrics(); return 0; }
+    if(argc==2 && !strcmp(argv[1],"--pause-metrics")) { settings_pause_metrics(); return 0; }
     settings_structure(); settings_native_chooser(); settings_about(); settings_native_options(); settings_game_chooser(); settings_staging();
-    settings_timer_staging(); settings_timer_video(); settings_multiplayer_staging(); settings_controller_staging(); settings_acceleration_staging();
+    settings_timer_staging(); settings_timer_video(); settings_multiplayer_staging(); settings_controller_staging(); settings_acceleration_staging(); settings_look_sensitivity_staging();
     settings_menu_repeat_staging(); settings_hud_staging();
     settings_pause_and_campaign(); settings_registration_failure(); settings_cross_map_rebuild();
     puts("native game settings tests passed"); return 0;
@@ -1486,7 +1597,7 @@ static unsigned mac_visible_rows(struct widget_instance *column) {
 }
 static void mac_settings_video(void) {
     settings_setup(0); assert(device_settings_build());
-    assert(NUMBER_OF_DEVICE_SETTINGS==27 && device_settings_page_counts[_ds_video]==7 && device_settings_page_counts[_ds_timer]==7);
+    assert(NUMBER_OF_DEVICE_SETTINGS==29 && device_settings_page_counts[_ds_video]==7 && device_settings_page_counts[_ds_timer]==7);
     for(unsigned i=0;i<7;i++) assert(device_settings.column_children[_ds_main][_ds_video][i].vertical_offset+28<321);
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_render_height],L"Accept applies"));
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_anti_aliasing],L"Relaunch"));
@@ -1554,30 +1665,18 @@ static void mac_settings_pause_layouts(void) {
     for(short layout=_ds_pause_1p;layout<_ds_layout_count;layout++) {
         settings_setup(layout<=_ds_pause_4p ? 1:2); assert(device_settings_build());
         assert(!memcmp(originals,originals_before,sizeof(originals)));
+        /* Video and Timer Audio are the fullest pages: seven settings and
+         * ACCEPT, at the page's one pitch, inside every viewport. */
         for(short page=_ds_video;page<=_ds_timer;page++) {
-            struct ui_widget_child_reference *children=device_settings.screen_children[layout][page];
-            struct ui_widget_definition *frame=ui_widget_definition_get(children[0].widget_tag.index);
-            struct ui_widget_definition *screen=&device_settings.screen[layout][page];
-            struct ui_widget_definition *column=&device_settings.column[layout][page];
-            assert(frame->bounds.y1==240 && frame->bounds.x0==-4 && frame->bounds.x1==222);
-            assert(children[0].vertical_offset>=0 && children[0].vertical_offset+240<=screen->bounds.y1);
-            short count=7,pitch=page==_ds_video ? 20:22;
-            short column_height=(count+1)*pitch+27-pitch;
-            assert(column->child_widgets.count==count+1 && column->bounds.y1==column_height);
-            assert(children[1].vertical_offset+column_height<children[3].vertical_offset);
-            for(short i=0;i<count;i++) {
-                short row=device_settings_page_rows[page][i];
-                assert(device_settings.column_children[layout][page][i].vertical_offset==i*pitch);
-                assert(!memcmp(&device_settings.row[row].bounds,&originals[6].bounds,sizeof(rectangle2d)));
-                assert(device_settings.row[row].background_bitmap.index==originals[6].background_bitmap.index);
-                assert(device_settings.row[row].text_font.index==tag_loaded(FONT_GROUP_TAG,"ui\\small_ui"));
-            }
+            assert(device_settings_page_counts[page]==7);
+            settings_check_pause_page(layout,page,&originals[layout<=_ds_pause_4p ? layout-_ds_pause_1p:layout-_ds_solo]);
         }
         settings_values[_device_setting_anti_aliasing]=0;
         struct widget_instance *one=open_settings(layout,_ds_video,0),*column=mac_video_column(one);
-        struct widget_instance *accept=widget_instance_find_by_tag_index_recursive(one,device_settings.accept_tag);
+        struct widget_instance *accept=column->child;
+        while(accept->next) accept=accept->next;
+        assert(accept->definition_tag_index==device_settings.accept_tag || accept->definition_tag_index==device_settings.split_accept_tag);
         assert(mac_visible_rows(column)==8 && accept->visible && !accept->disabled);
-        assert(device_settings.column_children[layout][_ds_video][7].vertical_offset==7*20);
         assert(TEST_FLAG(device_settings.column[layout][_ds_video].flags,_widget_dpad_updown_tabs_thru_list_items_bit));
         struct widget_instance *two=open_settings(layout,_ds_video,3);
         assert(game_settings_event(setting_control(two,_device_setting_anti_aliasing),_device_settings_next));
@@ -1632,10 +1731,11 @@ def game_settings_fixture_source(*, mac_video=False):
     cache = (ROOT / "source/cache/cache_files.c").read_text()
     cache_header = (ROOT / "source/cache/cache_files.h").read_text()
     pause = (ROOT / "source/interface/native_pause_frame.inc").read_text()
-    pause_dependencies = c_block(cache_header, "struct tag_iterator\n{") + ";\n"
+    pause_dependencies = "typedef struct {short x,y;} point2d;\n"
+    pause_dependencies += c_block(cache_header, "struct tag_iterator\n{") + ";\n"
     pause_dependencies += c_block(cache, "void tag_iterator_new(\n") + "\n"
     pause_dependencies += c_block(cache, "long tag_iterator_next(\n") + "\n"
-    pause_dependencies += c_block(pause, "static long native_pause_resident_tag(") + "\n"
+    pause_dependencies += pause + "\n"
     source += UI_STUBS.replace("/* NATIVE ENUMS */", "\n".join(enums)).replace("/* NATIVE PREVIEW CALLBACK */", preview).replace(
         "/* PRODUCTION WIDGET PAUSE LIFECYCLE */", pause_lifecycle + focus_lifecycle).replace(
         "/* SHARED NATIVE PAUSE DEPENDENCIES */", pause_dependencies)
@@ -1665,6 +1765,7 @@ def game_settings_fixture_source(*, mac_video=False):
 int main(int argc,char **argv) {
     if(argc==2 && !strcmp(argv[1],"--about-metrics")) { settings_about_metrics(); return 0; }
     if(argc==2 && !strcmp(argv[1],"--controller-metrics")) { settings_controller_metrics(); return 0; }
+    if(argc==2 && !strcmp(argv[1],"--pause-metrics")) { settings_pause_metrics(); return 0; }
     mac_settings_video(); mac_settings_pause_layouts(); settings_about();
     settings_native_chooser(); settings_game_chooser(); settings_staging();
     settings_timer_staging(); settings_multiplayer_staging(); settings_controller_staging();
@@ -1678,22 +1779,47 @@ int main(int argc,char **argv) {
 
 
 class NativeGameSettingsTests(unittest.TestCase):
+    def verify_pause_font_metrics(self, binary):
+        """Every Pause row, with each value a player can step to, fits its row in the page's font."""
+        strings = self.verify_font_metrics(binary, "--pause-metrics", 1000)
+        if strings is None:
+            return
+        rows = {(font, value) for font, _, value in strings}
+        # One player's pages are all in the large font; split screen's settings in the small one.
+        for value in ("Default Game Types\t< Off >", "Position\t< Bottom Center >", "Anti-Aliasing\t< FXAA >",
+                      "Timer Audio...\t", "Master\t< 100% >", "FPS Limit\t< Uncapped >"):
+            self.assertIn((r"ui\large_ui", value), rows)
+            self.assertIn((r"ui\small_ui", value), rows)
+        self.assertIn((r"ui\large_ui", "ACCEPT"), rows)
+        self.assertIn((r"ui\small_ui", "ACCEPT"), rows)
+        # One font per page: one player's rows (281 for centred text, 267
+        # between a setting's insets) are never small, and split screen's
+        # settings (230) are never large.
+        self.assertEqual({font for font, width, _ in strings if width in (281, 267)}, {r"ui\large_ui"})
+        self.assertEqual({font for font, width, _ in strings if width == 230}, {r"ui\small_ui"})
+        self.assertEqual({width for _, width, _ in strings}, {281, 267, 247, 250, 230})
+
     def verify_controller_font_metrics(self, binary):
         """Measure deadzones and Controller choices with owned Xbox fonts."""
+        strings = self.verify_font_metrics(binary, "--controller-metrics", 64000)
+        if strings is not None:
+            self.assertEqual({font for font, _, _ in strings}, {r"ui\large_ui", r"ui\small_ui"})
+
+    def verify_font_metrics(self, binary, mode, at_least):
+        """Measure what the fixture prints (font, room, text) with owned Xbox fonts."""
         from tools.verify_performance_sound_samples import Cache
         paths = [next((root / f"assets/maps/{name}.map" for root in (ROOT, PRIMARY)
                        if (root / f"assets/maps/{name}.map").exists()), None) for name in ("ui", "bloodgulch")]
         paths = [path for path in paths if path is not None]
         if not paths:
-            return
-        output = subprocess.run([str(binary), "--controller-metrics"], check=True,
+            return None
+        output = subprocess.run([str(binary), mode], check=True,
                                 text=True, capture_output=True).stdout
         strings = []
         for value in output.splitlines():
             font, width, *codes = value.split()
             strings.append((font, int(width), "".join(chr(int(code)) for code in codes)))
-        self.assertGreater(len(strings), 64000)
-        self.assertEqual({font for font, _, _ in strings}, {r"ui\large_ui", r"ui\small_ui"})
+        self.assertGreater(len(strings), at_least)
         for path in paths:
             cache = Cache(path)
             fonts = {}
@@ -1712,12 +1838,14 @@ class NativeGameSettingsTests(unittest.TestCase):
                 if key not in measured:
                     cursor, glyphs = fonts[name]
                     ink_right = cursor
-                    for character in value:
+                    # A Pause setting: its name, at least two spaces, its value.
+                    for character in value.replace("\t", "  "):
                         advance, ink_width, origin_x = glyphs[character]
                         ink_right = max(ink_right, cursor + origin_x + ink_width)
                         cursor += advance
                     measured[key] = max(cursor, ink_right)
                 self.assertLessEqual(measured[key], width, f"{path.stem}: {value!r} clips in {name}")
+        return strings
 
     def verify_about_font_metrics(self, binary):
         """Measure every production page with the owned UI font, including long names/counts."""
@@ -1779,10 +1907,9 @@ class NativeGameSettingsTests(unittest.TestCase):
             for index in range(count):
                 code, advance, width, _, origin_x = cache.unpack("<H4h", address + index * 0x14)
                 glyphs[chr(code)] = (advance, width, origin_x)
-            widths = [(value, 276) for value in strings]
-            widths.extend((value, 202) for value in ("Resolution: < 2160p >",
-                "Resolution: < Native >", "FPS Limit: < Uncapped >", "FPS Limit: < 120 FPS >", "AA: < FXAA >",
-                "Position: < Bottom Center >", "Timer Size: < 100% >", "Asset Quality: < Original >"))
+            # Pause's own row texts (a name, a tab and a value) are measured
+            # in their rows by verify_pause_font_metrics.
+            widths = [(value, 276) for value in strings if "\t" not in value]
             widths.append(("Original", 112))
             for value, available in widths:
                 lines = value.splitlines()
@@ -1815,6 +1942,7 @@ class NativeGameSettingsTests(unittest.TestCase):
                     if platform == "HALO_MACOS":
                         self.verify_about_font_metrics(binary)
                         self.verify_controller_font_metrics(binary)
+                        self.verify_pause_font_metrics(binary)
 
 
 @unittest.skipUnless(shutil.which("clang") and (SDL / "include/SDL3/SDL.h").exists(), "clang and SDL3 headers required")
@@ -1920,18 +2048,19 @@ class ConfigBooleanPersistenceTests(unittest.TestCase):
 
     def test_hud_boolean_save_reload_and_failure(self):
         setting = "display.high_res_hud"
+        # original_value is read before the file exists: the default, Upres since 0.7.
         original = '# video preferences\n[display]\nhigh_res_hud = false # original artwork\nvsync = true\n'
         high_res = original.replace('= false # original', '= true # original')
-        self.run_save(original, high_res, setting=setting, value=1, original_value=0)
-        self.run_save(high_res, original, setting=setting, original_value=0)
+        self.run_save(original, high_res, setting=setting, value=1, original_value=1)
+        self.run_save(high_res, original, setting=setting, original_value=1)
         self.run_save(original, original, setting=setting, mode="failure", value=1,
-                      original_value=0, success=False)
+                      original_value=1, success=False)
         malformed = original.replace('= false # original', '= "Original" # original')
         self.run_save(malformed, malformed, setting=setting, value=1,
-                      original_value=0, success=False)
+                      original_value=1, success=False)
         missing = '# video preferences\n[display]\nvsync = true\n'
         self.run_save(missing, missing.replace('[display]\n', '[display]\nhigh_res_hud = true\n'),
-                      setting=setting, value=1, original_value=0)
+                      setting=setting, value=1, original_value=1)
 
     def test_retired_menu_repeat_setting_is_rejected_without_changing_file(self):
         setting = "input.fast_menu_repeat"

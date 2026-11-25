@@ -544,7 +544,7 @@ static boolean king_engine_display_score(
 				}
 				else
 					string = L"";
-				usnprintf(buffer, buffer_size, string, place_name, score);
+				usnprintf(buffer, buffer_size, ustring_format_checked(string, "sd"), place_name, score);
 			}
 			else if (message == king_message_ally_on_the_hill)
 			{
@@ -557,7 +557,7 @@ static boolean king_engine_display_score(
 				}
 				else
 					string = L"";
-				usnprintf(buffer, buffer_size, string, other_player->name, score);
+				usnprintf(buffer, buffer_size, ustring_format_checked(string, "sd"), other_player->name, score);
 			}
 			else if (message == king_message_enemy_on_the_hill)
 			{
@@ -570,7 +570,7 @@ static boolean king_engine_display_score(
 				}
 				else
 					string = L"";
-				usnprintf(buffer, buffer_size, string, other_player->name, score);
+				usnprintf(buffer, buffer_size, ustring_format_checked(string, "sd"), other_player->name, score);
 			}
 			else
 			{

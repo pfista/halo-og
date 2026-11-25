@@ -35,7 +35,8 @@ static const char *names[] = {"audio.volume", "audio.music_volume", "audio.effec
     "display.timer_position", "display.timer_scale", "display.fullscreen",
     "maps.show_og", "maps.show_community", "network.join_in_progress",
     "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration",
-    "input.fast_menu_repeat", "display.high_res_hud", "game.show_default_game_types"};
+    "input.fast_menu_repeat", "display.high_res_hud", "game.show_default_game_types",
+    "input.look_sensitivity_horizontal", "input.look_sensitivity_vertical"};
 #define TEST_SETTING_COUNT (sizeof(names)/sizeof(names[0]))
 static double saved[TEST_SETTING_COUNT];
 static const char *antialiasing="off";
@@ -92,6 +93,7 @@ static void reset(double values[NUMBER_OF_DEVICE_SETTINGS]) {
     for (unsigned i=0;i<TEST_SETTING_COUNT;i++) saved[i]=(i==7 || i==11 || i==12) ? 0.0 : 1.0;
     saved[18]=saved[19]=9000;
     saved[21]=saved[22]=0;
+    saved[24]=saved[25]=0;
     saved[0]=0.15; fullscreen=native_fullscreen=1; write_ok=switch_ok=apply_ok=1;
     antialiasing="off";render_height=480;frame_limit=0;
     writes=audio_applies=video_applies=switches=starts=stops=0;
@@ -132,6 +134,30 @@ static void check_controller_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) 
     values[_device_setting_look_acceleration]=1; values[_device_setting_left_stick_deadzone]=3277; write_ok=0;
     assert(!device_settings_apply((1UL<<_device_setting_look_acceleration)|(1UL<<_device_setting_left_stick_deadzone),values));
     assert(saved[20]==0 && saved[18]==9000 && !audio_applies && !video_applies && !switches);
+    /* Look sensitivity: Profile (0) keeps the Xbox's one profile value; 1 to 10 set
+     * turning or up/down on its own, on the profile's own scale of rates. */
+    reset(values);
+    assert(values[_device_setting_look_sensitivity_horizontal]==0 && values[_device_setting_look_sensitivity_vertical]==0);
+    values[_device_setting_look_sensitivity_horizontal]=7; values[_device_setting_look_sensitivity_vertical]=3;
+    assert(device_settings_apply((1UL<<_device_setting_look_sensitivity_horizontal)|
+        (1UL<<_device_setting_look_sensitivity_vertical),values));
+    assert(writes==1 && saved[24]==7 && saved[25]==3 && !audio_applies && !video_applies && !switches);
+    assert(device_settings_get(_device_setting_look_sensitivity_horizontal)==7 &&
+        device_settings_get(_device_setting_look_sensitivity_vertical)==3);
+    for(int setting=_device_setting_look_sensitivity_horizontal;setting<=_device_setting_look_sensitivity_vertical;setting++) {
+        const double bad[]={-1,11,2.5,NAN,INFINITY};
+        for(unsigned i=0;i<sizeof(bad)/sizeof(bad[0]);i++) {
+            values[setting]=bad[i]; assert(!device_settings_apply(1UL<<setting,values));
+        }
+        values[setting]=0;
+    }
+    assert(writes==1);
+    saved[24]=11; saved[25]=-2;
+    assert(device_settings_get(_device_setting_look_sensitivity_horizontal)==0 &&
+        device_settings_get(_device_setting_look_sensitivity_vertical)==0);
+    /* The ends and middle of the original profile tables (player_ui.c). */
+    assert(halo_controller_look_rate(0,1)==80 && halo_controller_look_rate(0,5)==160 && halo_controller_look_rate(0,10)==260);
+    assert(halo_controller_look_rate(1,1)==40 && halo_controller_look_rate(1,5)==80 && halo_controller_look_rate(1,10)==130);
 }
 static void check_menu_repeat_settings(double values[NUMBER_OF_DEVICE_SETTINGS]) {
     unsigned long menu_repeat = 1UL << _device_setting_fast_menu_repeat;
@@ -375,7 +401,7 @@ int main(void) {
         (1UL<<_device_setting_join_in_progress),values));
     assert(writes==2 && saved[6]==1 && saved[15]==1 && saved[16]==1 && saved[17]==1);
 #if MAC_FULLSCREEN
-    assert(NUMBER_OF_DEVICE_SETTINGS==27);
+    assert(NUMBER_OF_DEVICE_SETTINGS==29);
     reset(values);values[_device_setting_render_height]=0;
     values[_device_setting_frame_limit]=120;values[_device_setting_anti_aliasing]=1;
     assert(device_settings_apply((1UL<<_device_setting_render_height)|
@@ -413,9 +439,9 @@ int main(void) {
     assert(values[_device_setting_render_height]==720);
     assert(device_settings_apply(1UL<<_device_setting_render_height,values) && !writes);
 #elif HALO_DEVICE_HAS_RENDER_RESOLUTION
-    assert(NUMBER_OF_DEVICE_SETTINGS==25);
+    assert(NUMBER_OF_DEVICE_SETTINGS==27);
 #else
-    assert(NUMBER_OF_DEVICE_SETTINGS==24);
+    assert(NUMBER_OF_DEVICE_SETTINGS==26);
 #endif
     puts("device settings save/apply tests passed");
 }

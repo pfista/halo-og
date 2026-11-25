@@ -18,7 +18,10 @@ of intervening upstream changes.
 `685bf260a0a648a1d898928a99b17428a2549b92` (October 4, 2026 review).
 The November 17 catch-up inventoried merged history through
 `307a42ee04ba58ccafbc231353629e67476af5cd` and reviewed selected production
-diffs. Review subsequent candidates individually.
+diffs. The November 23 review inventoried the `testing` branch through
+`40d3a1f71f70e1bd955d5ed9b88e8b8a410de28e` (1,083 commits since the fork
+point) and set [the adoption plan](opence-adoption.md). Review subsequent
+candidates individually.
 
 The following decisions still constrain integration. Excluded/deferred changes
 were diff-reviewed and remain unintegrated; their runtime behavior is unvalidated.
@@ -118,6 +121,49 @@ base v11. The 43-to-44 change covers automated MCC package offers and dedicated
 MCC hosting. For v11, the earlier pregame keep-alive width correction
 (`904fbbfc`) merits independent verification against existing lobby traffic.
 
+## November 24 adoption for 0.7
+
+After the November 23 player meeting the user chose to take OpenCE engine work
+more permissively, in the batches of [the adoption plan](opence-adoption.md).
+Every upstream commit below is from OpenCE's CC0 era (before `4b09168e`).
+
+| Area | Upstream | Halo OG | Decision |
+| --- | --- | --- | --- |
+| Joining | `ab3c388c` | `e10e543fb` | Adopt. Connecting clears the closed mark a write made before the socket existed. |
+| Joining | `ff8fc7a6` | `07922fbed` | Adopt. A connect wait that times out is still connecting. |
+| Grenades | `1f87b4ff` | `958472823` | Adopt. A joiner's copy of a unit has no grenades until the host's inventory arrives. Upstream measured 2 of 41 throws unseen by the host before and none after. |
+| Motion sensor | `1ac8186d6` | `832e5f3e8` | Adopt. Three or four local players overran two stack arrays. |
+| Split screen | `cf17201ec` | `2b90d9b30` | Adopt. Dividers follow the screen width. |
+| Help text | `626c42df6` | `97104e2ea` | Adopt. A custom icon in help text read the button icon list at index -1. |
+| String lists | `5ec67a8db` | `665276ed5` | Adopt. |
+| Map text as a format | `c1694f607`, `40bb5ea4a`, `65cd4c29d` | `2b3483c1f` | Adopt as one change. The upstream hunks for its co-op scoreboard are left out. |
+| Items | `d084721f` | `6a030ef0c` | Adopt. Changes behavior only on maps with more than 32,767 collision surfaces. |
+| Active camouflage | `43dc11f22` | `ece84ed2e` | Adopt. |
+| 3D sound distance | `991ab4101` | `783e0ebd4` | Adopt. DirectSound's distance factor converts units for Doppler; the rolloff is a ratio of distances in the same units. This raises distant 3D sounds by up to 10 dB and should be compared with an Xbox. |
+| Camouflage and reflection target | `c92b9defc` | `2ef502d70` | Adopt for OpenGL and write the Metal counterpart. Unchanged at 480 lines. |
+| Smooth Motion pose changes | `e44619818` | `8246f48df` | Adopt. Smooth Motion off is unchanged. |
+| Smooth Motion cinematic camera | `33c2baa28` | `c4c5ca4aa` | Adopt. Smooth Motion off is unchanged. |
+| Antennas and attached effects | `39ece781e` | `acee506b8` | Adopt with a change: upstream steps antennas in the tick at every frame rate, Halo OG only with Smooth Motion on, so the original path is kept when it is off. |
+| Antenna and flag jump threshold | `f2a0f91e4` | — | Exclude. It corrects an original Xbox quirk in stock behavior. |
+| Lens flares out of view | `744040c87` | — | Defer. It changes when a flare fades and needs a comparison on both renderers. |
+| Hardening rounds | `761210d4`, `76addf66`, `54abd344` | — | Defer to the map import work. |
+
+New in the same release, not from upstream: native resolution in a window on
+Windows and Linux, Detail Distance, the picture defaults and their
+one-time move (`e024d3c72`, `9906611cc`), the 32-player host cap (`f592733cf`),
+separate look sensitivity (`c5314ab4e`) and the 0.7 release line (`eceb73d38`).
+
+Validation on November 24: the Mac guest builds; `d3d8_gl.c` compiles in the
+guest-only OpenGL configuration; focused fixtures pass for settings and their
+migration, device settings, the settings menu on five platform configurations,
+render scale, the Metal texture cache, desktop resolution, render
+interpolation, solo start, the performance network gate and the v11 wire
+layout. Isolated Mac sessions with the player cloaked rendered correctly on
+Metal at 480 lines, at the 1080p preset and at a native 2560x1920 drawable,
+and Blood Gulch ran with Smooth Motion on and off. Not done: Windows, Linux,
+Android and iPhone builds, a two-machine game, a controller in hand, a vehicle
+antenna on screen, and any comparison with an Xbox.
+
 ## Desktop OpenGL lens flare visibility
 
 Since `42256112`, Windows and Linux use the latest completed visibility test for each light and
@@ -196,13 +242,13 @@ upstream `307a42ee` (November 16, 2026) OpenCE had moved from protocol 11 to 44,
 adding co-op, new modes, dedicated-server and admission changes that Halo OG
 does not adopt, and it now checks the version explicitly when a client joins.
 Halo OG does not follow those versions. Its network version is its own:
-20000 plus the release line of the product version, currently **20006** for
-0.6. Versions 1 to 11 were shared with OpenCE, so Halo OG v0.5.2 and
+20000 plus the release line of the product version, currently **20007** for
+0.7. Versions 1 to 11 were shared with OpenCE, so Halo OG v0.5.2 and
 earlier, and every OpenCE build, are a different version; a client names the
 mismatch and does not join.
 
 **The product version states which builds play together.** While the major
-version is 0, builds with the same minor version do: every 0.6.x. From 1.0,
+version is 0, builds with the same minor version do: every 0.7.x. From 1.0,
 builds with the same major version do: every 1.x. The release line is the
 minor version before 1.0 and 100 times the major version after it, and the
 game refuses a host on another line, naming both releases. The rule for
@@ -226,9 +272,12 @@ Game-discovery UI requires a user check-in before implementation and should map
 to original Xbox-style Multiplayer/System Link menus; upstream's PC-style
 server browser UI is not adopted.
 
-Version 20006 sends what protocol 11 sent: host authority, 30 Hz simulation
-and the 28-byte PC options record, with no new prediction or transport
-algorithm. Halo OG hosts original-rule defaults. A client refuses a settings
+Versions 20006 and 20007 send what protocol 11 sent: host authority, 30 Hz
+simulation and the 28-byte PC options record, with no new prediction or
+transport algorithm. 0.7 is a new line because machines must agree on what it
+changes in the simulation and in what a joiner assumes, not because the
+messages changed: a joiner's copy of a unit starts without grenades, an item
+keeps its resting surface on very large maps, and a host admits 32 players. Halo OG hosts original-rule defaults. A client refuses a settings
 record carrying an option it does not implement (radar players, per-team
 vehicle sets, custom loadouts, unknown weapon sets, or an invalid value) before
 the record can precache a map or change state. Valid host-authoritative values,
@@ -243,8 +292,8 @@ before the received settings can change state or start precaching. Use matching
 Halo OG builds and map revisions for the baseline playtest.
 
 PB capability flag `0x04` is separate from the in-progress flag `0x02`.
-Options-off games advertise the stock version, 20006; enabled PB games advertise
-it with bit 15 set (`0xCE26`) and require supporting peers. Input Delay: 33ms also requires peers that confirm
+Options-off games advertise the stock version, 20007; enabled PB games advertise
+it with bit 15 set (`0xCE27`) and require supporting peers. Input Delay: 33ms also requires peers that confirm
 the delay capability; older PB builds cannot join an enabled-delay match.
 Builds on version 11 or earlier must update.
 See [networking](../port/linux/NETCODE.md), [Performance Options](performance-options.md)
@@ -354,13 +403,35 @@ the hold timer. It defaults Original and applies only after Accept, with no
 simulation, gameplay-button or network-rule change. See
 [menu repeat](menu-repeat.md) for the option and validation boundaries.
 
-New configurations set `display.high_res_hud`, `display.interpolation` and
-`display.direct_camera` to `false`. Existing choices are preserved. Simulation
-stays at 30 Hz; high-refresh rendering can be appropriate, with interpolation
-and input response assessed separately.
+Since 0.7, at the user's request after the November 2026 player meeting, a new
+installation uses the enhanced picture: `display.interpolation` and
+`display.high_res_hud` are `true`, and `display.render_height` is `0` on Mac,
+Windows and Linux (the display's own resolution, in fullscreen or a window;
+before 0.7 the Mac drew 480 lines and Windows and Linux drew 480 lines in a
+window). This is the one deliberate exception to "options default to the
+original": players compared the 480-line, 30 FPS default with other builds and
+read it as a worse port. It changes only what is drawn. The original Xbox
+picture remains selectable in Video and in
+[the comparison profile](../port/macos/profiles/xbox-ntsc.toml);
+`display.direct_camera` stays `false`, and the simulation stays at 30 Hz. The
+iPhone keeps 480 lines until it has a Resolution setting.
+
+`display.detail_distance` goes with the resolution. The Xbox's level-of-detail,
+shadow and particle cutoffs are sizes in 480-line pixels, chosen so a change
+happens where that picture cannot show it. By default the cutoffs now follow
+the lines actually drawn, up to three times the Xbox's distance, so a native
+picture hides the changes as the Xbox's did and a 480-line picture is exactly
+the Xbox's. The ten-unit range of footstep and impact effects is unchanged
+because those effects carry sounds.
+
+The game writes every setting into `config.toml` at its default, so a changed
+default alone would never reach an existing player. A file with no
+`display.defaults_revision` that still holds the 0.6 value for every one of
+those settings moves to the new defaults once. A file that changed any of them
+keeps all of them, as does a tool profile that names only some.
 
 At the user's explicit request, Video exposes optional replacements as
-**Asset Quality: Original / Upres**, with Original as the default. Native Metal now
+**Asset Quality: Original / Upres**, with Upres as the default since 0.7. Native Metal now
 supports the same optional assets as ANGLE, including meter coverage blending.
 These are hand-authored PC-derived reconstructions in Xbox layout, not a new
 stock-artwork baseline. Upres also enables font substitutes and 34 menu title

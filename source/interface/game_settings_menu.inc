@@ -19,7 +19,7 @@ enum { _ds_settings_label, _ds_profile_label, _ds_game_label, _ds_about_label, _
     _ds_timer_label, _ds_timer_help, _ds_timer_link_label, _ds_timer_link_help,
     _ds_select_key_label, _ds_accept_key_label, _ds_failure_brief, _ds_partial_failure_brief,
     _ds_about_heading, _ds_about_info, _ds_multiplayer_label, _ds_multiplayer_help,
-    _ds_controller_label, _ds_controller_help, _ds_row_label_start,
+    _ds_controller_label, _ds_controller_help, _ds_pause_timer_link_label, _ds_row_label_start,
     _ds_help_start = _ds_row_label_start + NUMBER_OF_DEVICE_SETTINGS,
     _ds_value_start = _ds_help_start + NUMBER_OF_DEVICE_SETTINGS };
 static short const device_settings_choices[] = {_ds_audio, _ds_video, _ds_controller, _ds_multiplayer};
@@ -28,14 +28,18 @@ static short const device_settings_deadzone_presets[] = {0, 3277, 6553, 9000, 98
 static char const *const device_settings_deadzone_labels[] = {"0%", "10%", "20%", "Xbox", "30%", "40%", "49%"};
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 7
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 7, 3, 4};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 7, 5, 4};
 #elif HALO_DEVICE_HAS_RENDER_RESOLUTION
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 7
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 5, 3, 4};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 5, 5, 4};
 #else
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 6
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 6, 5, 3, 4};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 6, 5, 5, 4};
 #endif
+/* A Pause page shows its settings and ACCEPT. One more setting than fits
+ * belongs on a sub-page, as Audio's TIMER AUDIO; the rows are never squeezed. */
+typedef char device_settings_pages_fit_a_pause_panel[
+    DEVICE_SETTINGS_MAX_PAGE_ROWS + 1 <= NATIVE_PAUSE_MAXIMUM_ROWS ? 1 : -1];
 static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX_PAGE_ROWS] = {
     {NONE, NONE, NONE, NONE},
     {_device_setting_master_volume, _device_setting_music_volume, _device_setting_effects_volume,
@@ -56,7 +60,8 @@ static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX
     {_device_setting_timer_volume, _device_setting_timer_countdown, _device_setting_timer_beeps,
      _device_setting_timer_minutes, _device_setting_timer_items},
 #endif
-    {_device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone, _device_setting_look_acceleration},
+    {_device_setting_look_sensitivity_horizontal, _device_setting_look_sensitivity_vertical,
+     _device_setting_look_acceleration, _device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone},
     {_device_setting_show_og_maps, _device_setting_show_community_maps, _device_setting_join_in_progress,
      _device_setting_show_default_game_types}};
 static short const device_settings_page_titles[_ds_page_count] = {_ds_game_label, _ds_audio_label, _ds_video_label, _ds_timer_label, _ds_controller_label, _ds_multiplayer_label};
@@ -71,6 +76,9 @@ static struct
     struct ui_widget_definition column[_ds_layout_count][_ds_page_count], choice[_ds_layout_count][DEVICE_SETTINGS_CHOICE_COUNT];
     struct ui_widget_definition timer_link[_ds_layout_count];
     struct ui_widget_definition heading[_ds_page_count], footer[_ds_page_count], row[NUMBER_OF_DEVICE_SETTINGS], accept;
+    struct ui_widget_definition pause_styles[NUMBER_OF_NATIVE_PAUSE_STYLES];
+    /* Split screen shows the same pages in the kit's smaller rows. */
+    struct ui_widget_definition split_heading[_ds_page_count], split_row[NUMBER_OF_DEVICE_SETTINGS], split_accept;
     struct ui_widget_child_reference settings_children[4], settings_menu_children[3], settings_preview_children[2];
     struct ui_widget_child_reference about_children[3];
     struct ui_widget_game_data_input_reference settings_menu_input;
@@ -89,6 +97,8 @@ static struct
     long timer_tags[_ds_layout_count];
     char timer_names[_ds_layout_count][64];
     long row_tags[NUMBER_OF_DEVICE_SETTINGS], heading_tags[_ds_page_count], footer_tags[_ds_page_count], accept_tag;
+    long split_row_tags[NUMBER_OF_DEVICE_SETTINGS], split_heading_tags[_ds_page_count], split_accept_tag;
+    char split_row_names[NUMBER_OF_DEVICE_SETTINGS][64];
     char screen_names[_ds_layout_count][_ds_page_count][64], column_names[_ds_layout_count][_ds_page_count][64];
     char choice_names[_ds_layout_count][DEVICE_SETTINGS_CHOICE_COUNT][64], row_names[NUMBER_OF_DEVICE_SETTINGS][64];
     unsigned about_page;
@@ -219,15 +229,15 @@ static void device_settings_text_definition(struct ui_widget_definition *definit
     if (interactive) definition->background_bitmap = style->background_bitmap;
 }
 
-/* Pause buttons are authored for the resident 202 by 27 crop. Changing that
- * rectangle changes the bitmap's UVs, not merely the layout's available space. */
+/* A Pause row in one of the kit's styles. Text that is not a row to select,
+ * a page's title, is the same row without its selection box. */
 static void device_settings_pause_text_definition(struct ui_widget_definition *definition,
     struct ui_widget_definition const *style, long strings, short label, boolean interactive)
 {
-    device_settings_text_definition(definition, style, strings, label, interactive);
-    definition->bounds = style->bounds;
-    definition->horizontal_offset = style->horizontal_offset;
-    definition->vertical_offset = style->vertical_offset;
+    if (interactive) *definition = *style;
+    else native_pause_title_definition(definition, style);
+    definition->text_label_string_list = device_settings_reference(UNICODE_STRING_LIST_TAG, strings);
+    definition->string_list_index = label;
 }
 
 static boolean device_settings_build_about(long strings, struct ui_widget_definition const *base,
@@ -386,7 +396,7 @@ static boolean device_settings_build_native_pages(long strings, long const *head
         L"Adjust music, sound effects,\r\ndialogue and overall volume.",
         L"Choose fullscreen, VSync\r\nand smooth motion settings.",
         L"Choose stick deadzones\r\nand look acceleration\r\nfor this device.",
-        L"Choose map sets and game types.\r\nAllow new players into matches\r\nafter they start."};
+        L"Pick map sets and game types.\r\nLet new players join matches\r\nafter they start."};
     struct ui_widget_definition *base[NUMBEROF(templates)];
     struct ui_widget_child_reference *chooser_rows;
     long i, tag, page, row;
@@ -570,7 +580,10 @@ static boolean device_settings_build(void)
         "TIMER AUDIO...", "Choose timer volume and cues.\r\nHost Timer Sounds must be on.",
         "=SELECT", "=ACCEPT", "COULD NOT SAVE", "REVIEW SETTINGS", "", "",
         "MULTIPLAYER", "Left/Right: Adjust\r\nAccept saves. B: Cancel",
-        "CONTROLLER", "Left/Right: Adjust\r\nAccept saves. B: Cancel"};
+        "CONTROLLER", "Left/Right: Adjust\r\nAccept saves. B: Cancel",
+        /* In Pause the link to the sub-page lines up with the names of the
+         * settings around it; it has no value to show. */
+        "Timer Audio...\t"};
     static char const *const row_labels[] = {
         "MASTER VOLUME:", "MUSIC VOLUME:", "EFFECTS VOLUME:", "DIALOGUE VOLUME:", "TIMER VOLUME:",
         "MENU MUSIC:", "FULLSCREEN:", "VSYNC:", "SMOOTH MOTION:",
@@ -582,7 +595,7 @@ static boolean device_settings_build(void)
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         , "FPS LIMIT:", "ANTI-ALIASING:"
 #endif
-        , "DEFAULT GAME TYPES:"
+        , "DEFAULT GAME TYPES:", "HORIZONTAL SENSITIVITY:", "VERTICAL SENSITIVITY:"
         };
     static char const *const help[] = {
         "Hear the whole battlefield.\r\nAdjust master game audio.",
@@ -622,8 +635,11 @@ static boolean device_settings_build(void)
         "Smooth world edges with FXAA.\r\nOriginal HUD stays unchanged.\r\nRelaunch Halo to apply."
 #endif
         , "Show original built-in game types.\r\nCustom types and Team Slayer Pro\r\nstay visible when this option is off."
+        , "Set turning speed on its own, 1 to 10.\r\nProfile uses each player's own\r\nLook Sensitivity, as on the Xbox."
+        , "Set looking up and down, 1 to 10.\r\nProfile uses each player's own\r\nLook Sensitivity, as on the Xbox."
         };
     static char const *const heading_names[] = {"ui\\native_settings\\game_title", "ui\\native_settings\\audio_title", "ui\\native_settings\\video_title", "ui\\native_settings\\timer_title", "ui\\native_settings\\controller_title", "ui\\native_settings\\multiplayer_title"};
+    static char const *const split_heading_names[] = {"ui\\native_settings\\split_game_title", "ui\\native_settings\\split_audio_title", "ui\\native_settings\\split_video_title", "ui\\native_settings\\split_timer_title", "ui\\native_settings\\split_controller_title", "ui\\native_settings\\split_multiplayer_title"};
     static char const *const footer_names[] = {"ui\\native_settings\\game_help", "ui\\native_settings\\audio_help", "ui\\native_settings\\video_help", "ui\\native_settings\\timer_help", "ui\\native_settings\\controller_help", "ui\\native_settings\\multiplayer_help"};
     struct ui_widget_definition const *bases[_ds_layout_count] = {0};
     struct ui_widget_definition const *style;
@@ -666,11 +682,17 @@ static boolean device_settings_build(void)
                 bases[layout] = native_multiplayer_pause_root((short)(layout - _ds_pause_1p));
                 if (!bases[layout]) return FALSE;
             }
-            style = native_multiplayer_pause_button_style();
-            if (!style) return FALSE;
+            for (i = 0; i < NUMBER_OF_NATIVE_PAUSE_STYLES; i++)
+            {
+                style = native_multiplayer_pause_button_style((short)i);
+                if (!style) return FALSE;
+                device_settings.pause_styles[i] = *style;
+            }
         }
         else
         {
+            /* Campaign and co-op keep their authored Pause list. Their
+             * settings pages are the same panels as multiplayer's. */
             for (layout = _ds_solo; layout < _ds_layout_count; layout++)
             {
                 tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, device_settings_campaign_roots[layout - _ds_solo]);
@@ -679,8 +701,11 @@ static boolean device_settings_build(void)
             }
             tag = tag_loaded(UI_WIDGET_DEFINITION_TAG, "ui\\shell\\solo_game\\pause_game\\resume_game_button");
             if (tag == NONE) return FALSE;
-            style = ui_widget_definition_get(tag);
+            for (i = 0; i < NUMBER_OF_NATIVE_PAUSE_STYLES; i++)
+                if (!native_pause_row_definition(&device_settings.pause_styles[i], (short)i,
+                    ui_widget_definition_get(tag)->background_bitmap.index)) return FALSE;
         }
+        style = &device_settings.pause_styles[_native_pause_wide];
     }
     text_definition = main_menu ? device_settings_text_definition : device_settings_pause_text_definition;
     csmemset(device_settings_drafts, 0, sizeof(device_settings_drafts));
@@ -700,13 +725,18 @@ static boolean device_settings_build(void)
     {
         text_definition(&device_settings.heading[page], style, strings, device_settings_page_titles[page], FALSE);
         if (main_menu) device_settings.heading[page].text_font.index = font;
-        else
-        {
-            device_settings.heading[page].bounds.y1 = 22;
-            device_settings.heading[page].vertical_offset = 0;
-        }
         device_settings.heading[page].text_color = (real_argb_color){1, 1, 1, 1};
         heading_tags[page] = device_settings_register(heading_names[page], &device_settings.heading[page]);
+        device_settings.split_heading_tags[page] = NONE;
+        if (!main_menu)
+        {
+            /* One title style on every Pause page: the page's own font, in white. */
+            text_definition(&device_settings.split_heading[page],
+                &device_settings.pause_styles[page == _ds_game ? _native_pause_split_menu : _native_pause_split_options],
+                strings, device_settings_page_titles[page], FALSE);
+            device_settings.split_heading_tags[page] = device_settings_register(split_heading_names[page], &device_settings.split_heading[page]);
+            if (device_settings.split_heading_tags[page] == NONE) return FALSE;
+        }
         device_settings_text_definition(&device_settings.footer[page], style, strings, device_settings_page_help[page], FALSE);
         device_settings.footer[page].text_font.index = font;
         device_settings.footer[page].bounds.y1 = main_menu ? 40 : 60;
@@ -736,29 +766,53 @@ static boolean device_settings_build(void)
     device_settings_native.option_input.function = _device_settings_option_help;
     for (row = 0; row < NUMBER_OF_DEVICE_SETTINGS; row++)
     {
+        /* Every row of a Pause page uses its style's one font. */
         text_definition(&device_settings.row[row], style, strings, (short)(_ds_value_start + row), TRUE);
-        if (main_menu || row == _device_setting_interpolation || row == _device_setting_timer_position ||
-            row >= _device_setting_show_og_maps
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
-            || row == _device_setting_fullscreen || row == _device_setting_vsync ||
-            row == _device_setting_timer_volume || row >= _device_setting_timer_countdown
-#endif
-            )
-            device_settings.row[row].text_font.index = font;
+        if (main_menu) device_settings.row[row].text_font.index = font;
+        else native_pause_setting_definition(&device_settings.row[row], _native_pause_wide);
         performance_pause_block(&device_settings.row[row].event_handlers, NUMBEROF(device_settings.row_events), device_settings.row_events);
         snprintf(device_settings.row_names[row], sizeof(device_settings.row_names[row]), "ui\\native_settings\\row_%ld", row);
         device_settings.row_tags[row] = device_settings_register(device_settings.row_names[row], &device_settings.row[row]);
         if (device_settings.row_tags[row] == NONE) return FALSE;
+        device_settings.split_row_tags[row] = NONE;
+        if (!main_menu)
+        {
+            text_definition(&device_settings.split_row[row], &device_settings.pause_styles[_native_pause_split_options],
+                strings, (short)(_ds_value_start + row), TRUE);
+            native_pause_setting_definition(&device_settings.split_row[row], _native_pause_split_options);
+            performance_pause_block(&device_settings.split_row[row].event_handlers, NUMBEROF(device_settings.row_events), device_settings.row_events);
+            snprintf(device_settings.split_row_names[row], sizeof(device_settings.split_row_names[row]), "ui\\native_settings\\split_row_%ld", row);
+            device_settings.split_row_tags[row] = device_settings_register(device_settings.split_row_names[row], &device_settings.split_row[row]);
+            if (device_settings.split_row_tags[row] == NONE) return FALSE;
+        }
     }
     text_definition(&device_settings.accept, style, strings, _ds_accept_label, TRUE);
     if (main_menu) device_settings.accept.text_font.index = font;
     performance_pause_block(&device_settings.accept.event_handlers, 2, device_settings.accept_events);
     device_settings.accept_tag = device_settings_register("ui\\native_settings\\accept", &device_settings.accept);
     if (device_settings.accept_tag == NONE) return FALSE;
+    device_settings.split_accept_tag = NONE;
+    if (!main_menu)
+    {
+        text_definition(&device_settings.split_accept, &device_settings.pause_styles[_native_pause_split_options],
+            strings, _ds_accept_label, TRUE);
+        performance_pause_block(&device_settings.split_accept.event_handlers, 2, device_settings.accept_events);
+        device_settings.split_accept_tag = device_settings_register("ui\\native_settings\\split_accept", &device_settings.split_accept);
+        if (device_settings.split_accept_tag == NONE) return FALSE;
+    }
     /* Register every root before wiring the Game choices. */
     for (layout = 0; layout < _ds_layout_count; layout++)
     {
+        /* The viewport picks the style: one player's whole screen, or split screen. */
+        short menu_style = NONE, options_style = NONE;
+        boolean split = FALSE;
         if (!bases[layout]) continue;
+        if (!main_menu)
+        {
+            menu_style = native_pause_style_for(&bases[layout]->bounds, FALSE);
+            options_style = native_pause_style_for(&bases[layout]->bounds, TRUE);
+            split = options_style != _native_pause_wide;
+        }
         for (page = 0; page < _ds_page_count; page++)
         {
             snprintf(device_settings.screen_names[layout][page], sizeof(device_settings.screen_names[layout][page]), "ui\\native_settings\\screen_%ld_%ld", layout, page);
@@ -767,8 +821,11 @@ static boolean device_settings_build(void)
             column_tags[layout][page] = device_settings_register(device_settings.column_names[layout][page], &device_settings.column[layout][page]);
             if (device_settings.screen_tags[layout][page] == NONE || column_tags[layout][page] == NONE) return FALSE;
         }
-        text_definition(&device_settings.timer_link[layout], style, strings, _ds_timer_link_label, TRUE);
+        text_definition(&device_settings.timer_link[layout],
+            main_menu ? style : &device_settings.pause_styles[options_style], strings,
+            main_menu ? _ds_timer_link_label : _ds_pause_timer_link_label, TRUE);
         if (main_menu) device_settings.timer_link[layout].text_font.index = font;
+        else native_pause_setting_definition(&device_settings.timer_link[layout], options_style);
         for (i = 0; i < 2; i++)
             performance_pause_event_definition(&device_settings.timer_events[layout][i], i ? _gamepad_binary_button_start : _gamepad_analog_button_a,
                 _device_settings_enter_timer, FLAG(_event_handler_run_function_bit) | FLAG(_event_handler_open_widget_bit),
@@ -779,7 +836,9 @@ static boolean device_settings_build(void)
         if (device_settings.timer_tags[layout] == NONE) return FALSE;
         for (i = 0; i < (long)DEVICE_SETTINGS_CHOICE_COUNT; i++)
         {
-            text_definition(&device_settings.choice[layout][i], style, strings, device_settings_page_titles[device_settings_choices[i]], TRUE);
+            text_definition(&device_settings.choice[layout][i],
+                main_menu ? style : &device_settings.pause_styles[menu_style], strings,
+                device_settings_page_titles[device_settings_choices[i]], TRUE);
             if (main_menu) device_settings.choice[layout][i].text_font.index = font;
             for (row = 0; row < 2; row++)
                 performance_pause_event_definition(&device_settings.choice_events[layout][i][row], row ? _gamepad_binary_button_start : _gamepad_analog_button_a,
@@ -795,26 +854,20 @@ static boolean device_settings_build(void)
             struct ui_widget_definition *column = &device_settings.column[layout][page];
             short count = device_settings_page_counts[page];
             short rows = count + (page != _ds_game);
-            short pitch = main_menu ? 24 : 27;
-            short width = main_menu ? 284 : 202;
-#if HALO_DEVICE_HAS_RENDER_RESOLUTION
-            /* Keep authored button rectangles/UVs while fitting all settings
-             * and Accept inside the smallest split-screen root. */
-            if (!main_menu && page == _ds_video) pitch = 20;
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
-            else if (!main_menu && page == _ds_timer) pitch = 22;
-#endif
-#endif
-            /* Five-row Controller pages use the existing six-row frame. */
-            short height = main_menu ? 28 + rows * pitch + 40 : rows <= 4 ? 159 : rows <= 6 ? 213 : 240;
-#if HALO_DEVICE_HAS_RENDER_RESOLUTION
-            if (!main_menu && pitch < 27) height = 240;
-#endif
+            boolean action = page != _ds_game;
+            /* The main menu's own numbers; Pause takes its from the kit. */
+            short pitch = 24, width = 284;
+            short height = 28 + rows * pitch + 40;
             short x = (bases[layout]->bounds.x1 - bases[layout]->bounds.x0 - width) / 2;
             short y = (bases[layout]->bounds.y1 - bases[layout]->bounds.y0 - height) / 2;
-            short column_y = main_menu ? 28 : 22;
-            if (!main_menu && page == _ds_game)
-                column_y += (height - 29 - column_y - rows * pitch) / 2;
+            short column_y = 28;
+            short pause_style = action ? options_style : menu_style;
+            struct native_pause_panel panel = {0};
+            if (!main_menu)
+            {
+                if (!native_pause_panel_place(&panel, pause_style, &bases[layout]->bounds, rows, TRUE, action)) return FALSE;
+                width = native_pause_styles[pause_style].row_width;
+            }
             performance_pause_clear_definition(root);
             root->type = _ui_widget_type_container;
             root->controller_index = _widget_controller_any;
@@ -826,20 +879,21 @@ static boolean device_settings_build(void)
             performance_pause_clear_definition(column);
             column->type = _ui_widget_type_column_list;
             column->controller_index = _widget_controller_any;
-            column->bounds = (rectangle2d){0, 0, (short)(rows * pitch), width};
+            column->bounds = (rectangle2d){0, 0, main_menu ? (short)(rows * pitch) : panel.rows_height, width};
             column->flags = FLAG(_widget_pass_unhandled_events_to_children_bit) | FLAG(_widget_dpad_updown_tabs_thru_list_items_bit);
-#if HALO_DEVICE_HAS_RENDER_RESOLUTION
-            if (!main_menu && pitch < 27) column->bounds.y1 += 27 - pitch;
-#endif
             if (!main_menu && page != _ds_game)
                 performance_pause_block(&column->game_data_inputs, 1, &device_settings_native.option_input);
             for (row = 0; row < count; row++)
                 performance_pause_child(&device_settings.column_children[layout][page][row],
                     page == _ds_game ? choice_tags[layout][row] :
                     device_settings_page_rows[page][row] == NONE ? device_settings.timer_tags[layout] :
-                    device_settings.row_tags[device_settings_page_rows[page][row]], 0, (short)(row * pitch));
+                    split ? device_settings.split_row_tags[device_settings_page_rows[page][row]] :
+                    device_settings.row_tags[device_settings_page_rows[page][row]], 0,
+                    main_menu ? (short)(row * pitch) : native_pause_row_y(pause_style, (short)row, rows, action));
             if (page != _ds_game)
-                performance_pause_child(&device_settings.column_children[layout][page][count], device_settings.accept_tag, 0, count * pitch);
+                performance_pause_child(&device_settings.column_children[layout][page][count],
+                    split ? device_settings.split_accept_tag : device_settings.accept_tag, 0,
+                    main_menu ? count * pitch : native_pause_row_y(pause_style, count, rows, action));
             performance_pause_block(&column->child_widgets, rows, device_settings.column_children[layout][page]);
             if (main_menu)
             {
@@ -850,18 +904,24 @@ static boolean device_settings_build(void)
             }
             else
             {
-                long frame = native_pause_frame_tag(height), legend = native_pause_legend_tag();
+                long legend = native_pause_legend_tag();
                 short children = 4;
-                if (frame == NONE || legend == NONE) return FALSE;
+                if (legend == NONE) return FALSE;
                 /* The frame renders first. The original legend uses its
                  * original inset and keeps Select/Back semantics. */
-                performance_pause_child(&device_settings.screen_children[layout][page][0], frame, x - 8, y);
-                performance_pause_child(&device_settings.screen_children[layout][page][1], column_tags[layout][page], x, y + column_y);
-                performance_pause_child(&device_settings.screen_children[layout][page][2], heading_tags[page], x, y);
-                performance_pause_child(&device_settings.screen_children[layout][page][3], legend, x + 17, y + height - 25);
-                if (page != _ds_game && bases[layout]->bounds.y1 - bases[layout]->bounds.y0 >= 480)
+                performance_pause_child(&device_settings.screen_children[layout][page][0], panel.frame_tag,
+                    panel.x - NATIVE_PAUSE_FRAME_MARGIN, panel.y);
+                performance_pause_child(&device_settings.screen_children[layout][page][1], column_tags[layout][page],
+                    panel.x, panel.y + panel.rows_y);
+                performance_pause_child(&device_settings.screen_children[layout][page][2],
+                    split ? device_settings.split_heading_tags[page] : heading_tags[page], panel.x, panel.y + panel.title_y);
+                performance_pause_child(&device_settings.screen_children[layout][page][3], legend,
+                    panel.x + native_pause_legend_x(pause_style), panel.y + panel.height - NATIVE_PAUSE_LEGEND_Y);
+                /* Help for the focused row needs the whole screen. */
+                if (page != _ds_game && pause_style == _native_pause_wide)
                 {
-                    performance_pause_child(&device_settings.screen_children[layout][page][4], device_settings.footer_tags[page], x - 41, y + height + 6);
+                    performance_pause_child(&device_settings.screen_children[layout][page][4], device_settings.footer_tags[page],
+                        panel.x + (width - NATIVE_PAUSE_HELP_WIDTH) / 2, panel.y + panel.height + NATIVE_PAUSE_HELP_GAP);
                     children++;
                 }
                 performance_pause_block(&root->child_widgets, children, device_settings.screen_children[layout][page]);
@@ -985,13 +1045,36 @@ static struct device_settings_draft *device_settings_draft_for(struct widget_ins
     return &device_settings_drafts[local];
 }
 
-static boolean game_settings_is_adjustable(struct widget_instance *widget)
+/* The setting a row shows, in either Pause size or on the main menu. */
+static short device_settings_row_setting(struct widget_instance const *widget)
 {
     short row;
-    if (!widget || !device_settings.ready) return FALSE;
+    if (!widget || widget->definition_tag_index == NONE) return NONE;
     for (row = 0; row < NUMBER_OF_DEVICE_SETTINGS; row++)
-        if (widget->definition_tag_index == device_settings.row_tags[row]) return TRUE;
-    return FALSE;
+        if (widget->definition_tag_index == device_settings.row_tags[row] ||
+            widget->definition_tag_index == device_settings.split_row_tags[row]) return row;
+    return NONE;
+}
+
+static struct widget_instance *device_settings_find_row(struct widget_instance *root, short row)
+{
+    struct widget_instance *widget = widget_instance_find_by_tag_index_recursive(root, device_settings.row_tags[row]);
+    if (!widget && device_settings.split_row_tags[row] != NONE)
+        widget = widget_instance_find_by_tag_index_recursive(root, device_settings.split_row_tags[row]);
+    return widget;
+}
+
+static struct widget_instance *device_settings_find_heading(struct widget_instance *root, short page)
+{
+    struct widget_instance *widget = widget_instance_find_by_tag_index_recursive(root, device_settings.heading_tags[page]);
+    if (!widget && device_settings.split_heading_tags[page] != NONE)
+        widget = widget_instance_find_by_tag_index_recursive(root, device_settings.split_heading_tags[page]);
+    return widget;
+}
+
+static boolean game_settings_is_adjustable(struct widget_instance *widget)
+{
+    return device_settings.ready && device_settings_row_setting(widget) != NONE;
 }
 
 static boolean game_settings_is_native_spinner(struct widget_instance *widget)
@@ -1029,14 +1112,14 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
         , "Resolution"
 #endif
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        , "FPS Limit", "AA"
+        , "FPS Limit", "Anti-Aliasing"
 #endif
-        , "Default Game Types"
+        , "Default Game Types", "Look Horizontal", "Look Vertical"
         };
     short row, local = (short)(draft - device_settings_drafts);
     for (row = 0; row < NUMBER_OF_DEVICE_SETTINGS; row++)
     {
-        struct widget_instance *widget = widget_instance_find_by_tag_index_recursive(draft->root, device_settings.row_tags[row]);
+        struct widget_instance *widget = device_settings_find_row(draft->root, row);
         char text[128];
         short index = (short)(_ds_value_start + local * NUMBER_OF_DEVICE_SETTINGS + row);
         if (!widget) continue;
@@ -1056,7 +1139,7 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
         }
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         else if (row == _device_setting_anti_aliasing)
-            snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "FXAA" : "OFF");
+            snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "FXAA" : device_settings.native_pages ? "OFF" : "Off");
         else if (row == _device_setting_frame_limit)
         {
             if (draft->values[row] == 0.0) snprintf(value, sizeof(value), "Uncapped");
@@ -1083,13 +1166,21 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
         }
         else if (row == _device_setting_look_acceleration)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Xbox" : "Off");
+        else if (row == _device_setting_look_sensitivity_horizontal || row == _device_setting_look_sensitivity_vertical)
+        {
+            if (draft->values[row] == 0.0) snprintf(value, sizeof(value), "Profile");
+            else snprintf(value, sizeof(value), "%.0f", draft->values[row]);
+        }
         else if (row == _device_setting_fast_menu_repeat)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Faster" : "Original");
         else if (row == _device_setting_asset_quality)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "Upres" : "Original");
-        else snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "ON" : "OFF");
+        /* The main menu's capitals; Pause's values read as words, like Xbox and Original. */
+        else if (device_settings.native_pages) snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "ON" : "OFF");
+        else snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "On" : "Off");
         if (device_settings.native_pages) snprintf(text, sizeof(text), "%s", value);
-        else snprintf(text, sizeof(text), "%s: < %s >", names[row], value);
+        /* A Pause row: the name at the left, its value at the right. */
+        else snprintf(text, sizeof(text), "%s\t< %s >", names[row], value);
         device_settings_text(index, text);
         if (device_settings.native_pages) widget->parameters.list.selected_index = index;
         else widget->parameters.text_box.string_list_index = index;
@@ -1169,7 +1260,7 @@ static boolean game_settings_event(struct widget_instance *widget, short functio
         draft->layout = active_layout;
         draft->audio_session = page == _ds_audio || page == _ds_timer;
         draft->entering_timer = draft->resume_audio = FALSE;
-        heading = widget_instance_find_by_tag_index_recursive(root, device_settings.heading_tags[page]);
+        heading = device_settings_find_heading(root, page);
         if (heading) heading->parameters.text_box.string_list_index = device_settings_page_titles[page];
         device_settings_render_draft(draft);
         return TRUE;
@@ -1199,7 +1290,7 @@ static boolean game_settings_event(struct widget_instance *widget, short functio
         return TRUE;
     }
     footer = widget_instance_find_by_tag_index_recursive(root, device_settings.footer_tags[page]);
-    heading = widget_instance_find_by_tag_index_recursive(root, device_settings.heading_tags[page]);
+    heading = device_settings_find_heading(root, page);
     if (function == _device_settings_accept)
     {
         unsigned long changed = 0;
@@ -1231,10 +1322,10 @@ static boolean game_settings_event(struct widget_instance *widget, short functio
         return TRUE;
     }
     if (function != _device_settings_next && function != _device_settings_previous) return FALSE;
-    for (row = 0; row < NUMBER_OF_DEVICE_SETTINGS; row++)
-        if (widget->definition_tag_index == device_settings.row_tags[row] ||
-            (device_settings.native_pages && widget->definition_tag_index == device_settings_native.spinner_tags[row])) break;
-    if (row == NUMBER_OF_DEVICE_SETTINGS) return FALSE;
+    row = device_settings_row_setting(widget);
+    for (layout = 0; row == NONE && device_settings.native_pages && layout < NUMBER_OF_DEVICE_SETTINGS; layout++)
+        if (widget->definition_tag_index == device_settings_native.spinner_tags[layout]) row = layout;
+    if (row == NONE) return FALSE;
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
     if (row == _device_setting_render_height)
     {
@@ -1271,6 +1362,13 @@ static boolean game_settings_event(struct widget_instance *widget, short functio
     }
     else if (row == _device_setting_timer_position)
         draft->values[row] = ((short)draft->values[row] + (function == _device_settings_next ? 1 : 2)) % 3;
+    else if (row == _device_setting_look_sensitivity_horizontal || row == _device_setting_look_sensitivity_vertical)
+    {
+        /* Profile (0), then the original scale's 1 to 10; no wrap at either end. */
+        short step = (short)draft->values[row] + (function == _device_settings_next ? 1 : -1);
+        draft->values[row] = step < 0 ? 0 : step > HALO_CONTROLLER_LOOK_SENSITIVITY_MAX ?
+            HALO_CONTROLLER_LOOK_SENSITIVITY_MAX : step;
+    }
     else if (device_settings_is_stick_deadzone(row))
     {
         short preset;

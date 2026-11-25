@@ -108,6 +108,7 @@ symbols in this file:
 #include "cseries/errors.h"
 #include "bitmaps/bitmap_group.h"
 #include "bitmaps/bitmaps.h"
+#include "cache/cache_files.h"
 #include "interface/interface.h"
 #include "math/integer_math.h"
 #include "math/real_math.h"
@@ -500,6 +501,80 @@ void draw_string_render_label(
 	draw_string_set_highlight(NONE, NONE);
 	rasterizer_draw_string(bounds, NULL, NULL, 0, string);
 	font_drawing_globals = saved;
+}
+#endif
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* port: the font of the main menu's version label, which is set like a build
+number: the console's monospace font at three quarters of its size. No map has
+a font that small, so this is a font tag made here. It gives the text engine
+the advance, line height and baseline; its bitmaps are empty, and the letters
+are the console font rebuilt as outlines, which fonts.json maps this tag's
+name to at that scale (port/linux/src/text_hires.h). Nothing is drawn with it
+unless Asset Quality is Upres, so a caller uses a map's font otherwise. */
+enum
+{
+	_build_label_advance = 6,   /* the console font's 8, 12 and 3 at three quarters */
+	_build_label_ascent = 9,
+	_build_label_descent = 2,
+	_build_label_bitmap = _build_label_advance * (_build_label_ascent + _build_label_descent),
+	_build_label_first = ' ',
+	_build_label_count = '~' - ' ' + 1
+};
+
+long draw_string_build_label_font(
+	void)
+{
+	static char const name[] = "ui\\og_build_label";
+	static struct font_header header;
+	static struct font_character_table table;
+	static short indices[256];
+	static struct font_character characters[_build_label_count];
+	/* one empty bitmap that every character shares, then the capital H's:
+	its inked rows are how a display-resolution font is found for a tag */
+	static byte pixels[2 * _build_label_bitmap];
+	long tag = tag_loaded(FONT_GROUP_TAG, name);
+	short index;
+
+	if (tag != NONE)
+		return tag;
+	csmemset(&header, 0, sizeof(header));
+	csmemset(&table, 0, sizeof(table));
+	csmemset(pixels, 0, sizeof(pixels));
+	for (index = 2; index < _build_label_ascent; index++)
+		pixels[_build_label_bitmap + index * _build_label_advance] = 255;
+	for (index = 0; index < (short)NUMBEROF(indices); index++)
+		indices[index] = NONE;
+	for (index = 0; index < _build_label_count; index++)
+	{
+		struct font_character *character = &characters[index];
+
+		csmemset(character, 0, sizeof(*character));
+		character->character = (word)(_build_label_first + index);
+		character->character_width = _build_label_advance;
+		character->bitmap_width = _build_label_advance;
+		character->bitmap_height = _build_label_ascent + _build_label_descent;
+		character->bitmap_origin_y = _build_label_ascent;
+		character->hardware_character_index = NONE;
+		character->pixels_offset = character->character == 'H' ? _build_label_bitmap : 0;
+		indices[_build_label_first + index] = index;
+	}
+	table.character_indices.count = NUMBEROF(indices);
+	table.character_indices.address = indices;
+	header.ascending_height = _build_label_ascent;
+	header.descending_height = _build_label_descent;
+	header.character_tables.count = 1;
+	header.character_tables.address = &table;
+	for (index = 0; index < NUMBER_OF_TEXT_STYLES; index++)
+	{
+		header.style_fonts[index].group_tag = FONT_GROUP_TAG;
+		header.style_fonts[index].index = NONE;
+	}
+	header.characters.count = _build_label_count;
+	header.characters.address = characters;
+	header.pixels.size = sizeof(pixels);
+	header.pixels.address = pixels;
+	return cache_files_register_runtime_ui_tag(FONT_GROUP_TAG, name, &header);
 }
 #endif
 

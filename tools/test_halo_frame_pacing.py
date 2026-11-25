@@ -292,7 +292,12 @@ int main(void) {
         }
         if (strcmp(s->name, "display.frame_limit") && strcmp(s->name, "display.render_height")) continue;
         if (s->type != _config_integer || s->environment || s->platforms != _platform_all) return 1;
+#if defined(HALO_IOS)
         if (strcmp(s->default_value, !strcmp(s->name, "display.frame_limit") ? "0" : "480")) return 2;
+#else
+        /* Since 0.7 the Mac draws at its display's own resolution by default. */
+        if (strcmp(s->default_value, "0")) return 2;
+#endif
         found++;
     }
 #if defined(HALO_MACOS)
@@ -392,12 +397,12 @@ class NativeConfigTests(unittest.TestCase):
             return tuple(map(int, values[:3])), path.read_text()
 
     def test_native_defaults_registered_as_integer_config_only(self):
-        for target in ("native", "ios"):
+        for target, height in (("native", 0), ("ios", 480)):
             with self.subTest(target=target):
                 values, text = self.config(target)
-                self.assertEqual(values, (2, 0, 480))
+                self.assertEqual(values, (2, 0, height))
                 self.assertIn("frame_limit = 0", text)
-                self.assertIn("render_height = 480", text)
+                self.assertIn(f"render_height = {height}", text)
                 self.assertEqual(self.anti_aliasing, "off")
                 self.assertIn('anti_aliasing = "off"', text)
                 self.assertNotIn("\nrenderer =", text)
@@ -440,7 +445,7 @@ class NativeConfigTests(unittest.TestCase):
 
     def test_native_aa_string_is_preserved_and_wrong_type_defaults_off(self):
         values, text = self.config('native', '[display]\nanti_aliasing = "fxaa" # smooth\n')
-        self.assertEqual(values, (2, 0, 480))
+        self.assertEqual(values, (2, 0, 0))
         self.assertEqual(self.anti_aliasing, 'fxaa')
         self.assertIn('anti_aliasing = "fxaa" # smooth', text)
         for value in ('1', 'true'):
@@ -457,7 +462,7 @@ class NativeConfigTests(unittest.TestCase):
     def test_wrong_toml_types_use_defaults(self):
         content = '[display]\nframe_limit = "120"\nrender_height = true\n'
         values, text = self.config("native", content)
-        self.assertEqual(values, (2, 0, 480))
+        self.assertEqual(values, (2, 0, 0))
         self.assertIn(content, text)
 
 

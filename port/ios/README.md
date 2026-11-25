@@ -133,8 +133,9 @@ before `xcrun simctl launch`; the simulator may advertise a system gamepad.
 
 The app opts into ProMotion and SDL requests the display's maximum refresh
 rate. On ProMotion iPhones it can request 120 Hz. UIKit schedules Metal
-presentation at the available rate. Enable `display.interpolation` in
-`config.toml` to interpolate rendering between the original 30 Hz game ticks.
+presentation at the available rate. `display.interpolation` in `config.toml`
+(on by default since 0.7) interpolates rendering between the original 30 Hz
+game ticks; set it to `false` for the original 30 frames a second.
 
 For a 60 Hz comparison or lower-power session, set `HALO_IOS_REFRESH_RATE=60`
 in the Xcode scheme's environment or pass it through `devicectl`:

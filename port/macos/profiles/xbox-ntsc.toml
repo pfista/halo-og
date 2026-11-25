@@ -8,6 +8,9 @@ vsync = true
 interpolation = false
 direct_camera = false
 high_res_hud = false
+render_height = 480
+# Marks these display settings as chosen, so the game keeps them.
+defaults_revision = 1
 
 [audio]
 enabled = true

@@ -1,0 +1,11 @@
+{
+  "summary": "Halo OG 0.7.0 makes the game sharper out of the box and replaces its redrawn text with Halo OG's own fonts, rebuilt letter by letter from the original Xbox font. It also redesigns the in-game Pause menu, adds separate horizontal and vertical look sensitivity, and brings over a set of engine fixes. Everyone in a match needs 0.7: this version does not join games hosted on 0.6 or earlier.",
+  "highlights": [
+    "Sharper picture by default: new installations on Mac, Windows and Linux start at the display's resolution with Upres assets and Smooth Motion on, and settings that never changed the picture move to these defaults once. The original Xbox picture is still three settings away in Game Settings → Video.",
+    "Text: with Upres assets, menu and in-game text is drawn in fonts rebuilt from the game's own letters instead of a lookalike typeface, so letter shapes, sizes and spacing match the original and letters stay sharp at sizes such as 1080p. This is a first version of the fonts and a few characters are still rough.",
+    "Pause menu: with one player, every Pause page shares one wider panel with all rows at the same size, setting names at the left and values at the right, and Accept set apart. Split-screen keeps a compact panel. The main menu's settings pages are unchanged.",
+    "Look sensitivity: Game Settings → Controller has separate Look Horizontal and Look Vertical settings from 1 to 10, from the main menu and from Pause during a match. Profile, the default, keeps each player's own Look Sensitivity as on the Xbox.",
+    "Active camouflage and detail: a cloaked player is drawn at the screen's resolution instead of a fixed 320 by 240, so camo no longer shows as a coarse smear at high resolutions. Models, shadows and particles keep their detail farther away as resolution rises.",
+    "Fixes: joining right after a game search no longer hangs, joiners no longer throw a grenade the host never gave them, 3D sounds play at their true distance instead of three times farther, split-screen dividers span wide screens, and three Smooth Motion glitches are gone. Hosted games admit up to 32 players."
+  ]
+}

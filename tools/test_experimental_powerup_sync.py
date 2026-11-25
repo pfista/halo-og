@@ -78,7 +78,7 @@ struct object_datum { long definition_index; struct object_fields object; };
 struct item_datum { long definition_index; struct object_fields object;
     struct { unsigned flags; short rested_surface_index,bsp_index; long item_on_rest_object_index;
              real_point3d item_rest_object_offset; } item; };
-struct unit_datum { struct { long driver_object_index,player_index; } unit; };
+struct unit_datum { struct { long driver_object_index,player_index; byte grenade_counts[2]; } unit; };
 struct object_definition { struct { struct { long index; } model; short type; } object; };
 struct equipment_definition { struct { short powerup_type; } equipment; };
 struct model_region { struct { int count; } permutations; };
@@ -96,7 +96,7 @@ static struct datum_header headers[MAXIMUM_TRACKED_OBJECTS];
 static struct { long maximum_count,size; void *data; } header_data={64,sizeof(struct datum_header),headers}, *object_header_data=&header_data;
 static struct item_datum storage;
 static struct object_datum *const object=(struct object_datum *)&storage;
-static struct unit_datum unit={{NONE,NONE}};
+static struct unit_datum unit={{NONE,NONE,{0,0}}};
 static struct object_definition definition={.object.model.index=NONE,.object.type=_object_type_equipment};
 static struct equipment_definition equipment={{_equipment_powerup_active_camouflage}};
 static struct model model;
@@ -229,7 +229,10 @@ int main(void) {
         for(int experimental=0;experimental<=1;experimental++) for(int reused=0;reused<=1;reused++) for(int rest=0;rest<=1;rest++) {
             reset(experimental,power,reused);struct distributed_object_change c=change(rest);
             if(reused) { SET_FLAG(object->object.flags,_object_at_rest_bit,!rest);object->object.position.z=0;contacts(); }
+            /* Only a unit's grenades wait for the host's inventory; an item's copy touches no unit. */
+            unit.unit.grenade_counts[0]=4;unit.unit.grenade_counts[1]=2;
             distributed_client_create(&c);
+            assert(unit.unit.grenade_counts[0]==4 && unit.unit.grenade_counts[1]==2);
             assert(!objects_client_creating && !objects_client_deleting && objects_client_creating_index==NONE);
             assert(new_calls==!reused && objects_client_has[1]==OBJECT_INDEX);
             assert(object->object.position.z==10 && moves==reused && interpolation_calls==reused);

@@ -370,6 +370,7 @@ static boolean process_telnet_client_buffer(
 
 					if (
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+						console_process_menu_check_command(expression) ||
 						console_process_native_command(expression) ||
 #endif
 						hs_compile_and_evaluate(expression))

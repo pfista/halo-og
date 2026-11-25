@@ -1,8 +1,9 @@
 {
- "comment": "Which font draws each of the maps' font tags (port/linux/src/text_hires.c).",
+ "comment": "Which font draws each of the maps' font tags (port/linux/src/text_hires.c). units_per_pixel marks a font rebuilt from a tag's own letters (tools/og_font.py): that many font units are one pixel of the tag it draws, and its glyphs are drawn from the pen with no fitting. The fonts are built with 64 units to the pixel; ui\\og_build_label is a tag the game makes for the main menu's version label, the console's font at three quarters of its size, so 85. Without units_per_pixel a font is a substitute typeface, sized by the tag's capital height and fitted to each original glyph's ink.",
  "fonts": [
-  {"tag": "ui\\large_ui", "file": "Overpass-900.ttf"},
-  {"tag": "ui\\interstate", "file": "Overpass-900.ttf"},
-  {"tag": "ui\\small_ui", "file": "Overpass-750.ttf"}
+  {"tag": "ui\\large_ui", "file": "OGMenuLarge.ttf", "units_per_pixel": 64},
+  {"tag": "ui\\interstate", "file": "OGMessage.ttf", "units_per_pixel": 64},
+  {"tag": "ui\\small_ui", "file": "OGMenuSmall.ttf", "units_per_pixel": 64},
+  {"tag": "ui\\og_build_label", "file": "OGConsole.ttf", "units_per_pixel": 85}
  ]
 }

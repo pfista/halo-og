@@ -58,6 +58,9 @@ symbols in this file:
 #include "cseries/cseries_windows.h"
 #include "game/game_globals.h"
 #include "game/players.h"
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+#include "controller_settings.h"
+#endif
 #include "input/input.h"
 #include "input/input_abstraction.h"
 #include "interface/player_ui.h"
@@ -312,6 +315,13 @@ void input_abstraction_update(
 	void)
 {
 	long controller_index;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	/* port: Game Settings can set either look rate on its own, on the
+	profile's own 1 to 10 scale; Profile (0) keeps the Xbox's one Look
+	Sensitivity for both. This is local aim input only. */
+	long look_sensitivity_horizontal = halo_controller_look_sensitivity(0);
+	long look_sensitivity_vertical = halo_controller_look_sensitivity(1);
+#endif
 
 	TAG_BLOCK_GET_ELEMENT(
 		&scenario_get_game_globals()->player_control,
@@ -333,6 +343,12 @@ void input_abstraction_update(
 
 			player_look_yaw_rate[controller_index] = input_abstraction_globals.player_control_preferences[controller_index].yaw_rate;
 			player_look_pitch_rate[controller_index] = input_abstraction_globals.player_control_preferences[controller_index].pitch_rate;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			if (look_sensitivity_horizontal)
+				player_look_yaw_rate[controller_index] = halo_controller_look_rate(0, look_sensitivity_horizontal);
+			if (look_sensitivity_vertical)
+				player_look_pitch_rate[controller_index] = halo_controller_look_rate(1, look_sensitivity_vertical);
+#endif
 			{
 				real scale;
 

@@ -88,7 +88,8 @@ class DesktopVideoResolutionTests(unittest.TestCase):
         # the older full fixture do not participate in these resolution checks.
         source = SETTINGS_HARNESS.split("int main(", 1)[0].replace(
             '"input.fast_menu_repeat", "display.high_res_hud"};',
-            '"input.fast_menu_repeat", "display.high_res_hud", "game.show_default_game_types"};') + SETTINGS_MAIN
+            '"input.fast_menu_repeat", "display.high_res_hud", "game.show_default_game_types",\n'
+            '    "input.look_sensitivity_horizontal", "input.look_sensitivity_vertical"};') + SETTINGS_MAIN
         for defines in (("-DHALO_LINUX=1",), ("-DHALO_WINDOWS=1",),
                         ("-DHALO_MACOS=1", "-DHALO_ANDROID=1"),
                         ("-DHALO_ANDROID=1",), ("-DHALO_MACOS=1", "-DHALO_IOS=1", "-DHALO_ANDROID=1")):
@@ -181,14 +182,16 @@ int main(void) {
 #include <assert.h>
 #include <stdlib.h>
 #define SCREEN_HEIGHT 480
+#define SECONDARY_TARGET_WIDTH 320
+#define SECONDARY_TARGET_HEIGHT 240
 #define RENDER_TARGET_BUCKET_COUNT 256
  typedef unsigned GLuint;
-struct xgpu_render_target { unsigned long data,width,height;GLuint texture; };
+struct xgpu_render_target { unsigned long data,width,height;int depth;GLuint texture; };
 ''' + function(gl, "struct render_target_entry\n") + ";\n" + function(gl, "struct framebuffer_entry\n") + r''';
 static struct render_target_entry *render_targets,*render_target_buckets[RENDER_TARGET_BUCKET_COUNT];
 static struct framebuffer_entry *framebuffers;
 static unsigned textures_deleted,framebuffers_deleted,invalidations;
-static void glDeleteTextures(int count,const GLuint *id) { assert(count==1 && (*id==11 || *id==12));textures_deleted++; }
+static void glDeleteTextures(int count,const GLuint *id) { assert(count==1 && (*id==11 || *id==12 || *id==15));textures_deleted++; }
 static void glDeleteFramebuffers(int count,const GLuint *id) { assert(count==1 && *id<4);framebuffers_deleted++; }
 static void xgpu_gl_state_invalidate(void) { invalidations++; }
 ''' + function(gl, "static struct render_target_entry **render_target_bucket(") + "\n" + function(gl, "static void screen_render_targets_retire(") + r'''
@@ -203,14 +206,19 @@ static void framebuffer(GLuint id,GLuint color,GLuint depth) {
     entry->next=framebuffers;framebuffers=entry;
 }
 int main(void) {
+    /* 15 is the secondary color target (camouflage, reflections), drawn at the screen's scale too;
+       16 is a depth target of the same size, which is not. */
+    target(12288,320,240,15);target(16384,320,240,16);render_targets->target.depth=1;
     target(4096,640,480,11);target(4096,640,480,12);target(4096,256,256,13);target(8192,854,480,14);
     framebuffer(1,11,12);framebuffer(2,11,0);framebuffer(3,13,12);framebuffer(4,13,14);
     screen_render_targets_retire(640);
-    assert(textures_deleted==2 && framebuffers_deleted==3 && invalidations==1);
-    assert(render_targets->target.texture==14 && render_targets->next->target.texture==13 && !render_targets->next->next);
+    assert(textures_deleted==3 && framebuffers_deleted==3 && invalidations==1);
+    assert(!*render_target_bucket(12288) && (*render_target_bucket(16384))->target.texture==16);
+    assert(render_targets->target.texture==14 && render_targets->next->target.texture==13 &&
+        render_targets->next->next->target.texture==16 && !render_targets->next->next->next);
     assert((*render_target_bucket(4096))->target.texture==13 && !(*render_target_bucket(4096))->next_in_bucket);
     assert(framebuffers->framebuffer==4 && !framebuffers->next);
-    screen_render_targets_retire(640);assert(textures_deleted==2 && framebuffers_deleted==3);
+    screen_render_targets_retire(640);assert(textures_deleted==3 && framebuffers_deleted==3);
     while(render_targets) { struct render_target_entry *next=render_targets->next;free(render_targets);render_targets=next; }
     free(framebuffers);return 0;
 }
@@ -219,7 +227,10 @@ int main(void) {
 
     def test_menu_presets_and_platform_row_counts(self):
         menu = (ROOT / "source/interface/game_settings_menu.inc").read_text()
-        definitions = menu[menu.index("#define DEVICE_SETTINGS_ENTRY"):menu.index("#define DEVICE_SETTINGS_STRING_COUNT")]
+        # The page tables check themselves against the Pause kit's row limit.
+        kit = (ROOT / "source/interface/native_pause_frame.inc").read_text()
+        definitions = function(kit, "enum\n{\n\t/* One overflow rule") + ";\n"
+        definitions += menu[menu.index("#define DEVICE_SETTINGS_ENTRY"):menu.index("#define DEVICE_SETTINGS_STRING_COUNT")]
         build = function(menu, "static boolean device_settings_build(")
         copy = build[build.index("    static char const *const captions"):build.index("    static char const *const heading_names")]
         cycle = function(menu, "static double device_settings_cycle_choice(")
@@ -265,7 +276,10 @@ int main(void) {
 
     def test_mac_resolution_menu_stages_accepts_cancels_and_exposes_all_metal_controls(self):
         menu = (ROOT / "source/interface/game_settings_menu.inc").read_text()
-        definitions = menu[menu.index("#define DEVICE_SETTINGS_ENTRY"):menu.index("#define DEVICE_SETTINGS_STRING_COUNT")]
+        # The page tables check themselves against the Pause kit's row limit.
+        kit = (ROOT / "source/interface/native_pause_frame.inc").read_text()
+        definitions = function(kit, "enum\n{\n\t/* One overflow rule") + ";\n"
+        definitions += menu[menu.index("#define DEVICE_SETTINGS_ENTRY"):menu.index("#define DEVICE_SETTINGS_STRING_COUNT")]
         storage = SETTINGS_HARNESS.split("int main(", 1)[0].replace(
             '"input.fast_menu_repeat", "display.high_res_hud"};',
             '"input.fast_menu_repeat", "display.high_res_hud", "game.show_default_game_types"};')
@@ -294,6 +308,7 @@ static struct {
     unsigned about_page;
     long about_tag,accept_tag,screen_tags[_ds_layout_count][_ds_page_count];
     long row_tags[NUMBER_OF_DEVICE_SETTINGS],heading_tags[_ds_page_count],footer_tags[_ds_page_count];
+    long split_row_tags[NUMBER_OF_DEVICE_SETTINGS],split_heading_tags[_ds_page_count];
     struct { short vertical_offset; } column_children[_ds_layout_count][_ds_page_count][DEVICE_SETTINGS_MAX_PAGE_ROWS+1];
 } device_settings;
 static struct { long spinner_tags[NUMBER_OF_DEVICE_SETTINGS]; } device_settings_native;
@@ -311,6 +326,8 @@ static struct widget_instance *widget_instance_find_by_tag_index_recursive(struc
 }
 ''' + "\n".join(function(menu, signature) for signature in (
             "static struct device_settings_draft *device_settings_draft_for(",
+            "static short device_settings_row_setting(",
+            "static struct widget_instance *device_settings_find_heading(",
             "static boolean game_settings_is_native_spinner(",
             "static double device_settings_cycle_choice(",
             "static boolean device_settings_is_stick_deadzone(")) + r'''
@@ -331,8 +348,10 @@ int main(void) {
     footer.parent=&root;footer.definition_tag_index=300;
     for(i=0;i<NUMBER_OF_DEVICE_SETTINGS;i++) {
         device_settings.row_tags[i]=400+i;
+        device_settings.split_row_tags[i]=NONE;
         device_settings_native.spinner_tags[i]=500+i;
     }
+    for(i=0;i<_ds_page_count;i++) device_settings.heading_tags[i]=device_settings.split_heading_tags[i]=NONE;
     for(i=0;i<=DEVICE_SETTINGS_MAX_PAGE_ROWS;i++) {
         short setting=i<DEVICE_SETTINGS_MAX_PAGE_ROWS ? device_settings_page_rows[_ds_video][i] : NONE;
         rows[i].visible=TRUE;rows[i].parent=&column;rows[i].previous=i ? &rows[i-1] : NULL;
@@ -465,7 +484,8 @@ int main(int argc,char **argv) {
     return 0;
 }
 '''
-        for defines,expected in (((),"-1"), (("-DHALO_MACOS=1","-DHALO_ANDROID=1"),"480")):
+        # Since 0.7 every desktop draws at the native drawable by default.
+        for defines,expected in (((),"0"), (("-DHALO_MACOS=1","-DHALO_ANDROID=1"),"0")):
             with self.subTest(defines=defines),tempfile.TemporaryDirectory(prefix="halo-resolution-config-") as folder:
                 prefix=Path(folder)/"prefix.h";prefix.write_text(PREFIX)
                 env={key:value for key,value in os.environ.items() if not key.startswith("HALO_")}
@@ -474,6 +494,31 @@ int main(int argc,char **argv) {
                         str(PORT/"port_config.c"),str(ROOT/"port/third_party/tomlc17/tomlc17.c"))
                 self.compile_run(source,defines=defines,inputs=inputs,arguments=(expected,),env=env)
                 self.compile_run(source,defines=defines,inputs=inputs,arguments=("1080",),env=env)
+
+    def test_windows_and_linux_settings_from_0_6_move_to_native_unless_a_picture_was_chosen(self):
+        if not (SDL / "include/SDL3/SDL.h").exists():
+            self.skipTest("SDL3 headers required")
+        source = CONFIG_HARNESS.split("int main(", 1)[0] + r'''
+int main(int argc,char **argv) {
+    (void)argc;
+    assert(config_integer("display.render_height")==atol(argv[1]));
+    assert(config_boolean("display.interpolation")==atoi(argv[2]));
+    assert(config_boolean("display.high_res_hud")==atoi(argv[2]));
+    return 0;
+}
+'''
+        written_by_0_6 = "[display]\ninterpolation = false\nrender_height = -1\nhigh_res_hud = false\n"
+        for text, height, enhanced in ((written_by_0_6, "0", "1"),
+                                       (written_by_0_6.replace("-1", "480"), "480", "0"),
+                                       (written_by_0_6.replace("-1", "1080"), "1080", "0")):
+            with self.subTest(height=height),tempfile.TemporaryDirectory(prefix="halo-desktop-defaults-") as folder:
+                prefix=Path(folder)/"prefix.h";prefix.write_text(PREFIX)
+                (Path(folder)/"config.toml").write_text(text)
+                env={key:value for key,value in os.environ.items() if not key.startswith("HALO_")}
+                env.update(HALO_SAVE_ROOT=folder,HALO_DATA_ROOT=folder)
+                inputs=("-pthread","-include",str(prefix),"-I",str(SDL/"include"),"-I",str(ROOT/"port/third_party/tomlc17"),
+                        str(PORT/"port_config.c"),str(ROOT/"port/third_party/tomlc17/tomlc17.c"))
+                self.compile_run(source,inputs=inputs,arguments=(height,enhanced),env=env)
 
 
 if __name__ == "__main__":

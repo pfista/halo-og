@@ -306,7 +306,7 @@ class DisplayConfigurationTests(unittest.TestCase):
     def test_actual_config_has_integer_compatibility_defaults_and_no_environment(self):
         self.assertEqual(proof.display_configuration_checks(self.text), {
             'display.frame_limit': {'type':'integer','default':0,'environment':None,'native_metal_only':False},
-            'display.render_height': {'type':'integer','default':480,'environment':None,'native_metal_only':False},
+            'display.render_height': {'type':'integer','default':0,'environment':None,'native_metal_only':False},
         })
 
     def test_aa_requires_native_string_off_no_environment_and_original_integer_defaults(self):
@@ -323,10 +323,10 @@ class DisplayConfigurationTests(unittest.TestCase):
                 proof.display_configuration_checks(self.text.replace(original, replacement), True)
 
     def test_type_default_env_and_platform_changes_are_rejected(self):
-        for name, default in (('display.frame_limit','0'),('display.render_height','480')):
-            original = f'"{name}", _config_integer, "{default}", NULL, _environment_value, _platform_all'
+        for name, default in (('display.frame_limit','"0"'),('display.render_height','NATIVE_RENDER_HEIGHT_DEFAULT')):
+            original = f'"{name}", _config_integer, {default}, NULL, _environment_value, _platform_all'
             for replacement in (original.replace('_config_integer','_config_boolean'),
-                                original.replace(f'"{default}"','"720"'),
+                                original.replace(default,'"720"'),
                                 original.replace('NULL','"HALO_NEW_SETTING"'),
                                 original.replace('_platform_all','_platform_android')):
                 with self.subTest(name=name, replacement=replacement), self.assertRaisesRegex(ValueError, 'type/default/environment'):

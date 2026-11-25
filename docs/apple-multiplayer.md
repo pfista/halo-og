@@ -155,7 +155,7 @@ python3 tools/macos_multiplayer_smoke.py --mode invite --seconds 95 \
 ```
 
 Use a fresh output directory for each run. Two physical Macs on different
-networks and 128-player capacity still need separate testing.
+networks and a full 32-player game still need separate testing.
 LAN mode also needs a second configured non-loopback IPv4 address on the Mac
 (for example an existing VPN interface); it discovers that address automatically
 or accepts `--client-address`. Invite mode works with LAN plus loopback.

@@ -13,6 +13,11 @@ content imports; competitive features are optional and default off.
   app in a different direction, and falling behind it is expected. Review useful
   upstream changes individually. Inspect actual diffs, defaults and
   dependencies; split mixed commits and never merge wholesale.
+- Since November 2026 an OpenCE engine improvement is a candidate by default
+  when it passes [the four adoption tests](docs/opence-adoption.md#rules-for-taking-a-change):
+  stock behavior unchanged or optional, no OpenCE protocol, co-op, services or
+  PC menus, working on Metal, and a stated licence era. OpenCE is AGPL from
+  commit `4b09168e`; Halo OG is CC0 until its own licence change.
 - Prioritize matching accuracy, correctness, stability, performance and platform
   fixes that preserve Xbox behavior. Review netcode timing, authority, fairness,
   compatibility and service dependencies before adoption.
@@ -22,6 +27,9 @@ content imports; competitive features are optional and default off.
 - Intentional departures from original behavior should generally be explicit
   configuration options that default to the original behavior. Keep uncertain
   netcode changes selectable while comparing their timing and feel with OG.
+  The one standing exception is the picture: since 0.7 a new installation
+  defaults to native resolution, Upres assets and Smooth Motion, with the
+  original Xbox picture selectable. Rules and simulation default to original.
 - Halo OG is its own multiplayer network: Halo OG builds play with Halo OG
   builds. Interoperability with OpenCE games is not a goal, and Halo OG does not
   follow OpenCE's network protocol versions. Port an upstream networking fix
@@ -104,6 +112,8 @@ settings; verify the installed signature and `Contents/Resources/BuildInfo.txt`.
 - [Playtesting](docs/playtesting.md): installation, joining and reporting problems.
 - [Building](docs/building.md): platform toolchains and targeted validation routes.
 - [Fidelity policy](docs/xbox-fidelity.md): baseline, defaults and upstream decisions.
+- [OpenCE adoption](docs/opence-adoption.md): what is taken from upstream, the
+  licence plan and the state of each batch.
 - [Community maps](docs/community-maps.md): conversion and managed storage.
 - [Community conversion](docs/community-map-conversion.md): authoring tools,
   stock/community provenance and repeatable map-specific conversion profiles.

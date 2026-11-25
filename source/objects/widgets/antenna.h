@@ -106,6 +106,9 @@ long antenna_new(
 	long definition_index);
 void antenna_delete(
 	long antenna_index);
+/* port: the chain's step with Smooth Motion on, once a tick (antenna.c) */
+void antennas_tick(
+	real delta);
 void antennas_update(
 	real delta);
 void antenna_render(

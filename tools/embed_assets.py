@@ -154,7 +154,7 @@ def main() -> None:
         index = files.index(font["file"])
         tag = font["tag"].replace("\\", "\\\\")
         size = (ROOT / FONT_ASSETS / font["file"]).stat().st_size
-        lines.append(f'\t{{ "{tag}", "{font["file"]}", font{index}, {size} }},')
+        lines.append(f'\t{{ "{tag}", "{font["file"]}", font{index}, {size}, {int(font.get("units_per_pixel", 0))} }},')
     if not fonts:
         lines.append("\t{ 0 },")
     lines.append("};")

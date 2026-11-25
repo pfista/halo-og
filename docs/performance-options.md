@@ -343,8 +343,8 @@ understand. An unextended v11 host ignores those unknown data messages.
 The updated host keeps capabilities per connection slot and clears them when
 the slot is removed or reused.
 
-All options off advertises Halo OG's stock network version, 20006. When any
-option is enabled, the host advertises that version with bit 15 set (`0xCE26`)
+All options off advertises Halo OG's stock network version, 20007. When any
+option is enabled, the host advertises that version with bit 15 set (`0xCE27`)
 alongside capability flag `0x04`. A client without practice options displays its
 update-required explanation. The host also checks capability at admission, so
 a stale advertisement or direct join cannot bypass the requirement.

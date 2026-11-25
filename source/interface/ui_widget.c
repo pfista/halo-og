@@ -1472,6 +1472,7 @@ static boolean ui_check_for_pause_game(
 #include "native_multiplayer_pause.inc"
 #include "performance_pause_menu.inc"
 #include "game_settings_menu.inc"
+#include "ui_layout_check.inc"
 #endif
 
 /* ---------- globals */
@@ -1866,11 +1867,11 @@ void draw_bitmap_in_rect(
 }
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-static void native_pause_frame_render(struct widget_instance *widget,
+static void native_pause_frame_render(struct ui_widget_definition const *definition,
 	rectangle2d *clip, point2d origin, real alpha)
 {
 	short piece, band;
-	if (!native_pause_frame_is_widget(widget->definition_tag_index)) return;
+	if (!TEST_FLAG(definition->flags, _widget_native_pause_frame_bit)) return;
 	for (piece = 0; piece < 3; piece++)
 	{
 		struct bitmap_data *bitmap = bitmap_group_get_bitmap_from_sequence(
@@ -1878,13 +1879,56 @@ static void native_pause_frame_render(struct widget_instance *widget,
 		for (band = 0; band < 3; band++)
 		{
 			rectangle2d destination, source;
-			native_pause_frame_slice(piece, band,
-				ui_widget_definition_get(widget->definition_tag_index)->bounds.y1,
+			native_pause_frame_slice(piece, band, definition->bounds.x1, definition->bounds.y1,
 				origin, &destination, &source);
 			draw_bitmap_region_in_rect(bitmap, &destination, &source, clip,
 				modulate_pixel32_by_real_alpha(0xFFFFFFFF, alpha), NULL, FALSE, &source);
 		}
 	}
+}
+
+/* A native Pause row whose text holds a tab shows a setting: its name from
+ * the row's left end and its value to the right end, each inset by the
+ * kit's measure. `bounds` arrives with the left inset. */
+static boolean native_pause_row_render_text(struct widget_instance const *widget,
+	struct ui_widget_definition const *definition, rectangle2d const *bounds,
+	rectangle2d const *clip, wchar_t const *text)
+{
+	wchar_t name[64], value[64], fitted[NUMBEROF(name) + NUMBEROF(value) + 2];
+	rectangle2d inner = *bounds;
+	short tab, index, length = 0;
+	if (!TEST_FLAG(definition->flags, _widget_native_pause_row_bit)) return FALSE;
+	for (tab = 0; text[tab] && text[tab] != L'\t'; tab++);
+	if (!text[tab] || tab >= (short)NUMBEROF(name)) return FALSE;
+	for (index = 0; index < tab; index++) name[index] = fitted[length++] = text[index];
+	name[tab] = 0;
+	/* The row is wide enough when the name, two spaces and the value fit. */
+	fitted[length++] = L' ';
+	fitted[length++] = L' ';
+	for (index = 0; text[tab + 1 + index] && index < (short)NUMBEROF(value) - 1; index++)
+		value[index] = fitted[length++] = text[tab + 1 + index];
+	value[index] = fitted[length] = 0;
+	inner.x1 -= native_pause_value_inset(definition);
+	draw_string_set_format(NONE, _text_justification_left, 0);
+	ui_layout_check_text(widget, &inner, clip, fitted);
+	rasterizer_draw_unicode_string(&inner, clip, NULL, 0, name);
+	draw_string_set_format(NONE, _text_justification_right, 0);
+	rasterizer_draw_unicode_string(&inner, clip, NULL, 0, value);
+	return TRUE;
+}
+
+/* A native Pause row's selection box, at the row's own size. */
+static void native_pause_box_render(struct bitmap_data *bitmap, rectangle2d const *row,
+	rectangle2d *clip, pixel32 color)
+{
+	short piece, band;
+	for (piece = 0; piece < 3; piece++)
+		for (band = 0; band < 3; band++)
+		{
+			rectangle2d destination, source;
+			native_pause_box_slice(piece, band, row, &destination, &source);
+			draw_bitmap_region_in_rect(bitmap, &destination, &source, clip, color, NULL, FALSE, &source);
+		}
 }
 #endif
 
@@ -3265,7 +3309,7 @@ static void event_handler_dispatch(
 		handler->event_type == _gamepad_binary_button_start) && event_widget_name &&
 		(!csstrcmp(event_widget_name, "ui\\shell\\multiplayer_game\\pause_game\\resume_game_button") ||
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-		 !csstrcmp(event_widget_name, native_multiplayer_pause_resume_name) ||
+		 native_multiplayer_pause_is_resume(widget->definition_tag_index) ||
 #endif
 		 !csstrcmp(event_widget_name, "ui\\shell\\solo_game\\pause_game\\resume_game_button")))
 		resume_mouse = TRUE;
@@ -4185,6 +4229,46 @@ void ui_stop_main_menu_music(
 	return;
 }
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* port: the tag of the screen on top and of the widget with the focus in it,
+with that widget's place among its siblings, for automated menu checks: they
+wait for the screen they asked for and move to an item by name instead of
+counting presses (console "ui") */
+char const *ui_widget_top_screen_name(
+	char const **focus_name,
+	short *focus_index)
+{
+	short stack;
+
+	*focus_name = "none";
+	*focus_index = NONE;
+	for (stack = 0; stack < (short)NUMBEROF(widget_globals.active_widgets); stack++)
+	{
+		struct widget_instance *top = widget_globals.active_widgets[stack];
+
+		if (top)
+		{
+			struct widget_instance *parent = top;
+
+			while (parent->focused_child)
+			{
+				struct widget_instance *sibling;
+				short index = 0;
+
+				for (sibling = parent->child; sibling && sibling != parent->focused_child; sibling = sibling->next)
+					index++;
+				*focus_index = index;
+				parent = parent->focused_child;
+			}
+			if (parent != top)
+				*focus_name = tag_get_name(parent->definition_tag_index);
+			return tag_get_name(top->definition_tag_index);
+		}
+	}
+	return "none";
+}
+#endif
+
 void display_error_deferred(
 	short error_code,
 	short local_player_index,
@@ -4460,8 +4544,13 @@ void display_error(
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 				if (error_code == _error_locked_game_type)
 				{
+					/* The stock dialog's text box is 247 pixels wide and also
+					draws the frame, whose inside is only 211 with the left
+					margin repeated on the right; nothing wraps. Like the
+					stock messages, this one is broken into lines that stay
+					inside (tools/menu_layout_check.py checks it). */
 					static wchar_t locked_text[] =
-						L"Team Slayer Pro is locked.\r\nChoose another game type to change the rules.";
+						L"Team Slayer Pro\r\nis a locked game type.\r\nChoose another to edit.";
 					static struct string_list_entry locked_entry;
 					static struct string_list locked_strings;
 					static struct ui_widget_definition locked_definition;
@@ -5209,6 +5298,11 @@ static void widget_instance_render_text_box(
 				SECONDS_PER_MILLISECOND * 3.0f) + 1.5f) * 0.4f) * color.alpha;
 	}
 	draw_string_set_draw_mode(font_index, NONE, justification, 0, &color);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+	if (native_pause_row_render_text(widget, definition, &bounds, &clip, *text))
+		return;
+	ui_layout_check_text(widget, &bounds, &clip, *text);
+#endif
 	if (string_has_icons_to_draw(*text))
 		draw_string_and_hack_in_icons(&bounds, &clip, NULL, 0, *text, FALSE);
 	else
@@ -5426,6 +5520,9 @@ static void widget_instance_render_spinner_list(
 					definition->justification,
 					0,
 					&color);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+				if (!native_pause_row_render_text(widget, definition, &bounds, &clip, item_text))
+#endif
 				rasterizer_draw_unicode_string(&bounds, &clip, NULL, 0, item_text);
 			}
 		}
@@ -6028,7 +6125,7 @@ static void widget_instance_render_recursive(
 		return;
 	ui_mouse_note_target(widget, definition, offset);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-	native_pause_frame_render(widget, clip_rect, offset, alpha_modifier);
+	native_pause_frame_render(definition, clip_rect, offset, alpha_modifier);
 #endif
 	bitmap = bitmap_group_get_bitmap_from_sequence(
 		definition->background_bitmap.index,
@@ -6107,6 +6204,11 @@ static void widget_instance_render_recursive(
 				alpha_modifier;
 		}
 		color = modulate_pixel32_by_real_alpha(0xFFFFFFFF, alpha);
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		if (TEST_FLAG(definition->flags, _widget_native_pause_row_bit))
+			native_pause_box_render(bitmap, &bounds, clip, color);
+		else
+#endif
 		draw_bitmap_in_rect(
 			bitmap,
 			&bounds,
@@ -6151,6 +6253,9 @@ static void widget_instance_render_recursive(
 		break;
 
 	case _ui_widget_type_column_list:
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		ui_layout_check_rows(widget, definition);
+#endif
 		widget_instance_render_column_list(
 			widget,
 			definition,
@@ -6255,19 +6360,31 @@ void render_ui_widgets_postgame(
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 static void render_home_menu_version(void)
 {
-	long font_index;
-	rectangle2d bounds = { 448, 16, 476, 240 };
-	real_argb_color color = { 0.7f, 0.8f, 0.8f, 0.8f };
+	long font_index = NONE;
+	rectangle2d bounds = { 455, 16, 476, 240 };
+	/* A build number: small, faint and out of the way. */
+	real_argb_color color = { 0.5f, 1.0f, 1.0f, 1.0f };
 
 	if (!main_menu_screen_is_active() || !widget_globals.active_widgets[0]->visible)
 		return;
-	font_index = tag_loaded(FONT_GROUP_TAG, "ui\\small_ui");
+	/* The console's monospace font at three quarters of its size where text
+	is drawn at the display's resolution; otherwise that font as the maps
+	have it, which is the smallest they hold. */
+	if (asset_quality_upres())
+		font_index = draw_string_build_label_font();
+	if (font_index == NONE)
+		font_index = tag_loaded(FONT_GROUP_TAG, "old tags\\internal system plain");
+	if (font_index == NONE)
+		font_index = tag_loaded(FONT_GROUP_TAG, "ui\\small_ui");
 	if (font_index == NONE)
 		return;
 	color.alpha *= widget_instance_get_cumulative_alpha_modifier(widget_globals.active_widgets[0]);
 	/* Menus occupy centered 640 columns; this footer belongs to the screen edge. */
 	halo_screen_ui_offset(FALSE);
+	/* (no drop shadow under it: a shadow color with no alpha, where none set means black) */
+	rasterizer_text_set_shadow_color(0x00000001);
 	draw_string_render_label(font_index, &bounds, &color, "OG v" HALO_OG_VERSION);
+	rasterizer_text_set_shadow_color(0);
 	halo_screen_ui_offset(TRUE);
 }
 #endif
@@ -7307,6 +7424,11 @@ static boolean ui_check_for_pause_game(
 					{
 						short layout = local_player_count == 1 ? 0 :
 							(local_player_count == 2 || (local_player_count == 3 && pressed_by_first_local_player)) ? 1 : 2;
+						/* debug.pause_layout: a split-screen layout with one
+						 * controller, for tools/menu_layout_check.py. */
+						long shown_as = config_integer("debug.pause_layout");
+						if (shown_as == 2 || shown_as == 4)
+							layout = shown_as == 2 ? 1 : 2;
 						native_pause_tag = performance_pause_tags[_pp_pause_1p + layout];
 					}
 #endif

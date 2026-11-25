@@ -17,18 +17,51 @@ pages clone the original Advanced Controls editor: blue option rows, separate
 labels and values, the original arrow graphics, contextual help, and the native
 Accept/Cancel legend. There are no replacement fonts or new artwork.
 
-In-game settings use the resident pause artwork: original 202×27 buttons,
-original bitmap fonts and text baseline, and the blue frame with its native
-Select/Back legend. Taller option pages extend the middle of the frame while
-preserving its corners and footer divider. Split-screen pages fit within their
-local viewport; focused help appears beneath the frame in full-screen layouts.
+In-game menus use the resident pause artwork: the blue frame with its
+Select/Back legend, the rounded selection box, and the original bitmap fonts at
+the stock button's text position. Pause, Performance Options, Game Settings
+and every Game Settings page are one panel, measured in one place
+(`native_pause_styles` in `source/interface/native_pause_frame.inc`):
 
-Multiplayer uses shared, fixed Xbox-style pause layouts for one, two and four
-local players. Game Settings and Performance share the same button style,
+| | One player | Split screen |
+| --- | --- | --- |
+| Panel | 308 pixels wide (the original is 226), centred | 274 wide, centred in the half or quarter screen |
+| Pause list, Game Settings list | Large font, the original 27-pixel rows | The same |
+| Pages of settings | Large font, 27-pixel rows | Small font, 21-pixel rows, so that eight fit 240 lines |
+| Help for the focused row | Beneath the frame | None |
+
+- Every row of a page uses one font and one size, and the selection box is
+  never taller than the space between rows.
+- The frame's height follows its content: the same space above the title,
+  between the title and the first row, and between the last row and the
+  legend's divider on every page. Titles are the page's own font in white.
+- A setting's row shows its name at the left end and its value, between
+  arrows, at the right end, so names and values line up down the page. A link
+  to a sub-page lines up with the names. Lists and actions are centred.
+  Pause's values read as words (**On**, **Off**, **Xbox**); the main menu keeps
+  its capitals.
+- **Accept** and **Apply** stand half a row apart from the settings above them.
+- A page shows at most eight rows, its Accept or Apply included. A page that
+  needs more gets a sub-page, as Audio has **Timer Audio**; rows are never
+  squeezed, and a ninth row on a page does not compile.
+- The frame's corners and the selection box's rounded ends are drawn as
+  authored. Only their middles stretch, so the art is the map's own at any size.
+
+Multiplayer uses these layouts for one, two and four local players,
 independent of a map's authored pause-menu children. Imported main-menu editor
 tags do not switch in-game settings to the main-menu layout. Campaign and
-cooperative play retain their authored pause roots. The dual-renderer local
-build completed; in-game validation remains pending.
+cooperative play keep their authored Pause list, with **Game Settings** added
+as a fifth row at a 24-pixel pitch; their Game Settings pages are the same
+panels as multiplayer's. The main menu's Game Settings pages are separate and
+unchanged.
+
+`tools/menu_layout_check.py` walks these pages in a hosted game and fails on
+text that does not fit its box and on rows that overlap: `--tour pause` for
+one player, `--tour pause-2p` and `--tour pause-4p` for split screen. The walk presses one controller, so for
+split screen `debug.pause_layout` (2 or 4) shows player one's Pause in a half
+or a quarter of the screen. Campaign's pages were looked at once in a running
+game (The Silent Cartographer, November 24, 2026). Split screen has not been
+played with two controllers.
 
 Audio, Video, Controller and Multiplayer preferences belong to the local installation. They are not
 part of a player profile, map or network gametype. Performance Options remain saved
@@ -37,6 +70,21 @@ size are local preferences; the host still controls whether the timer and
 timer audio are enabled.
 
 ## Controller
+
+**Horizontal Sensitivity** and **Vertical Sensitivity** set how fast the look
+stick turns and how fast it looks up and down, each on its own. Both offer
+**Profile** and 1 to 10. Profile is the default and the original behavior: each
+player's profile has one Look Sensitivity that sets both. A number uses the
+same scale as the profile setting, 80 to 260 degrees a second for turning and
+40 to 130 for up and down, so Horizontal 5 with Vertical 5 equals a profile
+sensitivity of 5. Like the rest of Game Settings, they can be changed from the
+main menu or from Pause during a match, and take effect on Accept.
+
+They save locally as `input.look_sensitivity_horizontal` and
+`input.look_sensitivity_vertical` (0 is Profile) and apply to every local
+controller, so split-screen players who want different speeds should leave
+them on Profile and use their own profiles. Mouse aiming is unaffected. Aim is
+local input, so the options need no agreement from the host or other players.
 
 Controller has separate **Left Stick Deadzone** and **Right Stick Deadzone**
 controls. Each offers 0%, 10%, 20%, Xbox, 30%, 40% and 49% presets. **Xbox** is
@@ -47,8 +95,8 @@ can expose drift; the same original axial filter rescales the remaining range.
 The settings save locally as `input.left_stick_deadzone` and
 `input.right_stick_deadzone`, integer values from 0 to 16000. They apply to every
 connected local controller, including touch sticks on iOS, rather than being
-stored in player profiles. Sensitivity and control layout retain their original
-profile controls. Left/right stick labels also fit Southpaw and Legacy layouts.
+stored in player profiles. Control layout retains its original profile
+control. Left/right stick labels also fit Southpaw and Legacy layouts.
 
 Accept saves and applies the draft; Cancel leaves the current preferences in
 place. Mouse sensitivity and keyboard movement are separate. Controller use
@@ -138,7 +186,20 @@ playing. Changing Menu Music during a match affects the next main-menu visit.
 
 ## Video
 
-Video includes **Asset Quality: Original / Upres**, with Original as the default.
+Since 0.7 a new installation uses the enhanced picture: the display's own
+resolution on Mac, Windows and Linux, **Asset Quality: Upres** and **Smooth
+Motion: On**. For the original Xbox picture choose **Resolution: 480p**, **Asset
+Quality: Original** and **Smooth Motion: Off**. The simulation runs at 30 Hz
+with either picture. The iPhone keeps a 480-line picture because it has no
+Resolution setting yet.
+
+A settings file from 0.6 or earlier moves to these defaults once, and only if
+it never changed Resolution, Asset Quality, Smooth Motion or the Mac frame
+limit. A file that changed any of them keeps all of them. The game records
+the offer as `display.defaults_revision`, so choosing the original picture
+afterwards is kept.
+
+Video includes **Asset Quality: Original / Upres**, with Upres as the default.
 Accept saves `display.high_res_hud`; relaunch Halo to apply the asset choice.
 The legacy key retains existing high-resolution HUD preferences and now controls
 HUD redraws, scalable font glyphs and faithful menu title replacements together.
@@ -156,6 +217,22 @@ Smooth Motion enables render interpolation while simulation remains
 30 Hz. Switching interpolation resets its old snapshots before rendering with
 the new setting.
 
+**Detail Distance** has no menu row yet; it is `display.detail_distance` in
+`config.toml`. The Xbox chooses a model's level of detail, whether to draw the
+model and its shadow, and whether to draw a particle from their size on a
+480-line screen. At a higher resolution those changes become visible: models
+lose detail and particles vanish in view. The setting multiplies the distance
+at which they happen.
+
+| Value | Meaning |
+| --- | --- |
+| `0` (default) | Follows the resolution: the lines drawn for each of the Xbox's 480, up to 3 times. At 1080p that is 2.25, at 1440p and above 3, and at 480p exactly the Xbox's distances. |
+| `1` | The Xbox's distances at any resolution |
+| `2`, `3` | Fixed |
+
+Only what is drawn changes. Footstep and impact effects keep the Xbox's range,
+because they carry sounds.
+
 Timer Position is Top Center, Bottom Center or Bottom Right
 (`display.timer_position`, default 0). Timer Size is 50–100%
 (`display.timer_scale`, default 1); editing moves in 5% steps and untouched
@@ -169,17 +246,18 @@ VSync and Smooth Motion use `display.vsync` and `display.interpolation` in
 
 | Renderer/platform | Resolution behavior | Default |
 | --- | --- | --- |
-| Mac Native Metal | Resolution applies between frames after Accept, in fullscreen or a window. Native fits the current Retina drawable; the game's logical aspect stays fixed at startup. | 480p |
-| Windows/Linux OpenGL | Resolution applies between frames after Accept, in fullscreen or a window. Native fits the current drawable while retaining the game's logical aspect. | Auto: native pixels fullscreen, Xbox 640x480 in a window |
+| Mac Native Metal | Resolution applies between frames after Accept, in fullscreen or a window. Native fits the current Retina drawable; the game's logical aspect stays fixed at startup. | Native |
+| Windows/Linux OpenGL | Resolution applies between frames after Accept, in fullscreen or a window. Native fits the current drawable while retaining the game's logical aspect. | Native |
 | Mac ANGLE | Uses the existing display scaling; Resolution controls apply only to Native Metal. | Existing display scaling |
 
-Windows and Linux also provide **Auto**, which preserves the existing fullscreen
-and windowed behavior. The setting is `display.render_height`: -1 is Auto on
+Windows and Linux also provide **Auto**, their default before 0.7: native
+pixels in fullscreen and the Xbox's 640x480 in a window. The setting is `display.render_height`: -1 is Auto on
 Windows/Linux, 0 is Native, and the preset values are their heights in pixels.
 Window size remains independent: drag the window edge or change
 `display.window_scale` for its initial size. Native follows drawable size changes;
 fixed presets keep a stable render size while the window scales the picture.
-Unsupported values fall back to each platform's default. The OpenGL renderer
+An unsupported value falls back to 480p on Mac and Auto on Windows and Linux.
+The OpenGL renderer
 limits physical target sizes to the GPU's supported texture dimensions and
 releases obsolete screen targets and framebuffers when resolution changes.
 

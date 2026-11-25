@@ -105,7 +105,7 @@ hit, object and ping message formats are unchanged from version 10.
 Versions 1 to 11 were shared with OpenCE, whose numbers have continued from 12
 with different contents. Halo OG's own versions are 20000 plus the product
 version's release line: the minor version while the major version is 0, then
-100 times the major version. The current one is **20006**, for every 0.6.x
+100 times the major version. The current one is **20007**, for every 0.7.x
 build. It sends what version 11 sent; its number alone keeps Halo OG and OpenCE
 games apart, and a build on version 11 or earlier is told to update. Builds of
 different release lines do not play together, and the refusal names both
@@ -117,7 +117,7 @@ PC settings it does not implement before applying settings or precaching a map.
 It also recognizes upstream's action-only input bit while preserving its local
 controls. PB capability uses advertisement flag `0x04`, distinct from the new
 in-progress flag `0x02`; an enabled PB session advertises the stock version with
-bit 15 set (`0xCE26`).
+bit 15 set (`0xCE27`).
 See [the protocol policy](../../docs/xbox-fidelity.md#protocol-compatibility) for exact
 settings and rule limits.
 
@@ -263,6 +263,9 @@ a pregame keep-alive every five seconds from the host
      keeps the latest snapshot per unit until its unit and all named
      weapons exist, then moves those same weapon objects into its units.
      Older snapshots are rejected per unit, independently of other units.
+     A client's copy of a unit carries no grenades until the host's
+     inventory arrives (not the unit tag's: a player spawned with the
+     button held threw one the host's copy did not have).
      A change of weapons or grenades goes to every client at once; one of
      ammunition only to the unit's player's machine at once, and to the
      others as often as they are sent that player. A client takes its own

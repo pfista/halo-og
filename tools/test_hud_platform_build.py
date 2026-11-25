@@ -73,7 +73,8 @@ class HudPlatformBuildTests(unittest.TestCase):
             "port/assets/titles/titles.json", "port/assets/fonts/fonts.json",
             *("port/assets/hud/" + asset["name"] + ".png" for asset in assets),
             *("port/assets/titles/" + asset["name"] + ".png" for asset in titles),
-            "port/assets/fonts/Overpass-750.ttf", "port/assets/fonts/Overpass-900.ttf"}
+            "port/assets/fonts/OGMenuLarge.ttf", "port/assets/fonts/OGMenuSmall.ttf",
+            "port/assets/fonts/OGMessage.ttf", "port/assets/fonts/OGConsole.ttf"}
         for target in ("linux", "windows", "android", "ios", "macos", "macos-metal"):
             with self.subTest(target=target):
                 edges = self.graph(target)

@@ -37,9 +37,13 @@ def function(source, name):
     return declaration(source, source[match.start():match.end()])
 
 
-def embedded_fonts():
-    """Use the production 32-bit word ABI, without unrelated PNG tables."""
-    fonts = json.loads((ROOT / "port/assets/fonts/fonts.json").read_text())["fonts"]
+def embedded_fonts(own=False):
+    """Use the production 32-bit word ABI, without unrelated PNG tables. With `own`, the fonts fonts.json
+    lists: rebuilt from their tags' own letters. Otherwise a substitute typeface for each tag, which is
+    sized by capital height and fitted to the original ink: the path any font without units_per_pixel takes."""
+    fonts = json.loads((ROOT / "port/assets/fonts/fonts.json").read_text())["fonts"] if own else [
+        {"tag": "ui\\large_ui", "file": "Overpass-900.ttf"}, {"tag": "ui\\interstate", "file": "Overpass-900.ttf"},
+        {"tag": "ui\\small_ui", "file": "Overpass-750.ttf"}]
     files = sorted({font["file"] for font in fonts})
     lines = ['#include "text_hires.h"']
     for index, name in enumerate(files):
@@ -55,7 +59,7 @@ def embedded_fonts():
         tag = json.dumps(font["tag"])
         name = json.dumps(font["file"])
         size = (ROOT / "port/assets/fonts" / font["file"]).stat().st_size
-        lines.append(f"{{{tag},{name},font{files.index(font['file'])},{size}}},")
+        lines.append(f"{{{tag},{name},font{files.index(font['file'])},{size},{int(font.get('units_per_pixel', 0))}}},")
     lines += ["};", f"const unsigned int text_hires_embedded_count = {len(fonts)};"]
     return "\n".join(lines) + "\n"
 
@@ -74,6 +78,8 @@ static int enabled = 1, allocation_calls, fail_allocation, fail_at_allocation;
 static float pixel_scale = 2.0f;
 int asset_quality_upres(void) { return enabled; }
 float halo_screen_pixel_scale(void) { return pixel_scale; }
+static long ui_offset_units;
+long halo_screen_ui_offset_units(void) { return ui_offset_units; }
 static void *fixture_malloc(size_t size) {
     allocation_calls++;
     if (fail_allocation || allocation_calls==fail_at_allocation) return NULL;
@@ -399,7 +405,8 @@ static void engine_tests(const char *mode) {
     assert(!original_draws && quad_count==4 && bound_bitmap==hires_text_atlas);
     assert(!batch_active && bitmap_allocations==1);
     pixel32 packed=(127UL<<24)|(51UL<<16)|(102UL<<8)|204UL;
-    assert(quads[0][0].color==(packed&0xff000000UL));
+    /* The substitute's shadow is half as dark as the color: the original's soft glyph shows half of it. */
+    assert(quads[0][0].color==(((packed>>24)+1)/2<<24));
     assert(quads[1][0].color==(packed^0xffffffUL));
     assert(quads[3][0].color==packed);
     for(int vertex=0;vertex<4;vertex++) {
@@ -411,12 +418,57 @@ static void engine_tests(const char *mode) {
     if(!strcmp(mode,"clipping")) {
         quad_count=0;global_shadow_color=0x80203040;clip=(rectangle2d){3,3,9,7};
         rasterizer_draw_string(&bounds,&clip,NULL,0,"A");assert(quad_count==2);
-        assert(quads[0][0].color==global_shadow_color);
+        assert(quads[0][0].color==0x40203040);
         for(int v=0;v<4;v++) {
             assert(quads[1][v].position.x>=3 && quads[1][v].position.x<=7);
             assert(quads[1][v].position.y>=3 && quads[1][v].position.y<=9);
         }
         assert(quads[1][0].texture_coordinates.x>0 && quads[1][1].texture_coordinates.x>quads[1][0].texture_coordinates.x);
+    } else if(!strcmp(mode,"ink")) {
+        /* A substitute glyph fills the original glyph's ink, to a part of a pixel: columns 2 to 5
+           of the 8-wide bitmap, the first half covered, and rows 3 to 9. Text then keeps the
+           original font's sizes and spacing whatever the substitute's own proportions are. */
+        memset(original_ink[0],0,sizeof(original_ink[0]));
+        for(int row=3;row<=9;row++) {
+            original_ink[0][row*8+2]=128;
+            for(int column=3;column<=5;column++) original_ink[0][row*8+column]=255;
+        }
+        quad_count=0;rasterizer_draw_string(&bounds,&clip,NULL,0,"Q");assert(quad_count==2);
+        near_value(quads[1][1].position.x-quads[1][0].position.x,6-(2+(1-128/255.f)));
+        near_value(quads[1][2].position.y-quads[1][1].position.y,7);
+        /* (the bitmap's left edge is at 0: the pen at the leading width, less the glyph's origin) */
+        near_value(quads[1][0].position.x,2+(1-128/255.f));
+        /* The whole substitute glyph is shown in it, not a part of one. */
+        assert(quads[1][0].texture_coordinates.x<quads[1][1].texture_coordinates.x);
+        /* A glyph with no ink draws nothing. */
+        memset(original_ink[0],0,sizeof(original_ink[0]));
+        quad_count=0;rasterizer_draw_string(&bounds,&clip,NULL,0,"Z");assert(!quad_count);
+    } else if(!strcmp(mode,"own")) {
+        /* A font rebuilt from the tag's own letters is drawn from the pen, where its own outline lies: the
+           same whatever the original bitmap holds, and at the tag's size whatever capital height is asked. */
+        struct text_hires_glyph small,large;
+        memset(original_ink[0],0,sizeof(original_ink[0]));
+        for(int row=3;row<=9;row++) for(int column=2;column<=5;column++) original_ink[0][row*8+column]=255;
+        quad_count=0;rasterizer_draw_string(&bounds,&clip,NULL,0,"Q");assert(quad_count==2);
+        float left=quads[1][0].position.x,width=quads[1][1].position.x-quads[1][0].position.x;
+        assert(width>0);
+        for(int row=3;row<=9;row++) { original_ink[0][row*8+1]=255;original_ink[0][row*8+6]=255; }
+        quad_count=0;rasterizer_draw_string(&bounds,&clip,NULL,0,"Q");assert(quad_count==2);
+        near_value(quads[1][0].position.x,left);near_value(quads[1][1].position.x-quads[1][0].position.x,width);
+        assert(text_hires_font_own(text_hires_font("ui\\large_ui",12)));
+        assert(text_hires_batch_begin(0));
+        assert(text_hires_glyph(text_hires_font("ui\\large_ui",12),'H',&small));
+        assert(text_hires_glyph(text_hires_font("ui\\large_ui",24),'H',&large));
+        text_hires_batch_end();
+        near_value(small.bottom-small.top,large.bottom-large.top);
+        /* On a screen that is not a whole multiple of 480 lines, each letter still lands on whole screen
+           pixels, with the menus' centering counted: between pixels, letters are resampled unevenly. */
+        pixel_scale=2.25f;ui_offset_units=107;
+        quad_count=0;rasterizer_draw_string(&bounds,&clip,NULL,0,"Q");assert(quad_count==2);
+        /* (its right and bottom edges: the box cuts its left and top) */
+        float across=(quads[1][2].position.x+107)*2.25f,down=quads[1][2].position.y*2.25f;
+        assert(fabsf(across-roundf(across))<0.01f && fabsf(down-roundf(down))<0.01f);
+        pixel_scale=2.0f;ui_offset_units=0;
     } else if(!strcmp(mode,"transform")) {
         struct dynamic_screen_vertex before[4];memcpy(before,quads[1],sizeof(before));quad_count=0;
         rasterizer_text_transform.scale=.75f;rasterizer_text_transform.anchor_x=5;rasterizer_text_transform.anchor_y=8;
@@ -542,7 +594,8 @@ def fixture_source():
                  "draw_string", "draw_unicode_string", "draw_string_preflight", "draw_unicode_string_preflight"):
         source += function(draw, name) + "\n"
     for name in ("rasterizer_text_submit_character", "hires_text_font_get", "rasterizer_preflight_hires_character",
-                 "hires_text_prepare", "rasterizer_draw_hires_character_quad", "rasterizer_draw_hires_character",
+                 "hires_text_prepare", "hires_ink_edges", "hires_original_ink_get",
+                 "rasterizer_draw_hires_character_quad", "rasterizer_draw_hires_character",
                  "rasterizer_draw_hires_character_with_dropshadow", "rasterizer_draw_string",
                  "rasterizer_draw_unicode_string"):
         source += function(raster, name) + "\n"
@@ -572,12 +625,12 @@ int main(int argc,char **argv) {
     return source
 
 
-def build_fixture(directory):
+def build_fixture(directory, own=False):
     folder = Path(directory)
     folder.mkdir(parents=True, exist_ok=True)
     source, embedded = folder / "text-fixture.c", folder / "fonts.c"
     source.write_text(fixture_source())
-    embedded.write_text(embedded_fonts())
+    embedded.write_text(embedded_fonts(own))
     executable = folder / ("text-fixture.exe" if sys.platform == "win32" else "text-fixture")
     command = ["clang", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-but-set-variable",
@@ -659,6 +712,14 @@ class TextHiresTests(unittest.TestCase):
 
     def test_clipping_and_shadow_color(self):
         self.run_case("clipping")
+
+    def test_substitute_glyph_fills_the_original_glyphs_ink(self):
+        self.run_case("ink")
+
+    def test_a_font_rebuilt_from_its_tag_is_drawn_from_the_pen_at_the_tags_size(self):
+        with tempfile.TemporaryDirectory(prefix="halo-text-own-") as directory:
+            result = subprocess.run([str(build_fixture(directory, own=True)), "own"], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_existing_scaled_text_transform_is_preserved(self):
         self.run_case("transform")

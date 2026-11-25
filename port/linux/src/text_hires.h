@@ -1,6 +1,7 @@
 /* Optional display-resolution glyphs. Original font tags still own advances,
- * wrapping, baselines, colors and clipping. Overpass is an authored substitute
- * for Interstate, rather than a claim of identical Xbox font outlines. */
+ * wrapping, baselines, colors and clipping. A font is either rebuilt from a
+ * tag's own letters (tools/og_font.py), with that tag's pixel as its unit, or
+ * a substitute typeface sized by the tag's capital height. */
 #ifndef TEXT_HIRES_H
 #define TEXT_HIRES_H
 
@@ -12,6 +13,9 @@ struct text_hires_embedded
 	const char *file;
 	const unsigned int *data;
 	unsigned int size;
+	/* Font units to one pixel of the tag, for a font rebuilt from the tag's
+	 * own letters; 0 for a substitute, which is sized by capital height. */
+	unsigned int units_per_pixel;
 };
 extern const struct text_hires_embedded text_hires_embedded[];
 extern const unsigned int text_hires_embedded_count;
@@ -24,6 +28,9 @@ struct text_hires_glyph
 };
 
 long text_hires_font(const char *tag_name, float cap_height);
+/* Whether the font is the tag's own letters rebuilt: its glyphs lie where
+ * the tag's bitmaps do, from the pen, and need no fitting. */
+int text_hires_font_own(long font);
 int text_hires_covers(long font, unsigned long code);
 /* Successful empty glyphs have zero width/height. The caller must preflight a
  * complete string before submitting quads; glyph lookup never resets an atlas. */
@@ -51,7 +58,10 @@ int text_hires_atlas_pixels(unsigned long data, struct text_hires_atlas_pixels *
 int text_hires_atlas_pixels_since(unsigned long data, uint64_t uploaded_revision,
 	struct text_hires_atlas_pixels *out);
 
-/* Renderer adapter: physical pixels for each unit of the game's 480 lines. */
+/* Renderer adapter: physical pixels for each unit of the game's 480 lines,
+ * and how many units it is moving what is drawn to the right just now (the
+ * menus' centering on a wide screen, halo_screen_ui_offset). */
 float halo_screen_pixel_scale(void);
+long halo_screen_ui_offset_units(void);
 
 #endif

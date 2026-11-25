@@ -41,11 +41,15 @@ class MenuAssetManifestTests(unittest.TestCase):
         self.assertIn("CAMPAIGN", expected.values())
         self.assertNotIn("OPEN CE", expected.values())
 
-    def test_font_manifest_uses_the_reviewed_overpass_weights_only(self):
+    def test_font_manifest_draws_each_tag_with_the_font_rebuilt_from_its_own_letters(self):
         fonts = json.loads((ROOT / "port/assets/fonts/fonts.json").read_text())["fonts"]
         self.assertEqual({font["tag"]: font["file"] for font in fonts}, {
-            "ui\\large_ui": "Overpass-900.ttf", "ui\\interstate": "Overpass-900.ttf",
-            "ui\\small_ui": "Overpass-750.ttf"})
+            "ui\\large_ui": "OGMenuLarge.ttf", "ui\\interstate": "OGMessage.ttf",
+            "ui\\small_ui": "OGMenuSmall.ttf", "ui\\og_build_label": "OGConsole.ttf"})
+        # (tools/og_font.py writes 64 font units to one pixel of the tag; the version label's tag is made by
+        # the game for the console's font at three quarters of its size)
+        self.assertEqual({font["tag"]: font["units_per_pixel"] for font in fonts}, {
+            "ui\\large_ui": 64, "ui\\interstate": 64, "ui\\small_ui": 64, "ui\\og_build_label": 85})
         for font in fonts:
             self.assertTrue((ROOT / "port/assets/fonts" / font["file"]).is_file())
 

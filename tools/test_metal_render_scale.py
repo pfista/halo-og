@@ -76,6 +76,9 @@ class RenderScaleTests(unittest.TestCase):
             C.c_uint32, C.c_uint32, C.c_uint32, C.c_uint32, C.c_uint32, C.POINTER(Dimensions)]
         cls.lib.halo_metal_render_scale_rectangle.argtypes = [
             C.POINTER(Dimensions), C.POINTER(Edges), C.POINTER(Rectangle)]
+        cls.lib.halo_metal_render_secondary_target_dimensions.argtypes = [
+            C.POINTER(Dimensions), C.POINTER(Dimensions)]
+        cls.lib.halo_metal_render_secondary_target_dimensions.restype = C.c_int
         cls.lib.halo_metal_render_presentation_box.argtypes = [
             C.POINTER(Dimensions), C.c_uint32, C.c_uint32, C.POINTER(Rectangle)]
         cls.lib.halo_metal_render_window_point.argtypes = [C.POINTER(Dimensions),
@@ -128,6 +131,37 @@ class RenderScaleTests(unittest.TestCase):
                 self.assertEqual(values(d), (width, 480, expected_width, preset))
                 self.assertEqual(self.rectangle(d, (0, 0, width, 480)), (0, 0, expected_width, preset))
         self.assertEqual(values(self.dimensions(1600, preset=2160)), (1600, 480, 7200, 2160))
+
+    def test_secondary_target_gets_the_screens_pixels_per_unit(self):
+        # The camouflage and reflection target is 320x240 units: half the
+        # Xbox's 480 lines, so half of every preset, and exactly 320x240 at 480.
+        for width in (640, 738, 854, 1600):
+            for preset in PRESETS:
+                d = sentinel(Dimensions)
+                screen = self.dimensions(width, preset=preset)
+                self.assertEqual(self.lib.halo_metal_render_secondary_target_dimensions(
+                    C.byref(screen), C.byref(d)), OK)
+                expected = (Fraction(320 * preset, 480), Fraction(preset, 2))
+                self.assertEqual(values(d), (320, 240, *expected))
+                self.assertEqual(d.scale_mode, 0)
+                self.assertEqual(self.rectangle(d, (0, 0, 320, 240)), (0, 0, *expected))
+                self.assertEqual(self.rectangle(d, (160, 120, 320, 240)), (expected[0] / 2, expected[1] / 2,
+                                                                         expected[0] / 2, expected[1] / 2))
+        # Native: the screen's own ratio on each axis (738 units on 3600 pixels).
+        screen = self.native_dimensions()
+        d = sentinel(Dimensions)
+        self.assertEqual(self.lib.halo_metal_render_secondary_target_dimensions(C.byref(screen), C.byref(d)), OK)
+        self.assertEqual(values(d), (320, 240, math.floor(Fraction(320 * 3600, 738) + Fraction(1, 2)), 1169))
+        self.assertEqual(d.scale_mode, 1)
+        self.assertEqual(self.rectangle(d, (0, 0, 320, 240)), (0, 0, d.storage_width, d.storage_height))
+        # Anything that is not the scaled screen target is refused, and the output is left alone.
+        for bad in (self.dimensions(256, 256, screen_width=640), self.native_dimensions(320, 240)):
+            out = sentinel(Dimensions)
+            before = bytes(out)
+            self.assertEqual(self.lib.halo_metal_render_secondary_target_dimensions(
+                C.byref(bad), C.byref(out)), INVALID)
+            self.assertEqual(bytes(out), before)
+        self.assertEqual(self.lib.halo_metal_render_secondary_target_dimensions(C.byref(screen), None), INVALID)
 
     def test_scale_one_and_authored_offscreen_sizes_unchanged(self):
         for width, height in ((1, 1), (731, 321), (640, 479), (8192, 8192), (1600, 481)):

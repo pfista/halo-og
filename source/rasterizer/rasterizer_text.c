@@ -333,6 +333,94 @@ static boolean hires_text_prepare(rectangle2d const *bounds, rectangle2d const *
 	return FALSE;
 }
 
+/* the first and last inked entries of a row of coverages, each edge moved in
+by what its entry lacks of full coverage */
+static boolean hires_ink_edges(const real *coverage, short count, real *first_edge, real *last_edge)
+{
+	short first = 0, last = (short)(count - 1);
+
+	while (first < count && coverage[first] <= 0.0f)
+		first++;
+	while (last > first && coverage[last] <= 0.0f)
+		last--;
+	if (first >= count)
+		return FALSE;
+	if (first == last)
+	{
+		*first_edge = (real)first + (1.0f - coverage[first]) * 0.5f;
+		*last_edge = (real)first + 1.0f - (1.0f - coverage[first]) * 0.5f;
+	}
+	else
+	{
+		*first_edge = (real)first + (1.0f - coverage[first]);
+		*last_edge = (real)last + coverage[last];
+	}
+	return TRUE;
+}
+
+/* Where an original glyph's ink lies in its bitmap, to a part of a pixel, as
+left, top, right, bottom: the bitmap's first and last inked columns and rows,
+each moved in by what its edge pixels lack of full coverage. A substitute
+glyph is drawn into exactly this rectangle, so text keeps the original font's
+widths, heights, spacing and clipping whatever the substitute typeface's own
+proportions are. (The substitute, cap heights matched, ran 9% wide and 6%
+tall in ui\small_ui, with A, K and E 15 to 20% wide.) */
+static boolean hires_original_ink_get(
+	struct font_header const *font, struct font_character const *character, real ink[4])
+{
+	static struct
+	{
+		struct font_header const *font;
+		struct font_character const *character;
+		long pixels_offset;
+		word code;
+		boolean inked;
+		real ink[4];
+	} cache[1024];
+	unsigned long slot = (((unsigned long)(size_t)character >> 3) ^ ((unsigned long)(size_t)font >> 5)) &
+		(sizeof(cache) / sizeof(cache[0]) - 1);
+	real columns[64] = { 0 }, rows[64] = { 0 };
+
+	if (cache[slot].font != font || cache[slot].character != character ||
+		cache[slot].pixels_offset != character->pixels_offset || cache[slot].code != character->character)
+	{
+		cache[slot].font = font;
+		cache[slot].character = character;
+		cache[slot].pixels_offset = character->pixels_offset;
+		cache[slot].code = character->character;
+		cache[slot].inked = FALSE;
+		if (character->bitmap_width > 0 && character->bitmap_width <= (short)(sizeof(columns) / sizeof(columns[0])) &&
+			character->bitmap_height > 0 && character->bitmap_height <= (short)(sizeof(rows) / sizeof(rows[0])) &&
+			character->pixels_offset >= 0 && character->pixels_offset <= font->pixels.size &&
+			(long)character->bitmap_width * character->bitmap_height <= font->pixels.size - character->pixels_offset)
+		{
+			const byte *pixels = (const byte *)font->pixels.address + character->pixels_offset;
+			short row, column;
+
+			for (row = 0; row < character->bitmap_height; row++)
+			{
+				for (column = 0; column < character->bitmap_width; column++)
+				{
+					real coverage = (real)pixels[(long)row * character->bitmap_width + column] * (1.0f / 255.0f);
+
+					if (coverage > columns[column])
+						columns[column] = coverage;
+					if (coverage > rows[row])
+						rows[row] = coverage;
+				}
+			}
+			cache[slot].inked =
+				hires_ink_edges(columns, character->bitmap_width, &cache[slot].ink[0], &cache[slot].ink[2]) &&
+				hires_ink_edges(rows, character->bitmap_height, &cache[slot].ink[1], &cache[slot].ink[3]);
+		}
+	}
+	ink[0] = cache[slot].ink[0];
+	ink[1] = cache[slot].ink[1];
+	ink[2] = cache[slot].ink[2];
+	ink[3] = cache[slot].ink[3];
+	return cache[slot].inked;
+}
+
 static void rasterizer_draw_hires_character_quad(
 	struct parse_string_state *state, struct font_header *font, struct font_character *character, unsigned long color,
 	short x0, short y0, short x, short y, boolean drop_shadow)
@@ -340,30 +428,82 @@ static void rasterizer_draw_hires_character_quad(
 	struct text_hires_glyph glyph;
 	struct dynamic_screen_vertex vertices[NUMBER_OF_VERTICES_PER_QUADRILATERAL];
 	real left, top, right, bottom, u0, v0, u1, v1;
-	real pen_x = (real)(x0 - x + character->bitmap_origin_x);
-	real baseline = (real)(y0 - y + character->bitmap_origin_y);
+	real ink[4], glyph_left, glyph_top, glyph_right, glyph_bottom;
+	long replacement;
 	short pass;
 	rectangle2d character_clip;
-	if (!text_hires_glyph(hires_text_font_get(font), character->character, &glyph) ||
+	replacement = hires_text_font_get(font);
+	if (!text_hires_glyph(replacement, character->character, &glyph) ||
 		glyph.right <= glyph.left || glyph.bottom <= glyph.top)
 		return;
+	/* x0 and y0 are where the part of the original glyph's bitmap that the
+	 * clip left begins, x and y how much the clip took off its left and top. */
+	if (text_hires_font_own(replacement))
+	{
+		/* The tag's own letters rebuilt: the outline is drawn in the tag's
+		 * pixels from the pen on the baseline, which the bitmap's origin
+		 * places, so it lies where the original letter does. */
+		real pen_x = (real)(x0 - x + character->bitmap_origin_x);
+		real baseline = (real)(y0 - y + character->bitmap_origin_y);
+		real scale = halo_screen_pixel_scale();
+
+		/* On whole screen pixels. The glyph's picture is drawn for whole
+		 * pixels from the pen, but the pen is in units of the game's 480
+		 * lines, which fall between screen pixels unless the screen is a
+		 * whole multiple of 480 lines. Each letter was then resampled at a
+		 * different part of a pixel: stems came out unevenly soft, and
+		 * letters seemed to sit at different heights. Text drawn at another
+		 * size is resampled whatever is done here, so it is left alone. */
+		if (rasterizer_text_transform.scale == 1.0f && scale > 0.0f)
+		{
+			real offset = (real)halo_screen_ui_offset_units();
+
+			pen_x = (real)(long)((pen_x + offset) * scale + (pen_x + offset >= 0.0f ? 0.5f : -0.5f)) / scale - offset;
+			baseline = (real)(long)(baseline * scale + (baseline >= 0.0f ? 0.5f : -0.5f)) / scale;
+		}
+		glyph_left = pen_x + glyph.left;
+		glyph_top = baseline + glyph.top;
+		glyph_right = pen_x + glyph.right;
+		glyph_bottom = baseline + glyph.bottom;
+	}
+	else
+	{
+		/* A substitute typeface fills the rectangle of the original glyph's
+		 * ink and is cut where the original is, so a box that fits the
+		 * original text fits this. */
+		if (!hires_original_ink_get(font, character, ink))
+			return;
+		glyph_left = (real)(x0 - x) + ink[0];
+		glyph_top = (real)(y0 - y) + ink[1];
+		glyph_right = (real)(x0 - x) + ink[2];
+		glyph_bottom = (real)(y0 - y) + ink[3];
+	}
 	draw_string_get_character_clip(state, &character_clip);
-	/* Preserve the tag's advance; center the substitute within that advance. */
-	pen_x += ((real)character->character_width - glyph.advance) * 0.5f;
-	left = MAX(pen_x + glyph.left, (real)character_clip.x0);
-	right = MIN(pen_x + glyph.right, (real)character_clip.x1);
-	top = MAX(baseline + glyph.top, (real)character_clip.y0);
-	bottom = MIN(baseline + glyph.bottom, (real)character_clip.y1);
+	left = MAX(glyph_left, (real)character_clip.x0);
+	right = MIN(glyph_right, (real)character_clip.x1);
+	top = MAX(glyph_top, (real)character_clip.y0);
+	bottom = MIN(glyph_bottom, (real)character_clip.y1);
 	if (right <= left || bottom <= top)
 		return;
-	u0 = glyph.u0 + (left - pen_x - glyph.left) / (glyph.right - glyph.left) * (glyph.u1 - glyph.u0);
-	u1 = glyph.u0 + (right - pen_x - glyph.left) / (glyph.right - glyph.left) * (glyph.u1 - glyph.u0);
-	v0 = glyph.v0 + (top - baseline - glyph.top) / (glyph.bottom - glyph.top) * (glyph.v1 - glyph.v0);
-	v1 = glyph.v0 + (bottom - baseline - glyph.top) / (glyph.bottom - glyph.top) * (glyph.v1 - glyph.v0);
+	u0 = glyph.u0 + (left - glyph_left) / (glyph_right - glyph_left) * (glyph.u1 - glyph.u0);
+	u1 = glyph.u0 + (right - glyph_left) / (glyph_right - glyph_left) * (glyph.u1 - glyph.u0);
+	v0 = glyph.v0 + (top - glyph_top) / (glyph_bottom - glyph_top) * (glyph.v1 - glyph.v0);
+	v1 = glyph.v0 + (bottom - glyph_top) / (glyph_bottom - glyph_top) * (glyph.v1 - glyph.v0);
+	/* The original shadow is the glyph again, one pixel down and right. Its
+	 * glyph has a soft edge about a pixel wide, so the shadow that shows is a
+	 * fringe fading from dark at the letter to nothing a pixel out: half as
+	 * dark, on average, as the shadow's color. A sharp substitute drawn the
+	 * same way leaves a hard fringe at the color's full darkness, which
+	 * stands out far more. Its shadow is drawn at half strength instead. */
 	for (pass = drop_shadow ? 0 : 1; pass < 2; pass++)
 	{
 		real offset = pass == 0 ? 1.0f : 0.0f;
-		unsigned long vertex_color = pass == 0 ? (global_shadow_color ? global_shadow_color : color & 0xFF000000) : color;
+		unsigned long vertex_color = color;
+		if (pass == 0)
+		{
+			unsigned long shadow_color = global_shadow_color ? global_shadow_color : color & 0xFF000000;
+			vertex_color = (((shadow_color >> 24) + 1) / 2 << 24) | (shadow_color & 0x00FFFFFF);
+		}
 		vertices[0].color = vertices[1].color = vertices[2].color = vertices[3].color = vertex_color;
 		vertices[0].position.x = vertices[3].position.x = left + offset;
 		vertices[1].position.x = vertices[2].position.x = right + offset;

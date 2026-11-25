@@ -22,6 +22,7 @@ typedef unsigned char boolean;
 typedef unsigned char byte;
 typedef unsigned short word;
 #define HALO_PORT_MAXIMUM_NETWORK_PLAYERS 16
+#define HALO_OG_HOST_MAXIMUM_PLAYERS 16
 #define MAXIMUM_NETWORK_MACHINE_COUNT 4
 #define MAXIMUM_NETWORK_PLAYER_COUNT 16
 #define MAXIMUM_MACHINE_NAME_LENGTH 16

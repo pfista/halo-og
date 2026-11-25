@@ -180,11 +180,11 @@ the setting for one start of the game. It has priority over the file.
 | --- | --- | --- | --- |
 | `display.fullscreen` | `true` | `HALO_FULLSCREEN` | `true`: fullscreen with the display's shape; `false`: a window with the Xbox's 4:3 shape. Auto resolution draws at native pixels fullscreen and 640x480 in a window. F11 changes between the two. |
 | `display.window_scale` | `2` | `HALO_WINDOW_SCALE` | The size of the window, as a multiple of 640x480. You can change the size of the window. |
-| `display.render_height` | `-1` | — | Render resolution in fullscreen or a window: `-1` Auto preserves native fullscreen/480p windowed; `0` Native fits current drawable pixels; `480`, `720`, `1080`, `1440` or `2160` select a fixed height. Game coordinates remain 480 lines. Game Settings → Video → Resolution applies between frames. |
+| `display.render_height` | `0` | — | Render resolution in fullscreen or a window: `0` Native fits current drawable pixels; `-1` Auto is native fullscreen/480p windowed; `480`, `720`, `1080`, `1440` or `2160` select a fixed height. Game coordinates remain 480 lines. Game Settings → Video → Resolution applies between frames. |
 | `display.vsync` | `true` | `HALO_NO_VSYNC=1` sets `false` | `true`: each frame waits for the display. |
-| `display.interpolation` | `false` | `HALO_INTERPOLATION` | `true`: one frame for each refresh of the display. `false`: 30 frames each second, as on the Xbox. Refer to "Frame rate". |
+| `display.interpolation` | `true` | `HALO_INTERPOLATION` | `true`: one frame for each refresh of the display. `false`: 30 frames each second, as on the Xbox. Refer to "Frame rate". |
 | `display.direct_camera` | `false` | `HALO_DIRECT_CAMERA` | `true`: in first person, on foot, the view points where the player aims in each frame, not where the last tick left it. Refer to "Frame rate". |
-| `display.high_res_hud` | `false` | `HALO_HIGH_RES_HUD` | `true`: the HUD (meters, counters, panels and their outlines, the motion sensor, reticles, waypoints, scopes) is drawn from the high-res assets in `port/assets/hud`, 8x the size of the maps' bitmaps. The bitmaps with English text keep the maps' own. `false`: the maps' own bitmaps. |
+| `display.high_res_hud` | `true` | `HALO_HIGH_RES_HUD` | `true`: the HUD (meters, counters, panels and their outlines, the motion sensor, reticles, waypoints, scopes) is drawn from the high-res assets in `port/assets/hud`, 8x the size of the maps' bitmaps. The bitmaps with English text keep the maps' own. `false`: the maps' own bitmaps. |
 | `audio.enabled` | `true` | `HALO_NO_AUDIO=1` sets `false` | `false`: no audio device. The sound continues without output. |
 | `audio.volume` | `1.0` | `HALO_VOLUME` | The master volume. |
 | `audio.menu_music` | `true` | — | `false` disables only the main menu title music; menu effects and gameplay audio keep playing. Restart after editing. |
@@ -262,6 +262,10 @@ Each frame shows the world between the last two ticks
   the last tick.
 - Rotations use quaternions. Positions and scales are linear.
 - A teleport, a respawn or a cut of the camera does not mix. It jumps.
+- A pose that changes at once (a weapon switch, a model swapped) does not
+  mix either.
+- In cinematics, a camera that moves with an object (the lifepod in a30,
+  a Pelican) moves with the object as it is drawn.
 
 Thus the frames are one tick (33 ms) after the calculation. The calculation
 does not change.
@@ -272,7 +276,7 @@ on foot, each frame points the view where the player aims at that time. Thus the
 turns in the frame that the mouse moves. In a vehicle and in cinematics, the
 view mixes as the other things do. On Android, the view mixes as before.
 
-To retain the default 30 frames each second, use `display.interpolation = false`.
+For the original 30 frames each second, use `display.interpolation = false`.
 
 To see the frame rate:
 
@@ -289,9 +293,10 @@ half a second.
 
 ## System link
 
-The Xbox game lets 16 players on 4 machines play a system link game. This
-port lets up to 128 players on up to 128 machines play. Each machine can
-have up to 4 players (split screen).
+The Xbox game lets 16 players on 4 machines play a system link game. A Halo OG
+host admits up to 32 players. The network records hold 128 players on up to 128
+machines, so the limit is one number. Each machine can have up to 4 players
+(split screen).
 
 - `include/halo_port_limits.h` sets the limits.
 - `include/halo_port_capacity.h` sets the memory for the limits. The game
@@ -301,7 +306,7 @@ have up to 4 players (split screen).
 Obey these rules:
 
 - All the machines in a game must use a build with the same limits.
-- The port uses Halo OG's own netcode version, 20006 for every 0.6.x build.
+- The port uses Halo OG's own netcode version, 20007 for every 0.7.x build.
   Builds with the same minor version play together. It does not see the Xbox
   game, and it does not join OpenCE builds or Halo OG v0.5.2 and earlier, which
   are on other versions.
@@ -509,7 +514,7 @@ play is disabled. Set `discord.application_id = ""` to disable the integration.
 | --- | --- |
 | Game code | All 466 C files of the game. The changes are in "Game source changes". |
 | Graphics | Direct3D 8 on OpenGL 4.5 core through SDL3 (`src/d3d8_gl.c`). The port translates the NV2A vertex shaders and register combiners to GLSL. It decodes all the Xbox texture formats. The vertex and index buffers come from a GL copy of the Xbox memory. |
-| High-res HUD | Optional with `display.high_res_hud = true`; this fork defaults to the maps' own bitmaps. The high-res assets are redraws at 8x the size of the maps' bitmaps (4x for the largest), in `port/assets/hud`. They cover the meters, counters, panels and their outlines, the motion sensor, reticles, waypoints and scopes, but no bitmap with English text. `tools/hud_assets.py` makes them from the SVG redraws, and the build embeds them in the executable. When enabled and the game uploads one of those bitmaps, `src/hud_hires.c` gives the high-res texture in its place, if the bitmap's pixels are those of the English maps: another language's maps keep their own. The game sizes and places the HUD from its tags as before. |
+| High-res HUD | On by default since 0.7 (`display.high_res_hud = true`); `false` draws the maps' own bitmaps. The high-res assets are redraws at 8x the size of the maps' bitmaps (4x for the largest), in `port/assets/hud`. They cover the meters, counters, panels and their outlines, the motion sensor, reticles, waypoints and scopes, but no bitmap with English text. `tools/hud_assets.py` makes them from the SVG redraws, and the build embeds them in the executable. When enabled and the game uploads one of those bitmaps, `src/hud_hires.c` gives the high-res texture in its place, if the bitmap's pixels are those of the English maps: another language's maps keep their own. The game sizes and places the HUD from its tags as before. |
 | Sound | Xbox DirectSound on SDL3 audio (`src/dsound_sdl.c`): PCM and Xbox ADPCM, mixed at 48 kHz, with volume, pitch, mix bins, distance, stereo pan, occlusion and obstruction. There is no Doppler effect, no cones and no reverb. |
 | Input | XInput on SDL3 (`src/xinput_sdl.c`): keyboard, mouse, gamepads with rumble, and the debug keyboard for the console. |
 | Files | The Win32 file functions and the MSVC file functions on POSIX, with the translation of Xbox paths. |

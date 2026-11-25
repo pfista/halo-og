@@ -18,8 +18,12 @@ enum
 	_pp_options_1p, _pp_options_2p, _pp_options_4p,
 	_pp_column, _pp_preset, _pp_timer, _pp_markers, _pp_audio, _pp_movement, _pp_weapon,
 	_pp_apply, _pp_title, _pp_footer,
+	/* The same controls in split screen's smaller rows. Help has no room there. */
+	_pp_split_column, _pp_split_preset, _pp_split_timer, _pp_split_markers, _pp_split_audio,
+	_pp_split_movement, _pp_split_weapon, _pp_split_apply, _pp_split_title,
 	_pp_widget_count
 };
+enum { PERFORMANCE_PAUSE_SPLIT = _pp_split_column - _pp_column, PERFORMANCE_PAUSE_ROWS = _pp_apply - _pp_preset + 1 };
 
 static char const *const performance_pause_original_names[3] =
 {
@@ -39,6 +43,10 @@ static char const *const performance_pause_names[_pp_widget_count] =
 	"ui\\performance\\pause_timer", "ui\\performance\\pause_markers", "ui\\performance\\pause_audio",
 	"ui\\performance\\pause_movement", "ui\\performance\\pause_weapon",
 	"ui\\performance\\pause_apply", "ui\\performance\\pause_title", "ui\\performance\\pause_footer",
+	"ui\\performance\\split_column", "ui\\performance\\split_preset",
+	"ui\\performance\\split_timer", "ui\\performance\\split_markers", "ui\\performance\\split_audio",
+	"ui\\performance\\split_movement", "ui\\performance\\split_weapon",
+	"ui\\performance\\split_apply", "ui\\performance\\split_title",
 };
 
 /* unicode_string_list_get_string writes the terminating NUL; keep these
@@ -48,13 +56,15 @@ static wchar_t performance_pause_text[][64] =
 	L"PERFORMANCE OPTIONS", L"APPLY", L"RETURN",
 	L"Apply to change host settings.",
 	L"Host settings (view only).",
-	L"Preset: < Default >", L"Preset: < Practice >", L"Preset: < Pro >", L"Preset: < Custom >",
-	L"Match timer: < Off >", L"Match timer: < On >",
-	L"Markers: < Off >", L"Markers: < On >",
+	/* A setting's row is its name, a tab and its value: the name is drawn
+	 * from the row's left end and the value to its right end. */
+	L"Preset\t< Default >", L"Preset\t< Practice >", L"Preset\t< Pro >", L"Preset\t< Custom >",
+	L"Match Timer\t< Off >", L"Match Timer\t< On >",
+	L"Markers\t< Off >", L"Markers\t< On >",
 	L"PERFORMANCE OPTIONS",
-	L"Timer sounds: <Off>", L"Timer sounds: <On>", L"GAME SETTINGS",
-	L"Movement: <Normal>", L"Movement: <Just Me>", L"Movement: <Silent>",
-	L"Weapon: < Normal >", L"Weapon: < Just Me >", L"Weapon: < Silent >",
+	L"Timer Sounds\t< Off >", L"Timer Sounds\t< On >", L"GAME SETTINGS",
+	L"Movement\t< Normal >", L"Movement\t< Just Me >", L"Movement\t< Silent >",
+	L"Weapon\t< Normal >", L"Weapon\t< Just Me >", L"Weapon\t< Silent >",
 	L"Original footsteps,\r\njumps and landings.",
 	L"Just Me: hear your movement.\r\nOthers cannot hear it.",
 	L"Silent: no movement sounds.\r\nCombat sounds stay normal.",
@@ -86,7 +96,7 @@ static long performance_pause_tags[_pp_widget_count];
 static struct ui_widget_child_reference performance_pause_children[3][3];
 static struct ui_widget_child_reference performance_pause_list_children[3][4];
 static struct ui_widget_child_reference performance_pause_option_children[3][5];
-static struct ui_widget_child_reference performance_pause_column_children[7];
+static struct ui_widget_child_reference performance_pause_column_children[2][PERFORMANCE_PAUSE_ROWS];
 static struct ui_widget_event_handler_reference performance_pause_entry_events[3][2];
 static struct ui_widget_event_handler_reference performance_pause_settings_events[3][2];
 static struct ui_widget_event_handler_reference performance_pause_root_events[3];
@@ -152,11 +162,9 @@ static void performance_pause_clear_definition(struct ui_widget_definition *defi
 
 static boolean performance_pause_build(void)
 {
-	struct ui_widget_definition const *button_style;
-	long font, pause_frame_tag, frame_tag, legend_tag, index, layout;
+	long legend_tag, index, layout, split;
 	static short const string_starts[7] = {0, 5, 9, 11, 14, 17, 20};
 	static short const string_counts[7] = {NUMBEROF(performance_pause_text), 4, 2, 2, 2, 3, 3};
-	static short const pause_frame_y[3] = {164, 52, 46};
 
 	/* Runtime registrations are invalidated at every scenario unload. A tag
 	 * name lookup avoids dereferencing stale map definitions after a reload. */
@@ -168,14 +176,8 @@ static boolean performance_pause_build(void)
 	csmemset(performance_pause_drafts, 0, sizeof(performance_pause_drafts));
 	if (!native_multiplayer_pause_build())
 		return FALSE;
-	button_style = native_multiplayer_pause_button_style();
-	font = native_pause_resident_tag(FONT_GROUP_TAG, "ui\\small_ui");
-	if (!button_style || font == NONE)
-		return FALSE;
-	pause_frame_tag = native_pause_frame_tag(159);
-	frame_tag = native_pause_frame_tag(240);
 	legend_tag = native_pause_legend_tag();
-	if (pause_frame_tag == NONE || frame_tag == NONE || legend_tag == NONE) return FALSE;
+	if (legend_tag == NONE) return FALSE;
 	for (index = 0; index < (long)NUMBEROF(performance_pause_strings); index++)
 	{
 		csmemset(&performance_pause_strings[index], 0, sizeof(performance_pause_strings[index]));
@@ -203,8 +205,8 @@ static boolean performance_pause_build(void)
 			return FALSE;
 	}
 
-	/* All maps use the regular Xbox frame, four known rows and the same
-	 * viewport placements. Authored map lists cannot add or rearrange rows. */
+	/* All maps use the regular Xbox frame, four known rows and the kit's
+	 * placement in each viewport. Authored map lists cannot add or rearrange rows. */
 	for (layout = 0; layout < 3; layout++)
 	{
 		struct ui_widget_definition *pause = &performance_pause_definitions[_pp_pause_1p + layout];
@@ -213,37 +215,42 @@ static boolean performance_pause_build(void)
 		struct ui_widget_definition *settings = &performance_pause_definitions[_pp_settings_1p + layout];
 		struct ui_widget_definition *options = &performance_pause_definitions[_pp_options_1p + layout];
 		struct ui_widget_definition const *pause_style = native_multiplayer_pause_root((short)layout);
-		short x, pause_y, y;
+		struct ui_widget_definition const *menu_row;
+		struct native_pause_panel panel;
+		short menu_style, options_style, controls, row;
 		if (!pause_style) return FALSE;
 		*pause = *pause_style;
-		x = (pause->bounds.x1 - 202) / 2 - 1;
-		pause_y = pause_frame_y[layout];
-		y = (pause->bounds.y1 - 240) / 2;
-		performance_pause_child(&performance_pause_children[layout][0], pause_frame_tag, x - 8, pause_y);
+		menu_style = native_pause_style_for(&pause->bounds, FALSE);
+		options_style = native_pause_style_for(&pause->bounds, TRUE);
+		controls = options_style == _native_pause_wide ? 0 : PERFORMANCE_PAUSE_SPLIT;
+		menu_row = native_multiplayer_pause_button_style(menu_style);
+		if (!menu_row || !native_pause_panel_place(&panel, menu_style, &pause->bounds, 4, FALSE, FALSE))
+			return FALSE;
+		performance_pause_child(&performance_pause_children[layout][0], panel.frame_tag,
+			panel.x - NATIVE_PAUSE_FRAME_MARGIN, panel.y);
 		performance_pause_child(&performance_pause_children[layout][1],
-			performance_pause_tags[_pp_list_1p + layout], x, pause_y + 15);
-		performance_pause_child(&performance_pause_children[layout][2], legend_tag, x + 17, pause_y + 134);
+			performance_pause_tags[_pp_list_1p + layout], panel.x, panel.y + panel.rows_y);
+		performance_pause_child(&performance_pause_children[layout][2], legend_tag,
+			panel.x + native_pause_legend_x(menu_style), panel.y + panel.height - NATIVE_PAUSE_LEGEND_Y);
 		performance_pause_block(&pause->child_widgets, 3, performance_pause_children[layout]);
 		list->type = _ui_widget_type_column_list;
 		list->flags = FLAG(_widget_pass_unhandled_events_to_children_bit) |
 			FLAG(_widget_dpad_updown_tabs_thru_list_items_bit);
-		list->bounds.x1 = 202;
-		list->bounds.y1 = 111;
-		performance_pause_child(&performance_pause_list_children[layout][0],
-			native_multiplayer_pause_resume_tag(), 0, 0);
-		performance_pause_child(&performance_pause_list_children[layout][3],
-			native_multiplayer_pause_leave_tag(), 0, 84);
-		performance_pause_child(&performance_pause_list_children[layout][1],
-			performance_pause_tags[_pp_entry_1p + layout], 0, 28);
-		performance_pause_child(&performance_pause_list_children[layout][2],
-			performance_pause_tags[_pp_settings_1p + layout], 0, 56);
+		list->bounds.x1 = menu_row->bounds.x1;
+		list->bounds.y1 = panel.rows_height;
+		for (row = 0; row < 4; row++)
+			performance_pause_child(&performance_pause_list_children[layout][row],
+				row == 0 ? native_multiplayer_pause_resume_tag(menu_style) :
+				row == 1 ? performance_pause_tags[_pp_entry_1p + layout] :
+				row == 2 ? performance_pause_tags[_pp_settings_1p + layout] :
+					native_multiplayer_pause_leave_tag(menu_style),
+				0, native_pause_row_y(menu_style, row, 4, FALSE));
 		performance_pause_block(&list->child_widgets, 4, performance_pause_list_children[layout]);
-		*entry = *button_style;
+		/* Every row of the list is the same size and font. */
+		*entry = *menu_row;
 		performance_pause_reference(&entry->text_label_string_list, UNICODE_STRING_LIST_TAG,
 			performance_pause_string_tags[0]);
 		entry->string_list_index = 0;
-		/* Both longer labels use the regular small_ui font and button bounds. */
-		entry->text_font.index = font;
 		performance_pause_event_definition(&performance_pause_entry_events[layout][0],
 			_gamepad_analog_button_a, 0, FLAG(_event_handler_open_widget_bit), performance_pause_tags[_pp_options_1p + layout]);
 		performance_pause_event_definition(&performance_pause_entry_events[layout][1],
@@ -268,14 +275,22 @@ static boolean performance_pause_build(void)
 		options->flags = FLAG(_widget_pass_unhandled_events_to_children_bit);
 		options->background_bitmap = pause->background_bitmap;
 		performance_pause_block(&options->event_handlers, 3, performance_pause_root_events);
-		/* The non-interactive frame draws first. Native 27-pixel buttons end
-		 * at the original footer divider; split-screen keeps its full legend. */
-		performance_pause_child(&performance_pause_option_children[layout][0], frame_tag, x - 8, y);
-		performance_pause_child(&performance_pause_option_children[layout][1], performance_pause_tags[_pp_column], x, y + 22);
-		performance_pause_child(&performance_pause_option_children[layout][2], performance_pause_tags[_pp_title], x, y);
-		performance_pause_child(&performance_pause_option_children[layout][3], legend_tag, x + 17, y + 215);
-		performance_pause_child(&performance_pause_option_children[layout][4], performance_pause_tags[_pp_footer], x - 41, y + 242);
-		performance_pause_block(&options->child_widgets, layout == 0 ? 5 : 4, performance_pause_option_children[layout]);
+		/* The non-interactive frame draws first. Help needs the whole screen. */
+		if (!native_pause_panel_place(&panel, options_style, &options->bounds, PERFORMANCE_PAUSE_ROWS, TRUE, TRUE))
+			return FALSE;
+		performance_pause_child(&performance_pause_option_children[layout][0], panel.frame_tag,
+			panel.x - NATIVE_PAUSE_FRAME_MARGIN, panel.y);
+		performance_pause_child(&performance_pause_option_children[layout][1],
+			performance_pause_tags[_pp_column + controls], panel.x, panel.y + panel.rows_y);
+		performance_pause_child(&performance_pause_option_children[layout][2],
+			performance_pause_tags[_pp_title + controls], panel.x, panel.y + panel.title_y);
+		performance_pause_child(&performance_pause_option_children[layout][3], legend_tag,
+			panel.x + native_pause_legend_x(options_style), panel.y + panel.height - NATIVE_PAUSE_LEGEND_Y);
+		performance_pause_child(&performance_pause_option_children[layout][4], performance_pause_tags[_pp_footer],
+			panel.x + (native_pause_styles[options_style].row_width - NATIVE_PAUSE_HELP_WIDTH) / 2,
+			panel.y + panel.height + NATIVE_PAUSE_HELP_GAP);
+		performance_pause_block(&options->child_widgets, options_style == _native_pause_wide ? 5 : 4,
+			performance_pause_option_children[layout]);
 	}
 	performance_pause_event_definition(&performance_pause_root_events[0],
 		_widget_event_created, _performance_pause_created, FLAG(_event_handler_run_function_bit), NONE);
@@ -292,55 +307,63 @@ static boolean performance_pause_build(void)
 	performance_pause_event_definition(&performance_pause_spinner_events[0],
 		_gamepad_analog_button_a, _performance_pause_next, FLAG(_event_handler_run_function_bit), NONE);
 
-	performance_pause_definitions[_pp_column].type = _ui_widget_type_column_list;
-	performance_pause_definitions[_pp_column].flags =
-		FLAG(_widget_pass_unhandled_events_to_children_bit) | FLAG(_widget_dpad_updown_tabs_thru_list_items_bit);
-	performance_pause_definitions[_pp_column].bounds.x1 = 202;
-	performance_pause_definitions[_pp_column].bounds.y1 = 189;
-	performance_pause_block(&performance_pause_definitions[_pp_column].child_widgets, 7, performance_pause_column_children);
-	for (index = _pp_preset; index <= _pp_footer; index++)
+	for (split = 0; split < 2; split++)
 	{
-		struct ui_widget_definition *definition = &performance_pause_definitions[index];
-		definition->type = _ui_widget_type_text_box;
-		definition->bounds.x1 = 202;
-		definition->bounds.y1 = 27;
-		definition->text_font = button_style->text_font;
-		definition->horizontal_offset = button_style->horizontal_offset;
-		definition->vertical_offset = button_style->vertical_offset;
-		definition->text_color = button_style->text_color;
-		definition->justification = _text_justification_center;
-		performance_pause_reference(&definition->text_label_string_list,
+		short style_index = split ? _native_pause_split_options : _native_pause_wide;
+		short controls = split ? PERFORMANCE_PAUSE_SPLIT : 0;
+		struct native_pause_style const *style = &native_pause_styles[style_index];
+		struct ui_widget_definition const *row_style = native_multiplayer_pause_button_style(style_index);
+		struct ui_widget_definition *column = &performance_pause_definitions[_pp_column + controls];
+		if (!row_style) return FALSE;
+		column->type = _ui_widget_type_column_list;
+		column->flags =
+			FLAG(_widget_pass_unhandled_events_to_children_bit) | FLAG(_widget_dpad_updown_tabs_thru_list_items_bit);
+		column->bounds.x1 = style->row_width;
+		column->bounds.y1 = (short)(PERFORMANCE_PAUSE_ROWS * style->row_height + style->action_gap);
+		performance_pause_block(&column->child_widgets, PERFORMANCE_PAUSE_ROWS, performance_pause_column_children[split]);
+		for (index = _pp_preset; index <= _pp_apply; index++)
+		{
+			struct ui_widget_definition *definition = &performance_pause_definitions[index + controls];
+			*definition = *row_style;
+			performance_pause_reference(&definition->text_label_string_list,
+				UNICODE_STRING_LIST_TAG, performance_pause_string_tags[0]);
+			performance_pause_child(&performance_pause_column_children[split][index - _pp_preset],
+				performance_pause_tags[index + controls], 0,
+				native_pause_row_y(style_index, (short)(index - _pp_preset), PERFORMANCE_PAUSE_ROWS, TRUE));
+			if (index <= _pp_weapon)
+			{
+				definition->type = _ui_widget_type_spinner_list;
+				native_pause_setting_definition(definition, style_index);
+				definition->flags |= FLAG(_widget_dpad_leftright_tabs_thru_list_items_bit);
+				definition->list_flags = FLAG(_list_items_generated_from_string_list_tag);
+				definition->text_label_string_list.index = performance_pause_string_tags[index - _pp_preset + 1];
+				performance_pause_block(&definition->event_handlers, 1, performance_pause_spinner_events);
+			}
+		}
+		performance_pause_definitions[_pp_apply + controls].string_list_index = 1;
+		performance_pause_block(&performance_pause_definitions[_pp_apply + controls].event_handlers, 2,
+			performance_pause_apply_events);
+		/* One title style on every page: the page's own font, in white. */
+		native_pause_title_definition(&performance_pause_definitions[_pp_title + controls], row_style);
+		performance_pause_reference(&performance_pause_definitions[_pp_title + controls].text_label_string_list,
 			UNICODE_STRING_LIST_TAG, performance_pause_string_tags[0]);
-		if (index <= _pp_apply)
-		{
-			definition->background_bitmap = button_style->background_bitmap;
-			performance_pause_child(&performance_pause_column_children[index - _pp_preset],
-				performance_pause_tags[index], 0, (index - _pp_preset) * 27);
-		}
-		if (index <= _pp_weapon)
-		{
-			definition->type = _ui_widget_type_spinner_list;
-			definition->flags = FLAG(_widget_dpad_leftright_tabs_thru_list_items_bit);
-			definition->list_flags = FLAG(_list_items_generated_from_string_list_tag);
-			definition->text_label_string_list.index = performance_pause_string_tags[index - _pp_preset + 1];
-			performance_pause_block(&definition->event_handlers, 1, performance_pause_spinner_events);
-		}
+		performance_pause_definitions[_pp_title + controls].string_list_index = 13;
 	}
-	performance_pause_definitions[_pp_apply].string_list_index = 1;
-	performance_pause_block(&performance_pause_definitions[_pp_apply].event_handlers, 2, performance_pause_apply_events);
-	performance_pause_definitions[_pp_title].text_font.index = font;
-	/* small_ui fits the full title within the authored 202-pixel frame. */
-	performance_pause_definitions[_pp_title].bounds.y1 = 22;
-	performance_pause_definitions[_pp_title].horizontal_offset = 0;
-	performance_pause_definitions[_pp_title].vertical_offset = 0;
-	performance_pause_definitions[_pp_title].string_list_index = 13;
-	/* The native small_ui font has a 20-pixel line advance. */
-	performance_pause_definitions[_pp_footer].bounds.y1 = 40;
-	performance_pause_definitions[_pp_footer].bounds.x1 = 284;
-	performance_pause_definitions[_pp_footer].text_font.index = font;
-	performance_pause_definitions[_pp_footer].horizontal_offset = 0;
-	performance_pause_definitions[_pp_footer].vertical_offset = 0;
-	performance_pause_definitions[_pp_footer].string_list_index = 3;
+	{
+		struct ui_widget_definition *footer = &performance_pause_definitions[_pp_footer];
+		long font = native_pause_resident_tag(FONT_GROUP_TAG, "ui\\small_ui");
+		if (font == NONE) return FALSE;
+		native_pause_title_definition(footer, native_multiplayer_pause_button_style(_native_pause_wide));
+		footer->text_color = native_multiplayer_pause_button_style(_native_pause_wide)->text_color;
+		performance_pause_reference(&footer->text_label_string_list,
+			UNICODE_STRING_LIST_TAG, performance_pause_string_tags[0]);
+		/* The native small_ui font has a 20-pixel line advance. */
+		footer->bounds.y1 = 40;
+		footer->bounds.x1 = NATIVE_PAUSE_HELP_WIDTH;
+		footer->text_font.index = font;
+		footer->horizontal_offset = footer->vertical_offset = 0;
+		footer->string_list_index = 3;
+	}
 	performance_pause_ready = TRUE;
 	return TRUE;
 }
@@ -363,8 +386,18 @@ static boolean performance_pause_is_spinner(struct widget_instance *widget)
 	short index;
 	if (!performance_pause_ready || !widget || widget->definition_tag_index == NONE) return FALSE;
 	for (index = _pp_preset; index <= _pp_weapon; index++)
-		if (widget->definition_tag_index == performance_pause_tags[index]) return TRUE;
+		if (widget->definition_tag_index == performance_pause_tags[index] ||
+			widget->definition_tag_index == performance_pause_tags[index + PERFORMANCE_PAUSE_SPLIT]) return TRUE;
 	return FALSE;
+}
+
+/* A control of the options page, in whichever size this root shows. */
+static struct widget_instance *performance_pause_control(struct widget_instance *root, short control)
+{
+	struct widget_instance *widget = widget_instance_find_by_tag_index_recursive(root, performance_pause_tags[control]);
+	if (!widget && control < _pp_footer)
+		widget = widget_instance_find_by_tag_index_recursive(root, performance_pause_tags[control + PERFORMANCE_PAUSE_SPLIT]);
+	return widget;
 }
 
 static short performance_pause_preset(unsigned flags)
@@ -400,14 +433,14 @@ static void performance_pause_update(struct widget_instance *widget)
 	if (!draft || !draft->root)
 		return;
 	widget = draft->root;
-	preset = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_preset]);
-	timer = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_timer]);
-	markers = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_markers]);
-	audio = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_audio]);
-	movement = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_movement]);
-	weapon = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_weapon]);
-	apply = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_apply]);
-	footer = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_footer]);
+	preset = performance_pause_control(widget, _pp_preset);
+	timer = performance_pause_control(widget, _pp_timer);
+	markers = performance_pause_control(widget, _pp_markers);
+	audio = performance_pause_control(widget, _pp_audio);
+	movement = performance_pause_control(widget, _pp_movement);
+	weapon = performance_pause_control(widget, _pp_weapon);
+	apply = performance_pause_control(widget, _pp_apply);
+	footer = performance_pause_control(widget, _pp_footer);
 	if (!preset || !timer || !markers || !audio || !movement || !weapon || !apply)
 		return;
 	if (!editable)
@@ -479,12 +512,12 @@ static boolean performance_pause_event(struct widget_instance *widget, short fun
 		return FALSE;
 	if (function == _performance_pause_created)
 	{
-		struct widget_instance *preset = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_preset]);
-		struct widget_instance *timer = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_timer]);
-		struct widget_instance *markers = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_markers]);
-		struct widget_instance *audio = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_audio]);
-		struct widget_instance *movement = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_movement]);
-		struct widget_instance *weapon = widget_instance_find_by_tag_index_recursive(widget, performance_pause_tags[_pp_weapon]);
+		struct widget_instance *preset = performance_pause_control(widget, _pp_preset);
+		struct widget_instance *timer = performance_pause_control(widget, _pp_timer);
+		struct widget_instance *markers = performance_pause_control(widget, _pp_markers);
+		struct widget_instance *audio = performance_pause_control(widget, _pp_audio);
+		struct widget_instance *movement = performance_pause_control(widget, _pp_movement);
+		struct widget_instance *weapon = performance_pause_control(widget, _pp_weapon);
 		if (!preset || !timer || !markers || !audio || !movement || !weapon)
 		{
 			draft->root = NULL;

@@ -38,6 +38,7 @@ static struct
 	const char *tag;
 	stbtt_fontinfo info;
 	float scale, cap_height;
+	int own;
 } fonts[MAXIMUM_FONTS];
 static long font_count;
 
@@ -115,9 +116,19 @@ long text_hires_font(const char *tag_name, float cap_height)
 		fonts[font_count].tag = embedded->tag;
 		fonts[font_count].cap_height = cap_height;
 		fonts[font_count].scale = cap_height / (float)(y1 - y0);
+		/* The tag's own letters rebuilt: one pixel of the tag is a fixed
+		 * number of font units, so nothing is measured or matched. */
+		fonts[font_count].own = embedded->units_per_pixel != 0;
+		if (fonts[font_count].own)
+			fonts[font_count].scale = 1.0f / (float)embedded->units_per_pixel;
 		return font_count++;
 	}
 	return -1;
+}
+
+int text_hires_font_own(long font)
+{
+	return font >= 0 && font < font_count && fonts[font].own;
 }
 
 int text_hires_covers(long font, unsigned long code)

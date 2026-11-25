@@ -16,6 +16,10 @@ static uint32_t rounded_edge(uint32_t edge, uint32_t numerator, uint32_t denomin
      * the original ILP32 guest. Integer half-up matches GL target_pixel. */
     return (uint32_t)(((uint64_t)edge * numerator + denominator / 2u) / denominator);
 }
+static int secondary_size(const struct halo_metal_render_dimensions *d) {
+    return d->logical_width == HALO_METAL_RENDER_SECONDARY_WIDTH &&
+        d->logical_height == HALO_METAL_RENDER_SECONDARY_HEIGHT;
+}
 static int valid_dimensions(const struct halo_metal_render_dimensions *d) {
     if (!d || !d->logical_width || !d->logical_height || !d->storage_width || !d->storage_height ||
         d->logical_width > HALO_METAL_RENDER_MAX_DIMENSION ||
@@ -23,10 +27,14 @@ static int valid_dimensions(const struct halo_metal_render_dimensions *d) {
         d->storage_width > HALO_METAL_RENDER_MAX_DIMENSION ||
         d->storage_height > HALO_METAL_RENDER_MAX_DIMENSION) return 0;
     if (d->scale_mode == HALO_METAL_RENDER_SCALE_NATIVE_AXES)
-        return valid_screen_width(d->logical_width) &&
-            d->logical_height == HALO_METAL_RENDER_LOGICAL_HEIGHT;
+        return secondary_size(d) || (valid_screen_width(d->logical_width) &&
+            d->logical_height == HALO_METAL_RENDER_LOGICAL_HEIGHT);
     if (d->scale_mode != HALO_METAL_RENDER_SCALE_UNIFORM) return 0;
     if (d->storage_width == d->logical_width && d->storage_height == d->logical_height) return 1;
+    /* The secondary target is half the logical height, so half each preset. */
+    if (secondary_size(d))
+        return !(d->storage_height & 1u) && valid_preset(d->storage_height * 2u) &&
+            d->storage_width == rounded_edge(d->logical_width, d->storage_height, d->logical_height);
     return valid_screen_width(d->logical_width) && d->logical_height == HALO_METAL_RENDER_LOGICAL_HEIGHT &&
         valid_preset(d->storage_height) &&
         d->storage_width == rounded_edge(d->logical_width, d->storage_height, d->logical_height);
@@ -59,6 +67,22 @@ int halo_metal_render_native_target_dimensions(uint32_t width, uint32_t height, 
         result.storage_height = storage_height;
         result.scale_mode = HALO_METAL_RENDER_SCALE_NATIVE_AXES;
     }
+    if (!valid_dimensions(&result)) return HALO_METAL_INVALID;
+    *dimensions = result;
+    return HALO_METAL_OK;
+}
+int halo_metal_render_secondary_target_dimensions(const struct halo_metal_render_dimensions *screen,
+    struct halo_metal_render_dimensions *dimensions) {
+    if (!dimensions || !valid_dimensions(screen) || !valid_screen_width(screen->logical_width) ||
+        screen->logical_height != HALO_METAL_RENDER_LOGICAL_HEIGHT) return HALO_METAL_INVALID;
+    /* Uniform presets use the height ratio on both axes, as their rectangles do. */
+    int native = screen->scale_mode == HALO_METAL_RENDER_SCALE_NATIVE_AXES;
+    struct halo_metal_render_dimensions result = {
+        HALO_METAL_RENDER_SECONDARY_WIDTH, HALO_METAL_RENDER_SECONDARY_HEIGHT,
+        rounded_edge(HALO_METAL_RENDER_SECONDARY_WIDTH, native ? screen->storage_width : screen->storage_height,
+            native ? screen->logical_width : screen->logical_height),
+        rounded_edge(HALO_METAL_RENDER_SECONDARY_HEIGHT, screen->storage_height, screen->logical_height),
+        screen->scale_mode};
     if (!valid_dimensions(&result)) return HALO_METAL_INVALID;
     *dimensions = result;
     return HALO_METAL_OK;

@@ -3,7 +3,8 @@
 Choose **Settings → Game Settings → Video → Asset Quality**, then select
 **Original** or **Upres**. The same control is available through Game Settings in
 Pause. Accept saves the choice; Cancel discards it. Quit and reopen Halo to apply
-the saved choice. Original is the default.
+the saved choice. Upres is the default since 0.7; Original keeps the maps' own
+artwork.
 
 The setting retains `display.high_res_hud` in `config.toml` as a legacy key, so
 an existing enabled HUD preference becomes Upres without a migration write.
@@ -28,20 +29,49 @@ language-specific message artwork are deliberately excluded.
 ## Fonts and menu artwork
 
 The font/menu extension selectively ports upstream commit
-`0182da817285b67eee8264663ca79f7c32d66b5e`. It embeds Overpass 900 for
-`ui\\large_ui` and `ui\\interstate`, and Overpass 750 for `ui\\small_ui`.
-Glyphs are rasterized at the renderer's pixel scale while the game's original
-font tags still control character advances, wrapping, colors, shadows and
-clipping. Unsupported fonts/characters or atlas failures use original bitmap
-text for the entire string. Original mode creates no replacement glyph atlas.
+`0182da817285b67eee8264663ca79f7c32d66b5e` for the text machinery and the
+title pictures. The text fonts themselves are Halo OG's own since 0.7:
+`OGMenuLarge.ttf` for `ui\\large_ui`, `OGMessage.ttf` for `ui\\interstate` and
+`OGMenuSmall.ttf` for `ui\\small_ui`, each rebuilt from its tag's own letters
+by `tools/og_font.py`, with no other typeface. Glyphs are rasterized at the
+renderer's pixel scale while the game's original font tags still control
+character advances, wrapping, colors, shadows and clipping.
+
+A font rebuilt from its tag has that tag's pixel as its unit (`units_per_pixel`
+in `fonts.json`), so each glyph is drawn from the pen on the baseline, where
+its outline lies, and falls where the original letter does. A font without
+that mark is a substitute typeface, as Overpass was through 0.6: it is sized
+by the tag's capital height, and each glyph is drawn into the rectangle the
+original glyph's ink occupies, measured to a part of a pixel, so letter sizes,
+letter spacing and line widths are the original's. Either way a glyph's drop
+shadow is drawn at half the darkness of the original's: the original glyph's
+soft edge shows about half of its shadow, and a sharp glyph would show all of
+it. Unsupported fonts/characters or atlas failures use original bitmap text
+for the entire string. Original mode creates no replacement glyph atlas.
+
+How the fonts are rebuilt: the maps store a letter's pixels in 16 levels that
+are evenly spaced shares of a pixel, kept through a curve that lifts the faint
+ones (one fifteenth of a pixel is stored as 104 of 255). Read as brightness,
+every stroke comes out about a third of a pixel too heavy and small counters
+close. Decoded, the smoothest shape that every pixel would store the same way
+is the letter's outline; pixels on straight level or upright edges and their
+corners are filled exactly, so stems and bar ends stay straight and square.
+The version label on the main menu is the console's font,
+`old tags\\internal system plain`, rebuilt the same way (`OGConsole.ttf`) and
+drawn at three quarters of its size through a font tag the game makes for it,
+`ui\\og_build_label`; with Original assets the label is the console font as the
+maps have it. The fonts are under review letter by letter. `tools/font_lab.py` writes the
+pages for that: the original text above each candidate, with a measured
+difference, and `--review` for only our own font's weight and letters.
 
 The 34 menu title images in `port/assets/titles` replace text already authored
 as bitmaps: 33 are 4× and one is 2×, capped at 2048 pixels. Their manifests retain
 the English text, original bitmap dimensions, per-letter positions and pixel
 checksums. Original backgrounds/glows are enlarged where possible. The titles
 use Newtown-derived OpenCE glyphs; that font name does not rebrand the game.
-These and Overpass are substitutes with similar outlines, not recovered Bungie
-high-resolution originals. Asset provenance and license notices are in
+These are substitutes with similar outlines, not recovered Bungie
+high-resolution originals; rebuilding the title lettering from the pictures
+themselves is planned. Asset provenance and license notices are in
 `port/assets/fonts` and packaged with every platform.
 
 No upstream menu definitions, navigation, PC menu layout or postgame report

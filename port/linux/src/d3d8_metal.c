@@ -131,6 +131,11 @@ void halo_screen_ui_offset(unsigned char centered)
 	ui_offset = centered ? (halo_screen_width() - 640) / 2 : 0;
 }
 
+long halo_screen_ui_offset_units(void)
+{
+	return (long)ui_offset;
+}
+
 /* ---------- state the XDK header's inline functions read and write */
 
 DWORD D3D__RenderState[D3DRS_MAX];
@@ -1427,16 +1432,23 @@ static struct native_resource *target_get(const D3DSurface *surface) {
         if (entry) return entry;
     }
     surface_dimensions(surface,&width,&height,&depth);
+    /* The secondary color target is sized from the screen's own storage. */
+    BOOL secondary=!depth && width==HALO_METAL_RENDER_SECONDARY_WIDTH && height==HALO_METAL_RENDER_SECONDARY_HEIGHT;
+    unsigned long scaled_width=secondary ? (unsigned long)halo_screen_width():width;
+    unsigned long scaled_height=secondary ? HALO_METAL_RENDER_LOGICAL_HEIGHT:height;
     struct halo_metal_render_dimensions dimensions;
     if (native_render_height()) {
-        require_status("native target dimensions",halo_metal_render_target_dimensions(width,height,
+        require_status("native target dimensions",halo_metal_render_target_dimensions(scaled_width,scaled_height,
             halo_screen_width(),native_render_height(),&dimensions));
     } else {
         if (!native_storage_width || !native_storage_height)
             native_fail("native backing not initialized",HALO_METAL_INVALID);
-        require_status("native target dimensions",halo_metal_render_native_target_dimensions(width,height,
+        require_status("native target dimensions",halo_metal_render_native_target_dimensions(scaled_width,scaled_height,
             halo_screen_width(),native_storage_width,native_storage_height,&dimensions));
     }
+    if (secondary)
+        require_status("native secondary target dimensions",
+            halo_metal_render_secondary_target_dimensions(&dimensions,&dimensions));
     for (entry=resource_lookup_first(surface->Data);entry;entry=resource_lookup_next(entry))
         if ((entry->usage&HALO_METAL_RENDER_TARGET) && entry->data==surface->Data &&
             entry->format_word==surface->Format && entry->size_word==surface->Size &&
@@ -1565,14 +1577,22 @@ static void native_resolution_commit(void) {
     if (replace) {
         packet_flush(NATIVE_FLUSH_RESIZE);
         history_sample_override=target_get(&device.history_buffer);
+        struct halo_metal_render_dimensions secondary;
+        require_status("native secondary target dimensions",
+            halo_metal_render_secondary_target_dimensions(&dimensions,&secondary));
         for (struct native_resource *entry=resources;entry;entry=entry->next) {
-            if (!(entry->usage&HALO_METAL_RENDER_TARGET) || entry==history_sample_override ||
-                entry->description.width!=logical_width || entry->description.height!=SCREEN_HEIGHT) continue;
+            if (!(entry->usage&HALO_METAL_RENDER_TARGET) || entry==history_sample_override) continue;
+            /* The secondary color target follows the screen's pixels per unit. */
+            const struct halo_metal_render_dimensions *scaled=
+                entry->description.width==logical_width && entry->description.height==SCREEN_HEIGHT ? &dimensions:
+                entry->format==HALO_METAL_BGRA8 && entry->description.width==HALO_METAL_RENDER_SECONDARY_WIDTH &&
+                    entry->description.height==HALO_METAL_RENDER_SECONDARY_HEIGHT ? &secondary:NULL;
+            if (!scaled) continue;
             /* Retain every original alias signature, including color views of
                the depth-buffer address. Textures resolve before attachments. */
             resource_delete(entry);
-            entry->storage_width=dimensions.storage_width;entry->storage_height=dimensions.storage_height;
-            entry->scale_mode=dimensions.scale_mode;entry->last_rendered=0;
+            entry->storage_width=scaled->storage_width;entry->storage_height=scaled->storage_height;
+            entry->scale_mode=scaled->scale_mode;entry->last_rendered=0;
             resource_create(entry);target_storage_initialize(entry);
         }
         packet_flush(NATIVE_FLUSH_RESIZE);

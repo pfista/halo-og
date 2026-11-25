@@ -234,6 +234,7 @@ static unsigned char console_is_active(void) { return 0; }
 void platform_pump_events(void) {}
 void platform_input_read(struct platform_input_state *out,BOOL consume) { (void)consume;*out=input; }
 static void wheel_update(void) {}
+static void test_input_presses(XINPUT_GAMEPAD *pad,XINPUT_GAMEPAD *navigation) { (void)pad;(void)navigation; }
 static unsigned test_input_gamepad(XINPUT_GAMEPAD *pad) {
     if(synthetic_look){pad->sThumbRX=32767;return 4u;}return 0;
 }

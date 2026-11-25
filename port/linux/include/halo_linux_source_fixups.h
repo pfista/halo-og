@@ -23,6 +23,14 @@ struct observer_result;
 struct render_camera;
 struct real_matrix4x3;
 int halo_interpolation_enabled(void);
+/* how many times farther than on the Xbox models keep their detail and
+particles are drawn (display.detail_distance; port/linux/game/detail_distance.c) */
+void halo_detail_distance_refresh(void);
+float halo_detail_distance(void);
+/* console "press <button>": a scripted press of controller 1, for automated
+menu checks (port/linux/src/xinput_sdl.c) */
+int test_input_press(const char *name);
+int test_input_presses_pending(void);
 float game_time_get_tick_fraction(void);
 void render_interpolation_tick(void);
 void render_interpolation_reset(void);

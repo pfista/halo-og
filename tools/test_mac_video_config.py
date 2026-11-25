@@ -39,8 +39,14 @@ int main(int argc,char **argv) {
         puts("0");return 0;
     }
     if(!strcmp(argv[1],"defaults")) {
-        assert(config_integer("display.render_height")==480);
+        assert(config_integer("display.render_height")==0);
+        assert(config_boolean("display.interpolation") && config_boolean("display.high_res_hud"));
         puts("1");return 0;
+    }
+    if(!strcmp(argv[1],"display")) {
+        printf("%ld %d %d %ld\n",config_integer("display.render_height"),config_boolean("display.interpolation"),
+            config_boolean("display.high_res_hud"),config_integer("display.frame_limit"));
+        return 0;
     }
     /* Warm the cache through an identical registered boolean save without
        completing missing defaults or altering the test's original text. */
@@ -201,7 +207,62 @@ class MacVideoConfigTests(unittest.TestCase):
         self.assertNotIn("renderer", config["display"])
         self.assertEqual(config["display"]["anti_aliasing"], "off")
         self.assertEqual(config["display"]["frame_limit"], 0)
-        self.assertEqual(config["display"]["render_height"], 480)
+        self.assertEqual(config["display"]["render_height"], 0)
+        self.assertIs(config["display"]["interpolation"], True)
+        self.assertIs(config["display"]["high_res_hud"], True)
+        self.assertEqual(config["display"]["defaults_revision"], 1)
+
+    def load_display(self, content):
+        """Start with an existing settings file; return what the game uses and the file it leaves."""
+        with tempfile.TemporaryDirectory(prefix="halo-display-defaults-") as folder:
+            path = Path(folder) / "config.toml"
+            path.write_text(content)
+            env = {key: value for key, value in os.environ.items() if not key.startswith("HALO_")}
+            env.update(HALO_SAVE_ROOT=folder, HALO_DATA_ROOT=folder)
+            result = subprocess.run([str(self.executable), "display"], env=env, capture_output=True,
+                                    text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return tuple(map(int, result.stdout.split())), path.read_text()
+
+    def test_settings_from_0_6_that_never_changed_the_picture_move_to_the_new_defaults(self):
+        untouched = ('# my notes\n[display]\nvsync = false\ninterpolation = false # smooth\nframe_limit = 0\n'
+                     'render_height = 480\nhigh_res_hud = false\n\n[audio]\nvolume = 0.5\n')
+        used, saved = self.load_display(untouched)
+        self.assertEqual(used, (0, 1, 1, 0))
+        display = tomllib.loads(saved)["display"]
+        self.assertEqual((display["render_height"], display["interpolation"], display["high_res_hud"]),
+                         (0, True, True))
+        self.assertEqual(display["defaults_revision"], 1)
+        self.assertIs(display["vsync"], False)
+        self.assertEqual(tomllib.loads(saved)["audio"]["volume"], 0.5)
+        self.assertIn("# my notes", saved)
+        self.assertIn("interpolation = true # smooth", saved)
+        # The offer is made once: choosing the Xbox picture afterwards is kept.
+        chosen = saved.replace("render_height = 0", "render_height = 480").replace(
+            "interpolation = true", "interpolation = false").replace("high_res_hud = true", "high_res_hud = false")
+        self.assertEqual(self.load_display(chosen), ((480, 0, 0, 0), chosen))
+
+    def test_settings_that_changed_any_picture_option_keep_all_of_them(self):
+        base = ('[display]\ninterpolation = false\nframe_limit = 0\nrender_height = 480\n'
+                'high_res_hud = false\n')
+        for change, expected in (("render_height = 720", (720, 0, 0, 0)),
+                                 ("interpolation = true", (480, 1, 0, 0)),
+                                 ("high_res_hud = true", (480, 0, 1, 0)),
+                                 ("frame_limit = 30", (480, 0, 0, 30))):
+            with self.subTest(change=change):
+                key = change.split(" = ")[0]
+                original = "\n".join(change if line.startswith(key + " ") else line
+                                     for line in base.split("\n"))
+                used, saved = self.load_display(original)
+                self.assertEqual(used, expected)
+                self.assertTrue(saved.startswith(original))
+
+    def test_profile_naming_only_some_picture_options_keeps_the_ones_it_names(self):
+        used, saved = self.load_display('[display]\ninterpolation = false\nhigh_res_hud = false\n')
+        # The options it names stay; the ones it omits take this version's defaults.
+        self.assertEqual(used, (0, 0, 0, 0))
+        self.assertIn("interpolation = false", saved)
+        self.assertIn("high_res_hud = false", saved)
 
 
 if __name__ == "__main__":

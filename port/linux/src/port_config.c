@@ -69,6 +69,15 @@ struct config_setting
 	const char *comment;
 };
 
+/* The Mac draws at its display's own resolution unless a player chooses
+otherwise. The iPhone has no Resolution setting in its menus yet, so it keeps
+the Xbox height until a player can choose there. */
+#if defined(HALO_IOS)
+#define NATIVE_RENDER_HEIGHT_DEFAULT "480"
+#else
+#define NATIVE_RENDER_HEIGHT_DEFAULT "0"
+#endif
+
 static const struct config_setting config_settings[] =
 {
 	{ "display.fullscreen", _config_boolean, "true", "HALO_FULLSCREEN", _environment_value, _platform_desktop,
@@ -82,10 +91,13 @@ static const struct config_setting config_settings[] =
 		"Xbox's 4:3." },
 	{ "display.vsync", _config_boolean, "true", "HALO_NO_VSYNC", _environment_set_is_false, _platform_all,
 		"Wait for the display between frames; false draws as fast as possible." },
-	/* Original Xbox presentation is the fork's baseline; enhancements are opt-in. */
-	{ "display.interpolation", _config_boolean, "false", "HALO_INTERPOLATION", _environment_value, _platform_all,
-		"Draw a frame for every display refresh, blending between the game's 30\n"
-		"ticks a second; false keeps the original 30 frames a second." },
+	/* Since 0.7 a new installation draws at the display's resolution and
+	refresh rate with the Upres assets. The original Xbox picture stays one
+	setting away: 480 lines, the original artwork and 30 frames a second.
+	The simulation is 30 ticks a second either way. */
+	{ "display.interpolation", _config_boolean, "true", "HALO_INTERPOLATION", _environment_value, _platform_all,
+		"Smooth Motion: draw a frame for every display refresh, blending between\n"
+		"the game's 30 ticks a second; false keeps the original 30 frames a second." },
 #if defined(HALO_MACOS)
 	{ "display.frame_limit", _config_integer, "0", NULL, _environment_value, _platform_all,
 		"Native Metal render cap: 0 is uncapped, or choose 30, 60 or 120.\n"
@@ -95,16 +107,20 @@ static const struct config_setting config_settings[] =
 		"Native Metal world smoothing: off preserves the original picture; fxaa\n"
 		"smooths world edges before drawing the original HUD. Original assets\n"
 		"and the game's 30 ticks a second stay unchanged. Restart to apply." },
-	{ "display.render_height", _config_integer, "480", NULL, _environment_value, _platform_all,
+	{ "display.render_height", _config_integer, NATIVE_RENDER_HEIGHT_DEFAULT, NULL, _environment_value, _platform_all,
 		"Native Metal render height: 0 for the native drawable, or 480, 720,\n"
-		"1080, 1440 or 2160 pixels. Native mode uses actual Retina pixels.\n"
-		"Width follows the startup aspect. Accept applies between frames." },
+		"1080, 1440 or 2160 pixels. Native mode uses actual Retina pixels;\n"
+		"480 is the original Xbox picture. Width follows the startup aspect.\n"
+		"Accept applies between frames." },
 #elif !defined(HALO_ANDROID) && !defined(HALO_IOS)
-	{ "display.render_height", _config_integer, "-1", NULL, _environment_value, _platform_desktop,
-		"Render height in fullscreen or a window: -1 keeps automatic selection\n"
-		"(native fullscreen, Xbox 480p window); 0 fits the native drawable;\n"
-		"480, 720, 1080, 1440 or 2160 select a fixed height. Applies between\n"
-		"frames; game coordinates and the 30 Hz simulation stay unchanged." },
+	/* Native in a window as well as fullscreen since 0.7, as on the Mac, so
+	the same settings give the same picture on every desktop. */
+	{ "display.render_height", _config_integer, "0", NULL, _environment_value, _platform_desktop,
+		"Render height in fullscreen or a window: 0 fits the native drawable;\n"
+		"-1 is Auto (native fullscreen, Xbox 480p window); 480, 720, 1080,\n"
+		"1440 or 2160 select a fixed height. 480 is the original Xbox picture.\n"
+		"Applies between frames; game coordinates and the 30 Hz simulation\n"
+		"stay unchanged." },
 #endif
 	{ "display.timer_position", _config_integer, "0", NULL, _environment_value, _platform_all,
 		"PB timer position: 0 is top center, 1 bottom center, 2 bottom right." },
@@ -114,10 +130,20 @@ static const struct config_setting config_settings[] =
 		"In first person, point the view where the player aims now instead of\n"
 		"where the last tick left it: the view turns the frame the mouse moves,\n"
 		"not up to two ticks (66 ms) later." },
-	{ "display.high_res_hud", _config_boolean, "false", "HALO_HIGH_RES_HUD", _environment_value, _platform_all,
-		"Asset Quality: false keeps Original; true enables Upres HUD, font\n"
-		"glyphs and faithful menu title redraws. Layout and gameplay stay\n"
-		"the same. This legacy key preserves existing HUD preferences." },
+	{ "display.high_res_hud", _config_boolean, "true", "HALO_HIGH_RES_HUD", _environment_value, _platform_all,
+		"Asset Quality: true enables Upres HUD, font glyphs and faithful menu\n"
+		"title redraws; false keeps the Original artwork. Layout and gameplay\n"
+		"stay the same. This legacy key preserves existing HUD preferences." },
+	{ "display.detail_distance", _config_integer, "0", NULL, _environment_value, _platform_all,
+		"How far away models keep their detail and their shadows, and particles\n"
+		"are drawn, as a multiple of the Xbox's distances. 0 follows the\n"
+		"resolution: the lines drawn for each of the Xbox's 480, up to 3, so\n"
+		"480 lines is exactly the Xbox's. 1 is the Xbox's at any resolution;\n"
+		"2 and 3 are fixed. Only what is drawn changes." },
+	{ "display.defaults_revision", _config_integer, "1", NULL, _environment_value, _platform_all,
+		"Written by the game: which display defaults this file has been offered.\n"
+		"A file from 0.6 or earlier has no such line; if it never changed the\n"
+		"display settings it moves once to the current defaults." },
 
 	{ "audio.enabled", _config_boolean, "true", "HALO_NO_AUDIO", _environment_set_is_false, _platform_all,
 		"Play sound." },
@@ -165,6 +191,13 @@ static const struct config_setting config_settings[] =
 		"Keep the original map-authored held-stick horizontal turning boost.\n"
 		"Controller settings call this Xbox; Off removes only this timed boost.\n"
 		"Sensitivity, pitch response and direct mouse aiming stay separate." },
+	{ "input.look_sensitivity_horizontal", _config_integer, "0", NULL, _environment_value, _platform_all,
+		"Controller turning speed, 1 to 10 on the original Look Sensitivity\n"
+		"scale (80 to 260 degrees a second); 0 uses each player profile's own\n"
+		"Look Sensitivity, as on the Xbox. Applies to every local controller." },
+	{ "input.look_sensitivity_vertical", _config_integer, "0", NULL, _environment_value, _platform_all,
+		"Controller up and down looking speed, 1 to 10 on the original scale\n"
+		"(40 to 130 degrees a second); 0 uses the player profile's own." },
 	/* Bindings are config-only: they do not need application environment variables. */
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define BINDING(name, mac, other, comment) { "bindings." #name, _config_string, "\"" mac "\"", NULL, _environment_value, _platform_all, comment },
@@ -327,6 +360,14 @@ static const struct config_setting config_settings[] =
 		"machines of twice it), to test the netcode as over the internet; 0 none." },
 	{ "debug.network_loss", _config_real, "0.0", "HALO_NETWORK_LOSS", _environment_value, _platform_all,
 		"Percent of datagrams received that are dropped, for the same; 0 none." },
+	{ "debug.ui_layout_check", _config_boolean, "false", NULL, _environment_value, _platform_all,
+		"Log each menu text that does not fit its box, once, with the box and\n"
+		"the size the text needs, and each pair of rows in a list whose boxes\n"
+		"overlap (tools/menu_layout_check.py)." },
+	{ "debug.pause_layout", _config_integer, "0", NULL, _environment_value, _platform_all,
+		"Show the multiplayer Pause menus as split screen does, with one\n"
+		"controller: 2 for two players' half screen, 4 for a quarter screen\n"
+		"(tools/menu_layout_check.py); 0 follows the players." },
 	{ "debug.test_input", _config_string, "\"\"", "HALO_TEST_INPUT", _environment_value, _platform_all,
 		"\"bot:<seed>\" plays controller 1 with a scripted pattern (automated\n"
 		"network tests); \"look:<seed>\" stands still, only turning and looking\n"
@@ -693,6 +734,8 @@ static char *config_add_missing(const char *text, toml_datum_t table)
 
 /* ---------- values */
 
+static char *config_offer_display_defaults(const char *text, size_t size, toml_datum_t table);
+
 static int config_text_is_false(const char *text)
 {
 	char lower[8];
@@ -868,16 +911,19 @@ static void config_load(int complete_file)
 
 		if (result.ok)
 		{
+			char *offered;
 			char *completed;
 
 			for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS; index++)
 				config_set_from_file(&config_values[index], &config_settings[index], result.toptab);
 			config_report_unknown_keys(result.toptab);
 			platform_log("settings: %s", path);
-			completed = complete_file ? config_add_missing(text, result.toptab) : NULL;
-			if (completed && !config_write_file(path, completed))
+			offered = complete_file ? config_offer_display_defaults(text, size, result.toptab) : NULL;
+			completed = complete_file ? config_add_missing(offered ? offered : text, result.toptab) : NULL;
+			if ((completed || offered) && !config_write_file(path, completed ? completed : offered))
 				platform_log("settings: cannot write %s", path);
 			free(completed);
+			free(offered);
 		}
 		else
 		{
@@ -1190,6 +1236,74 @@ static char *config_edit_value(const char *text, size_t size, const struct confi
 	free(addition);
 	toml_free(parsed);
 	return updated;
+}
+
+/* ---------- display defaults */
+
+/* Halo OG 0.7 changed what a new installation looks like: the display's own
+resolution, the Upres assets and a frame for every display refresh. The game
+writes every setting into the file at its default, so a file from 0.6 or
+earlier still names the old defaults and a changed default would never reach
+it. Such a file has no display.defaults_revision. When it holds every one of
+these settings exactly as 0.6 wrote them, the player made no display choice
+and the settings move to the current defaults. A file that changed any of
+them, or that names only some of them (a test or tool profile), keeps what it
+says. Returns the new text, or NULL when nothing moves. */
+static char *config_offer_display_defaults(const char *text, size_t size, toml_datum_t table)
+{
+	/* what 0.6 wrote for each setting, then its name */
+	static const struct
+	{
+		double previous;
+		const char *name;
+	} offered[] =
+	{
+		{ 0.0, "display.interpolation" },
+		{ 0.0, "display.high_res_hud" },
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+		{ 480.0, "display.render_height" },
+		{ 0.0, "display.frame_limit" },
+#elif !defined(HALO_ANDROID) && !defined(HALO_IOS)
+		{ -1.0, "display.render_height" },
+#endif
+	};
+	char *result = NULL;
+	size_t index;
+
+	if (toml_seek(table, "display.defaults_revision").type != TOML_UNKNOWN)
+		return NULL;
+	for (index = 0; index < sizeof(offered) / sizeof(offered[0]); index++)
+	{
+		long setting = config_setting_index(offered[index].name);
+
+		if (setting < 0 || !config_number_matches(toml_seek(table, offered[index].name),
+			config_settings[setting].type, offered[index].previous))
+			return NULL;
+	}
+	for (index = 0; index < sizeof(offered) / sizeof(offered[0]); index++)
+	{
+		const struct config_setting *setting = &config_settings[config_setting_index(offered[index].name)];
+		const char *current = result ? result : text;
+		char *updated = config_edit_value(current, result ? strlen(result) : size, setting, setting->default_value);
+
+		if (!updated)
+		{
+			free(result);
+			return NULL;
+		}
+		free(result);
+		result = updated;
+	}
+	for (index = 0; index < sizeof(offered) / sizeof(offered[0]); index++)
+	{
+		long setting = config_setting_index(offered[index].name);
+
+		config_set_from_text(&config_values[setting], config_settings[setting].type,
+			config_settings[setting].default_value);
+	}
+	platform_log("settings: no display choice had been made, so Resolution, Asset Quality and Smooth Motion "
+		"move to this version's defaults");
+	return result;
 }
 
 struct config_retired_string
