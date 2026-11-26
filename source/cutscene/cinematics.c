@@ -461,10 +461,17 @@ void cinematic_render(
 
 				{
 					/* the bounds are for 640 columns: on a wider screen move
-					them so they keep their place relative to its sides */
+					them so they keep their place relative to its sides. The
+					text sits against the edge it is justified to, so that edge
+					is the one to keep in place: moving a right-justified
+					chapter title by the middle of its box left it ending at
+					about 81% of a wide screen instead of the Xbox's 93%.
+					0 is left, 1 right and 2 centred, as in draw_string.c. */
 					static rectangle2d wide_bounds;
-					short shift = (short)(((title_bounds->x0 + title_bounds->x1) / 2) *
-						(halo_screen_width() - 640) / 640);
+					long anchor = title->justification == 0 ? title_bounds->x0 :
+						title->justification == 1 ? title_bounds->x1 :
+						(title_bounds->x0 + title_bounds->x1) / 2;
+					short shift = (short)(anchor * (halo_screen_width() - 640) / 640);
 
 					wide_bounds = *title_bounds;
 					wide_bounds.x0 += shift;
