@@ -125,7 +125,14 @@ static void playlist_profile_write(int32_t, struct game_variant *);
 /* Minimal editor context; the production dirty comparison accesses only these. */
 struct player_profile { word flags; byte unused[46]; };
 union edit_data { struct player_profile player; struct game_variant variant; };
-static struct { int32_t edit_profile_index; struct { union edit_data current, original; } edit_profile; } player_ui_globals;
+/* (saving a player profile hands it to each local player using it; this fixture saves game variants only,
+   so no local player has a profile) */
+#define MAXIMUM_NUMBER_OF_LOCAL_PLAYERS 4
+static struct { int32_t edit_profile_index; struct { union edit_data current, original; } edit_profile;
+    struct { int32_t active_profile_index; } local_players[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS]; } player_ui_globals;
+static void player_ui_set_active_player_profile(short player, int32_t index, struct player_profile *profile) {
+    (void)player; (void)index; (void)profile; assert(0);
+}
 static int32_t saved_game_file_get_type(int32_t index) { (void)index; return _saved_game_file_type_game_variant; }
 static boolean player_profile_get(int32_t index, struct player_profile *profile) { (void)index; (void)profile; assert(0); return FALSE; }
 static void player_profile_save(int32_t index, struct player_profile *profile) { (void)index; (void)profile; assert(0); }
