@@ -159,7 +159,9 @@ void render_particles(
 			boolean owned_by_local_player =
 				particle->local_player_index == local_player_index;
 
-			if (render_location_visible(&particle->location) &&
+			/* (a particle the Xbox would not have shown yet: particles.c) */
+			if (particle_drawn(particle_index) &&
+				render_location_visible(&particle->location) &&
 				(!TEST_FLAG(
 					particle->flags,
 					_particle_datum_dont_draw_first_person_bit) ||
