@@ -200,10 +200,11 @@ place of `f815e1ccb`), campaign checkpoints and the delay after death counted
 in game ticks instead of frames (`cd345aac7`, and `ce59b9316` written for
 Halo OG), a one-frame flash to the fog colour (`521c8c8d5`, written), lens
 flares out of view no longer tested (`744040c87`), the motion sensor wedge's
-fade (`3ae09c3d2`), faster HUD picture decoding (`f38d526e8`), three Smooth
+fade (`3ae09c3d2`), faster HUD picture decoding (`f38d526e8`), four Smooth
 Motion fixes written for Halo OG (the CTF flag's cloth, `ced1e1f2d`; lightning
 that changed shape every frame, `688eeb8a0`; a fast vehicle's shadow,
-`0e7233f3b`), and two dozen small fixes. [Xbox fidelity](xbox-fidelity.md) lists every one with its
+`0e7233f3b`; plasma impacts drawn as streaks, `900a4d3f0`), and two dozen
+small fixes. [Xbox fidelity](xbox-fidelity.md) lists every one with its
 commit.
 
 Still open, all CC0-era unless noted: a menu row for Detail Distance (the

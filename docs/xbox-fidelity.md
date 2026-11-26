@@ -208,6 +208,7 @@ counted ticks. Halo OG draws several frames a tick.
 | Frame throttle | `e799d0814` | `64309294b` | Adopted | With Smooth Motion off the loop sleeps between looks at the clock. Frame pacing at 30 frames a second on a Mac is not yet measured. |
 | CTF flag cloth | `ced1e1f2d`, `eb0c7f543` | `302036cba` | Written | The cloth is stepped once a tick with the frames' time added up, so it is as loose as on the Xbox at any frame rate, and the drawn cloth follows its pole between steps. |
 | Lightning | `688eeb8a0` | `497a4a396` | Written | A bolt keeps one shape for a whole tick in each window instead of a new one every frame. |
+| New particles | `900a4d3f0` | `cac8c18bd` | Written | A particle is first drawn a tick old, as the Xbox's whole-tick update showed it, so one that lasts less than a tick is not drawn flying along its path: plasma impacts no longer show tall streaks. |
 | Moving object's shadow | `0e7233f3b` | `6e1fa5a12` | Written | The shadow map is centred on the object as drawn, so a fast vehicle's shadow no longer flickers along its trailing side. |
 
 ### Menus, text and saves
@@ -242,8 +243,10 @@ death timers (`tools/test_campaign_timers.py`), the blur's passes and quad
 (`tools/test_screen_effect_scale.py`), the portal clip
 (`tools/test_portal_clip.py`), the bar in wide text
 (`tools/test_unicode_text_bar.py`), the lightning seed
-(`tools/test_lightning_tick_shape.py`) and the flag's step
-(`tools/test_flag_cloth_step.py`). Each fails on the code before its fix.
+(`tools/test_lightning_tick_shape.py`), the flag's step
+(`tools/test_flag_cloth_step.py`) and a new particle's first draw
+(`tools/test_particle_first_drawn.py`). Those written with a fix fail on the
+code before it.
 
 The blur was photographed on the pistol's scope at 1080 lines, with the fix
 switched off and on in one run so that the view is the same: without it the
@@ -253,8 +256,8 @@ warp started from the script console (`cinematic_screen_effect_set_convolution`)
 were compared the same way against the earlier fix, which gave a narrower
 blur. At 480 lines the Xbox's passes and quad are drawn unchanged.
 
-Not yet watched in play: the flag's cloth, lightning and a fast vehicle's
-shadow at a high frame rate, a campaign mission (checkpoints, death, chapter
+Not yet watched in play: the flag's cloth, lightning, plasma impacts and a
+fast vehicle's shadow at a high frame rate, a campaign mission (checkpoints, death, chapter
 titles), split screen, and the OpenGL change. These rest on fixtures or on
 reading the code.
 
