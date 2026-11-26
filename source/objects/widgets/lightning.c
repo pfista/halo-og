@@ -47,6 +47,7 @@ symbols in this file:
 #include "bitmaps/bitmap_group.h"
 #include "cache/texture_cache.h"
 #include "cseries/cseries.h"
+#include "game/game.h"
 #include "interface/hud_draw.h"
 #include "bitmaps/bitmap_color_conversion.h"
 #include "math/real_math.h"
@@ -163,6 +164,79 @@ static void lightning_offset_marker_position(
 
 static struct lightning_globals lightning_globals = {0};
 
+/* A bolt takes its shape from the local random seed each time it is drawn.
+The Xbox drew once a tick, so a bolt held each shape for a thirtieth of a
+second. Drawn several times a tick (port/linux/game/render_interpolation.c)
+it changed shape that many times as fast. The first frame of a tick to draw a
+lightning in a window records the seed it started from, and later frames of
+that tick draw it from that seed again. Each split-screen window has its own
+bolt, as it did. This is drawing state only and is not saved. */
+enum
+{
+	MAXIMUM_LIGHTNINGS = 256,
+	MAXIMUM_LIGHTNING_WINDOWS = 4
+};
+
+struct lightning_tick_seed
+{
+	long lightning_index;
+	long tick;
+	unsigned long seed;
+};
+
+static struct lightning_tick_seed lightning_tick_seeds[MAXIMUM_LIGHTNINGS][MAXIMUM_LIGHTNING_WINDOWS];
+
+static void lightning_tick_seeds_forget(
+	long lightning_index)
+{
+	if (lightning_index == NONE)
+	{
+		csmemset(lightning_tick_seeds, NONE, sizeof(lightning_tick_seeds));
+	}
+	else if (DATUM_INDEX_TO_ABSOLUTE_INDEX(lightning_index) < MAXIMUM_LIGHTNINGS)
+	{
+		csmemset(
+			lightning_tick_seeds[DATUM_INDEX_TO_ABSOLUTE_INDEX(lightning_index)],
+			NONE,
+			sizeof(lightning_tick_seeds[0]));
+	}
+
+	return;
+}
+
+/* Returns whether this frame redraws the tick's bolt; the caller then puts
+`*found_seed` back when it has drawn. */
+static boolean lightning_tick_seed_begin(
+	long lightning_index,
+	unsigned long *found_seed)
+{
+	unsigned long *seed = get_global_local_random_seed_address();
+	long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(lightning_index);
+	short window_index = render.window_index;
+	boolean redraw = FALSE;
+
+	*found_seed = *seed;
+	if (absolute_index < MAXIMUM_LIGHTNINGS && window_index >= 0 && window_index < MAXIMUM_LIGHTNING_WINDOWS)
+	{
+		struct lightning_tick_seed *record = &lightning_tick_seeds[absolute_index][window_index];
+		long tick = game_time_get();
+
+		if (record->lightning_index == lightning_index && record->tick == tick)
+		{
+			*seed = record->seed;
+			redraw = TRUE;
+		}
+		else
+		{
+			record->lightning_index = lightning_index;
+			record->tick = tick;
+			record->seed = *seed;
+		}
+	}
+
+	return redraw;
+}
+
 /* ---------- public code */
 
 void lightnings_initialize(
@@ -185,6 +259,7 @@ void lightnings_initialize_for_new_map(
 {
 	if (lightning_globals.lightning_data)
 		data_make_valid(lightning_globals.lightning_data);
+	lightning_tick_seeds_forget(NONE);
 
 	return;
 }
@@ -204,7 +279,11 @@ long lightning_new(
 	long lightning_index = datum_new(lightning_globals.lightning_data);
 
 	if (lightning_index != NONE)
+	{
 		lightning_get(lightning_index)->definition_index = definition_index;
+		/* a new lightning in a slot used before starts with its own shape */
+		lightning_tick_seeds_forget(lightning_index);
+	}
 
 	return lightning_index;
 }
@@ -269,6 +348,8 @@ void lightning_submit(
 	(void)lighting;
 	if (object_index != NONE && widget_index != NONE)
 	{
+		unsigned long found_seed;
+		boolean redraw = lightning_tick_seed_begin(widget_index, &found_seed);
 		struct lightning_datum *lightning = lightning_get(widget_index);
 		struct lightning_definition *definition = lightning_definition_get(lightning->definition_index);
 		struct object_marker marker;
@@ -551,6 +632,9 @@ void lightning_submit(
 				}
 			}
 		}
+		/* a later frame of the tick leaves the seed as it found it */
+		if (redraw)
+			*get_global_local_random_seed_address() = found_seed;
 	}
 
 	return;
