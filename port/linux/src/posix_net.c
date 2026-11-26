@@ -456,6 +456,11 @@ static posix_ulong interface_address(unsigned int flags)
 		{
 			struct sockaddr_in *address = (struct sockaddr_in *)entry->ifa_addr;
 
+			/* when looking for the local network, not a self-assigned
+			169.254 address (an iPhone's cable to a computer has one),
+			which reaches no one else on it */
+			if ((flags & IFF_BROADCAST) && (ntohl(address->sin_addr.s_addr) >> 16) == 0xA9FE)
+				continue;
 			if ((ntohl(address->sin_addr.s_addr) >> 24) != 127)
 			{
 				result = address->sin_addr.s_addr;
@@ -474,11 +479,14 @@ posix_ulong posix_local_ipv4_address(void)
 	posix_ulong result = 0;
 	int probe;
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(HALO_IOS)
 	/* a phone's default route may be its mobile data (on Wi-Fi without the
-	internet, or sharing its connection), which the local network cannot
-	reach: first the local network's interface (Wi-Fi, or the one it
-	shares its connection on), which alone of them has broadcasts */
+	internet, or sharing its connection), or on iPhone a VPN such as
+	Tailscale or the mobile network's 192.0.0.x translation address, none of
+	which the local network can reach: first the local network's interface
+	(Wi-Fi, or the one it shares its connection on), which alone of them has
+	broadcasts. Internet play offers this address to players on the same
+	network, who share the public one and so need it to connect. */
 	result = interface_address(IFF_BROADCAST);
 	if (result)
 		return result;
