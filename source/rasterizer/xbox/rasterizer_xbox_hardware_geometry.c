@@ -94,13 +94,13 @@ boolean rasterizer_vertex_buffer_new(
 	void const *vertices,
 	long buffer_size)
 {
-	/* BUG: The January XDK CreateVertexBuffer failure returns without writing
-	 * the output pointer (0x5de713..0x5de719); the original caller then tests
-	 * that uninitialized output (January function +0xb3). This inherited
-	 * failure-path bug is preserved; the Unlock restoration does not add it.
+	/* A failed CreateVertexBuffer returns without writing the output pointer
+	 * (January XDK, 0x5de713..0x5de719), and the Xbox's caller then tested
+	 * that pointer uninitialized (January function +0xb3). Both pointers
+	 * start as NULL here, so a failed creation or lock is seen as one.
 	 */
-	D3DVertexBuffer *d3d_vertex_buffer;
-	byte *locked_vertices;
+	D3DVertexBuffer *d3d_vertex_buffer = NULL;
+	byte *locked_vertices = NULL;
 	boolean success;
 	short vertex_size;
 	long result;
@@ -209,8 +209,9 @@ boolean rasterizer_triangle_buffer_new(
 	long count,
 	void const *triangles)
 {
-	D3DIndexBuffer *d3d_index_buffer;
-	byte *locked_triangles;
+	/* As in rasterizer_vertex_buffer_new: a failure must not leave these unset. */
+	D3DIndexBuffer *d3d_index_buffer = NULL;
+	byte *locked_triangles = NULL;
 	boolean success;
 	long buffer_size;
 	long result;
