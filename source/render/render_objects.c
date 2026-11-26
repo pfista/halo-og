@@ -783,6 +783,26 @@ static boolean render_object_shadow_begin(
 	real shadow_intensity = level_of_detail;
 
 	object_get_bounding_sphere(data->object_index, &center, &radius);
+	{
+		/* The bounding sphere is where the last tick left the object, but
+		the model drawn into the shadow map is the pose between two ticks
+		(port/linux/game/render_interpolation.c). A fast vehicle sat up to a
+		tick's travel off the map's centre, and the fade at the map's edge
+		cut its trailing side by a different amount each frame. Centre the
+		map on the object as this frame draws it. */
+		real_matrix4x3 const *drawn_nodes = render_interpolation_object_node_matrices(data->object_index);
+
+		if (drawn_nodes)
+		{
+			real_matrix4x3 const *tick_nodes = (real_matrix4x3 const *)object_header_block_get(
+				data->object_index,
+				&object_get(data->object_index)->object.node_matrices);
+
+			center.x += drawn_nodes[0].position.x - tick_nodes[0].position.x;
+			center.y += drawn_nodes[0].position.y - tick_nodes[0].position.y;
+			center.z += drawn_nodes[0].position.z - tick_nodes[0].position.z;
+		}
+	}
 
 	perpendicular3d(&data->lighting->shadow_vector, &shadow_right);
 	normalize3d(&shadow_right);
