@@ -150,7 +150,8 @@ class DirectCameraTests(unittest.TestCase):
             ("linux", (), True),
             ("android", ("HALO_ANDROID",), False),
             ("macos", ("HALO_ANDROID", "HALO_MACOS"), True),
-            ("ios", ("HALO_ANDROID", "HALO_MACOS", "HALO_IOS"), False),
+            # The iPhone shows Direct Camera in Video; only Android keeps the tick's view.
+            ("ios", ("HALO_ANDROID", "HALO_MACOS", "HALO_IOS"), True),
         )
         with tempfile.TemporaryDirectory(prefix="halo-direct-camera-") as temporary:
             directory = Path(temporary)

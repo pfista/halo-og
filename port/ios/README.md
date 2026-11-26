@@ -137,7 +137,9 @@ presentation at the available rate. `display.interpolation` in `config.toml`
 (on by default since 0.7) interpolates rendering between the original 30 Hz
 game ticks; set it to `false` for the original 30 frames a second.
 
-For a 60 Hz comparison or lower-power session, set `HALO_IOS_REFRESH_RATE=60`
+**Game Settings → Video** has **FPS Limit** (Uncapped, 30, 60 or 120),
+**Resolution** and **Direct Camera**; see [Video settings](../../docs/native-settings.md#video).
+For a 60 Hz display request instead, set `HALO_IOS_REFRESH_RATE=60`
 in the Xcode scheme's environment or pass it through `devicectl`:
 
 ```sh

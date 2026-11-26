@@ -32,8 +32,14 @@ static const char *const setting_names[NUMBER_OF_DEVICE_SETTINGS] =
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
     , "display.render_height"
 #endif
+#if HALO_DEVICE_HAS_FRAME_LIMIT
+    , "display.frame_limit"
+#endif
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-    , "display.frame_limit", "display.anti_aliasing"
+    , "display.anti_aliasing"
+#endif
+#if HALO_DEVICE_HAS_DIRECT_CAMERA
+    , "display.direct_camera"
 #endif
     , "game.show_default_game_types"
     , "input.look_sensitivity_horizontal", "input.look_sensitivity_vertical"
@@ -59,6 +65,8 @@ double device_settings_get(short setting)
     if (setting == _device_setting_fast_menu_repeat) return 1.0;
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
     if (setting == _device_setting_anti_aliasing) return !strcmp(config_string(setting_names[setting]), "fxaa");
+#endif
+#if HALO_DEVICE_HAS_FRAME_LIMIT
     if (setting == _device_setting_frame_limit)
     {
         long cap = config_integer(setting_names[setting]);
@@ -139,7 +147,7 @@ int device_settings_apply(unsigned long changed_mask,
         }
         else
 #endif
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
+#if HALO_DEVICE_HAS_FRAME_LIMIT
         if (setting == _device_setting_frame_limit)
         {
             double cap = values[setting];
@@ -190,7 +198,9 @@ int device_settings_apply(unsigned long changed_mask,
             previous[count].string = config_string(setting_names[setting]);
             updates[count].string = values[setting] != 0.0 ? "fxaa" : "off";
         }
-        else if (setting == _device_setting_frame_limit)
+#endif
+#if HALO_DEVICE_HAS_FRAME_LIMIT
+        if (setting == _device_setting_frame_limit)
             previous[count].number = config_integer(setting_names[setting]);
 #endif
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
@@ -214,8 +224,12 @@ int device_settings_apply(unsigned long changed_mask,
         if (fullscreen_changed && !halo_video_fullscreen_set(old_fullscreen != 0.0)) return -1;
         return 0;
     }
-    if ((effective & ((1UL << _device_setting_vsync) | (1UL << _device_setting_interpolation))) &&
-        !halo_video_apply_settings())
+    if ((effective & ((1UL << _device_setting_vsync) | (1UL << _device_setting_interpolation)
+#if HALO_DEVICE_HAS_DIRECT_CAMERA
+        /* the camera reads its choice again when the display settings apply */
+        | (1UL << _device_setting_direct_camera)
+#endif
+        )) && !halo_video_apply_settings())
     {
         /* Restore the accepted preference if the display backend refuses it. */
         int restored = !count || config_write_values(previous, count);

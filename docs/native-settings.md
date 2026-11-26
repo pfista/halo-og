@@ -190,8 +190,8 @@ Since 0.7 a new installation uses the enhanced picture: the display's own
 resolution on Mac, Windows and Linux, **Asset Quality: Upres** and **Smooth
 Motion: On**. For the original Xbox picture choose **Resolution: 480p**, **Asset
 Quality: Original** and **Smooth Motion: Off**. The simulation runs at 30 Hz
-with either picture. The iPhone keeps a 480-line picture because it has no
-Resolution setting yet.
+with either picture. The iPhone starts with a 480-line picture, its lightest
+load; its Video page offers the others.
 
 A settings file from 0.6 or earlier moves to these defaults once, and only if
 it never changed Resolution, Asset Quality, Smooth Motion or the Mac frame
@@ -216,6 +216,15 @@ keeping the game's 480-line coordinates, assets and 30 Hz simulation.
 Smooth Motion enables render interpolation while simulation remains
 30 Hz. Switching interpolation resets its old snapshots before rendering with
 the new setting.
+
+The iPhone's Video page lists what a phone can change: **Smooth Motion**,
+**Direct Camera**, **FPS Limit** (Uncapped, 30, 60 or 120), **Resolution**
+(480p, 720p, 1080p or Native), **Asset Quality**, **Timer Position** and
+**Timer Size**. It has no Fullscreen or VSync rows, because iOS always fills
+the screen and presents with the display. Direct Camera points a first-person
+view where the player aims in each frame instead of blending it between ticks;
+it is `display.direct_camera`, on by default on the iPhone and a `config.toml`
+choice (default off) on desktops. Every row but Asset Quality applies on Accept.
 
 **Detail Distance** has no menu row yet; it is `display.detail_distance` in
 `config.toml`. The Xbox chooses a model's level of detail, whether to draw the

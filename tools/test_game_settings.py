@@ -773,16 +773,29 @@ static void settings_native_options(void) {
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
         ,L"RESOLUTION:"
 #endif
+#if HALO_DEVICE_HAS_FRAME_LIMIT
+        ,L"FPS LIMIT:"
+#endif
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        ,L"FPS LIMIT:",L"ANTI-ALIASING:"
+        ,L"ANTI-ALIASING:"
+#endif
+#if HALO_DEVICE_HAS_DIRECT_CAMERA
+        ,L"DIRECT CAMERA:"
 #endif
         ,L"DEFAULT GAME TYPES:",L"HORIZONTAL SENSITIVITY:",L"VERTICAL SENSITIVITY:"};
     static const short rows_by_page[5][7]={
-        {0,1,2,3,NONE,5}, {6,7,8,22,
+        {0,1,2,3,NONE,5},
+#if defined(HALO_IOS)
+        /* The iPhone lists only what it can change: no Fullscreen or VSync. */
+        {8,_device_setting_direct_camera,_device_setting_frame_limit,_device_setting_render_height,22,13,14},
+#else
+        {6,7,8,22,
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
         _device_setting_render_height,
 #endif
-        13,14}, {4,9,10,11,12},
+        13,14},
+#endif
+        {4,9,10,11,12},
         {_device_setting_look_sensitivity_horizontal,_device_setting_look_sensitivity_vertical,20,18,19},
         {15,16,17,_device_setting_show_default_game_types}};
     static const short counts[5]={6,HALO_DEVICE_HAS_RENDER_RESOLUTION ? 7:6,5,5,4};
@@ -996,10 +1009,19 @@ static void settings_staging(void) {
     assert(game_settings_event(setting_control(root,_device_setting_interpolation),_device_settings_next));
     assert(game_settings_event(root,_device_settings_accept));
     assert(applied_mask==(1UL<<_device_setting_interpolation) && !settings_values[_device_setting_interpolation]);
-    assert(game_settings_event(setting_control(root,_device_setting_vsync),_device_settings_next));
-    rollback_incomplete=TRUE; assert(!game_settings_event(root,_device_settings_accept));
-    assert(!device_settings_drafts[0].values[_device_setting_fullscreen]);
-    assert(device_settings_drafts[0].values[_device_setting_vsync]==1);
+    {
+        /* A live Video row every platform shows: the iPhone has no VSync row. */
+#if HALO_DEVICE_HAS_DIRECT_CAMERA
+        const short live=_device_setting_direct_camera;
+#else
+        const short live=_device_setting_vsync;
+#endif
+        const double saved=settings_values[live];
+        assert(game_settings_event(setting_control(root,live),_device_settings_next));
+        rollback_incomplete=TRUE; assert(!game_settings_event(root,_device_settings_accept));
+        assert(!device_settings_drafts[0].values[_device_setting_fullscreen]);
+        assert(device_settings_drafts[0].values[live]==saved);
+    }
     assert(widget_instance_find_by_tag_index_recursive(root,device_settings.footer_tags[_ds_video])->parameters.text_box.string_list_index==_ds_partial_failure_help);
     settings_render_inputs(root->child);
     assert(widget_instance_find_by_tag_index_recursive(root,device_settings.footer_tags[_ds_video])->parameters.text_box.string_list_index==_ds_partial_failure_help);

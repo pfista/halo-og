@@ -2,11 +2,23 @@
 #ifndef HALO_DEVICE_SETTINGS_H
 #define HALO_DEVICE_SETTINGS_H
 
-/* Desktop GL and Mac Native Metal can choose physical render resolution. */
-#if (!defined(HALO_ANDROID) && !defined(HALO_IOS)) || (defined(HALO_MACOS) && !defined(HALO_IOS))
+/* Desktop GL and Native Metal (Mac and iPhone) can choose physical render
+ * resolution; Native Metal can also cap its presented frames. */
+#if !defined(HALO_ANDROID) || defined(HALO_MACOS)
 #define HALO_DEVICE_HAS_RENDER_RESOLUTION 1
 #else
 #define HALO_DEVICE_HAS_RENDER_RESOLUTION 0
+#endif
+#if defined(HALO_MACOS)
+#define HALO_DEVICE_HAS_FRAME_LIMIT 1
+#else
+#define HALO_DEVICE_HAS_FRAME_LIMIT 0
+#endif
+/* Desktops keep Direct Camera in config.toml; the iPhone shows it in Video. */
+#if defined(HALO_IOS)
+#define HALO_DEVICE_HAS_DIRECT_CAMERA 1
+#else
+#define HALO_DEVICE_HAS_DIRECT_CAMERA 0
 #endif
 
 enum
@@ -37,9 +49,14 @@ enum
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
     _device_setting_render_height,
 #endif
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
+#if HALO_DEVICE_HAS_FRAME_LIMIT
     _device_setting_frame_limit,
+#endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
     _device_setting_anti_aliasing,
+#endif
+#if HALO_DEVICE_HAS_DIRECT_CAMERA
+    _device_setting_direct_camera,
 #endif
     _device_setting_show_default_game_types,
     /* 0 keeps the player profile's Look Sensitivity; 1 to 10 set this axis. */

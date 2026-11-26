@@ -70,12 +70,23 @@ struct config_setting
 };
 
 /* The Mac draws at its display's own resolution unless a player chooses
-otherwise. The iPhone has no Resolution setting in its menus yet, so it keeps
-the Xbox height until a player can choose there. */
+otherwise. The iPhone keeps the Xbox height, its lightest load, until a
+player chooses another in Video, Resolution. */
 #if defined(HALO_IOS)
 #define NATIVE_RENDER_HEIGHT_DEFAULT "480"
 #else
 #define NATIVE_RENDER_HEIGHT_DEFAULT "0"
+#endif
+
+/* Direct Camera is a desktop config.toml choice, off by default. The iPhone
+shows it in Video and starts with it on (the player's request): with Smooth
+Motion the view otherwise trails the sticks by up to two ticks. */
+#if defined(HALO_IOS)
+#define DIRECT_CAMERA_DEFAULT "true"
+#define DIRECT_CAMERA_PLATFORMS _platform_all
+#else
+#define DIRECT_CAMERA_DEFAULT "false"
+#define DIRECT_CAMERA_PLATFORMS _platform_desktop
 #endif
 
 static const struct config_setting config_settings[] =
@@ -126,10 +137,11 @@ static const struct config_setting config_settings[] =
 		"PB timer position: 0 is top center, 1 bottom center, 2 bottom right." },
 	{ "display.timer_scale", _config_real, "1.0", NULL, _environment_value, _platform_all,
 		"PB timer size, 0.5 to 1.0. These preferences do not enable the timer." },
-	{ "display.direct_camera", _config_boolean, "false", "HALO_DIRECT_CAMERA", _environment_value, _platform_desktop,
+	{ "display.direct_camera", _config_boolean, DIRECT_CAMERA_DEFAULT, "HALO_DIRECT_CAMERA", _environment_value,
+		DIRECT_CAMERA_PLATFORMS,
 		"In first person, point the view where the player aims now instead of\n"
-		"where the last tick left it: the view turns the frame the mouse moves,\n"
-		"not up to two ticks (66 ms) later." },
+		"where the last tick left it: the view turns the frame the mouse or\n"
+		"stick moves, not up to two ticks (66 ms) later." },
 	{ "display.high_res_hud", _config_boolean, "true", "HALO_HIGH_RES_HUD", _environment_value, _platform_all,
 		"Asset Quality: true enables Upres HUD, font glyphs and faithful menu\n"
 		"title redraws; false keeps the Original artwork. Layout and gameplay\n"
