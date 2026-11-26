@@ -11,6 +11,7 @@ each batch stands. Per-commit decisions are in
 
 | Question | Decision (November 24, 2026) |
 | --- | --- |
+| Patch releases | 0.7.1 continues the adoption (November 26). A patch must play with 0.7.0, so it takes only changes that leave what machines send and the simulation alone: picture, sound, HUD, menus, local input, crash and bounds fixes. Anything else waits for 0.8. |
 | Re-fork from OpenCE or pull selectively | Pull selectively and be more permissive about what is pulled. No online co-op, no OpenCE netcode or services, no PC menus. |
 | Release | These changes are Halo OG 0.7. 0.7 builds play with 0.7 builds. |
 | Picture defaults | A new installation uses the display's resolution, Upres assets and Smooth Motion. The original Xbox picture stays selectable. |
@@ -142,7 +143,8 @@ Campaign, Firefight and UI maps stay out of scope: the profile omits scripts.
 ### 3. Menus
 
 Done for 0.7: horizontal and vertical look sensitivity in Game Settings, from
-the main menu and from Pause. A menu walk, `tools/menu_layout_check.py`, now
+the main menu and from Pause. Done for 0.7.1 so far: a saved profile's
+controls apply at once to the player using it (`ee1e169f9`). A menu walk, `tools/menu_layout_check.py`, now
 fails on any text that does not fit its box; it covers the multiplayer and
 Game Settings screens from the main menu and the one-player Pause pages of a
 hosted game, and found the locked game type dialog and one Game Settings
@@ -189,6 +191,10 @@ Done for 0.7: the new picture defaults on Mac, Windows and Linux, active
 camouflage at screen resolution on both renderers, three Smooth Motion fixes,
 and Detail Distance for model pop-in, shadows and particle culling
 (`display.detail_distance`, following the resolution by default).
+
+Done for 0.7.1 so far: the scope's blur at high resolution (`f815e1ccb`),
+lens flares out of view no longer tested (`744040c87`), the motion sensor
+wedge's fade (`3ae09c3d2`) and faster HUD picture decoding (`f38d526e8`).
 
 Still open, all CC0-era unless noted: a menu row for Detail Distance (the
 Video page is full on every desktop, so it waits for the Advanced page), scope

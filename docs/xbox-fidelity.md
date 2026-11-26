@@ -164,6 +164,26 @@ and Blood Gulch ran with Smooth Motion on and off. Not done: Windows, Linux,
 Android and iPhone builds, a two-machine game, a controller in hand, a vehicle
 antenna on screen, and any comparison with an Xbox.
 
+## November 26 adoption for 0.7.1
+
+0.7.1 continues the adoption as a patch: it must play with 0.7.0, so nothing
+here changes what machines send each other or how the simulation behaves.
+Every upstream commit below is from OpenCE's CC0 era.
+
+| Area | Upstream | Halo OG | Decision |
+| --- | --- | --- | --- |
+| Scope blur | `f815e1ccb` | `86c3cff15` | Adopt the shared screen-effect change, with Halo OG's own screen scale. At several screen pixels to the Xbox's one the blur's few copies stood apart as ghosts; the same spread is drawn in more, smaller steps. Unchanged at 480 lines. |
+| Lens flares out of view | `744040c87` | `c3ff7f002` | Adopt, reversing the deferral above. A flare is still tested once a sphere three times its test radius reaches the view. Not yet compared at the edge of the screen on either renderer. |
+| Saved profile | `ee1e169f9` | `cbb6afc76` | Adopt. Local to the machine that saves the profile. |
+| Motion sensor wedge | `3ae09c3d2` | `94ea0ec7d` | Adopt. Upres artwork only. |
+| HUD picture decoding | `f38d526e8` | `389f998de` | Adopt. Same pixels, decoded faster. |
+
+Validation on November 26: the Mac guest builds and runs a hosted match on
+Metal with these changes; the exact-pixel HUD fixtures pass with the new
+decoder. The scope blur was run zoomed on Metal without error, but no
+before-and-after picture of the ghosting was obtained: the scripted player did
+not reliably hold a scoped weapon in a bright scene.
+
 ## Desktop OpenGL lens flare visibility
 
 Since `42256112`, Windows and Linux use the latest completed visibility test for each light and
