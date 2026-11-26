@@ -492,6 +492,30 @@ void _rasterizer_screen_effect(
 		real_rectangle2d vertex_bounds;
 		unsigned long light_enhancement_input;
 		unsigned long desaturation_input;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		struct rasterizer_cinematic_screen_effect_parameters scaled_parameters;
+
+		/* port: a convolution blends a few copies of the screen, set apart by
+		its radius in the Xbox's pixels. At 640x480 they merge into a blur.
+		Drawn at several screen pixels to the Xbox's one, the same few copies
+		stand apart as sharp ghosts, most visibly around a scope (the zoom's
+		warp). The same spread is drawn in that many times the passes, each a
+		step of it, which blends them again. Adapted from OpenCE f815e1ccb. */
+		if (parameters->convolution_type != _rasterizer_screen_effect_convolution_type_none && !parameters->video_on)
+		{
+			long steps = (long)(halo_screen_pixel_scale() + 0.999f);
+
+			if (steps > 6)
+				steps = 6;
+			if (steps > 1)
+			{
+				scaled_parameters = *parameters;
+				scaled_parameters.convolution_radius /= (real)steps;
+				parameters = &scaled_parameters;
+				pass_count *= (short)steps;
+			}
+		}
+#endif
 
 		if (parameters->video_on)
 		{
