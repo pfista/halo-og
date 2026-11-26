@@ -231,6 +231,9 @@ def run_tour(console, folder, steps):
         elif kind == "shot":
             time.sleep(0.5)
             save_picture(folder, value)
+        elif kind == "run":
+            reply = console.command(value).strip()
+            print(f"  {value}: {reply}" if reply else f"  {value}")
 
 
 def main():
@@ -247,7 +250,7 @@ def main():
     parser.add_argument("--pause-layout", type=int, choices=(0, 2, 4), default=0,
                         help="With --steps: show Pause as two or four players' split screen does")
     parser.add_argument("--steps", help="Instead of a tour: comma-separated press:<button>, expect:<name>, "
-                        "shot:<name>, wait:<seconds>; prints the top screen after each press")
+                        "shot:<name>, wait:<seconds>, run:<console command>; prints the top screen after each press")
     args = parser.parse_args()
     executable, guest = BUILD / "halo", BUILD / "halo_guest.elf"
     if not executable.exists() or not guest.exists():
