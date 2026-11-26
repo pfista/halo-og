@@ -190,6 +190,9 @@ column says which.
 | Motion sensor wedge | `3ae09c3d2` | `94ea0ec7d` | Adopted | Upres artwork only. |
 | HUD picture decoding | `f38d526e8` | `389f998de` | Adopted | Same pixels, decoded faster. |
 | Nav point arrow | `36ea3fb80` | `3743ce01f` | Written | A point not yet looked at is classified when drawn instead of drawn with no arrow type. |
+| Teammate marker | `430e922ca` | `c8c234647` | Written | Not drawn on a map without the multiplayer HUD bitmap. |
+| Contrail buffers | `f1f33b05d` | `3eff334a2` | Written | A contrail of an unsupported type releases its buffers. An original fault; no stock contrail has such a type. |
+| Buffer creation | `e0cf4f880` | `b65e2223e` | Written | A failed vertex or index buffer creation is seen as a failure. An original fault. |
 
 ### Timing with Smooth Motion
 
@@ -203,6 +206,9 @@ counted ticks. Halo OG draws several frames a tick.
 | Scripted first-person camera | `073baa3c6` | `8fd5ffdb2` | Adopted | Blended between ticks again. |
 | Antenna shape record | `2853a4225` | `38eb0ea5a` | Adopted | A new antenna no longer blends from a deleted one's shape. |
 | Frame throttle | `e799d0814` | `64309294b` | Adopted | With Smooth Motion off the loop sleeps between looks at the clock. Frame pacing at 30 frames a second on a Mac is not yet measured. |
+| CTF flag cloth | `ced1e1f2d`, `eb0c7f543` | `302036cba` | Written | The cloth is stepped once a tick with the frames' time added up, so it is as loose as on the Xbox at any frame rate, and the drawn cloth follows its pole between steps. |
+| Lightning | `688eeb8a0` | `497a4a396` | Written | A bolt keeps one shape for a whole tick in each window instead of a new one every frame. |
+| Moving object's shadow | `0e7233f3b` | `6e1fa5a12` | Written | The shadow map is centred on the object as drawn, so a fast vehicle's shadow no longer flickers along its trailing side. |
 
 ### Menus, text and saves
 
@@ -227,24 +233,30 @@ counted ticks. Halo OG draws several frames a tick.
 | Download chunk size | `2b89960b0` | `43798a7e5` | Adopted | A size that is not a number fails the download instead of ending it short. |
 | Profiler buffer | `e97030572` | `9ea98861f` | Adopted | Diagnostics. |
 | Datum index in messages | `76ade8653` | `4853fd973` | Written | Error messages name the right objects. |
+| Script results | `953b0298d` | `0a63db13c` | Adopted | Boolean and short script results are whole values. Readers took only the low byte or word, so no script changes; saved games no longer carry uninitialised bytes. |
 
-Validation on November 26: the Mac guest builds and runs a hosted match on
-Metal with these changes, and the Pause and settings menu walks pass. The
-portable fixtures pass, with new ones for the checkpoint wait and death timers
-(`tools/test_campaign_timers.py`), the blur's passes and quad
+Validation on November 26: the Mac guest builds and runs hosted Slayer and
+CTF matches on Metal with these changes, and the Pause and settings menu walks
+pass. The portable fixtures pass, with new ones for the checkpoint wait and
+death timers (`tools/test_campaign_timers.py`), the blur's passes and quad
 (`tools/test_screen_effect_scale.py`), the portal clip
-(`tools/test_portal_clip.py`) and the bar in wide text
-(`tools/test_unicode_text_bar.py`).
+(`tools/test_portal_clip.py`), the bar in wide text
+(`tools/test_unicode_text_bar.py`), the lightning seed
+(`tools/test_lightning_tick_shape.py`) and the flag's step
+(`tools/test_flag_cloth_step.py`). Each fails on the code before its fix.
 
-The blur was compared in one run at 1080 lines against the Xbox's passes alone
-and the earlier fix, with a blur and a warp started from the script console
-(`cinematic_screen_effect_set_convolution`): the Xbox's passes alone show a
-grid of copies, the earlier fix a narrower blur, and this one a smooth blur of
-the Xbox's size with no band at the left and top. A scope's own masked warp
-uses the same passes but was not photographed: the scripted player did not
-hold a scoped weapon. The campaign timers, chapter titles, split-screen cases
-and the OpenGL change are covered by fixtures or by reading the code, not by a
-played mission.
+The blur was photographed on the pistol's scope at 1080 lines, with the fix
+switched off and on in one run so that the view is the same: without it the
+surround is a woven pattern of sharp copies with a bright band down the left
+and top edges, and with it a smooth blur to every edge. A cinematic blur and
+warp started from the script console (`cinematic_screen_effect_set_convolution`)
+were compared the same way against the earlier fix, which gave a narrower
+blur. At 480 lines the Xbox's passes and quad are drawn unchanged.
+
+Not yet watched in play: the flag's cloth, lightning and a fast vehicle's
+shadow at a high frame rate, a campaign mission (checkpoints, death, chapter
+titles), split screen, and the OpenGL change. These rest on fixtures or on
+reading the code.
 
 ## Desktop OpenGL lens flare visibility
 
