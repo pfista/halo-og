@@ -144,7 +144,9 @@ Campaign, Firefight and UI maps stay out of scope: the profile omits scripts.
 
 Done for 0.7: horizontal and vertical look sensitivity in Game Settings, from
 the main menu and from Pause. Done for 0.7.1 so far: a saved profile's
-controls apply at once to the player using it (`ee1e169f9`). A menu walk, `tools/menu_layout_check.py`, now
+controls apply at once to the player using it (`ee1e169f9`), a deleted
+profile's name can be used again (`412c5224e`), and text ending in a bar ends
+where it should (`2dea8f6c7`, written for Halo OG). A menu walk, `tools/menu_layout_check.py`, now
 fails on any text that does not fit its box; it covers the multiplayer and
 Game Settings screens from the main menu and the one-player Pause pages of a
 hosted game, and found the locked game type dialog and one Game Settings
@@ -192,13 +194,18 @@ camouflage at screen resolution on both renderers, three Smooth Motion fixes,
 and Detail Distance for model pop-in, shadows and particle culling
 (`display.detail_distance`, following the resolution by default).
 
-Done for 0.7.1 so far: the scope's blur at high resolution (`f815e1ccb`),
-lens flares out of view no longer tested (`744040c87`), the motion sensor
-wedge's fade (`3ae09c3d2`) and faster HUD picture decoding (`f38d526e8`).
+Done for 0.7.1 so far: the scope's blur at high resolution, at the Xbox's
+size and to every edge (`e6fdb07c3` and `5cd9bc79c`, written for Halo OG, in
+place of `f815e1ccb`), campaign checkpoints and the delay after death counted
+in game ticks instead of frames (`cd345aac7`, and `ce59b9316` written for
+Halo OG), a one-frame flash to the fog colour (`521c8c8d5`, written), lens
+flares out of view no longer tested (`744040c87`), the motion sensor wedge's
+fade (`3ae09c3d2`), faster HUD picture decoding (`f38d526e8`), and two dozen
+small fixes. [Xbox fidelity](xbox-fidelity.md) lists every one with its
+commit.
 
 Still open, all CC0-era unless noted: a menu row for Detail Distance (the
-Video page is full on every desktop, so it waits for the Advanced page), scope
-blur at high resolution (`f815e1ccb`), fuller Upres HUD (`9da2a45ff`,
+Video page is full on every desktop, so it waits for the Advanced page), fuller Upres HUD (`9da2a45ff`,
 `3ae09c3d2`, `f8b3eecb3`, `f38d526e8`, `c72962a73`), mixer quality (27
 commits), room reverb as an option
 (`8a8e70599`, `4afb59660`), and a Resolution setting on iPhone so it can take

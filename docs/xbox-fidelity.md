@@ -168,21 +168,83 @@ antenna on screen, and any comparison with an Xbox.
 
 0.7.1 continues the adoption as a patch: it must play with 0.7.0, so nothing
 here changes what machines send each other or how the simulation behaves.
-Every upstream commit below is from OpenCE's CC0 era.
 
-| Area | Upstream | Halo OG | Decision |
-| --- | --- | --- | --- |
-| Scope blur | `f815e1ccb` | `86c3cff15` | Adopt the shared screen-effect change, with Halo OG's own screen scale. At several screen pixels to the Xbox's one the blur's few copies stood apart as ghosts; the same spread is drawn in more, smaller steps. Unchanged at 480 lines. |
-| Lens flares out of view | `744040c87` | `c3ff7f002` | Adopt, reversing the deferral above. A flare is still tested once a sphere three times its test radius reaches the view. Not yet compared at the edge of the screen on either renderer. |
-| Saved profile | `ee1e169f9` | `cbb6afc76` | Adopt. Local to the machine that saves the profile. |
-| Motion sensor wedge | `3ae09c3d2` | `94ea0ec7d` | Adopt. Upres artwork only. |
-| HUD picture decoding | `f38d526e8` | `389f998de` | Adopt. Same pixels, decoded faster. |
+OpenCE is CC0 up to `4b09168e` (October 19, 2026) and AGPL after it. A CC0
+commit is adopted as code. For a later commit only the behaviour is taken: the
+fix is written for Halo OG from a description of what was wrong, and no
+upstream code from after the licence change is copied. The table's **How**
+column says which.
+
+### Picture
+
+| Area | Upstream | Halo OG | How | Decision |
+| --- | --- | --- | --- | --- |
+| Scope and cinematic blur | `e6fdb07c3`, `5cd9bc79c` | `62d9a8d30` | Written | The Xbox's passes are drawn unchanged and two passes are added, each at a third of the radius of the one before, so the blur keeps the Xbox's size and its copies merge. Each pass's quad is moved back by the half pixel the native renderers add, so the left and top edges are covered. This replaces `86c3cff15` (from `f815e1ccb`), which divided the radius by the screen's scale: smoother than nothing, but a narrower blur at up to six times the passes. Unchanged at 480 lines. |
+| Scripted blur in split screen | `f4b7462a7` | `a20d4fca1` | Written | The Xbox's fatal error becomes the effect without its blur and video parts. Only scripts reach it. |
+| One-frame flash to the fog colour | `521c8c8d5` | `5cb674c2d` | Written | A portal corner exactly on a clip line no longer becomes a value that is not a number. An original fault, kept until now. |
+| Lens flares out of view | `744040c87` | `c3ff7f002` | Adopted | Reverses the deferral above. A flare is still tested once a sphere three times its test radius reaches the view. Not yet compared at the edge of the screen on either renderer. |
+| OpenGL vertex constants | `b449c43e2` | `b2e6737ca` | Adopted | Windows, Linux and Android: a model's vertices no longer fly across the screen for a frame after long play at a high frame rate. Metal has no constant serials. |
+| Particles | `1f7c5c9d5`, `84dd8a2c3` | `660dbe86e`, `fa104ec15` | Adopted | A missing bitmap sequence draws nothing instead of dividing by zero; a fully culled group stores no invalid radius. |
+| Bitmap sampling | `794cbb92c` | `55becbe24` | Adopted | A format that cannot be sampled returns a defined colour to object lighting. |
+| Chapter titles on a wide screen | `516db98ee` | `1fc362951` | Written | A title's box is moved by the edge its text is justified to. Unchanged at 640 columns. |
+| Motion sensor wedge | `3ae09c3d2` | `94ea0ec7d` | Adopted | Upres artwork only. |
+| HUD picture decoding | `f38d526e8` | `389f998de` | Adopted | Same pixels, decoded faster. |
+| Nav point arrow | `36ea3fb80` | `3743ce01f` | Written | A point not yet looked at is classified when drawn instead of drawn with no arrow type. |
+
+### Timing with Smooth Motion
+
+The Xbox drew one frame for each 30 Hz game tick, so code that counted frames
+counted ticks. Halo OG draws several frames a tick.
+
+| Area | Upstream | Halo OG | How | Decision |
+| --- | --- | --- | --- | --- |
+| Delay after death | `cd345aac7` | `296549844` | Adopted | The revert after death and the co-op respawn wait 92 ticks, about three seconds, at any frame rate. |
+| Checkpoint wait | `ce59b9316` | `88863e321` | Written | A checkpoint looks for a safe moment every 10 ticks and gives up after 240, eight seconds, at any frame rate. At 120 frames a second it had given up after two. |
+| Scripted first-person camera | `073baa3c6` | `8fd5ffdb2` | Adopted | Blended between ticks again. |
+| Antenna shape record | `2853a4225` | `38eb0ea5a` | Adopted | A new antenna no longer blends from a deleted one's shape. |
+| Frame throttle | `e799d0814` | `64309294b` | Adopted | With Smooth Motion off the loop sleeps between looks at the clock. Frame pacing at 30 frames a second on a Mac is not yet measured. |
+
+### Menus, text and saves
+
+| Area | Upstream | Halo OG | How | Decision |
+| --- | --- | --- | --- | --- |
+| Saved profile | `ee1e169f9` | `cbb6afc76` | Adopted | A profile saved from Pause applies at once. Local to the machine that saves it. |
+| Deleted profile's name | `412c5224e` | `d212cdb08` | Adopted | The name can be used again and a neighbour is not overwritten. |
+| Text ending in a bar | `2dea8f6c7` | `7a623b87d` | Written | In names and chat, a bar is a line break only before an n. The Xbox swallowed the character after any bar and drew on past the end of text ending in one. No original text has a bar followed by anything else. |
+| Virtual keyboard after a map change | `572c674e4` | `6195b531e` | Written | The keyboard's tag pointer is cleared with the menu map. |
+| Wide printf | `99257442f` | `6290feb03` | Adopted | Bounds on a conversion's width digits. |
+| Last multiplayer map name | `22bb651e6` | `885473af1` | Adopted | Written from a buffer of the right size. |
+| Map header and tag names | `acb71c2f8`, `ea7911199` | `1700eba74`, `a99d8f970` | Adopted by hand | Bounds on reading a map's name and copying its tag names. |
+
+### Camera, sound and the rest
+
+| Area | Upstream | Halo OG | How | Decision |
+| --- | --- | --- | --- | --- |
+| Dead camera | `fb1abedd8` | `399861e3b` | Adopted | With no living player the camera keeps its target instead of following a pointer value. An original fault. |
+| Following camera | `8fccabed2` | `6ca063c0f` | Adopted | Valid on a track of fewer than four points. |
+| Unheard sound's listener | `b0ff22553` | `757c477ba` | Written | Split screen: a sound nobody hears no longer keeps a listener that has left. |
+| Sound permutation mask | `f7ea5db0e` | `48b1b3160` | Adopted | No audible change. |
+| Download chunk size | `2b89960b0` | `43798a7e5` | Adopted | A size that is not a number fails the download instead of ending it short. |
+| Profiler buffer | `e97030572` | `9ea98861f` | Adopted | Diagnostics. |
+| Datum index in messages | `76ade8653` | `4853fd973` | Written | Error messages name the right objects. |
 
 Validation on November 26: the Mac guest builds and runs a hosted match on
-Metal with these changes; the exact-pixel HUD fixtures pass with the new
-decoder. The scope blur was run zoomed on Metal without error, but no
-before-and-after picture of the ghosting was obtained: the scripted player did
-not reliably hold a scoped weapon in a bright scene.
+Metal with these changes, and the Pause and settings menu walks pass. The
+portable fixtures pass, with new ones for the checkpoint wait and death timers
+(`tools/test_campaign_timers.py`), the blur's passes and quad
+(`tools/test_screen_effect_scale.py`), the portal clip
+(`tools/test_portal_clip.py`) and the bar in wide text
+(`tools/test_unicode_text_bar.py`).
+
+The blur was compared in one run at 1080 lines against the Xbox's passes alone
+and the earlier fix, with a blur and a warp started from the script console
+(`cinematic_screen_effect_set_convolution`): the Xbox's passes alone show a
+grid of copies, the earlier fix a narrower blur, and this one a smooth blur of
+the Xbox's size with no band at the left and top. A scope's own masked warp
+uses the same passes but was not photographed: the scripted player did not
+hold a scoped weapon. The campaign timers, chapter titles, split-screen cases
+and the OpenGL change are covered by fixtures or by reading the code, not by a
+played mission.
 
 ## Desktop OpenGL lens flare visibility
 
