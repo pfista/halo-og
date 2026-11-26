@@ -122,6 +122,7 @@ symbols in this file:
 #include <xtl.h>
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "halo_expanded_cache.h"
+#include "halo_custom_maps.h"
 #endif
 
 /* ---------- constants */
@@ -370,6 +371,15 @@ boolean texture_cache_set_map(
 	   map. The resolver has already verified this exact accepted selection. */
 	if (logical_map && selection && selection->expanded &&
 		!_stricmp(logical_map, selection->logical_name))
+		page_count = NATIVE_GLOBAL_FIESTA_TEXTURE_CACHE_PAGE_COUNT;
+	/* A community map is authored beyond the Xbox's budget. With a second
+	   player in view, a converted Digsite map locked all 1,408 pages in one
+	   frame (8 MiB of them the other player's armour), the next texture had
+	   no page, and the pass that needed it drew with whatever its stage held:
+	   red and green ramps under every dynamic light, then a stage whose
+	   texture was the wrong kind. Such a map takes the larger arena as well.
+	   The Xbox's own maps, the menu and the campaign keep 22 MiB. */
+	else if (logical_map && native_map_is_community(logical_map))
 		page_count = NATIVE_GLOBAL_FIESTA_TEXTURE_CACHE_PAGE_COUNT;
 #else
 	(void)logical_map;

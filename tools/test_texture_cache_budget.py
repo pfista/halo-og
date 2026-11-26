@@ -116,6 +116,7 @@ static struct { struct data_array *textures; byte *base_address; struct lruv_cac
 static long texture_cache_page_count=XBOX_TEXTURE_CACHE_PAGE_COUNT;
 static struct native_map_cache_selection selection;
 struct native_map_cache_selection const *native_map_cache_current(void) { return &selection; }
+/* PRODUCTION MAP NAMES */
 static unsigned budget_logs;
 static char budget_log[256];
 void platform_log(char const *format,...) {
@@ -142,10 +143,13 @@ static void teardown(void) {
     lruv_flush(xbox_texture_cache_globals.cache);lruv_delete(xbox_texture_cache_globals.cache);
     data_dispose(&texture_slots);XPhysicalFree(physical_memory_get_texture_cache_base_address());
 }
-static void configure(char const *name,int expanded) {
+static void select_map(char const *logical,int expanded) {
     memset(&selection,0,sizeof(selection));selection.expanded=expanded;selection.generation=1;
-    snprintf(selection.logical_name,sizeof(selection.logical_name),"chillout_digsite");
-    snprintf(selection.physical_name,sizeof(selection.physical_name),"_fiesta_chillout_digsite");
+    snprintf(selection.logical_name,sizeof(selection.logical_name),"%s",logical);
+    snprintf(selection.physical_name,sizeof(selection.physical_name),"_fiesta_%s",logical);
+}
+static void configure(char const *name,int expanded) {
+    select_map("chillout_digsite",expanded);
     assert(texture_cache_set_map(name));
 }
 static void assert_budget(long size) {
@@ -186,22 +190,38 @@ static void borrow_and_return(void) {
 int main(int argc,char **argv) {
     assert(argc==2);setup();assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
     if(!strcmp(argv[1],"lifecycle")) {
-        configure("chillout_digsite",0);assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
+        /* The Xbox's own maps, the menu and the campaign keep the original
+           budget, whatever community selection the lobby holds. */
         configure("ui",1);assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
         configure("a10",1);assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
         configure("prisoner",1);assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
-        configure("_fiesta_chillout_digsite",1);assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
-        configure("CHILLOUT_DIGSITE",1);
+        assert(allocations==1 && budget_logs==0);
+        /* An original map takes the larger arena only for its own verified
+           expanded Fiesta selection. */
+        select_map("prisoner",1);assert(texture_cache_set_map("hangemhigh"));
+        assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
+        select_map("prisoner",1);assert(texture_cache_set_map("PRISONER"));
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+        assert_budget(HALO_PORT_GLOBAL_FIESTA_TEXTURE_CACHE_SIZE);
+        assert(budget_logs==1 && strstr(budget_log,"32 MiB for PRISONER"));
+#else
+        assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
+#endif
+        select_map("prisoner",0);assert(texture_cache_set_map("prisoner"));
+        assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
+        /* A community map takes it with no expanded selection at all: two
+           players on a converted map lock every original page in one frame. */
+        configure("chillout_digsite",0);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
         assert_budget(HALO_PORT_GLOBAL_FIESTA_TEXTURE_CACHE_SIZE);
         assert(last_allocation_size==HALO_PORT_GLOBAL_FIESTA_TEXTURE_CACHE_SIZE);
-        assert(budget_logs==1 && strstr(budget_log,"32 MiB for CHILLOUT_DIGSITE"));
+        assert(strstr(budget_log,"32 MiB for chillout_digsite"));
 #else
         assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
         assert(budget_logs==0);
 #endif
         int old_allocations=allocations,old_frees=frees;unsigned old_logs=budget_logs;
-        configure("chillout_digsite",1);assert(allocations==old_allocations && frees==old_frees);
+        configure("CHILLOUT_DIGSITE",1);assert(allocations==old_allocations && frees==old_frees);
         assert(budget_logs==old_logs);
         /* A pending lobby change does not change an already-open cache or its
            borrowing budget. Only the next explicit map hook can select pages. */
@@ -209,7 +229,7 @@ int main(int argc,char **argv) {
         borrow_and_return();configure("ui",1);assert_budget(HALO_PORT_TEXTURE_CACHE_SIZE);
         assert(last_allocation_size==HALO_PORT_TEXTURE_CACHE_SIZE);
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
-        assert(budget_logs==2 && strstr(budget_log,"22 MiB for ui"));
+        assert(strstr(budget_log,"22 MiB for ui"));
 #endif
         borrow_and_return();assert(xbox_texture_cache_globals.cache->blocks->maximum_count==1408);
     } else if(!strcmp(argv[1],"pressure")) {
@@ -261,6 +281,8 @@ def fixture():
     constants = c_block(texture, "enum\n") + ";"
     functions = "\n".join(c_block(texture, signature) for signature in (
         "boolean texture_cache_set_map(\n", "void *texture_cache_steal_memory(\n", "void texture_cache_return_memory(\n"))
+    maps = (ROOT / "port/linux/game/custom_maps.c").read_text()
+    map_names = (maps[maps.index("static char const *stock_names[]"):maps.index("static unsigned long little_u32(")])
     memory_functions = "\n".join(c_block(physical, signature) for signature in (
         "void *physical_memory_get_texture_cache_base_address(\n", "int physical_memory_resize_texture_cache(\n"))
     return (PREFIX.replace("/* LRU STRUCTURES */", structures)
@@ -268,6 +290,7 @@ def fixture():
             .replace("/* CACHE CONSTANTS */", constants + "\n#define TEXTURE_CACHE_SIZE HALO_PORT_TEXTURE_CACHE_SIZE")
             .replace("/* PHYSICAL STRUCTURE */", c_block(physical, "struct physical_memory_map_globals\n") + ";")
             .replace("/* PRODUCTION PHYSICAL */", memory_functions)
+            .replace("/* PRODUCTION MAP NAMES */", map_names)
             .replace("/* PRODUCTION TEXTURE */", functions) + HARNESS)
 
 

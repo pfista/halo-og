@@ -36,6 +36,25 @@ int native_map_is_custom(char const *map)
     return name[0] != 0;
 }
 
+/* The menu and the campaign: files of the Xbox's own that are not
+   multiplayer maps. */
+static char const *retail_names[] = {
+    "ui", "a10", "a30", "a50", "b30", "b40", "c10", "c20", "c40", "d20", "d40"
+};
+
+/* A converted community cache, by name: a map that is not one of the Xbox's
+   multiplayer maps, its menu or a campaign level. Such content is authored
+   beyond the Xbox's budgets, so its resource arenas may be the larger ones. */
+int native_map_is_community(char const *map)
+{
+    unsigned int i;
+    char const *name = native_map_basename(map);
+    if (!native_map_is_custom(name)) return FALSE;
+    for (i = 0; i < NUMBEROF(retail_names); i++)
+        if (!_stricmp(name, retail_names[i])) return FALSE;
+    return TRUE;
+}
+
 static unsigned long little_u32(unsigned char const *p)
 {
     return (unsigned long)p[0] | (unsigned long)p[1] << 8 |
@@ -77,14 +96,11 @@ static int map_compare(void const *a, void const *b)
 #ifdef HALO_MACOS
 static int map_can_download(char const *map)
 {
-    static char const *retail[] = {
-        "ui", "a10", "a30", "a50", "b30", "b40", "c10", "c20", "c40", "d20", "d40"
-    };
     unsigned int i;
     unsigned int length = (unsigned int)strlen(map);
     if (!native_map_is_custom(map) || !length || length >= HALO_CUSTOM_MAP_NAME_SIZE) return FALSE;
-    for (i = 0; i < NUMBEROF(retail); i++)
-        if (!_stricmp(map, retail[i])) return FALSE;
+    for (i = 0; i < NUMBEROF(retail_names); i++)
+        if (!_stricmp(map, retail_names[i])) return FALSE;
     for (i = 0; i < length; i++) {
         unsigned char c = (unsigned char)map[i];
         if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
