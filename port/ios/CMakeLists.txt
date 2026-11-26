@@ -25,6 +25,7 @@ list(FILTER HOST_SOURCES EXCLUDE REGEX "host_(main|loader)\\.c$")
 list(FILTER HOST_SOURCES EXCLUDE REGEX "host_(gl|gl_bridge|perf|renderer)\\.c$")
 add_executable(Halo MACOSX_BUNDLE ${HOST_SOURCES} ${MINIUPNPC_SOURCES} host/host_loader.c host/host_main.m host/host_controls.m
     "${HALO_ROOT}/port/macos/host/host_metal.mm" "${HALO_ROOT}/port/macos/host/metal_draw_encoder.mm"
+    "${HALO_ROOT}/port/macos/native/HaloDirectoryHTTP.m"
     "${HALO_ROOT}/port/macos/host/entry.s" "${HALO_BUILD}/host/host_import_table.c"
     "${HALO_BUILD}/embed/guest_image.s")
 target_sources(Halo PRIVATE Assets.xcassets)

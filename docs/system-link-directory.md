@@ -1,8 +1,10 @@
 # Public games in System Link
 
-Desktop builds containing this change use **https://games.oghalo.com** by default
-on macOS, Windows, and Linux. Existing published builds do not gain it until
+Builds containing this change use **https://games.oghalo.com** by default
+on macOS, Windows, Linux and iPhone. Existing published builds do not gain it until
 updated. It uses the original Xbox-style **Multiplayer → System Link** menu.
+On iPhone it is how the phone finds other games: iOS blocks LAN broadcasts
+without Apple's multicast entitlement ([Apple multiplayer](apple-multiplayer.md#connect-the-devices)).
 
 1. Use the same new build on both machines. Start with Blood Gulch, Slayer,
    and **Performance Options → Stock**, with Input Delay and Hardcore Off.
@@ -67,7 +69,7 @@ records cannot supply arbitrary download URLs.
 ## Implementation and validation
 
 The shared native worker performs HTTPS requests off the game and P2P threads.
-Mac uses NSURLSession, Windows uses WinHTTP, and Linux uses its existing Mbed TLS
+Mac and iPhone use NSURLSession, Windows uses WinHTTP, and Linux uses its existing Mbed TLS
 transport. Responses are bounded, certificates/hostnames are verified, and
 directory requests never follow redirects. Linux serializes TLS with map/update
 transfers because its current PSA backend has no threading support; a slow map
