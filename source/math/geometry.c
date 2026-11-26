@@ -1194,6 +1194,13 @@ short convex_polygon2d_clip_to_plane(
 
 			vector_from_points2d(point, previous_point, &vector);
 			scale = PIN(vector_intersect_plane2d(point, &vector, plane), 0.f, 1.f);
+			/* A corner exactly on the line, with the corner before it a
+			rounding error behind, divides zero by zero, and the pin keeps the
+			result. It then spread through every later clip of a portal's
+			outline, and the clusters past that portal were not drawn for a
+			frame. The corner on the line is the crossing. */
+			if (!valid_real(scale))
+				scale = 0.f;
 			point_from_line2d(point, &vector, scale, result + result_count);
 			SET_FLAG(result_clip_flags, result_count, TRUE);
 			result_count++;
