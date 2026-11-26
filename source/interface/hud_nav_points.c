@@ -954,11 +954,33 @@ void hud_render_nav_points(
 			}
 
 			position.z += nav_point->z_offset;
-			custom_render_nav_point(
-				local_player_index,
-				&position,
-				nav_point->nav_index,
-				nav_point->screen_type);
+			{
+				short screen_type = nav_point->screen_type;
+
+				/* The update gives a point its screen type, and skips a
+				player with no body. A point added then, or after this tick's
+				update, got here with the type the map started with, none,
+				which is not one of the arrow's sequences. Look at it now,
+				as the update would have. */
+				if (screen_type==NONE)
+				{
+					real_point3d head_position;
+
+					unit_get_head_position(
+						player_get(local_player_get_player_index(local_player_index))->unit_index,
+						&head_position);
+					screen_type = hud_get_nav_point_render_type(
+						local_player_index,
+						&head_position,
+						&position,
+						nav_point->type==_hud_nav_point_type_object ? nav_point->reference_index : NONE);
+				}
+				custom_render_nav_point(
+					local_player_index,
+					&position,
+					nav_point->nav_index,
+					screen_type);
+			}
 		}
 	}
 
