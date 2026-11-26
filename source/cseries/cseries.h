@@ -168,7 +168,11 @@ semicolon). */
 #define VALID_INDEX(index, count) (index>=0 && index<count)
 
 #define DATUM_INDEX_NEW(absolute_index, salt) ((absolute_index) | ((salt)<<SHORT_BITS))
-#define DATUM_INDEX_TO_ABSOLUTE_INDEX(datum_index) ((datum_index)&UNSIGNED_SHORT_MAX)
+/* The limits above are one enum whose values need 64 bits, so clang and gcc
+give each of them a 64-bit type and this expression with it. Passed to a
+printf-style function for a %d, it made every argument after it read from the
+wrong bytes. The index is a long, as Microsoft's compiler had it. */
+#define DATUM_INDEX_TO_ABSOLUTE_INDEX(datum_index) ((long)((datum_index)&UNSIGNED_SHORT_MAX))
 #define DATUM_INDEX_TO_IDENTIFIER(datum_index) ((datum_index)>>SHORT_BITS)
 
 /* ---------- fixed math */
