@@ -14,8 +14,9 @@
 #else
 #define HALO_DEVICE_HAS_FRAME_LIMIT 0
 #endif
-/* Desktops keep Direct Camera in config.toml; the iPhone shows it in Video. */
-#if defined(HALO_IOS)
+/* Direct Camera has a row on Native Metal: the iPhone's Video page and the
+ * Mac's Controller page. Windows and Linux keep it in config.toml. */
+#if defined(HALO_MACOS)
 #define HALO_DEVICE_HAS_DIRECT_CAMERA 1
 #else
 #define HALO_DEVICE_HAS_DIRECT_CAMERA 0

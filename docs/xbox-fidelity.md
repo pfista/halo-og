@@ -413,8 +413,8 @@ original": players compared the 480-line, 30 FPS default with other builds and
 read it as a worse port. It changes only what is drawn. The original Xbox
 picture remains selectable in Video and in
 [the comparison profile](../port/macos/profiles/xbox-ntsc.toml);
-`display.direct_camera` stays `false` on Mac, Windows and Linux, and the
-simulation stays at 30 Hz. The iPhone starts at 480 lines, its lightest load,
+`display.direct_camera` stays `false` on Mac, Windows and Linux (the Mac shows
+it as a Controller row), and the simulation stays at 30 Hz. The iPhone starts at 480 lines, its lightest load,
 and offers the other resolutions in Video. On the iPhone Direct Camera has a
 Video row and defaults to on, at the project owner's request (November 26,
 2026): with Smooth Motion the view otherwise trails the sticks by up to two

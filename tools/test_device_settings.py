@@ -241,8 +241,8 @@ int main(void) {
     check_game_type_settings(values);
     check_hud_settings(values);
 #if HALO_DEVICE_HAS_DIRECT_CAMERA
-    /* The iPhone's Video rows: Direct Camera takes effect on Accept through
-     * the display backend, and FPS Limit accepts only its own choices. */
+    /* Native Metal rows (Mac and iPhone): Direct Camera takes effect on Accept
+     * through the display backend, and FPS Limit accepts only its own choices. */
     reset(values);
     assert(values[_device_setting_direct_camera]==1 && values[_device_setting_frame_limit]==0);
     values[_device_setting_direct_camera]=0;
@@ -415,7 +415,7 @@ int main(void) {
         (1UL<<_device_setting_join_in_progress),values));
     assert(writes==2 && saved[6]==1 && saved[15]==1 && saved[16]==1 && saved[17]==1);
 #if MAC_FULLSCREEN
-    assert(NUMBER_OF_DEVICE_SETTINGS==29);
+    assert(NUMBER_OF_DEVICE_SETTINGS==30);
     reset(values);values[_device_setting_render_height]=0;
     values[_device_setting_frame_limit]=120;values[_device_setting_anti_aliasing]=1;
     assert(device_settings_apply((1UL<<_device_setting_render_height)|

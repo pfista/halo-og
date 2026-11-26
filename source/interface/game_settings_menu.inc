@@ -28,7 +28,7 @@ static short const device_settings_deadzone_presets[] = {0, 3277, 6553, 9000, 98
 static char const *const device_settings_deadzone_labels[] = {"0%", "10%", "20%", "Xbox", "30%", "40%", "49%"};
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 7
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 7, 5, 4};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 7, 6, 4};
 #elif HALO_DEVICE_HAS_RENDER_RESOLUTION
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 7
 static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 5, 5, 4};
@@ -69,7 +69,12 @@ static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX
      _device_setting_timer_minutes, _device_setting_timer_items},
 #endif
     {_device_setting_look_sensitivity_horizontal, _device_setting_look_sensitivity_vertical,
-     _device_setting_look_acceleration, _device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone},
+     _device_setting_look_acceleration, _device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+     /* The Mac's Video page is full; this is a view-response choice, as the rows above are. */
+     , _device_setting_direct_camera
+#endif
+    },
     {_device_setting_show_og_maps, _device_setting_show_community_maps, _device_setting_join_in_progress,
      _device_setting_show_default_game_types}};
 static short const device_settings_page_titles[_ds_page_count] = {_ds_game_label, _ds_audio_label, _ds_video_label, _ds_timer_label, _ds_controller_label, _ds_multiplayer_label};
@@ -407,7 +412,11 @@ static boolean device_settings_build_native_pages(long strings, long const *head
 #else
         L"Choose fullscreen, VSync\r\nand smooth motion settings.",
 #endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+        L"Choose stick deadzones,\r\nlook acceleration and\r\nDirect Camera.",
+#else
         L"Choose stick deadzones\r\nand look acceleration\r\nfor this device.",
+#endif
         L"Pick map sets and game types.\r\nLet new players join matches\r\nafter they start."};
     struct ui_widget_definition *base[NUMBEROF(templates)];
     struct ui_widget_child_reference *chooser_rows;

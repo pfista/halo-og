@@ -110,6 +110,16 @@ deflection. Off removes that timed boost and clears its accumulated time.
 Profile sensitivity, the underlying stick-response curve, vertical turning,
 zoom scaling and direct mouse aiming retain their existing behavior.
 
+On Mac the page also has **Direct Camera: Off / On**, saved as
+`display.direct_camera` (default `false`). With Smooth Motion, each frame draws
+a blend of the last two game ticks, so a first-person view can trail the mouse
+or stick by up to two ticks (66 ms). On points the view where the player aims
+in that frame; Off keeps the blended view. It applies on Accept and changes
+only what is drawn: aim, shots and the 30 Hz simulation are the same either
+way, and a vehicle seat or a cinematic keeps its own view. The row is on this
+page because the Mac's Video page is full. Windows and Linux set the same key
+in `config.toml`; the iPhone has the row in Video.
+
 Menu navigation uses one immediate movement, a 500 ms hold delay, then 100 ms
 repeats for held arrow keys, D-pad directions and sticks, including the
 on-screen name-entry keyboard. Release or stick neutral resets the hold.
@@ -223,8 +233,9 @@ The iPhone's Video page lists what a phone can change: **Smooth Motion**,
 **Timer Size**. It has no Fullscreen or VSync rows, because iOS always fills
 the screen and presents with the display. Direct Camera points a first-person
 view where the player aims in each frame instead of blending it between ticks;
-it is `display.direct_camera`, on by default on the iPhone and a `config.toml`
-choice (default off) on desktops. Every row but Asset Quality applies on Accept.
+it is `display.direct_camera`, on by default on the iPhone and off by default
+on desktops (a [Controller](#controller) row on Mac, `config.toml` on Windows
+and Linux). Every row but Asset Quality applies on Accept.
 
 **Detail Distance** has no menu row yet; it is `display.detail_distance` in
 `config.toml`. The Xbox chooses a model's level of detail, whether to draw the
