@@ -85,8 +85,11 @@ during startup and sends later links through the same native event bridge; the
 complete invite is written atomically to this app's save folder for the game's
 next network poll. Internet play must be enabled in `config.toml`.
 
-The app does not register the inherited `halo://` scheme. Earlier invitations
-can still be copied into the game through its existing clipboard join setting.
+The app does not register the inherited `halo://` scheme. The iPhone never
+reads or writes the clipboard: iOS asks permission for every paste, and a
+hosting phone's own invite would be joined again at its next launch. A phone
+finds games in the [System Link directory](../../docs/system-link-directory.md)
+or opens a `halo-og://` link; its own invite is in `halo.log`.
 iOS does not use the desktop Discord RPC integration.
 
 The default development bundle identifier is now `local.halo.og.ios`. Continue

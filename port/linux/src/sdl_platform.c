@@ -958,6 +958,7 @@ BOOL platform_next_keystroke(struct platform_keystroke *keystroke)
 bool SDL_ShowAndroidToast(const char *message, int duration, int gravity, int xoffset, int yoffset);
 #endif
 
+#if !defined(HALO_IOS)
 /* whether the text has an invite link in it (its prefix, in any case) */
 static BOOL platform_text_has_invite_link(const char *text)
 {
@@ -968,11 +969,22 @@ static BOOL platform_text_has_invite_link(const char *text)
 	}
 	return FALSE;
 }
+#endif
 
 /* puts a new invite on the clipboard, and joins one found there when the
 game comes to the front */
 static void platform_invite_clipboard(BOOL look)
 {
+#if defined(HALO_IOS)
+	/* The iPhone leaves the clipboard alone. iOS asks the player's leave for
+	every paste (and names the Mac a Universal Clipboard text came from), so
+	looking for an invite prompted at each launch and return to the game; and
+	a hosting phone's own invite, copied here, was joined again at its next
+	launch, long after that game ended. A phone finds games in the System Link
+	directory and opens halo-og:// links; its invite stays in halo.log. */
+	(void)look;
+	(void)p2p_take_clipboard_text();
+#else
 	/* the last clipboard text looked at, so each invite is joined once */
 	static char seen[256];
 	const char *invite = p2p_take_clipboard_text();
@@ -1006,6 +1018,7 @@ static void platform_invite_clipboard(BOOL look)
 		}
 		SDL_free(text);
 	}
+#endif
 }
 
 /* ---------- messages for the player */
