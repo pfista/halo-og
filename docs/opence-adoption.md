@@ -88,6 +88,50 @@ licences, not legal advice.
 When the change is made, make it one commit: replace `LICENSE.md`, add the
 notices, and update the README. AGPL-era ports land only after it.
 
+### Before the change: OpenCE's CC0-era commits
+
+The owner approved the move to AGPL on November 27, 2026, on one condition:
+everything wanted from before OpenCE's own licence change goes in first, while
+Halo OG is still CC0. The licence commit follows that, and AGPL-era code
+follows the licence commit.
+
+OpenCE has 543 commits between the fork point (`c55e4e2b`, October 2) and its
+licence change (`4b09168e`, October 19). Where they stood on November 27,
+checked commit by commit against Halo OG's history, documents and tree:
+
+| Commits | Standing |
+| --- | --- |
+| 54 | In Halo OG: the same patch, or adopted in a commit that names it |
+| 50 | Decided in these documents (taken in another form, or declined with a reason) |
+| 230 | Out by the rules above: co-op (54), PC menus (53), Custom Edition maps (34), Android touch (32), OpenCE's online services (31), the web build (20), the MCC loader (5), new modes (1) |
+| 25 | Looked at for 0.7.1 and not wanted or not applicable |
+| 9 | Wanted, but they change simulation or what machines send, so they wait for 0.8 |
+| 54 | Wanted and not in yet (see the list below) |
+| 121 | In areas that matter (netcode 33, renderer 31, simulation 19, other 13, build 10, input 7, HUD 6, audio 2) but never looked at one by one |
+
+Wanted and not in yet, all CC0:
+
+- The audio mixer: a limiter in place of the soft clipper, band-limited
+  resampling, and streams that recover after a hitch (17 commits, mostly
+  `port/linux/src/dsound_sdl.c`).
+- Room reverb and wall muffling as options that default to off (`8a8e70599`
+  and the stereo group).
+- The fuller Upres HUD: exact reticles, redrawn button prompts, upscaled
+  labels, and settings that apply without a restart (12 commits).
+- OpenGL correctness on Windows, Linux and Android (`3d2c04d67`, `764044d4f`,
+  `577b45d50`) and OpenGL performance (7 commits).
+- The core of OpenCE's test harness, which the mixer's own tests need.
+
+The 121 unreviewed commits are the gap in "everything": a first pass over
+their subjects found mostly decompilation bookkeeping, comments, tests and
+fixes to code Halo OG does not have, and about fifteen that deserve a real
+look, among them the camera's snapshot after a long frame (`aa7b10757`),
+reflections at the display's pixel density (`f2aec7bee`), projectile trail
+bitmaps read before a weapon's first shot (`712d1ebe3`), bounded copies of map
+strings on the scoreboard (`bcb0e5e63`), Escape restarting a level from the
+console (`6694d6180`) and the one-second wait when leaving Create Game
+(`3a6e146fd`). The per-commit list is kept with the plan's research notes.
+
 ## Batches
 
 ### 1. Small fixes

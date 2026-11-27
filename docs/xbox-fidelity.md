@@ -235,6 +235,12 @@ counted ticks. Halo OG draws several frames a tick.
 | Profiler buffer | `e97030572` | `9ea98861f` | Adopted | Diagnostics. |
 | Datum index in messages | `76ade8653` | `4853fd973` | Written | Error messages name the right objects. |
 | Script results | `953b0298d` | `0a63db13c` | Adopted | Boolean and short script results are whole values. Readers took only the low byte or word, so no script changes; saved games no longer carry uninitialised bytes. |
+| Rotational particles | `d5dedf19e` | `b6ea15a0e` | Adopted | A bitmap without the edge-on sequence draws the face-on picture instead of reading past its sequences. Community maps. |
+| Terminal printf | `7ac597815` | `babb48f71` | Adopted | Its arguments are a `va_list`. |
+| UPnP error | `89f83cf08` | `bad9681ad` | Adopted | The router's address is no longer printed. |
+| SMBIOS read on Windows | `a0761c4fd` | `0439f40e4` | Adopted | Each structure is read only within the firmware table. |
+| Environment switches | `cc820fd84` | `9e43edae9` | Adopted | `HALO_NO_VSYNC=0` and its like leave their setting off; before, any value turned it on. |
+| Frame throttle, camera track and profile comments | `691532327`, `8fca9ef42`, `b5a4870d0` | `f76b7d869`, `1f2433226`, `691b467bd` | Adopted | Follow-ups to fixes already taken. No behaviour changes. |
 
 Validation on November 26: the Mac guest builds and runs hosted Slayer and
 CTF matches on Metal with these changes, and the Pause and settings menu walks
