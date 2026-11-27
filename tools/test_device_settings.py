@@ -36,7 +36,7 @@ static const char *names[] = {"audio.volume", "audio.music_volume", "audio.effec
     "maps.show_og", "maps.show_community", "network.join_in_progress",
     "input.left_stick_deadzone", "input.right_stick_deadzone", "input.look_acceleration",
     "input.fast_menu_repeat", "display.high_res_hud", "game.show_default_game_types",
-    "input.look_sensitivity_horizontal", "input.look_sensitivity_vertical"};
+    "input.look_sensitivity_horizontal", "input.look_sensitivity_vertical", "display.direct_camera"};
 #define TEST_SETTING_COUNT (sizeof(names)/sizeof(names[0]))
 static double saved[TEST_SETTING_COUNT];
 static const char *antialiasing="off";
@@ -240,6 +240,20 @@ int main(void) {
     check_menu_repeat_settings(values);
     check_game_type_settings(values);
     check_hud_settings(values);
+#if HALO_DEVICE_HAS_DIRECT_CAMERA
+    /* Native Metal rows (Mac and iPhone): Direct Camera takes effect on Accept
+     * through the display backend, and FPS Limit accepts only its own choices. */
+    reset(values);
+    assert(values[_device_setting_direct_camera]==1 && values[_device_setting_frame_limit]==0);
+    values[_device_setting_direct_camera]=0;
+    assert(device_settings_apply(1UL<<_device_setting_direct_camera,values));
+    assert(writes==1 && saved[26]==0 && video_applies==1 && !audio_applies && !switches);
+    values[_device_setting_frame_limit]=45;
+    assert(!device_settings_apply(1UL<<_device_setting_frame_limit,values) && writes==1 && frame_limit==0);
+    values[_device_setting_frame_limit]=60;
+    assert(device_settings_apply(1UL<<_device_setting_frame_limit,values) && writes==2 && frame_limit==60);
+    assert(device_settings_get(_device_setting_frame_limit)==60 && video_applies==1);
+#endif
     if (MOBILE_FULLSCREEN) {
         /* Android/iOS remain fullscreen and never read or persist the
          * desktop-only preference, even in a mixed settings draft. */
@@ -401,7 +415,7 @@ int main(void) {
         (1UL<<_device_setting_join_in_progress),values));
     assert(writes==2 && saved[6]==1 && saved[15]==1 && saved[16]==1 && saved[17]==1);
 #if MAC_FULLSCREEN
-    assert(NUMBER_OF_DEVICE_SETTINGS==29);
+    assert(NUMBER_OF_DEVICE_SETTINGS==30);
     reset(values);values[_device_setting_render_height]=0;
     values[_device_setting_frame_limit]=120;values[_device_setting_anti_aliasing]=1;
     assert(device_settings_apply((1UL<<_device_setting_render_height)|

@@ -23,6 +23,7 @@ def main():
     sources = [p for p in sorted(mac_host.glob('*.c')) if p.name not in excluded]
     sources += [ios_host / 'host_loader.c', ios_host / 'host_main.m',
                 mac_host / 'host_metal.mm', mac_host / 'metal_draw_encoder.mm', mac_host / 'entry.s',
+                ROOT / 'port/macos/native/HaloDirectoryHTTP.m',
                 ROOT / 'build/ios/host/host_import_table.c', ROOT / 'build/ios/embed/guest_image.s',
                 *miniupnpc_sources()]
     sdl = Path(os.environ.get('HALO_MACOS_SDL_PREFIX', '/opt/homebrew/opt/sdl3'))

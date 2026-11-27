@@ -28,7 +28,7 @@ static short const device_settings_deadzone_presets[] = {0, 3277, 6553, 9000, 98
 static char const *const device_settings_deadzone_labels[] = {"0%", "10%", "20%", "Xbox", "30%", "40%", "49%"};
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 7
-static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 7, 5, 4};
+static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 7, 6, 4};
 #elif HALO_DEVICE_HAS_RENDER_RESOLUTION
 #define DEVICE_SETTINGS_MAX_PAGE_ROWS 7
 static short const device_settings_page_counts[_ds_page_count] = {4, 6, 7, 5, 5, 4};
@@ -50,6 +50,14 @@ static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX
     {_device_setting_timer_volume, _device_setting_timer_countdown, _device_setting_timer_beeps,
      _device_setting_timer_minutes, _device_setting_timer_items,
      _device_setting_timer_position, _device_setting_timer_scale},
+#elif defined(HALO_IOS)
+    /* iOS always fills the screen and presents with the display, so Fullscreen
+     * and VSync change nothing there and have no row. */
+    {_device_setting_interpolation, _device_setting_direct_camera, _device_setting_frame_limit,
+     _device_setting_render_height, _device_setting_asset_quality,
+     _device_setting_timer_position, _device_setting_timer_scale},
+    {_device_setting_timer_volume, _device_setting_timer_countdown, _device_setting_timer_beeps,
+     _device_setting_timer_minutes, _device_setting_timer_items},
 #else
     {_device_setting_fullscreen, _device_setting_vsync, _device_setting_interpolation,
      _device_setting_asset_quality,
@@ -61,7 +69,12 @@ static short const device_settings_page_rows[_ds_page_count][DEVICE_SETTINGS_MAX
      _device_setting_timer_minutes, _device_setting_timer_items},
 #endif
     {_device_setting_look_sensitivity_horizontal, _device_setting_look_sensitivity_vertical,
-     _device_setting_look_acceleration, _device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone},
+     _device_setting_look_acceleration, _device_setting_left_stick_deadzone, _device_setting_right_stick_deadzone
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+     /* The Mac's Video page is full; this is a view-response choice, as the rows above are. */
+     , _device_setting_direct_camera
+#endif
+    },
     {_device_setting_show_og_maps, _device_setting_show_community_maps, _device_setting_join_in_progress,
      _device_setting_show_default_game_types}};
 static short const device_settings_page_titles[_ds_page_count] = {_ds_game_label, _ds_audio_label, _ds_video_label, _ds_timer_label, _ds_controller_label, _ds_multiplayer_label};
@@ -394,8 +407,16 @@ static boolean device_settings_build_native_pages(long strings, long const *head
         DEVICE_CHOOSER_PREFIX "multiplayer_type_select_list"};
     static wchar_t descriptions[DEVICE_SETTINGS_CHOICE_COUNT][96] = {
         L"Adjust music, sound effects,\r\ndialogue and overall volume.",
+#if defined(HALO_IOS)
+        L"Choose smooth motion, camera,\r\nframe rate and resolution.",
+#else
         L"Choose fullscreen, VSync\r\nand smooth motion settings.",
+#endif
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+        L"Choose stick deadzones,\r\nlook acceleration and\r\nDirect Camera.",
+#else
         L"Choose stick deadzones\r\nand look acceleration\r\nfor this device.",
+#endif
         L"Pick map sets and game types.\r\nLet new players join matches\r\nafter they start."};
     struct ui_widget_definition *base[NUMBEROF(templates)];
     struct ui_widget_child_reference *chooser_rows;
@@ -592,8 +613,14 @@ static boolean device_settings_build(void)
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
         , "RESOLUTION:"
 #endif
+#if HALO_DEVICE_HAS_FRAME_LIMIT
+        , "FPS LIMIT:"
+#endif
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        , "FPS LIMIT:", "ANTI-ALIASING:"
+        , "ANTI-ALIASING:"
+#endif
+#if HALO_DEVICE_HAS_DIRECT_CAMERA
+        , "DIRECT CAMERA:"
 #endif
         , "DEFAULT GAME TYPES:", "HORIZONTAL SENSITIVITY:", "VERTICAL SENSITIVITY:"
         };
@@ -629,10 +656,14 @@ static boolean device_settings_build(void)
         "Set fullscreen or window resolution.\r\nAuto: native fullscreen, 480p window.\r\nAccept applies the render height."
 #endif
 #endif
+#if HALO_DEVICE_HAS_FRAME_LIMIT
+        , "Limit Native Metal render frames.\r\nSmooth Motion must be on.\r\nGame updates remain at 30 Hz."
+#endif
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        ,
-        "Limit Native Metal render frames.\r\nSmooth Motion must be on.\r\nGame updates remain at 30 Hz.",
-        "Smooth world edges with FXAA.\r\nOriginal HUD stays unchanged.\r\nRelaunch Halo to apply."
+        , "Smooth world edges with FXAA.\r\nOriginal HUD stays unchanged.\r\nRelaunch Halo to apply."
+#endif
+#if HALO_DEVICE_HAS_DIRECT_CAMERA
+        , "Point the view where you aim now.\r\nOff follows Smooth Motion's blend.\r\nGame updates remain at 30 Hz."
 #endif
         , "Show original built-in game types.\r\nCustom types and Team Slayer Pro\r\nstay visible when this option is off."
         , "Set turning speed on its own, 1 to 10.\r\nProfile uses each player's own\r\nLook Sensitivity, as on the Xbox."
@@ -1111,8 +1142,14 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
         , "Resolution"
 #endif
+#if HALO_DEVICE_HAS_FRAME_LIMIT
+        , "FPS Limit"
+#endif
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        , "FPS Limit", "Anti-Aliasing"
+        , "Anti-Aliasing"
+#endif
+#if HALO_DEVICE_HAS_DIRECT_CAMERA
+        , "Direct Camera"
 #endif
         , "Default Game Types", "Look Horizontal", "Look Vertical"
         };
@@ -1140,6 +1177,8 @@ static void device_settings_render_draft(struct device_settings_draft *draft)
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
         else if (row == _device_setting_anti_aliasing)
             snprintf(value, sizeof(value), "%s", draft->values[row] != 0.0 ? "FXAA" : device_settings.native_pages ? "OFF" : "Off");
+#endif
+#if HALO_DEVICE_HAS_FRAME_LIMIT
         else if (row == _device_setting_frame_limit)
         {
             if (draft->values[row] == 0.0) snprintf(value, sizeof(value), "Uncapped");
@@ -1330,15 +1369,22 @@ static boolean game_settings_event(struct widget_instance *widget, short functio
     if (row == _device_setting_render_height)
     {
         static short const choices[] = {
+#if defined(HALO_IOS)
+            /* An iPhone's Native is under 1440 lines, so the taller presets
+             * would only draw pixels its display cannot show. */
+            480, 720, 1080, 0
+#else
 #if !defined(HALO_MACOS)
             -1,
 #endif
-            0, 480, 720, 1080, 1440, 2160};
+            0, 480, 720, 1080, 1440, 2160
+#endif
+            };
         draft->values[row] = device_settings_cycle_choice(draft->values[row], function, choices, NUMBEROF(choices));
     }
     else
 #endif
-#if defined(HALO_MACOS) && !defined(HALO_IOS)
+#if HALO_DEVICE_HAS_FRAME_LIMIT
     if (row == _device_setting_frame_limit)
     {
         static short const choices[] = {0, 30, 60, 120};

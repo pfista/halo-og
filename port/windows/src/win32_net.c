@@ -14,6 +14,7 @@ codes, so this passes nearly everything straight through.
 #include <windows.h>
 #include <iphlpapi.h>
 #include <bcrypt.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -293,9 +294,9 @@ int posix_socket_select(int *read, int *read_count, int *write, int *write_count
 	return result;
 }
 
-/* the address the default route leaves from: a UDP socket "connected" to
-an internet address (a documentation one; nothing is sent) has it */
-static posix_ulong default_route_address(void)
+/* a UDP socket "connected" to the address (nothing is sent) has the one its
+packets would leave from */
+posix_ulong posix_route_ipv4_address(posix_ulong destination)
 {
 	struct sockaddr_in route;
 	int length = sizeof(route);
@@ -309,7 +310,7 @@ static posix_ulong default_route_address(void)
 	memset(&route, 0, sizeof(route));
 	route.sin_family = AF_INET;
 	route.sin_port = htons(9);
-	route.sin_addr.s_addr = htonl(0xC6336401);
+	route.sin_addr.s_addr = destination;
 	if (connect(probe, (struct sockaddr *)&route, sizeof(route)) == 0 &&
 		getsockname(probe, (struct sockaddr *)&route, &length) == 0 &&
 		route.sin_addr.s_addr != htonl(INADDR_ANY) && (ntohl(route.sin_addr.s_addr) >> 24) != 127)
@@ -324,7 +325,9 @@ posix_ulong posix_local_ipv4_address(void)
 {
 	ULONG size = 16 * 1024;
 	IP_ADAPTER_ADDRESSES *adapters = NULL, *adapter;
-	posix_ulong result = default_route_address();
+	/* the address the default route leaves from: that to an internet
+	address (a documentation one) */
+	posix_ulong result = posix_route_ipv4_address(htonl(0xC6336401));
 	ULONG status;
 
 	/* no route out (a network without the internet): the first adapter
@@ -363,6 +366,59 @@ posix_ulong posix_local_ipv4_address(void)
 	}
 	free(adapters);
 	return result;
+}
+
+int posix_ipv4_interfaces_text(char *text, int size)
+{
+	ULONG buffer_size = 16 * 1024;
+	IP_ADAPTER_ADDRESSES *adapters = NULL, *adapter;
+	ULONG status;
+	int length = 0;
+	int count = 0;
+
+	if (size < 1)
+		return 0;
+	text[0] = 0;
+	do
+	{
+		free(adapters);
+		adapters = malloc(buffer_size);
+		if (!adapters)
+			return 0;
+		status = GetAdaptersAddresses(AF_INET,
+			GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, NULL, adapters, &buffer_size);
+	}
+	while (status == ERROR_BUFFER_OVERFLOW);
+	for (adapter = status == NO_ERROR ? adapters : NULL; adapter; adapter = adapter->Next)
+	{
+		IP_ADAPTER_UNICAST_ADDRESS *address;
+
+		if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
+			continue;
+		for (address = adapter->FirstUnicastAddress; address; address = address->Next)
+		{
+			struct sockaddr_in *ipv4 = (struct sockaddr_in *)address->Address.lpSockaddr;
+			unsigned int value;
+			int written;
+
+			if (ipv4->sin_family != AF_INET)
+				continue;
+			value = ntohl(ipv4->sin_addr.s_addr);
+			written = snprintf(text + length, (size_t)(size - length), "%s%u.%u.%u.%u", count ? ", " : "",
+				value >> 24, (value >> 16) & 255, (value >> 8) & 255, value & 255);
+			if (written < 0 || written >= size - length)
+			{
+				/* no room: without this one */
+				text[length] = 0;
+				free(adapters);
+				return count;
+			}
+			length += written;
+			count++;
+		}
+	}
+	free(adapters);
+	return count;
 }
 
 void posix_random_bytes(void *buffer, posix_ulong size)

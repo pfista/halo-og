@@ -184,6 +184,12 @@ struct peer
 	int is_host;
 	int connected;
 	struct p2p_candidate candidates[P2P_MAXIMUM_CANDIDATES];
+	/* the send error last logged for each (0: none) */
+	int candidate_errors[P2P_MAXIMUM_CANDIDATES];
+	/* while it is not reached: the packets sent to its addresses, and those
+	that came from them and were not taken as its */
+	int punch_sent_count;
+	int punch_refused_count;
 	int candidate_count;
 	struct p2p_candidate endpoint;
 	/* its UDP stand-ins (indices in p2p.proxies) */
@@ -751,7 +757,8 @@ static void packet_nonce(const unsigned char *packet, unsigned char *nonce)
 	memcpy(nonce + P2P_NONCE_SIZE - 8, packet + 1 + P2P_IDENTIFIER_SIZE, 8);
 }
 
-static void peer_send_to(struct peer *peer, const struct p2p_candidate *to, const unsigned char *inner, int size)
+/* 0, or the socket error of a send the system refused */
+static int peer_send_to(struct peer *peer, const struct p2p_candidate *to, const unsigned char *inner, int size)
 {
 	unsigned char packet[MAXIMUM_PACKET_SIZE];
 	unsigned char nonce[P2P_NONCE_SIZE];
@@ -761,7 +768,7 @@ static void peer_send_to(struct peer *peer, const struct p2p_candidate *to, cons
 	int index;
 
 	if (p2p.tunnel_socket < 0 || size > MAXIMUM_INNER_SIZE)
-		return;
+		return 0;
 	/* the header, authenticated with the rest */
 	counter = ++peer->send_counter;
 	packet[0] = TUNNEL_MAGIC;
@@ -772,7 +779,12 @@ static void peer_send_to(struct peer *peer, const struct p2p_candidate *to, cons
 	sealed = p2p_aead_seal(peer->send_key, nonce, packet, TUNNEL_HEADER_SIZE, inner, size,
 		packet + TUNNEL_HEADER_SIZE);
 	make_address(&address, to->address, to->port);
-	posix_socket_sendto(p2p.tunnel_socket, packet, TUNNEL_HEADER_SIZE + sealed, 0, &address, sizeof(address));
+	if (posix_socket_sendto(p2p.tunnel_socket, packet, TUNNEL_HEADER_SIZE + sealed, 0, &address,
+		sizeof(address)) >= 0)
+	{
+		return 0;
+	}
+	return posix_socket_last_error();
 }
 
 /* to a peer the tunnel has reached; dropped otherwise */
@@ -784,14 +796,60 @@ static void peer_send(struct peer *peer, const unsigned char *inner, int size)
 	peer->sent_time = p2p_now();
 }
 
-static void peer_ping(struct peer *peer, const struct p2p_candidate *to)
+static int peer_ping(struct peer *peer, const struct p2p_candidate *to)
 {
 	unsigned char inner[5];
 	unsigned int now = (unsigned int)p2p_now();
 
 	inner[0] = _packet_ping;
 	memcpy(inner + 1, &now, 4);
-	peer_send_to(peer, to, inner, sizeof(inner));
+	return peer_send_to(peer, to, inner, sizeof(inner));
+}
+
+/* "a, b" of addresses; with routes, each with the address of this machine
+its packets leave from ("a from c"): a VPN that takes the local network's
+traffic shows there. text holds CANDIDATE_TEXT_SIZE bytes for each */
+enum { CANDIDATE_TEXT_SIZE = 64 };
+
+static const char *candidates_text(const struct p2p_candidate *candidates, int count, int routes, char *text)
+{
+	int length = 0;
+	int index;
+
+	text[0] = 0;
+	for (index = 0; index < count; index++)
+	{
+		char one[32];
+
+		length += sprintf(text + length, "%s%s", index ? ", " : "",
+			address_text(candidates[index].address, candidates[index].port, one));
+		if (routes)
+		{
+			unsigned long from = posix_route_ipv4_address((posix_ulong)candidates[index].address);
+			unsigned long value = network_long(from);
+
+			if (from)
+				length += sprintf(text + length, " from %lu.%lu.%lu.%lu", value >> 24, (value >> 16) & 255,
+					(value >> 8) & 255, value & 255);
+			else
+				length += sprintf(text + length, " (no route)");
+		}
+	}
+	return text;
+}
+
+/* what the system said of a send it refused */
+static const char *send_error_text(int error)
+{
+	switch (error)
+	{
+	case WSAEHOSTUNREACH: return "no route to it";
+	case WSAENETUNREACH: return "its network cannot be reached";
+	case WSAENETDOWN: return "the network is down";
+	case WSAEACCES: return "the system does not allow it";
+	case WSAEADDRNOTAVAIL: return "the address cannot be used";
+	default: return "the system refused";
+	}
 }
 
 static void stream_free(struct stream *stream);
@@ -945,6 +1003,8 @@ int p2p_peer_offered(const unsigned char *peer_identifier, const unsigned char *
 	const struct p2p_candidate *candidates, int count, int is_host)
 {
 	struct peer *peer = find_peer(peer_identifier);
+	int log_addresses = 0;
+	int known_count;
 
 	if (!memcmp(peer_identifier, identifier, P2P_IDENTIFIER_SIZE))
 		return 0;
@@ -979,8 +1039,25 @@ int p2p_peer_offered(const unsigned char *peer_identifier, const unsigned char *
 		peer->is_host = is_host;
 		peer->offered_time = p2p_now();
 		platform_log("Internet play: reaching %s %s", is_host ? "host" : "player", peer->name);
+		log_addresses = 1;
 	}
+	known_count = peer->candidate_count;
 	add_candidates(peer, candidates, count);
+	/* which addresses are tried, and from which: what a join that fails on
+	one network and not another turns on */
+	if (log_addresses || peer->candidate_count != known_count)
+	{
+		struct p2p_candidate own[P2P_MAXIMUM_CANDIDATES];
+		char theirs[CANDIDATE_TEXT_SIZE * P2P_MAXIMUM_CANDIDATES + 1];
+		char ours[CANDIDATE_TEXT_SIZE * P2P_MAXIMUM_CANDIDATES + 1];
+		char interfaces[256];
+
+		posix_ipv4_interfaces_text(interfaces, sizeof(interfaces));
+		platform_log("Internet play: %s %s is at %s; this machine at %s (its networks: %s)",
+			is_host ? "host" : "player", peer->name,
+			candidates_text(peer->candidates, peer->candidate_count, 1, theirs),
+			candidates_text(own, p2p_local_candidates(own, P2P_MAXIMUM_CANDIDATES), 0, ours), interfaces);
+	}
 	return 1;
 }
 
@@ -1082,6 +1159,11 @@ static void update_peers(void)
 		}
 		else if (elapsed(peer->offered_time, PUNCH_TIMEOUT))
 		{
+			/* nothing came back, or what came was not the peer's: the first
+			is the network's doing, the second this game's */
+			platform_log("Internet play: %s %s: %d packets sent to its addresses were not answered; %d came "
+				"from them and were refused", peer->is_host ? "host" : "player", peer->name,
+				peer->punch_sent_count, peer->punch_refused_count);
 			drop_peer(peer, "could not connect (both networks' NATs may be too strict for a direct "
 				"connection; forwarding network.tunnel_port on one router helps, as UPnP does where the "
 				"router allows it: network.allow_upnp)");
@@ -1091,7 +1173,22 @@ static void update_peers(void)
 			int candidate;
 
 			for (candidate = 0; candidate < peer->candidate_count; candidate++)
-				peer_ping(peer, &peer->candidates[candidate]);
+			{
+				int error = peer_ping(peer, &peer->candidates[candidate]);
+
+				peer->punch_sent_count += !error;
+				/* (once for each error of an address, not five times a second) */
+				if (error && error != WSAEWOULDBLOCK && peer->candidate_errors[candidate] != error)
+				{
+					char text[32];
+
+					peer->candidate_errors[candidate] = error;
+					platform_log("Internet play: cannot send to %s %s at %s: %s (error %d)",
+						peer->is_host ? "host" : "player", peer->name,
+						address_text(peer->candidates[candidate].address, peer->candidates[candidate].port, text),
+						send_error_text(error), error);
+				}
+			}
 			peer->sent_time = p2p_now();
 		}
 	}
@@ -2141,6 +2238,30 @@ static void stream_writeable(struct stream *stream)
 
 /* ---------- the tunnel */
 
+/* a tunnel packet that was not taken: counted for the peers not reached yet
+that gave its sender's address as theirs */
+static void tunnel_refused(const struct sockaddr_in *from)
+{
+	int index;
+
+	for (index = 0; index < P2P_MAXIMUM_PEERS; index++)
+	{
+		struct peer *peer = &p2p.peers[index];
+		int candidate;
+
+		if (!peer->used || peer->connected)
+			continue;
+		for (candidate = 0; candidate < peer->candidate_count; candidate++)
+		{
+			if (peer->candidates[candidate].address == from->sin_addr.s_addr)
+			{
+				peer->punch_refused_count++;
+				break;
+			}
+		}
+	}
+}
+
 static void tunnel_received(const unsigned char *packet, int size, const struct sockaddr_in *from)
 {
 	unsigned char inner[MAXIMUM_INNER_SIZE];
@@ -2162,17 +2283,26 @@ static void tunnel_received(const unsigned char *packet, int size, const struct 
 		return;
 	peer = find_peer(packet + 1);
 	if (!peer)
+	{
+		tunnel_refused(from);
 		return;
+	}
 	/* each packet once, sealed by the peer for this direction, its header
 	and all */
 	counter = packet_counter(packet);
 	if (!packet_fresh(peer, counter))
+	{
+		tunnel_refused(from);
 		return;
+	}
 	packet_nonce(packet, nonce);
 	inner_size = p2p_aead_open(peer->receive_key, nonce, packet, TUNNEL_HEADER_SIZE, packet + TUNNEL_HEADER_SIZE,
 		size - TUNNEL_HEADER_SIZE, inner);
 	if (inner_size < 1)
+	{
+		tunnel_refused(from);
 		return;
+	}
 	newest = counter > peer->receive_highest;
 	packet_received(peer, counter);
 	peer_heard(peer, from->sin_addr.s_addr, from->sin_port, newest);
@@ -2338,6 +2468,19 @@ int p2p_invite_peer_address(const char *text, unsigned long *address)
 	if (peer && peer->connected && peer->is_host) { *address = peer->virtual_address; found = 1; }
 	pthread_mutex_unlock(&p2p_lock);
 	return found;
+}
+
+int p2p_invite_answered(const char *text)
+{
+	unsigned char host[P2P_IDENTIFIER_SIZE];
+	int answered;
+
+	if (!p2p_invite_identity(text, host))
+		return 0;
+	pthread_mutex_lock(&p2p_lock);
+	answered = find_peer(host) != NULL;
+	pthread_mutex_unlock(&p2p_lock);
+	return answered;
 }
 
 void p2p_invite_received(const char *text)

@@ -110,5 +110,9 @@ unsigned long p2p_peer_endpoint_address(unsigned long virtual_address);
 /* Directory selection waits for this authenticated P2P peer and its real LAN advertisement. */
 int p2p_invite_identity(const char *invite, unsigned char *identifier);
 int p2p_invite_peer_address(const char *invite, unsigned long *address);
+/* whether the invite's host has answered the request to join it (it is being
+reached, or is): one that has closed never does, though the directory lists
+its game until the listing lapses */
+int p2p_invite_answered(const char *invite);
 
 #endif

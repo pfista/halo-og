@@ -17,6 +17,16 @@ ignoring case. Names are 1–31 ASCII letters, numbers, spaces, underscores or
 hyphens; stock-name duplicates are skipped. Native disk caches are bounded at
 512 MiB and the original tag arena remains 22 MiB.
 
+A community map loads with a 32 MiB texture cache, the arena full-arsenal Fiesta
+maps use; the Xbox's own maps, the menu and the campaign keep the original
+22 MiB. Converted maps carry larger textures than the Xbox budget allows: with
+a second player in view, a Digsite map locked all 22 MiB in one frame (8 MiB of
+it the other player's armour), and the next texture had no room. The engine
+logs that as `YOU GOT STABBED` in `debug.txt` and writes `stabbed.txt`; on
+screen it was red and green bands under dynamic lights, missing HUD pieces and,
+on iPhone, the game stopping. Treat either log phrase on a community map as a
+budget failure to fix in the map or the arena.
+
 A v7 cache cannot be converted by renaming it or changing its version field.
 Passing header checks does not establish support for every tag or game mode.
 

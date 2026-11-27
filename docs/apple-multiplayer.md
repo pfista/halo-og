@@ -58,10 +58,26 @@ System Settings → Wi-Fi → Details → TCP/IP, and the phone's in Settings �
 network access when prompted. Guest networks with client isolation prevent
 devices from reaching each other.
 
-The current iPhone build uses explicit peer addresses for discovery. It does
-not request Apple's multicast entitlement, which iOS requires for UDP
-broadcast/multicast; ordinary unicast to the other device avoids that requirement.
-See Apple's [multicast entitlement documentation](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.networking.multicast).
+iOS blocks UDP broadcast and multicast unless Apple has granted the app's team
+the [multicast entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.networking.multicast),
+which this build does not request. So the iPhone finds games through the
+[public System Link directory](system-link-directory.md): public games hosted
+on Mac, Windows, Linux or another iPhone appear in its **System Link** list, and
+games the phone hosts appear on those machines. This needs Internet access on both devices.
+
+Keep Halo in front on an iPhone that hosts: iOS suspends an app within seconds
+of it leaving the foreground, and the game ends. The phone withdraws its game
+from the list when that happens, so other players do not pick a game that no
+longer answers.
+
+Two Apple devices on the same network share one public address and connect
+through their local addresses. Each offers the address of the network its
+internet traffic leaves from when that is a local network, and otherwise (a
+VPN that takes all traffic, or mobile data) the address of its Wi-Fi or
+Ethernet.
+
+For a private game or a LAN without Internet, use explicit peer addresses
+instead; ordinary unicast to the other device needs no entitlement.
 
 Quit existing copies of Halo. From the repository root, replace the placeholder
 values below with your devices' current addresses:

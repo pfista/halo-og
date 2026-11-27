@@ -85,8 +85,11 @@ during startup and sends later links through the same native event bridge; the
 complete invite is written atomically to this app's save folder for the game's
 next network poll. Internet play must be enabled in `config.toml`.
 
-The app does not register the inherited `halo://` scheme. Earlier invitations
-can still be copied into the game through its existing clipboard join setting.
+The app does not register the inherited `halo://` scheme. The iPhone never
+reads or writes the clipboard: iOS asks permission for every paste, and a
+hosting phone's own invite would be joined again at its next launch. A phone
+finds games in the [System Link directory](../../docs/system-link-directory.md)
+or opens a `halo-og://` link; its own invite is in `halo.log`.
 iOS does not use the desktop Discord RPC integration.
 
 The default development bundle identifier is now `local.halo.og.ios`. Continue
@@ -137,7 +140,9 @@ presentation at the available rate. `display.interpolation` in `config.toml`
 (on by default since 0.7) interpolates rendering between the original 30 Hz
 game ticks; set it to `false` for the original 30 frames a second.
 
-For a 60 Hz comparison or lower-power session, set `HALO_IOS_REFRESH_RATE=60`
+**Game Settings → Video** has **FPS Limit** (Uncapped, 30, 60 or 120),
+**Resolution** and **Direct Camera**; see [Video settings](../../docs/native-settings.md#video).
+For a 60 Hz display request instead, set `HALO_IOS_REFRESH_RATE=60`
 in the Xcode scheme's environment or pass it through `devicectl`:
 
 ```sh

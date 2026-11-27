@@ -110,6 +110,16 @@ deflection. Off removes that timed boost and clears its accumulated time.
 Profile sensitivity, the underlying stick-response curve, vertical turning,
 zoom scaling and direct mouse aiming retain their existing behavior.
 
+On Mac the page also has **Direct Camera: Off / On**, saved as
+`display.direct_camera` (default `false`). With Smooth Motion, each frame draws
+a blend of the last two game ticks, so a first-person view can trail the mouse
+or stick by up to two ticks (66 ms). On points the view where the player aims
+in that frame; Off keeps the blended view. It applies on Accept and changes
+only what is drawn: aim, shots and the 30 Hz simulation are the same either
+way, and a vehicle seat or a cinematic keeps its own view. The row is on this
+page because the Mac's Video page is full. Windows and Linux set the same key
+in `config.toml`; the iPhone has the row in Video.
+
 Menu navigation uses one immediate movement, a 500 ms hold delay, then 100 ms
 repeats for held arrow keys, D-pad directions and sticks, including the
 on-screen name-entry keyboard. Release or stick neutral resets the hold.
@@ -190,8 +200,8 @@ Since 0.7 a new installation uses the enhanced picture: the display's own
 resolution on Mac, Windows and Linux, **Asset Quality: Upres** and **Smooth
 Motion: On**. For the original Xbox picture choose **Resolution: 480p**, **Asset
 Quality: Original** and **Smooth Motion: Off**. The simulation runs at 30 Hz
-with either picture. The iPhone keeps a 480-line picture because it has no
-Resolution setting yet.
+with either picture. The iPhone starts with a 480-line picture, its lightest
+load; its Video page offers the others.
 
 A settings file from 0.6 or earlier moves to these defaults once, and only if
 it never changed Resolution, Asset Quality, Smooth Motion or the Mac frame
@@ -216,6 +226,16 @@ keeping the game's 480-line coordinates, assets and 30 Hz simulation.
 Smooth Motion enables render interpolation while simulation remains
 30 Hz. Switching interpolation resets its old snapshots before rendering with
 the new setting.
+
+The iPhone's Video page lists what a phone can change: **Smooth Motion**,
+**Direct Camera**, **FPS Limit** (Uncapped, 30, 60 or 120), **Resolution**
+(480p, 720p, 1080p or Native), **Asset Quality**, **Timer Position** and
+**Timer Size**. It has no Fullscreen or VSync rows, because iOS always fills
+the screen and presents with the display. Direct Camera points a first-person
+view where the player aims in each frame instead of blending it between ticks;
+it is `display.direct_camera`, on by default on the iPhone and off by default
+on desktops (a [Controller](#controller) row on Mac, `config.toml` on Windows
+and Linux). Every row but Asset Quality applies on Accept.
 
 **Detail Distance** has no menu row yet; it is `display.detail_distance` in
 `config.toml`. The Xbox chooses a model's level of detail, whether to draw the

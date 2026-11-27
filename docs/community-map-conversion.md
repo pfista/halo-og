@@ -444,8 +444,8 @@ Accept it only after actual sustained-charge, release, reload and empty-magazine
 checks. Keep its profile and acceptance separate from presentation-only edits.
 
 Compilation limits do not establish runtime texture-cache fit. The preserved
-Xbox cache has 1,408 pages of 16 KiB (22 MiB); textures used in the current frame
-are locked. Chillout's Missile first-person `s_msllauncher` texture requested
+Xbox cache has 1,408 pages of 16 KiB (22 MiB); a community map loads with 2,048
+pages (32 MiB). Textures used in the current frame are locked. Chillout's Missile first-person `s_msllauncher` texture requested
 342 pages while as many as 1,265 other pages were locked. The native failure dump
 names that texture; neither the explosion texture nor total system RAM is the
 allocation being measured. Audit both `YOU GOT STABBED` and `SOUND CACHE BLOWN`

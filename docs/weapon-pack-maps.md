@@ -179,9 +179,9 @@ stored alongside the completion report. Native validation and installation are
 separate from these construction proofs.
 
 The native texture cache retains the original 22 MiB allocation and page budget
-for ordinary maps, UI and campaign. Loading an accepted hidden global Fiesta
-cache for the exact selected logical map replaces that empty arena with 32 MiB;
-the next ordinary map restores 22 MiB. Allocation failure preserves the prior
+for the Xbox's own maps, UI and campaign. Loading a community map, or an
+accepted hidden global Fiesta cache for the exact selected logical map, replaces
+that empty arena with 32 MiB; the next original map restores 22 MiB. Allocation failure preserves the prior
 arena and fails the map load. The budget remains fixed while that map is open,
 including borrowed movie/precache memory. Diagnostic logs record budget changes.
 The original 1,408 texture/LRU datum slots and all world placements remain intact.

@@ -773,19 +773,40 @@ static void settings_native_options(void) {
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
         ,L"RESOLUTION:"
 #endif
+#if HALO_DEVICE_HAS_FRAME_LIMIT
+        ,L"FPS LIMIT:"
+#endif
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
-        ,L"FPS LIMIT:",L"ANTI-ALIASING:"
+        ,L"ANTI-ALIASING:"
+#endif
+#if HALO_DEVICE_HAS_DIRECT_CAMERA
+        ,L"DIRECT CAMERA:"
 #endif
         ,L"DEFAULT GAME TYPES:",L"HORIZONTAL SENSITIVITY:",L"VERTICAL SENSITIVITY:"};
     static const short rows_by_page[5][7]={
-        {0,1,2,3,NONE,5}, {6,7,8,22,
+        {0,1,2,3,NONE,5},
+#if defined(HALO_IOS)
+        /* The iPhone lists only what it can change: no Fullscreen or VSync. */
+        {8,_device_setting_direct_camera,_device_setting_frame_limit,_device_setting_render_height,22,13,14},
+#else
+        {6,7,8,22,
 #if HALO_DEVICE_HAS_RENDER_RESOLUTION
         _device_setting_render_height,
 #endif
-        13,14}, {4,9,10,11,12},
-        {_device_setting_look_sensitivity_horizontal,_device_setting_look_sensitivity_vertical,20,18,19},
+        13,14},
+#endif
+        {4,9,10,11,12},
+        {_device_setting_look_sensitivity_horizontal,_device_setting_look_sensitivity_vertical,20,18,19
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+        ,_device_setting_direct_camera
+#endif
+        },
         {15,16,17,_device_setting_show_default_game_types}};
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+    static const short counts[5]={6,7,5,6,4};
+#else
     static const short counts[5]={6,HALO_DEVICE_HAS_RENDER_RESOLUTION ? 7:6,5,5,4};
+#endif
     settings_setup(0); assert(device_settings_build());
     assert(device_settings.native_pages && !game_settings_is_native_spinner(NULL));
     for(short page=_ds_audio;page<=_ds_multiplayer;page++) {
@@ -996,10 +1017,19 @@ static void settings_staging(void) {
     assert(game_settings_event(setting_control(root,_device_setting_interpolation),_device_settings_next));
     assert(game_settings_event(root,_device_settings_accept));
     assert(applied_mask==(1UL<<_device_setting_interpolation) && !settings_values[_device_setting_interpolation]);
-    assert(game_settings_event(setting_control(root,_device_setting_vsync),_device_settings_next));
-    rollback_incomplete=TRUE; assert(!game_settings_event(root,_device_settings_accept));
-    assert(!device_settings_drafts[0].values[_device_setting_fullscreen]);
-    assert(device_settings_drafts[0].values[_device_setting_vsync]==1);
+    {
+        /* A live Video row every platform shows: the iPhone has no VSync row. */
+#if defined(HALO_IOS)
+        const short live=_device_setting_direct_camera;
+#else
+        const short live=_device_setting_vsync;
+#endif
+        const double saved=settings_values[live];
+        assert(game_settings_event(setting_control(root,live),_device_settings_next));
+        rollback_incomplete=TRUE; assert(!game_settings_event(root,_device_settings_accept));
+        assert(!device_settings_drafts[0].values[_device_setting_fullscreen]);
+        assert(device_settings_drafts[0].values[live]==saved);
+    }
     assert(widget_instance_find_by_tag_index_recursive(root,device_settings.footer_tags[_ds_video])->parameters.text_box.string_list_index==_ds_partial_failure_help);
     settings_render_inputs(root->child);
     assert(widget_instance_find_by_tag_index_recursive(root,device_settings.footer_tags[_ds_video])->parameters.text_box.string_list_index==_ds_partial_failure_help);
@@ -1597,7 +1627,11 @@ static unsigned mac_visible_rows(struct widget_instance *column) {
 }
 static void mac_settings_video(void) {
     settings_setup(0); assert(device_settings_build());
-    assert(NUMBER_OF_DEVICE_SETTINGS==29 && device_settings_page_counts[_ds_video]==7 && device_settings_page_counts[_ds_timer]==7);
+    assert(NUMBER_OF_DEVICE_SETTINGS==30 && device_settings_page_counts[_ds_video]==7 && device_settings_page_counts[_ds_timer]==7);
+    /* Direct Camera has the Controller page's sixth row; Video is full. */
+    assert(device_settings_page_counts[_ds_controller]==6 &&
+        device_settings_page_rows[_ds_controller][5]==_device_setting_direct_camera);
+    assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_direct_camera],L"where you aim"));
     for(unsigned i=0;i<7;i++) assert(device_settings.column_children[_ds_main][_ds_video][i].vertical_offset+28<321);
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_render_height],L"Accept applies"));
     assert(wcsstr(device_settings.text[_ds_help_start+_device_setting_anti_aliasing],L"Relaunch"));

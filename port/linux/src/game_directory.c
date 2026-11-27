@@ -68,6 +68,14 @@ static void *directory_worker(void *unused)
         desired = hosted;
         snprintf(desired.invite, sizeof(desired.invite), "%s", host_invite);
         publish = publishing && desired.invite[0];
+#if defined(HALO_IOS)
+        /* An iPhone app that leaves the foreground is suspended within
+           seconds and is often closed from there, with no chance to withdraw
+           then: its game would stay listed, unreachable, until the listing
+           lapsed, above the one it opens next. Withdrawn at once instead,
+           and listed again when the app returns. */
+        publish = publish && foreground;
+#endif
         pthread_mutex_unlock(&directory_lock);
         if (id[0] && (!publish || strcmp(desired.invite, previous.invite))) {
             /* Keep a failed withdrawal's lease: resuming the same host can

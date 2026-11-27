@@ -9,6 +9,8 @@
 
 char **native_multiplayer_map_list(char **stock, short stock_count, short *count);
 int native_map_is_custom(char const *map);
+/* Not one of the Xbox's multiplayer maps, its menu or a campaign level. */
+int native_map_is_community(char const *map);
 char const *native_map_basename(char const *map);
 int native_map_header_valid(unsigned char const *header, char const *filename);
 /* User-supplied files take precedence over the read-only managed-map overlay. */

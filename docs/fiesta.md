@@ -81,8 +81,10 @@ finish. No map load or BEGIN takes effect with unverified assets.
 Expanded Fiesta streams held and visible weapon textures through the ordinary
 prediction paths, instead of prewarming the entire arsenal in one frame. It uses
 a bounded 32 MiB native texture cache to accommodate the imported assets.
-Ordinary maps, menus and campaign retain the original 22 MiB cache; transitions
-restore that budget, and failed allocations preserve the previous arena.
+[Community maps](community-maps.md#runtime-support-for-compatible-v5-maps) use
+the same 32 MiB cache. The Xbox's own maps, menus and campaign retain the
+original 22 MiB cache; transitions restore that budget, and failed allocations
+preserve the previous arena.
 
 The generation-one arsenal contains 31 playable definitions, including all nine
 Uncut weapons. Original and imported versions of the same recovered identity

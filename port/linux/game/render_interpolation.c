@@ -157,6 +157,8 @@ static real interpolation_fraction = 1.0f;
 static unsigned long interpolation_rendered_tick;
 static boolean interpolation_rendered_tick_valid;
 static boolean interpolation_current_tick;
+/* (defined with the camera, below; render_interpolation_reset clears it) */
+static int direct_camera_enabled;
 
 /* ---------- blending */
 
@@ -504,6 +506,8 @@ void render_interpolation_reset(void)
 	interpolation_rendered_tick_valid = FALSE;
 	interpolation_current_tick = FALSE;
 	interpolation_fraction = 1.0f;
+	/* (Video, Accept: the next frame reads Direct Camera again) */
+	direct_camera_enabled = -1;
 	if (interpolated_objects)
 	{
 		for (index = 0; index < MAXIMUM_INTERPOLATED_OBJECTS; index++)
@@ -716,6 +720,9 @@ void render_interpolation_correct_object(long object_index, real_vector3d const 
 /* ---------- camera */
 
 static struct observer_result direct_cameras[MAXIMUM_LOCAL_PLAYERS];
+/* display.direct_camera, read when first needed and again after the display
+settings apply (render_interpolation_reset); -1 until read */
+static int direct_camera_enabled = -1;
 
 static struct observer_result const *render_interpolation_blended_camera(
 	short local_player_index,
@@ -726,25 +733,25 @@ turns every frame (player_control.c), but the observer keeps it as of the
 last tick and the blend above draws it a tick later still. On foot, the view
 points where the player aims now (display.direct_camera). In a vehicle's
 seat or a cinematic the view is the seat's or the script's: left as it is.
-Desktop only: display.direct_camera is not an Android setting, and its
-default would otherwise apply there. */
+Desktop and iPhone: display.direct_camera is not an Android setting, and its
+default would otherwise apply there. The iPhone's touch sticks and
+controllers turn the facing every frame as the mouse does. */
 static struct observer_result const *render_interpolation_direct_camera(
 	short local_player_index,
 	struct observer_result const *observer)
 {
-/* The Mac guest shares HALO_ANDROID for its ABI, but uses desktop camera
- * settings. Android and iOS retain the tick-based/interpolated view. */
-#if defined(HALO_IOS) || (defined(HALO_ANDROID) && !defined(HALO_MACOS))
+/* The Mac and iPhone guests share HALO_ANDROID for their ABI, but use the
+ * Native Metal camera settings. Android retains the tick-based view. */
+#if defined(HALO_ANDROID) && !defined(HALO_MACOS)
 	(void)local_player_index;
 	return observer;
 #else
-	static int enabled = -1;
 	struct observer_result *direct;
 	long unit_index;
 
-	if (enabled < 0)
-		enabled = config_boolean("display.direct_camera");
-	if (!enabled || !observer ||
+	if (direct_camera_enabled < 0)
+		direct_camera_enabled = config_boolean("display.direct_camera") != 0;
+	if (!direct_camera_enabled || !observer ||
 		director_get_perspective(local_player_index) != _director_perspective_first_person ||
 		director_inhibited_facing(local_player_index) ||
 		cinematic_in_progress())

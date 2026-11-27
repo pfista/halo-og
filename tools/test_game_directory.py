@@ -252,7 +252,7 @@ struct network_advertised_game {
 };
 struct network_game_client { int state; struct network_advertised_game available_games[9]; };
 static struct halo_directory_game cached[64];
-static int cached_count, browsing, connected, requested, errors;
+static int cached_count, browsing, connected, answered, requested, errors;
 static unsigned long milliseconds=100, peer_address=0x1020304;
 static unsigned long system_milliseconds(void) { return milliseconds; }
 static void network_event(const char *s) { (void)s; }
@@ -265,6 +265,7 @@ int p2p_invite_identity(const char *text,unsigned char *out) {
  out[0]=(unsigned char)((out[0]&0xFC)|0x02); return 1;
 }
 int p2p_invite_peer_address(const char *text,unsigned long *out) { (void)text; *out=peer_address; return connected; }
+int p2p_invite_answered(const char *text) { (void)text; return answered || connected; }
 int p2p_join_invite(const char *text) { assert(strlen(text)==79); requested++; return 1; }
 void platform_show_message(const char *a,const char *b) { (void)a;(void)b;errors++; }
 '''.replace("@XNADDR_DECLARATIONS@", declarations)
@@ -291,12 +292,15 @@ int main(void) {
  connected=1; assert(!network_game_client_directory_should_post_join(&client));
  struct network_advertised_game *ad=&client.available_games[0]; ad->valid=1;
  address.bSizeOfStruct=sizeof(address); address.bFlags=0xA5;
- memcpy(address.abEnet,identity,6); address.ina.S_un.S_addr=9; memcpy(ad->xnaddr.data,&address,sizeof(address));
- assert(!network_game_client_directory_should_post_join(&client));
+ /* Another host's advertisement is not the selected one's, whatever address it carries. */
  address.ina.S_un.S_addr=(uint32_t)peer_address; memset(address.abEnet,0xBB,6); memcpy(ad->xnaddr.data,&address,sizeof(address));
  assert(!network_game_client_directory_should_post_join(&client));
- memcpy(address.abEnet,identity,6); memcpy(ad->xnaddr.data,&address,sizeof(address));
- assert(network_game_client_directory_should_post_join(&client));
+ /* The host's own carries its address on its local network, never the tunnel's:
+    its identity names it. Requiring the tunnel's address there never matched, and
+    a selected game was only joined on a second press. */
+ memcpy(address.abEnet,identity,6); address.ina.S_un.S_addr=0xC0A8041D; memcpy(ad->xnaddr.data,&address,sizeof(address));
+ connected=0; assert(!network_game_client_directory_should_post_join(&client)); /* not before the tunnel */
+ connected=1; assert(network_game_client_directory_should_post_join(&client));
  assert(!network_game_client_directory_should_post_join(&client));
  assert(network_game_client_directory_take_join(&client)==ad);
  assert(!network_game_client_directory_take_join(&client));
@@ -328,13 +332,38 @@ int main(void) {
  assert(!network_game_client_directory_begin_join(ad)); /* original LAN flow */
  assert(network_game_client_directory_begin_join(games)); network_game_client_directory_cancel();
  assert(!browsing && !network_game_client_directory_take_join(&client)); /* stale queued event */
+ {
+  /* Listings their hosts still renew come first, in the directory's order; one that
+     has missed a renewal (its host closed without withdrawing) comes after them. */
+  struct halo_directory_game original=cached[0], aging=original, first=original, second=original;
+  strcpy(aging.name,"Closed"); aging.lifetime_seconds=30; memset(aging.invite+15,'d',64);
+  strcpy(first.name,"First"); first.lifetime_seconds=62; memset(first.invite+15,'e',64);
+  strcpy(second.name,"Second"); second.lifetime_seconds=88; memset(second.invite+15,'f',64);
+  cached[0]=aging; cached[1]=first; cached[2]=second; cached_count=3;
+  network_game_client_get_directory_games(&client,&count);
+  assert(count==3 && !wcscmp(games[0].game_name,L"First") && !wcscmp(games[1].game_name,L"Second") &&
+      !wcscmp(games[2].game_name,L"Closed"));
+  assert(!strcmp(directory_metadata[2].invite,aging.invite) && !strcmp(directory_metadata[0].invite,first.invite));
+  /* A host that never answers has closed: the player is told at once, not after
+     half a minute, and its listing is left out while it could still last. */
+  connected=0; answered=0;
+  assert(network_game_client_directory_begin_join(&games[2]));
+  milliseconds+=9999; assert(!network_game_client_directory_should_post_join(&client) && errors==0);
+  answered=1; milliseconds+=2; assert(!network_game_client_directory_should_post_join(&client) && errors==0); /* answered: being reached */
+  answered=0; assert(!network_game_client_directory_should_post_join(&client) && errors==1);
+  assert(!network_game_client_directory_should_post_join(&client) && errors==1); /* told once */
+  network_game_client_get_directory_games(&client,&count);
+  assert(count==2 && !wcscmp(games[0].game_name,L"First") && !wcscmp(games[1].game_name,L"Second"));
+  milliseconds+=90000; network_game_client_get_directory_games(&client,&count); assert(count==3);
+  cached[0]=original; cached_count=1; connected=1;
+ }
  network_game_client_get_directory_games(&client,&count); network_game_client_directory_begin_join(games);
- milliseconds+=30001; assert(!network_game_client_directory_should_post_join(&client) && errors==1);
+ milliseconds+=30001; assert(!network_game_client_directory_should_post_join(&client) && errors==2);
  cached[0].network_version=11; network_game_client_get_directory_games(&client,&count); assert(count==0);
  cached[0].network_version=0x800B; network_game_client_get_directory_games(&client,&count); assert(count==0);
  cached[0].network_version=0xCE26; network_game_client_get_directory_games(&client,&count); assert(count==1);
  strcpy(cached[0].gametype,"Unknown"); network_game_client_get_directory_games(&client,&count); assert(count==0);
- puts("PASS directory System Link display, dedup, peer identity, real-ad join, timeout, cancellation");
+ puts("PASS directory System Link display, dedup, order, peer identity, real-ad join, silent host, timeout, cancellation");
 }
 '''
         source = Path(self.temp.name) / "join.c"

@@ -32,14 +32,11 @@ int host_halo_arsenal_download_request(const char *logical_map,
 #endif
 }
 
+/* The iPhone shares the Mac's NSURLSession client. iOS blocks System Link
+ * broadcasts without Apple's multicast entitlement, so the public directory
+ * is how a phone finds games hosted elsewhere on the LAN or the Internet. */
 int host_halo_directory_http(const char *method, const char *url, const char *lease,
     const char *body, char *response, int capacity, int *status, int *retry_after_seconds)
 {
-#ifdef HALO_IOS
-    if (status) *status = 0;
-    if (retry_after_seconds) *retry_after_seconds = 0;
-    return -1;
-#else
     return halo_directory_http(method, url, lease, body, response, capacity, status, retry_after_seconds);
-#endif
 }

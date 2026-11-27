@@ -183,7 +183,7 @@ the setting for one start of the game. It has priority over the file.
 | `display.render_height` | `0` | — | Render resolution in fullscreen or a window: `0` Native fits current drawable pixels; `-1` Auto is native fullscreen/480p windowed; `480`, `720`, `1080`, `1440` or `2160` select a fixed height. Game coordinates remain 480 lines. Game Settings → Video → Resolution applies between frames. |
 | `display.vsync` | `true` | `HALO_NO_VSYNC=1` sets `false` | `true`: each frame waits for the display. |
 | `display.interpolation` | `true` | `HALO_INTERPOLATION` | `true`: one frame for each refresh of the display. `false`: 30 frames each second, as on the Xbox. Refer to "Frame rate". |
-| `display.direct_camera` | `false` | `HALO_DIRECT_CAMERA` | `true`: in first person, on foot, the view points where the player aims in each frame, not where the last tick left it. Refer to "Frame rate". |
+| `display.direct_camera` | `false` (iPhone: `true`) | `HALO_DIRECT_CAMERA` | `true`: in first person, on foot, the view points where the player aims in each frame, not where the last tick left it. The Mac shows it in Game Settings → Controller and the iPhone in Video. Refer to "Frame rate". |
 | `display.high_res_hud` | `true` | `HALO_HIGH_RES_HUD` | `true`: the HUD (meters, counters, panels and their outlines, the motion sensor, reticles, waypoints, scopes) is drawn from the high-res assets in `port/assets/hud`, 8x the size of the maps' bitmaps. The bitmaps with English text keep the maps' own. `false`: the maps' own bitmaps. |
 | `audio.enabled` | `true` | `HALO_NO_AUDIO=1` sets `false` | `false`: no audio device. The sound continues without output. |
 | `audio.volume` | `1.0` | `HALO_VOLUME` | The master volume. |
@@ -274,7 +274,8 @@ The optional `display.direct_camera` setting is disabled by default. When
 enabled, the game reads the mouse and sticks in each frame. In first person,
 on foot, each frame points the view where the player aims at that time. Thus the view
 turns in the frame that the mouse moves. In a vehicle and in cinematics, the
-view mixes as the other things do. On Android, the view mixes as before.
+view mixes as the other things do. On Android, the view mixes as before. On
+the iPhone the setting is on by default and has a row in Video.
 
 For the original 30 frames each second, use `display.interpolation = false`.
 

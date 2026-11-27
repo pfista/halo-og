@@ -290,7 +290,10 @@ it walks and strafes in circles, turns, fires every few seconds, jumps now
 and then and throws a grenade every seven seconds; "sound:<seed>" adds
 ordinary switch/reload presses for sound-rule validation; "look:<seed>" stands
 still, only turning and looking up and down (where remote players aim and
-whether they stand) */
+whether they stand); "press:<seconds>=<button>,..." presses each button
+(test_input_press's names) that many seconds after the game started, which
+walks the menus of a machine with no script console to reach (a phone) */
+int test_input_press(const char *name);
 static int test_input_holding_action;
 static Uint64 test_input_holding_action_since;
 
@@ -310,6 +313,7 @@ static unsigned test_input_gamepad(XINPUT_GAMEPAD *pad)
 	static int seed = -1;
 	static int looking;
 	static int sound_events;
+	static const char *presses;
 	double t;
 
 	if (!checked)
@@ -331,6 +335,34 @@ static unsigned test_input_gamepad(XINPUT_GAMEPAD *pad)
 			seed = atoi(setting + 5);
 			looking = 1;
 		}
+		else if (!strncmp(setting, "press:", 6))
+			presses = setting + 6;
+	}
+	/* the presses whose time has come, in order */
+	while (presses && *presses)
+	{
+		char name[8];
+		char *end;
+		double at = strtod(presses, &end);
+		size_t length;
+
+		if (*end != '=')
+		{
+			presses = NULL;
+			break;
+		}
+		if ((double)SDL_GetTicks() / 1000.0 < at)
+			break;
+		length = strcspn(end + 1, ",");
+		if (length < sizeof(name))
+		{
+			memcpy(name, end + 1, length);
+			name[length] = 0;
+			test_input_press(name);
+		}
+		presses = end + 1 + length;
+		if (*presses == ',')
+			presses++;
 	}
 	if (seed < 0)
 		return 0;
