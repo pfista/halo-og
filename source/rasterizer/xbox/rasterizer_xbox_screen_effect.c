@@ -457,6 +457,87 @@ static void rasterizer_screen_effect_set_texture_transforms(
 
 	return;
 }
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+/* port: a convolution blends a few copies of the screen, set apart by its
+radius in the Xbox's pixels. At 640x480 a copy is as soft as the pixels it is
+made of, so the copies merge into a blur. Drawn at several screen pixels to
+the Xbox's one, the same copies stand apart as sharp ghosts, most visibly
+around a scope (the zoom's warp).
+
+The Xbox's passes are drawn as they are, so the blur keeps its size. Passes
+are then added in pairs, each at a third of the radius of the pass before:
+three copies a radius apart become nine a third of that apart, then
+twenty-seven. A pair divides the spacing by nine, and pairs are added while
+the copies would still be more than a screen pixel apart, counting the
+spacing as one of the Xbox's pixels to begin with. Two pairs are the most.
+The count stays even so that the last pass draws into the screen. */
+static short screen_effect_refinement_passes(
+	real scale)
+{
+	short passes = 0;
+	real spacing = 1.0f;
+
+	while (passes < 4 && scale * spacing > 1.0f)
+	{
+		passes += 2;
+		spacing /= 9.0f;
+	}
+
+	return passes;
+}
+
+/* The radius of one pass of a convolution whose first `xbox_pass_count`
+passes are the Xbox's. */
+static real screen_effect_pass_radius(
+	real radius,
+	short pass,
+	short xbox_pass_count)
+{
+	for (; pass >= xbox_pass_count; pass--)
+		radius /= 3.0f;
+
+	return radius;
+}
+
+/* port: the native renderers move every vertex half of one of the Xbox's
+pixels right and down, which puts a Direct3D 8 pixel centre on theirs. At
+640x480 a quad over the whole viewport still covers every pixel. Drawn larger
+it starts inside the left and top edges, so each pass left a band of older
+pixels there and the next pass smeared it inward as a dark edge. The quad is
+moved back by that half pixel and its texture coordinates with it, so it
+covers the viewport and every pixel samples where it did.
+`pixel` is one of the Xbox's pixels of the viewport drawn into, in the units
+of `vertex_bounds`. */
+static boolean screen_effect_draw_covering_quad(
+	real_rectangle2d const *vertex_bounds,
+	real_vector2d const *pixel,
+	short viewport_width,
+	short viewport_height)
+{
+	real x0 = vertex_bounds->x0 - 0.5f * pixel->i;
+	real x1 = vertex_bounds->x1 - 0.5f * pixel->i;
+	real y0 = vertex_bounds->y0 + 0.5f * pixel->j;
+	real y1 = vertex_bounds->y1 + 0.5f * pixel->j;
+	real u0 = -0.5f;
+	real u1 = (real)viewport_width - 0.5f;
+	real v0 = -0.5f;
+	real v1 = (real)viewport_height - 0.5f;
+	boolean success = IDirect3DDevice8_Begin(global_d3d_device, D3DPT_TRIANGLEFAN) >= 0;
+
+	success = IDirect3DDevice8_SetVertexData2f(global_d3d_device, 4, u0, v1) >= 0 && success;
+	success = IDirect3DDevice8_SetVertexData2f(global_d3d_device, _rasterizer_vertex_register_position, x0, y1) >= 0 && success;
+	success = IDirect3DDevice8_SetVertexData2f(global_d3d_device, 4, u1, v1) >= 0 && success;
+	success = IDirect3DDevice8_SetVertexData2f(global_d3d_device, _rasterizer_vertex_register_position, x1, y1) >= 0 && success;
+	success = IDirect3DDevice8_SetVertexData2f(global_d3d_device, 4, u1, v0) >= 0 && success;
+	success = IDirect3DDevice8_SetVertexData2f(global_d3d_device, _rasterizer_vertex_register_position, x1, y0) >= 0 && success;
+	success = IDirect3DDevice8_SetVertexData2f(global_d3d_device, 4, u0, v0) >= 0 && success;
+	success = IDirect3DDevice8_SetVertexData2f(global_d3d_device, _rasterizer_vertex_register_position, x0, y0) >= 0 && success;
+	success = IDirect3DDevice8_End(global_d3d_device) >= 0 && success;
+
+	return success;
+}
+#endif
+
 /* ---------- public code */
 
 void _rasterizer_screen_effect(
@@ -492,6 +573,15 @@ void _rasterizer_screen_effect(
 		real_rectangle2d vertex_bounds;
 		unsigned long light_enhancement_input;
 		unsigned long desaturation_input;
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+		struct rasterizer_cinematic_screen_effect_parameters refined_parameters;
+		short xbox_pass_count = pass_count;
+
+		/* see screen_effect_refinement_passes */
+		if (parameters->convolution_type != _rasterizer_screen_effect_convolution_type_none &&
+			!parameters->video_on)
+			pass_count += screen_effect_refinement_passes(halo_screen_pixel_scale());
+#endif
 
 		if (parameters->video_on)
 		{
@@ -712,6 +802,16 @@ void _rasterizer_screen_effect(
 				D3DRS_ZBIAS,
 				0);
 
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			if (pass >= xbox_pass_count)
+			{
+				refined_parameters = *parameters;
+				refined_parameters.convolution_radius = screen_effect_pass_radius(
+					parameters->convolution_radius, pass, xbox_pass_count);
+				rasterizer_screen_effect_set_texture_transforms(&refined_parameters, pass, pass_count);
+			}
+			else
+#endif
 			rasterizer_screen_effect_set_texture_transforms(parameters, pass, pass_count);
 
 			if (destination_target != NONE)
@@ -1000,6 +1100,25 @@ void _rasterizer_screen_effect(
 				vertex_bounds.x0 = vertex_bounds.y1 = -1.0f;
 				vertex_bounds.x1 = vertex_bounds.y0 = 1.0f;
 			}
+
+#ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
+			if (halo_screen_pixel_scale() > 1.0f)
+			{
+				/* The primary target's viewport is the window's; any other target's is all of it. */
+				boolean window_viewport = destination_target == NONE ||
+					destination_target == _rasterizer_target_render_primary;
+				real_vector2d pixel;
+
+				pixel.i = 2.0f / (window_viewport ? (real)viewport_width : (real)halo_screen_width());
+				pixel.j = 2.0f / (window_viewport ? (real)viewport_height : 480.0f);
+				if (!screen_effect_draw_covering_quad(&vertex_bounds, &pixel, viewport_width, viewport_height))
+				{
+					success = FALSE;
+					rasterizer_error(0, "screen_effect_draw_covering_quad");
+				}
+				continue;
+			}
+#endif
 
 			if (IDirect3DDevice8_Begin(
 				global_d3d_device,

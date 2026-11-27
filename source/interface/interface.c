@@ -89,6 +89,7 @@ symbols in this file:
 #include "interface/interface.h"
 #include "interface/hud_messaging.h"
 #include "interface/terminal.h"
+#include "interface/virtual_keyboard.h"
 #include "interface/weapon_hud_interface_definition.h"
 #include "main/main.h"
 #include "math/real_math.h"
@@ -285,6 +286,11 @@ void interface_dispose_from_old_map(
 	draw_string_dispose_from_old_map();
 	hud_dispose_from_old_map();
 	first_person_weapons_dispose_from_old_map();
+	/* The virtual keyboard keeps a pointer to its tag in the menu map, and
+	only the main menu looks it up again. Left set, a name entry opened
+	during a game read whatever the game's map had loaded at that address.
+	With it cleared the entry is refused until the menu is back. */
+	virtual_keyboard_dispose();
 
 	return;
 }

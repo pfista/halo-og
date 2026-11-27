@@ -151,7 +151,7 @@ class Console:
         return self.state()[0]
 
 
-def prepare(folder, port, asset_quality, render_height, host=None, pause_layout=0):
+def prepare(folder, port, asset_quality, render_height, host=None, pause_layout=0, game_type="slayer"):
     saves, data, frames = folder / "saves", folder / "data", folder / "frames"
     for directory in (saves, data / "maps", frames, folder / "screens"):
         directory.mkdir(parents=True)
@@ -184,7 +184,7 @@ ui_layout_check = true
 pause_layout = {pause_layout}
 screenshot_every = 15
 screenshot_directory = "{frames}"
-''' + (f'network_test = "host:{host}:slayer"\nnetwork_test_start = 4.0\n' if host else ""))
+''' + (f'network_test = "host:{host}:{game_type}"\nnetwork_test_start = 4.0\n' if host else ""))
     return dict(os.environ, HALO_DATA_ROOT=str(data), HALO_SAVE_ROOT=str(saves), HALO_WINDOWED="1",
                 HALO_VOLUME="0", HALO_NO_AUDIO="1")
 
@@ -231,6 +231,9 @@ def run_tour(console, folder, steps):
         elif kind == "shot":
             time.sleep(0.5)
             save_picture(folder, value)
+        elif kind == "run":
+            reply = console.command(value).strip()
+            print(f"  {value}: {reply}" if reply else f"  {value}")
 
 
 def main():
@@ -243,11 +246,12 @@ def main():
                         "game's 480-line units, so this only sets how sharp the pictures are")
     parser.add_argument("--screen-width", default=None, help="Logical width, such as 640 for 4:3; default follows the window")
     parser.add_argument("--port", type=int, default=2390)
-    parser.add_argument("--host", metavar="MAP", help="With --steps: host a Slayer game on this map first, to reach Pause")
+    parser.add_argument("--host", metavar="MAP", help="With --steps: host a game on this map first, to reach Pause")
+    parser.add_argument("--game-type", default="slayer", help="With --host: the game type to host, such as ctf")
     parser.add_argument("--pause-layout", type=int, choices=(0, 2, 4), default=0,
                         help="With --steps: show Pause as two or four players' split screen does")
     parser.add_argument("--steps", help="Instead of a tour: comma-separated press:<button>, expect:<name>, "
-                        "shot:<name>, wait:<seconds>; prints the top screen after each press")
+                        "shot:<name>, wait:<seconds>, run:<console command>; prints the top screen after each press")
     args = parser.parse_args()
     executable, guest = BUILD / "halo", BUILD / "halo_guest.elf"
     if not executable.exists() or not guest.exists():
@@ -265,7 +269,8 @@ def main():
         folder = output / tour
         environment = prepare(folder, args.port + index, args.asset_quality, args.render_height,
                               args.host if args.steps else IN_GAME.get(tour),
-                              args.pause_layout if args.steps else PAUSE_LAYOUT.get(tour, 0))
+                              args.pause_layout if args.steps else PAUSE_LAYOUT.get(tour, 0),
+                              args.game_type if args.steps else "slayer")
         if args.screen_width:
             environment["HALO_SCREEN_WIDTH"] = args.screen_width
         console = Console(args.port + index)

@@ -159,7 +159,9 @@ void render_particles(
 			boolean owned_by_local_player =
 				particle->local_player_index == local_player_index;
 
-			if (render_location_visible(&particle->location) &&
+			/* (a particle the Xbox would not have shown yet: particles.c) */
+			if (particle_drawn(particle_index) &&
+				render_location_visible(&particle->location) &&
 				(!TEST_FLAG(
 					particle->flags,
 					_particle_datum_dont_draw_first_person_bit) ||
@@ -400,12 +402,9 @@ void render_particles(
 						rendered_particle++;
 					}
 
-					/* BUG (original): a fully culled group divides zero by zero.
-					 * A corrected non-matching build would store 0.0f when
-					 * built_particle_count is zero. */
 					((struct shader_effect_definition *)sprite_data.shader)->
-						secondary_map_radius =
-						total_radius / built_particle_count;
+						secondary_map_radius = built_particle_count ?
+						total_radius / built_particle_count : 0.0f;
 					build_sprites_end(&sprite_data);
 				}
 			}

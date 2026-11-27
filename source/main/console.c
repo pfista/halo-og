@@ -229,7 +229,7 @@ void console_warning(
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 /* port: commands for automated menu checks (tools/menu_layout_check.py),
 which walk the real menus with scripted presses of controller 1:
-  press up|down|left|right|a|b|x|y|start|back
+  press up|down|left|right|a|b|x|y|ls|rs|start|back
   ui    the screen on top, the focused item, and the presses still pending
 "ui" answers on the script console only: a line on screen would be in the
 pictures the check takes. */
@@ -238,7 +238,7 @@ boolean console_process_menu_check_command(char const *command)
 	if (!strncmp(command, "press ", 6))
 	{
 		if (!test_input_press(command + 6))
-			console_printf(FALSE, "press up|down|left|right|a|b|x|y|start|back");
+			console_printf(FALSE, "press up|down|left|right|a|b|x|y|ls|rs|start|back");
 		return TRUE;
 	}
 	if (!strcmp(command, "ui"))

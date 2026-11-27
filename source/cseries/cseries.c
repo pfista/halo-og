@@ -348,7 +348,13 @@ char *csprintf(
 	va_list arglist;
 	
 	va_start(arglist, format);
-	vsprintf(buffer, format, arglist);
+	/* port: the caller's buffer's size isn't passed, but temporary, which
+	most callers format into (often with a map's tag names), is its own size */
+	if (buffer == temporary)
+		vsnprintf(buffer, sizeof(temporary), format, arglist);
+	else
+		vsprintf(buffer, format, arglist);
+	va_end(arglist);
 	
 	return buffer;
 }

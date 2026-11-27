@@ -898,10 +898,19 @@ static word parse_unicode_string(
 	switch (character)
 	{
 	case '|':
-		if (string[state->string_index++] == 'n')
+		/* The Xbox took the character after every bar before looking at it,
+		and left the result of the character before. A name or a message
+		ending in a bar was drawn on past its end, and a bar anywhere else
+		swallowed the next character. Only "|n" is a line break. */
+		if (string[state->string_index] == 'n')
 		{
+			state->string_index++;
 			state->character = '\r';
 			state->result = _parsed_end_of_line;
+		}
+		else
+		{
+			state->result = _parsed_character;
 		}
 		break;
 	case 0:

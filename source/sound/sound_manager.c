@@ -3424,6 +3424,28 @@ static void refresh_sounds(
 
 			if (listener_index == NONE)
 			{
+				/* A sound nobody hears keeps the listener it had. When that
+				local player has left a split-screen game the listener is no
+				longer valid, and the channel update asserted on it. Give the
+				sound the first listener that is. */
+				if (sound->listener_index < 0 ||
+					sound->listener_index >= MAXIMUM_NUMBER_OF_LOCAL_PLAYERS ||
+					!listener_get(sound->listener_index)->valid)
+				{
+					short valid_listener_index;
+
+					for (valid_listener_index = 0;
+						valid_listener_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
+						valid_listener_index++)
+					{
+						if (listener_get(valid_listener_index)->valid)
+						{
+							sound->listener_index = valid_listener_index;
+							break;
+						}
+					}
+				}
+
 				if (!TEST_FLAG(sound->flags, _sound_inaudible_bit))
 				{
 					sound_start_fade(

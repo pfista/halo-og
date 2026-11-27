@@ -168,6 +168,8 @@ void particles_dispose(
 	void);
 void particle_delete(
 	long particle_index);
+boolean particle_drawn(
+	long particle_index);
 void particles_stop_on_first_person_weapon(
 	short local_player_index);
 real particle_get_radius(

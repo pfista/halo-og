@@ -11,6 +11,7 @@ each batch stands. Per-commit decisions are in
 
 | Question | Decision (November 24, 2026) |
 | --- | --- |
+| Patch releases | 0.7.1 continues the adoption (November 26). A patch must play with 0.7.0, so it takes only changes that leave what machines send and the simulation alone: picture, sound, HUD, menus, local input, crash and bounds fixes. Anything else waits for 0.8. |
 | Re-fork from OpenCE or pull selectively | Pull selectively and be more permissive about what is pulled. No online co-op, no OpenCE netcode or services, no PC menus. |
 | Release | These changes are Halo OG 0.7. 0.7 builds play with 0.7 builds. |
 | Picture defaults | A new installation uses the display's resolution, Upres assets and Smooth Motion. The original Xbox picture stays selectable. |
@@ -87,6 +88,49 @@ licences, not legal advice.
 When the change is made, make it one commit: replace `LICENSE.md`, add the
 notices, and update the README. AGPL-era ports land only after it.
 
+### Before the change: OpenCE's CC0-era commits
+
+The owner approved the move to AGPL on November 27, 2026, on one condition:
+everything wanted from before OpenCE's own licence change goes in first, while
+Halo OG is still CC0. The licence commit follows that, and AGPL-era code
+follows the licence commit.
+
+OpenCE has 543 commits between the fork point (`c55e4e2b`, October 2) and its
+licence change (`4b09168e`, October 19). Where they stood on November 27,
+checked commit by commit against Halo OG's history, documents and tree:
+
+| Commits | Standing |
+| --- | --- |
+| 54 | In Halo OG: the same patch, or adopted in a commit that names it |
+| 50 | Decided in these documents (taken in another form, or declined with a reason) |
+| 230 | Out by the rules above: co-op (54), PC menus (53), Custom Edition maps (34), Android touch (32), OpenCE's online services (31), the web build (20), the MCC loader (5), new modes (1) |
+| 25 | Looked at for 0.7.1 and not wanted or not applicable |
+| 63 | Named in the 0.7.1 plan and not in yet. Most belong to the wanted groups listed below. About a dozen change simulation or what machines send and wait for 0.8, and a few (map hardening, the opt-in field of view setting) wait for their own batch. |
+| 121 | In areas that matter (netcode 33, renderer 31, simulation 19, other 13, build 10, input 7, HUD 6, audio 2) and judged from their subject line only, never one by one |
+
+Wanted and not in yet, all CC0:
+
+- The audio mixer: a limiter in place of the soft clipper, band-limited
+  resampling, and streams that recover after a hitch (17 commits, mostly
+  `port/linux/src/dsound_sdl.c`).
+- Room reverb and wall muffling as options that default to off (`8a8e70599`
+  and the stereo group).
+- The fuller Upres HUD: exact reticles, redrawn button prompts, upscaled
+  labels, and settings that apply without a restart (12 commits).
+- OpenGL correctness on Windows, Linux and Android (`3d2c04d67`, `764044d4f`,
+  `577b45d50`) and OpenGL performance (7 commits).
+- The core of OpenCE's test harness, which the mixer's own tests need.
+
+The 121 unreviewed commits are the gap in "everything": a first pass over
+their subjects found mostly decompilation bookkeeping, comments, tests and
+fixes to code Halo OG does not have, and about fifteen that deserve a real
+look, among them the camera's snapshot after a long frame (`aa7b10757`),
+reflections at the display's pixel density (`f2aec7bee`), projectile trail
+bitmaps read before a weapon's first shot (`712d1ebe3`), bounded copies of map
+strings on the scoreboard (`bcb0e5e63`), Escape restarting a level from the
+console (`6694d6180`) and the one-second wait when leaving Create Game
+(`3a6e146fd`). The per-commit list is kept with the plan's research notes.
+
 ## Batches
 
 ### 1. Small fixes
@@ -142,7 +186,10 @@ Campaign, Firefight and UI maps stay out of scope: the profile omits scripts.
 ### 3. Menus
 
 Done for 0.7: horizontal and vertical look sensitivity in Game Settings, from
-the main menu and from Pause. A menu walk, `tools/menu_layout_check.py`, now
+the main menu and from Pause. Done for 0.7.1 so far: a saved profile's
+controls apply at once to the player using it (`ee1e169f9`), a deleted
+profile's name can be used again (`412c5224e`), and text ending in a bar ends
+where it should (`2dea8f6c7`, written for Halo OG). A menu walk, `tools/menu_layout_check.py`, now
 fails on any text that does not fit its box; it covers the multiplayer and
 Game Settings screens from the main menu and the one-player Pause pages of a
 hosted game, and found the locked game type dialog and one Game Settings
@@ -190,9 +237,21 @@ camouflage at screen resolution on both renderers, three Smooth Motion fixes,
 and Detail Distance for model pop-in, shadows and particle culling
 (`display.detail_distance`, following the resolution by default).
 
+Done for 0.7.1 so far: the scope's blur at high resolution, at the Xbox's
+size and to every edge (`e6fdb07c3` and `5cd9bc79c`, written for Halo OG, in
+place of `f815e1ccb`), campaign checkpoints and the delay after death counted
+in game ticks instead of frames (`cd345aac7`, and `ce59b9316` written for
+Halo OG), a one-frame flash to the fog colour (`521c8c8d5`, written), lens
+flares out of view no longer tested (`744040c87`), the motion sensor wedge's
+fade (`3ae09c3d2`), faster HUD picture decoding (`f38d526e8`), four Smooth
+Motion fixes written for Halo OG (the CTF flag's cloth, `ced1e1f2d`; lightning
+that changed shape every frame, `688eeb8a0`; a fast vehicle's shadow,
+`0e7233f3b`; plasma impacts drawn as streaks, `900a4d3f0`), and two dozen
+small fixes. [Xbox fidelity](xbox-fidelity.md) lists every one with its
+commit.
+
 Still open, all CC0-era unless noted: a menu row for Detail Distance (the
-Video page is full on every desktop, so it waits for the Advanced page), scope
-blur at high resolution (`f815e1ccb`), fuller Upres HUD (`9da2a45ff`,
+Video page is full on every desktop, so it waits for the Advanced page), fuller Upres HUD (`9da2a45ff`,
 `3ae09c3d2`, `f8b3eecb3`, `f38d526e8`, `c72962a73`), mixer quality (27
 commits), room reverb as an option
 (`8a8e70599`, `4afb59660`), and a Resolution setting on iPhone so it can take

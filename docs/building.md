@@ -86,6 +86,8 @@ to run for every edit. From the repository root:
 | Native directory client | `python3 -m unittest tools.test_game_directory tools.test_game_directory_worker` |
 | Directory server | In `services/game-directory`, run `npm ci`, then `npm test`; the real lease-expiry case takes about 91 seconds. |
 | Menu text, menu boxes or Upres fonts | `python3 tools/menu_layout_check.py --output build/menu-layout/<new folder>` walks the real menus in a local Mac build and fails on any text that does not fit its box; it saves a picture of each screen. |
+| Scope blur or cinematic screen effects | `python3 -m unittest tools.test_screen_effect_scale`. To see one in a local Mac build, `python3 tools/menu_layout_check.py --output build/menu-layout/<new folder> --host bloodgulch --render-height 1080 --steps "wait:24,run:cinematic_screen_effect_start true,run:cinematic_screen_effect_set_convolution 1 1 2 2 0,wait:1.5,shot:blur"` starts a blur from the script console and saves a picture; convolution type 1 is the blur and 2 is the warp a scope uses. For a real scope, host CTF, which starts the player with a pistol: `--game-type ctf --steps "wait:26,press:y,wait:2.5,press:rs,wait:1.2,shot:zoom"`. |
+| Checkpoint wait or death timers | `python3 -m unittest tools.test_campaign_timers` |
 | Upres letter shapes, sizes or spacing | `python3 tools/font_lab.py --output build/font-lab/<new folder>` writes a page comparing the maps' letters with each candidate redraw (NumPy and Pillow). |
 | Metal CPU/transport behavior | `PYTHONPATH=tools python3 -m unittest tools.test_metal_guest_transport` |
 

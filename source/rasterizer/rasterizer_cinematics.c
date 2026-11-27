@@ -361,16 +361,11 @@ struct rasterizer_cinematic_screen_effect_parameters *rasterizer_screen_effect_g
 		}
 		else
 		{
-			if (main_get_window_count() > 1)
-			{
-				display_assert(
-					"### FATAL_ERROR screen effects can't use convolution when main_get_window_count>1\r\nmaybe you forgot to turn off the cinematic screen effect?",
-					"c:\\halo\\SOURCE\\rasterizer\\rasterizer_cinematics.c",
-					336,
-					TRUE);
-				system_exit(-1);
-			}
-
+			/* The Xbox ended the game here with a fatal error when more than
+			one window was drawn: a convolution and the video effect are
+			drawn for one window only. A script that starts a blur in split
+			screen now gets its effect without them; see the end of this
+			function. */
 			parameters = &cinematic_screen_effect_globals->parameters;
 		}
 
@@ -380,6 +375,20 @@ struct rasterizer_cinematic_screen_effect_parameters *rasterizer_screen_effect_g
 		{
 			parameters->filter_light_enhancement_intensity = 0.0f;
 			parameters->filter_desaturation_intensity = 0.0f;
+		}
+
+		if (main_get_window_count() > 1 &&
+			(parameters->convolution_type != 0 || parameters->video_on))
+		{
+			/* A copy, so that the effect is whole again when one window is drawn. */
+			static struct rasterizer_cinematic_screen_effect_parameters split_screen_parameters;
+
+			split_screen_parameters = *parameters;
+			split_screen_parameters.convolution_radius = 0.0f;
+			split_screen_parameters.convolution_type = 0;
+			split_screen_parameters.convolution_extra_passes = 0;
+			split_screen_parameters.video_on = FALSE;
+			parameters = &split_screen_parameters;
 		}
 
 		return parameters;

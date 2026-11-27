@@ -83,6 +83,7 @@ symbols in this file:
 #include "effects/effect_definitions.h"
 #include "effects/effects.h"
 #include "effects/material_effects.h"
+#include "game/game.h"
 #include "game/players.h"
 #include "interface/first_person_weapons.h"
 #include "memory/data.h"
@@ -221,6 +222,9 @@ static real particles_leftover_ticks = 0.f;
 static long particles_update_ticks = 0;
 static long particles_tick_frame_indices[MAXIMUM_PARTICLE_UNRENDERED_FRAME_COUNT + 1];
 static long particles_tick_frame_head = 0;
+/* The time the particles were last moved by. Until they have been, a frame is
+taken for a whole tick, as on the Xbox. */
+static real particles_last_step = 1.0f / TICKS_PER_SECOND;
 
 static char const *particle_effect_marker_names[NUMBER_OF_PARTICLE_EFFECT_MARKERS] =
 {
@@ -1018,12 +1022,42 @@ void particle_new(
 	return;
 }
 
+/* On the Xbox a particle's first update moved it a whole tick, so it was
+first drawn a tick old, and one whose only frame lasts less than a tick was
+gone before it was drawn at all. Updated a part of a tick at a time
+(port/linux/game/render_interpolation.c) such a particle was drawn on every
+frame of its tick, flying along its velocity: a plasma impact showed tall
+streaks. A particle is drawn once it is a tick old (half a tick while players
+are at double speed), give or take a thousandth. A particle that animates
+once a frame steps once a tick here, and is drawn from its first step.
+When the last update was a whole tick everything is drawn, as on the Xbox. */
+boolean particle_drawn(
+	long particle_index)
+{
+	struct particle_datum *particle = particle_get(particle_index);
+	real tick = (game_players_are_double_speed() ? 0.5f : 1.0f) / TICKS_PER_SECOND;
+	real tolerance = tick * 0.001f;
+
+	if (fabs(particles_last_step - tick) <= tolerance && particle->age <= particles_last_step)
+		return TRUE;
+	if (TEST_FLAG(
+		particle_definition_get(particle->definition_index)->flags,
+		_particle_definition_animate_once_per_frame_bit))
+		return particle->frame_time != -1.0f;
+
+	return particle->age >= tick - tolerance;
+}
+
 void particles_update(
 	real dt)
 {
 	long particle_index;
 
 	profile_enter(particles_update_section);
+
+	/* (a paused game keeps the step it was moving by) */
+	if (dt != 0.0f)
+		particles_last_step = dt;
 
 	{
 		long tick;

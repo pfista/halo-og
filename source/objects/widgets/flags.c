@@ -215,6 +215,61 @@ void flag_set_trailing_shape(
 
 struct data_array *flag_data;
 
+/* The cloth is relaxed one pass each time it is stepped, so how stiff it is
+depends on how often that is. The Xbox stepped it once a 30 Hz game tick. The
+native builds call flags_update every frame, several frames a tick
+(port/linux/game/render_interpolation.c), and at 240 frames a second the flag
+was eight times as stiff: it hung like a board. The frames' time is added up
+and the cloth is stepped on the first frame after each tick, with that time.
+Drawing state only: nothing here is saved. */
+static real flags_pending_time;
+static long flags_last_tick = NONE;
+
+/* Returns the time to step the cloth by on this frame, or zero to leave it. */
+static real flags_step_time(
+	real frame_time)
+{
+	long tick = game_time_get();
+	real step_time = 0.0f;
+
+	flags_pending_time += frame_time;
+	if (tick != flags_last_tick)
+	{
+		step_time = flags_pending_time;
+		flags_pending_time = 0.0f;
+		flags_last_tick = tick;
+	}
+
+	return step_time;
+}
+
+/* The cloth hangs from where its pole was when it was last stepped, and the
+frames until the next step draw the pole further on. How far the first
+attachment marker, on the object as it is drawn now, has moved since then:
+the drawn cloth is moved by as much, so it stays on its pole. */
+static void flag_drawn_offset(
+	struct flag_datum_prefix const *flag,
+	struct flag_definition *definition,
+	real_vector3d *offset)
+{
+	struct object_marker marker;
+
+	offset->i = offset->j = offset->k = 0.0f;
+	if (definition->attachment_points.count > 0 &&
+		object_get_marker_by_name(
+			flag->object_index,
+			TAG_BLOCK_GET_ELEMENT(&definition->attachment_points, 0, struct flag_attachment_point)->marker_name,
+			&marker,
+			1) > 0)
+	{
+		offset->i = marker.matrix.position.x - flag->first_attachment.x;
+		offset->j = marker.matrix.position.y - flag->first_attachment.y;
+		offset->k = marker.matrix.position.z - flag->first_attachment.z;
+	}
+
+	return;
+}
+
 /* ---------- public code */
 
 void flags_initialize(
@@ -231,6 +286,8 @@ void flags_initialize_for_new_map(
 	void)
 {
 	data_make_valid(flag_data);
+	flags_pending_time = 0.0f;
+	flags_last_tick = NONE;
 
 	return;
 }
@@ -264,6 +321,12 @@ void flags_update(
 	real delta)
 {
 	long flag_index;
+
+	/* (see flags_step_time: later frames of a tick leave the cloth, and do
+	not count toward the five updates a flag may go undrawn) */
+	delta = flags_step_time(delta);
+	if (delta == 0.0f)
+		return;
 
 	for (flag_index = data_next_index(flag_data, NONE);
 		flag_index != NONE;
@@ -737,7 +800,9 @@ void flag_render_proper(
 		short i;
 		short x;
 		short y;
+		real_vector3d drawn_offset;
 
+		flag_drawn_offset(flag, definition, &drawn_offset);
 		object_definition_get(object_get(flag->object_index)->definition_index);
 		vertices = rasterizer_dynamic_vertices_lock(vertex_buffer_index);
 		triangles = rasterizer_dynamic_triangles_lock(triangle_buffer_index);
@@ -763,7 +828,9 @@ void flag_render_proper(
 				cross_product3d(&horizontal, &vertical, &vertex.normal);
 				normalize3d(&vertex.normal);
 
-				vertex.position = point->position;
+				vertex.position.x = point->position.x + drawn_offset.i;
+				vertex.position.y = point->position.y + drawn_offset.j;
+				vertex.position.z = point->position.z + drawn_offset.k;
 				vertex.texcoord.x = x * one_over_width;
 				vertex.texcoord.y = y * one_over_height;
 				rasterizer_geometry_compress_vertices(
@@ -880,6 +947,9 @@ void flag_render_proper(
 				corner00->position.y) * 0.25f;
 			centroid.z = (corner11->position.z + corner01->position.z + corner10->position.z +
 				corner00->position.z) * 0.25f;
+			centroid.x += drawn_offset.i;
+			centroid.y += drawn_offset.j;
+			centroid.z += drawn_offset.k;
 
 			csmemset(&parameters, 0, sizeof(parameters));
 			parameters.unique_identifier = 1;

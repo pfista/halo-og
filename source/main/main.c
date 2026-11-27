@@ -714,6 +714,11 @@ static char const *scenario_paths[10] =
 };
 
 static struct _main_globals main_globals = { 0 };
+/* Keep the original globals layout; these clocks belong to pending requests. */
+static long main_loss_last_tick;
+static long main_respawn_last_tick;
+/* The game tick the checkpoint wait last counted from. */
+static long main_save_last_tick;
 boolean debug_force_frame_rate_update = FALSE;
 boolean debug_no_drawing = FALSE;
 boolean debug_game_save = FALSE;
@@ -917,6 +922,11 @@ void main_won_map(
 void main_lost_map(
 	void)
 {
+	if (!main_globals.lost_map)
+	{
+		main_globals.loss_timer = 0;
+		main_loss_last_tick = game_time_get();
+	}
 	main_globals.saving_map = FALSE;
 	main_globals.lost_map = TRUE;
 	return;
@@ -977,9 +987,14 @@ void main_save_map_nonsafe(
 void main_respawn(
 	boolean in_multiplayer)
 {
+	if (!main_globals.respawn)
+	{
+		main_globals.respawn_timer = 0;
+		main_respawn_last_tick = game_time_get();
+	}
 	main_globals.respawn = TRUE;
 	if (in_multiplayer)
-		main_globals.respawn_timer = 91;
+		main_globals.respawn_timer = 92;
 	return;
 }
 
@@ -1588,6 +1603,8 @@ void main_save_map_safe(
 		main_globals.ticks_until_next_save_check = 0;
 		main_globals.ticks_unable_to_save = 0;
 		main_globals.safe_intervals = 0;
+		/* The first safety check is on the next wait, as on the Xbox. */
+		main_save_last_tick = game_time_get() - 1;
 	}
 	return;
 }
@@ -1602,6 +1619,7 @@ void main_save_map_no_timeout(
 		main_globals.ticks_until_next_save_check = 0;
 		main_globals.ticks_unable_to_save = 0;
 		main_globals.safe_intervals = 0;
+		main_save_last_tick = game_time_get() - 1;
 	}
 	main_globals.save_map_timeout = FALSE;
 	return;
@@ -1909,6 +1927,11 @@ static void main_saving_map_private(
 	return;
 }
 
+/* The Xbox ran this once for each 30 Hz game tick, so its counts are in
+   ticks: give up after 240, look every 10, save after four safe looks in
+   a row. It is called once a frame here, so count the ticks that passed
+   since the last call. Counting frames made a checkpoint give up after two
+   seconds at 120 frames a second. */
 static void main_save_map_private(
 	void)
 {
@@ -1919,26 +1942,35 @@ static void main_save_map_private(
 
 		if (save_map_safely)
 		{
-			if (main_globals.ticks_unable_to_save++ >= 240 &&
-				main_globals.save_map_timeout)
+			long current_tick = game_time_get();
+			/* Loading a checkpoint or a core can move game time backwards. */
+			long ticks = current_tick > main_save_last_tick ?
+				current_tick - main_save_last_tick : 0;
+
+			main_save_last_tick = current_tick;
+			while (ticks-- > 0 && !save_map)
 			{
-				if (debug_game_save)
-					console_printf(FALSE, "gave up trying to save");
-				main_globals.saving_map = FALSE;
-				return;
-			}
-			else if (main_globals.ticks_until_next_save_check-- <= 0)
-			{
-				if (game_safe_to_save())
+				if (main_globals.ticks_unable_to_save++ >= 240 &&
+					main_globals.save_map_timeout)
 				{
-					if (main_globals.safe_intervals++ >= 3)
-						save_map = TRUE;
+					if (debug_game_save)
+						console_printf(FALSE, "gave up trying to save");
+					main_globals.saving_map = FALSE;
+					return;
 				}
-				else
+				else if (main_globals.ticks_until_next_save_check-- <= 0)
 				{
-					main_globals.safe_intervals = 0;
+					if (game_safe_to_save())
+					{
+						if (main_globals.safe_intervals++ >= 3)
+							save_map = TRUE;
+					}
+					else
+					{
+						main_globals.safe_intervals = 0;
+					}
+					main_globals.ticks_until_next_save_check = 10;
 				}
-				main_globals.ticks_until_next_save_check = 10;
 			}
 		}
 		else
@@ -1968,17 +2000,45 @@ static void main_switch_to_structure_bsp_private(
 	return;
 }
 
+/* The original post-increment test expires on its 92nd 30 Hz update.
+   Render-only frames must not advance it. Saturate so blocked co-op
+   respawns can retry indefinitely without overflowing the short counter. */
+static boolean main_death_timer_expired(
+	short *timer,
+	long *last_tick,
+	boolean advance)
+{
+	long current_tick = game_time_get();
+	unsigned long elapsed_ticks = 0;
+
+	if (current_tick < *last_tick)
+	{
+		/* A checkpoint/core load can move the simulation clock backwards. */
+		*timer = 0;
+	}
+	else
+	{
+		elapsed_ticks = (unsigned long)current_tick - (unsigned long)*last_tick;
+	}
+	*last_tick = current_tick;
+
+	if (!advance)
+		return FALSE;
+
+	*timer = (short)MIN(92, (unsigned long)*timer + elapsed_ticks);
+	return *timer >= 92;
+}
+
 static void main_lost_map_private(
 	void)
 {
-	if (!game_time_get_paused())
+	if (main_death_timer_expired(
+		&main_globals.loss_timer, &main_loss_last_tick,
+		!game_time_get_paused()))
 	{
-		if (main_globals.loss_timer++ > 90)
-		{
-			main_globals.lost_map = FALSE;
-			main_globals.loss_timer = 0;
-			game_state_revert();
-		}
+		main_globals.lost_map = FALSE;
+		main_globals.loss_timer = 0;
+		game_state_revert();
 	}
 	return;
 }
@@ -1986,13 +2046,13 @@ static void main_lost_map_private(
 static void main_respawn_private(
 	void)
 {
-	if (!game_time_get_paused() && !cinematic_in_progress())
+	if (main_death_timer_expired(
+		&main_globals.respawn_timer, &main_respawn_last_tick,
+		!game_time_get_paused() && !cinematic_in_progress()) &&
+		players_respawn_coop())
 	{
-		if (main_globals.respawn_timer++ > 90 && players_respawn_coop())
-		{
-			main_globals.respawn = FALSE;
-			main_globals.respawn_timer = 0;
-		}
+		main_globals.respawn = FALSE;
+		main_globals.respawn_timer = 0;
 	}
 	return;
 }
@@ -2495,7 +2555,6 @@ void main_rasterizer_throttle(
 	unsigned long start_milliseconds;
 	short lapsed_frames;
 	boolean did_throttle;
-	boolean precache_in_progress;
 	boolean synchronized;
 	char const *description;
 
@@ -2510,15 +2569,17 @@ void main_rasterizer_throttle(
 		if ((__int64)rasterizer_globals.frame_and_vertical_blank_index < target_index)
 		{
 			start_milliseconds = system_milliseconds();
-			precache_in_progress = cache_files_precache_in_progress();
 			did_throttle = TRUE;
 			profile_idle_start();
 			while ((__int64)rasterizer_globals.frame_and_vertical_blank_index < target_index)
 			{
-				if (precache_in_progress)
-				{
-					Sleep(1);
-				}
+				/* port: a sleep between looks, not only while a map
+				precaches: the Xbox spun here, which on a port holds a core
+				busy for most of each frame of a game held at 30 frames a
+				second (display.interpolation off). A millisecond is well
+				inside a 33 ms frame (Windows sets its timer to 1 ms:
+				win32_posix.c) */
+				Sleep(1);
 				if (system_milliseconds() > start_milliseconds + 1000)
 				{
 					console_warning(

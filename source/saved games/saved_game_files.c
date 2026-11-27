@@ -320,6 +320,7 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "saved games/player_profile.h"
 #include "saved games/playlist_profile.h"
+#include "interface/player_ui.h"
 #include "text/text_group.h"
 #include "tag_files/tag_groups.h"
 /* the saved game file checksum is an XDK content signature, and enumerated
@@ -851,17 +852,22 @@ void saved_game_file_remember_last_used_multiplayer_map(
 	char const *map_name)
 {
 	struct file_reference file;
+	/* port: the name in a buffer of the size written (callers' may be
+	smaller: the menus' map list's are 64 bytes), the rest zeros */
+	char name[MAXIMUM_FILENAME_LENGTH+1];
 
 	match_assert(
 		"c:\\halo\\SOURCE\\saved games\\saved_game_files.c",
 		1207,
 		map_name);
+	csmemset(name, 0, sizeof(name));
+	csstrncpy(name, map_name, sizeof(name) - 1);
 
 	if (file_reference_create_from_path(&file, "z:\\lastmpmp.txt", FALSE) &&
 		file_create(&file) &&
 		file_open(&file, FLAG(_permission_write_bit)))
 	{
-		if (!file_write(&file, MAXIMUM_FILENAME_LENGTH+1, map_name))
+		if (!file_write(&file, MAXIMUM_FILENAME_LENGTH+1, name))
 		{
 			error(_error_silent, "failed to write to '%s'", "z:\\lastmpmp.txt");
 		}
@@ -1541,6 +1547,12 @@ boolean delete_enumerated_saved_game_file(
 						error(_error_silent, "remove_nth_entry_in_mapfile() failed");
 						success = FALSE;
 					}
+					else
+					{
+						/* port: the files after it moved down the list; the
+						indices the players hold follow them */
+						player_ui_saved_game_file_removed(profile_index);
+					}
 
 					if (memory_unit != _memory_unit_hard_drive)
 					{
@@ -1566,6 +1578,30 @@ boolean delete_enumerated_saved_game_file(
 	reset_last_player1_profile_index();
 
 	return success;
+}
+
+/* port: a file's index once the file of removed_index has left its memory
+unit's list (delete_enumerated_saved_game_file): the files after it move
+down one, so their indices do; NONE for the file removed */
+long saved_game_file_index_after_removal(
+	long profile_index,
+	long removed_index)
+{
+	long n;
+	long removed_n;
+
+	if (profile_index == NONE || removed_index == NONE ||
+		SAVED_GAME_FILE_INDEX_MEMORY_UNIT(profile_index) != SAVED_GAME_FILE_INDEX_MEMORY_UNIT(removed_index))
+	{
+		return profile_index;
+	}
+	n = SAVED_GAME_FILE_INDEX_FILE_INDEX(profile_index);
+	removed_n = SAVED_GAME_FILE_INDEX_FILE_INDEX(removed_index);
+	if (n == removed_n)
+		return NONE;
+	if (n < removed_n)
+		return profile_index;
+	return (long)(((unsigned long)profile_index & ~(0xFFFUL << 16)) | ((unsigned long)(n - 1) << 16));
 }
 
 void saved_game_file_get_useable_untitled_profile_name(

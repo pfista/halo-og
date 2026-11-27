@@ -402,6 +402,8 @@ int test_input_press(const char *name)
 		{ "start", XINPUT_GAMEPAD_START, -1 }, { "back", XINPUT_GAMEPAD_BACK, -1 },
 		{ "a", 0, XINPUT_GAMEPAD_A }, { "b", 0, XINPUT_GAMEPAD_B },
 		{ "x", 0, XINPUT_GAMEPAD_X }, { "y", 0, XINPUT_GAMEPAD_Y },
+		/* the sticks' clicks: crouch and zoom on the default layout */
+		{ "ls", XINPUT_GAMEPAD_LEFT_THUMB, -1 }, { "rs", XINPUT_GAMEPAD_RIGHT_THUMB, -1 },
 	};
 	unsigned index;
 
