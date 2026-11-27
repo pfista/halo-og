@@ -105,9 +105,8 @@ checked commit by commit against Halo OG's history, documents and tree:
 | 50 | Decided in these documents (taken in another form, or declined with a reason) |
 | 230 | Out by the rules above: co-op (54), PC menus (53), Custom Edition maps (34), Android touch (32), OpenCE's online services (31), the web build (20), the MCC loader (5), new modes (1) |
 | 25 | Looked at for 0.7.1 and not wanted or not applicable |
-| 9 | Wanted, but they change simulation or what machines send, so they wait for 0.8 |
-| 54 | Wanted and not in yet (see the list below) |
-| 121 | In areas that matter (netcode 33, renderer 31, simulation 19, other 13, build 10, input 7, HUD 6, audio 2) but never looked at one by one |
+| 63 | Named in the 0.7.1 plan and not in yet. Most belong to the wanted groups listed below. About a dozen change simulation or what machines send and wait for 0.8, and a few (map hardening, the opt-in field of view setting) wait for their own batch. |
+| 121 | In areas that matter (netcode 33, renderer 31, simulation 19, other 13, build 10, input 7, HUD 6, audio 2) and judged from their subject line only, never one by one |
 
 Wanted and not in yet, all CC0:
 
