@@ -24,16 +24,32 @@ prevent the existing direct connection. A failed connection returns to the list
 after 30 seconds. Private invites and LAN discovery remain available. Compare
 invite and directory results when reporting a connection failure.
 
+Selecting a game joins it with one press: the row reads "Connecting..." until
+the host's own advertisement arrives through the connection, usually within a
+few seconds, and the lobby opens. A host that does not answer the request at
+all within ten seconds has closed. Halo says so then and leaves that listing
+out of the list for the 90 seconds it could still last.
+
+`halo.log` records, for each connection attempt, the addresses each machine
+offered, the address of this machine that packets to each would leave from,
+its network interfaces, any send the system refused, and on a failure how many
+packets went unanswered and how many arrived but were refused.
+
 Public listings include the game name, map, mode, player counts, and an invite
 usable by anyone who can see the listing. A host renews its listing every 30
 seconds and when metadata changes. Stopped/crashed games disappear within 90
-seconds; ordinary hosting disposal requests immediate removal.
+seconds; ordinary hosting disposal requests immediate removal. Listings whose
+hosts are still renewing them come first; one that has missed a renewal comes
+after them, so a host's new game stands above the one it left behind.
 
 Entering the list or returning to Halo requests a fresh listing immediately,
 subject to network latency and any server retry delay. Leaving the list,
 joining a game, hiding/minimizing Halo, or switching to another app pauses
 listing requests. A public host still renews its listing during gameplay and
-while Halo is in the background so late-join games remain discoverable.
+while Halo is in the background so late-join games remain discoverable. An
+iPhone is the exception: iOS suspends a background app within seconds, so an
+iPhone host withdraws its listing as soon as Halo leaves the foreground and
+lists the game again when it returns.
 New games created while the list is already open appear on the next ten-second
 refresh. Failed requests use increasing retry delays with jitter and respect
 the directory's numeric `Retry-After` header; reopening the list cannot bypass
@@ -86,7 +102,10 @@ cleanup to its expiry alarm and registration transaction.
 Only compatible protocol 11/optional PB-capable listings are displayed. Public
 metadata is untrusted: selecting a row must establish the authenticated P2P peer
 and receive its real advertisement before the existing join/compatibility checks
-run. Cached records expire against the directory server's time, avoiding local
+run. The advertisement is matched to the selected host by its identity alone:
+it carries the host's address on its own local network, never the tunnel's,
+and the join reaches a tunnel peer by identity. Cached records expire against
+the directory server's time, avoiding local
 clock skew. LAN, tunnel, and directory records are deduplicated by the Xbox
 address's host identity. The actual network advertisement takes priority so its
 current game rules remain visible. Directory-only rows show a score limit when
@@ -95,7 +114,8 @@ than displayed as zero. A failed listing withdrawal retains the lease for retry
 or renewal, preventing a restart from creating a second live listing.
 
 Tests cover production parsing, response caps, lease headers, authenticated-peer
-and actual-advertisement gating, LAN deduplication, timeout and cancellation,
+and actual-advertisement gating, LAN deduplication, listing order, hosts that
+never answer, timeout and cancellation,
 visible/foreground-only polling, immediate entry/resume, throttling, stale
 responses, host renewal in the background, and expiry without read-side cleanup.
 The local Mac build, live native HTTP smoke, and real Mac host registration and

@@ -65,6 +65,17 @@ which this build does not request. So the iPhone finds games through the
 on Mac, Windows, Linux or another iPhone appear in its **System Link** list, and
 games the phone hosts appear on those machines. This needs Internet access on both devices.
 
+Keep Halo in front on an iPhone that hosts: iOS suspends an app within seconds
+of it leaving the foreground, and the game ends. The phone withdraws its game
+from the list when that happens, so other players do not pick a game that no
+longer answers.
+
+Two Apple devices on the same network share one public address and connect
+through their local addresses. Each offers the address of the network its
+internet traffic leaves from when that is a local network, and otherwise (a
+VPN that takes all traffic, or mobile data) the address of its Wi-Fi or
+Ethernet.
+
 For a private game or a LAN without Internet, use explicit peer addresses
 instead; ordinary unicast to the other device needs no entitlement.
 

@@ -2470,6 +2470,19 @@ int p2p_invite_peer_address(const char *text, unsigned long *address)
 	return found;
 }
 
+int p2p_invite_answered(const char *text)
+{
+	unsigned char host[P2P_IDENTIFIER_SIZE];
+	int answered;
+
+	if (!p2p_invite_identity(text, host))
+		return 0;
+	pthread_mutex_lock(&p2p_lock);
+	answered = find_peer(host) != NULL;
+	pthread_mutex_unlock(&p2p_lock);
+	return answered;
+}
+
 void p2p_invite_received(const char *text)
 {
 	if (!p2p.running)
