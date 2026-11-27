@@ -127,6 +127,13 @@ the one its default route leaves from (on Android, first that of an
 interface with broadcasts: Wi-Fi, not mobile data), else the first of an
 interface that is up and not loopback; or 0 */
 posix_ulong posix_local_ipv4_address(void);
+/* the address of this machine that packets to destination (an IPv4 address in
+network order) would leave from, or 0: which network the system routes it
+through */
+posix_ulong posix_route_ipv4_address(posix_ulong destination);
+/* "en0 192.168.1.20, utun3 100.64.0.2 (point to point)": every IPv4 address of
+this machine but loopback, for the log; returns how many */
+int posix_ipv4_interfaces_text(char *text, int size);
 /* fills buffer with cryptographically random bytes; aborts the process if
 the system has none to give */
 void posix_random_bytes(void *buffer, posix_ulong size);

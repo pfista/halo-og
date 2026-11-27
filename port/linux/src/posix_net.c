@@ -472,34 +472,34 @@ static posix_ulong interface_address(unsigned int flags)
 	return result;
 }
 
-posix_ulong posix_local_ipv4_address(void)
+posix_ulong posix_route_ipv4_address(posix_ulong destination)
 {
 	struct sockaddr_in route;
 	socklen_t length = sizeof(route);
 	posix_ulong result = 0;
 	int probe;
 
-#if defined(__ANDROID__) || defined(HALO_IOS)
-	/* a phone's default route may be its mobile data (on Wi-Fi without the
-	internet, or sharing its connection), or on iPhone a VPN such as
-	Tailscale or the mobile network's 192.0.0.x translation address, none of
-	which the local network can reach: first the local network's interface
-	(Wi-Fi, or the one it shares its connection on), which alone of them has
-	broadcasts. Internet play offers this address to players on the same
-	network, who share the public one and so need it to connect. */
-	result = interface_address(IFF_BROADCAST);
-	if (result)
-		return result;
-#endif
-	/* the address the default route leaves from: a UDP socket "connected"
-	to an internet address (a documentation one; nothing is sent) has it */
+	/* a UDP socket "connected" to the address (nothing is sent) has the one
+	its packets would leave from */
 	probe = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 	if (probe >= 0)
 	{
 		memset(&route, 0, sizeof(route));
+#ifdef HALO_MACOS
+		/* (the Apple host's connect takes an address as the game has it, with
+		a two-byte family, where Darwin's own begins with a length:
+		port/macos/host/posix_net.c. Set as Darwin's, it was no family at
+		all, and nothing came of this) */
+		{
+			unsigned short family = AF_INET;
+
+			memcpy(&route, &family, sizeof(family));
+		}
+#else
 		route.sin_family = AF_INET;
+#endif
 		route.sin_port = htons(9);
-		route.sin_addr.s_addr = htonl(0xC6336401);
+		route.sin_addr.s_addr = destination;
 		if (connect(probe, (struct sockaddr *)&route, sizeof(route)) == 0 &&
 			getsockname(probe, (struct sockaddr *)&route, &length) == 0 &&
 			route.sin_addr.s_addr != htonl(INADDR_ANY) && (ntohl(route.sin_addr.s_addr) >> 24) != 127)
@@ -508,9 +508,103 @@ posix_ulong posix_local_ipv4_address(void)
 		}
 		close(probe);
 	}
+	return result;
+}
+
+#if defined(HALO_MACOS)
+/* whether an interface that is up, running and has these flags has the
+address */
+static int interface_has_address(posix_ulong address, unsigned int flags)
+{
+	struct ifaddrs *addresses, *entry;
+	int found = 0;
+
+	if (getifaddrs(&addresses) != 0)
+		return 0;
+	for (entry = addresses; entry && !found; entry = entry->ifa_next)
+	{
+		found = entry->ifa_addr && entry->ifa_addr->sa_family == AF_INET &&
+			(entry->ifa_flags & (IFF_UP | IFF_RUNNING | flags)) == (IFF_UP | IFF_RUNNING | flags) &&
+			((struct sockaddr_in *)entry->ifa_addr)->sin_addr.s_addr == address;
+	}
+	freeifaddrs(addresses);
+	return found;
+}
+#endif
+
+posix_ulong posix_local_ipv4_address(void)
+{
+	posix_ulong result = 0;
+
+#if defined(__ANDROID__)
+	/* a phone's default route may be its mobile data (on Wi-Fi without the
+	internet, or sharing its connection), which the local network cannot
+	reach: first the local network's interface (Wi-Fi, or the one it shares
+	its connection on), which alone of them has broadcasts. Internet play
+	offers this address to players on the same network, who share the public
+	one and so need it to connect. */
+	result = interface_address(IFF_BROADCAST);
+	if (result)
+		return result;
+#endif
+	/* the address the default route leaves from: that to an internet
+	address (a documentation one) */
+	result = posix_route_ipv4_address(htonl(0xC6336401));
+#if defined(HALO_MACOS)
+	/* an iPhone's default route may be its mobile data (the mobile network's
+	192.0.0.x translation address, say), and an iPhone's or a Mac's a VPN
+	that takes everything; neither has an address the local network can
+	reach, and neither has broadcasts. Then the first interface that has
+	them (Wi-Fi or Ethernet, but not the self-assigned address of a cable
+	between an iPhone and a computer): the address players on the same
+	network need, as above. */
+	if (!result || !interface_has_address(result, IFF_BROADCAST))
+	{
+		posix_ulong local = interface_address(IFF_BROADCAST);
+
+		if (local)
+			return local;
+	}
+#endif
 	/* no route out (a network without the internet): the first interface
 	that is up, running and not loopback */
 	return result ? result : interface_address(0);
+}
+
+int posix_ipv4_interfaces_text(char *text, int size)
+{
+	struct ifaddrs *addresses, *entry;
+	int length = 0;
+	int count = 0;
+
+	if (size < 1)
+		return 0;
+	text[0] = 0;
+	if (getifaddrs(&addresses) != 0)
+		return 0;
+	for (entry = addresses; entry; entry = entry->ifa_next)
+	{
+		unsigned int value;
+		int written;
+
+		if (!entry->ifa_addr || entry->ifa_addr->sa_family != AF_INET || (entry->ifa_flags & IFF_LOOPBACK))
+			continue;
+		value = ntohl(((struct sockaddr_in *)entry->ifa_addr)->sin_addr.s_addr);
+		written = snprintf(text + length, (size_t)(size - length), "%s%s %u.%u.%u.%u%s%s", count ? ", " : "",
+			entry->ifa_name, value >> 24, (value >> 16) & 255, (value >> 8) & 255, value & 255,
+			(entry->ifa_flags & IFF_BROADCAST) ? "" : " (point to point)",
+			(entry->ifa_flags & (IFF_UP | IFF_RUNNING)) == (IFF_UP | IFF_RUNNING) ? "" : " (down)");
+		if (written < 0 || written >= size - length)
+		{
+			/* no room: without this one */
+			text[length] = 0;
+			break;
+		}
+		length += written;
+		count++;
+	}
+	freeifaddrs(addresses);
+	return count;
 }
 
 void posix_random_bytes(void *buffer, posix_ulong size)
